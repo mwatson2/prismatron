@@ -1,0 +1,119 @@
+# Pre-commit configuration for Prismatron LED Display Software
+# See https://pre-commit.com for more information
+
+repos:
+  # General code quality and formatting
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--unsafe]  # Allow custom YAML tags
+      - id: check-toml
+      - id: check-json
+      - id: check-xml
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-symlinks
+      - id: check-added-large-files
+        args: [--maxkb=1024]  # 1MB limit
+      - id: check-docstring-first
+      - id: debug-statements
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: requirements-txt-fixer
+
+  # Python code formatting with Black
+  - repo: https://github.com/psf/black
+    rev: 23.12.1
+    hooks:
+      - id: black
+        language_version: python3
+        args: [--line-length=88]
+
+  # Import sorting with isort (compatible with Black)
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        args: [--profile=black, --line-length=88]
+
+  # Python linting with flake8 (relaxed config for development phase)
+  - repo: https://github.com/pycqa/flake8
+    rev: 7.0.0
+    hooks:
+      - id: flake8
+        additional_dependencies:
+          - flake8-docstrings
+          - flake8-bugbear
+          - flake8-comprehensions
+          - flake8-simplify
+
+  # Type checking with mypy (temporarily disabled for initial setup)
+  # - repo: https://github.com/pre-commit/mirrors-mypy
+  #   rev: v1.8.0
+  #   hooks:
+  #     - id: mypy
+  #       additional_dependencies: [types-PyYAML, types-requests, types-setuptools]
+  #       args: [--ignore-missing-imports]
+
+  # Security scanning with bandit
+  - repo: https://github.com/pycqa/bandit
+    rev: 1.7.5
+    hooks:
+      - id: bandit
+        args: ['-c', 'pyproject.toml']
+        additional_dependencies: ["bandit[toml]"]
+        exclude: ^tests/
+
+  # Dockerfile linting (temporarily disabled)
+  # - repo: https://github.com/hadolint/hadolint
+  #   rev: v2.12.0
+  #   hooks:
+  #     - id: hadolint-docker
+  #       args: [--ignore, DL3008, --ignore, DL3009, --ignore, DL3015]
+
+  # Shell script linting (temporarily disabled)
+  # - repo: https://github.com/shellcheck-py/shellcheck-py
+  #   rev: v0.9.0.6
+  #   hooks:
+  #     - id: shellcheck
+  #       args: [--severity=warning]
+
+  # Markdown formatting and linting (temporarily disabled)
+  # - repo: https://github.com/igorshubovych/markdownlint-cli
+  #   rev: v0.38.0
+  #   hooks:
+  #     - id: markdownlint
+  #       args: [--fix]
+
+  # YAML formatting (temporarily disabled)
+  # - repo: https://github.com/pre-commit/mirrors-prettier
+  #   rev: v4.0.0-alpha.8
+  #   hooks:
+  #     - id: prettier
+  #       types_or: [yaml, json, markdown]
+  #       args: [--tab-width=2, --prose-wrap=always]
+  #       exclude: ^(CLAUDE\.md|README\.md)$  # Skip auto-formatting for project docs
+
+  # Python dependency vulnerability scanning (temporarily disabled due to repo issues)
+  # - repo: https://github.com/pyupio/safety
+  #   rev: 2.3.5
+  #   hooks:
+  #     - id: safety
+  #       args: [--ignore=70612]  # Ignore jinja2 vulnerability in dev deps
+
+# Configuration for CI and special cases
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit hooks
+
+    for more information, see https://pre-commit.ci
+  autofix_prs: true
+  autoupdate_branch: ''
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
+  autoupdate_schedule: weekly
+  skip: []
+  submodules: false

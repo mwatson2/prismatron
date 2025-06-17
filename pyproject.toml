@@ -1,0 +1,235 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prismatron"
+description = "Computational LED Art Display Software"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Prismatron Team", email = "dev@prismatron.com"},
+]
+keywords = ["led", "display", "art", "computer-vision", "optimization"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Multimedia :: Graphics :: Presentation",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: System :: Hardware :: Hardware Drivers",
+]
+requires-python = ">=3.8"
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/prismatron/prismatron"
+Documentation = "https://docs.prismatron.com"
+Repository = "https://github.com/prismatron/prismatron.git"
+"Bug Tracker" = "https://github.com/prismatron/prismatron/issues"
+
+[project.scripts]
+prismatron = "src.main:main"
+wled-test-patterns = "tools.wled_test_patterns:main"
+
+[project.optional-dependencies]
+dev = [
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pre-commit>=3.0.0",
+    "isort>=5.12.0",
+]
+docs = [
+    "mkdocs>=1.4.0",
+    "mkdocs-material>=9.0.0",
+    "mkdocs-mermaid2-plugin>=0.6.0",
+]
+hardware = [
+    "nvidia-ml-py3>=11.0.0",
+    "scikit-image>=0.20.0",
+    "imageio-ffmpeg>=0.4.0",
+]
+profiling = [
+    "line_profiler>=4.0.0",
+    "memory_profiler>=0.60.0",
+    "py-spy>=0.3.0",
+]
+
+[tool.setuptools_scm]
+write_to = "src/_version.py"
+version_scheme = "post-release"
+local_scheme = "dirty-tag"
+
+[tool.black]
+line-length = 88
+target-version = ['py38', 'py39', 'py310', 'py311']
+include = '\.pyi?$'
+extend-exclude = '''
+# A regex preceded by ^/ will apply only to files and directories
+# in the root of the project.
+^/(
+  (
+      \.eggs
+    | \.git
+    | \.hg
+    | \.mypy_cache
+    | \.tox
+    | \.venv
+    | _build
+    | buck-out
+    | build
+    | dist
+    | env
+  )/
+  | docs/
+)
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["src", "tests", "tools"]
+known_third_party = [
+    "numpy", "scipy", "torch", "cv2", "PIL", "fastapi", "uvicorn",
+    "websockets", "ffmpeg", "pydantic", "yaml", "serial", "requests",
+    "sympy", "matplotlib", "networkx", "jinja2", "psutil", "pytest",
+    "structlog", "click", "cryptography", "sklearn", "joblib", "tqdm"
+]
+sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+
+[tool.mypy]
+python_version = "3.8"
+show_error_codes = true
+warn_return_any = false
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+warn_no_return = true
+warn_unreachable = true
+strict_equality = false
+
+# Relaxed settings for development phase
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = false
+disallow_untyped_decorators = false
+no_implicit_optional = false
+
+# Focus on real errors
+disallow_any_unimported = false
+disallow_any_expr = false
+disallow_any_decorated = false
+disallow_any_explicit = false
+disallow_any_generics = false
+disallow_subclassing_any = false
+
+[[tool.mypy.overrides]]
+module = [
+    "cv2.*",
+    "PIL.*",
+    "torch.*",
+    "torchvision.*",
+    "ffmpeg.*",
+    "serial.*",
+    "networkx.*",
+    "sympy.*",
+    "matplotlib.*",
+    "scipy.*",
+    "sklearn.*",
+    "structlog.*",
+]
+ignore_missing_imports = true
+
+# Extra relaxed settings for tests
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = false
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = false
+warn_return_any = false
+warn_no_return = false
+
+# Relaxed settings for tools
+[[tool.mypy.overrides]]
+module = "tools.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+warn_no_return = false
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers --strict-config"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "hardware: marks tests that require hardware",
+    "network: marks tests that require network access",
+    "gpu: marks tests that require GPU",
+]
+filterwarnings = [
+    "error",
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__pycache__/*",
+    "*/migrations/*",
+    "*/venv/*",
+    "*/env/*",
+    "src/_version.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+show_missing = true
+skip_covered = false
+precision = 2
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+
+[tool.bandit]
+exclude_dirs = ["tests", "venv", "env", ".venv", "build", "dist"]
+skips = [
+    "B101",  # assert_used - allow in tests and dev code
+    "B601",  # paramiko_calls - we don't use paramiko
+    "B602",  # subprocess_popen_with_shell_equals_true - careful usage allowed
+    "B603",  # subprocess_without_shell_equals_true - allow subprocess calls
+]
+severity = "medium"

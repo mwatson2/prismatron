@@ -15,12 +15,14 @@ FRAME_SIZE = FRAME_WIDTH * FRAME_HEIGHT * FRAME_CHANNELS
 BUFFER_COUNT = 3  # Triple buffering
 
 # Shared metadata numpy dtype - used by both producer and consumer
-METADATA_DTYPE = np.dtype([
-    ('presentation_timestamp', np.float64),
-    ('source_width', np.int32),
-    ('source_height', np.int32), 
-    ('capture_timestamp', np.float64)
-])
+METADATA_DTYPE: np.dtype = np.dtype(
+    [
+        ("presentation_timestamp", np.float64),
+        ("source_width", np.int32),
+        ("source_height", np.int32),
+        ("capture_timestamp", np.float64),
+    ]
+)
 
 # LED Hardware Configuration
 LED_COUNT = 3200  # Total number of RGB LEDs in the display

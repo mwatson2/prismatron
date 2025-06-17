@@ -8,19 +8,19 @@ This module contains components for the producer process:
 """
 
 from .content_sources import (
-    ContentSource,
-    ContentType,
-    ContentStatus,
     ContentInfo,
+    ContentSource,
     ContentSourceRegistry,
-    ImageSource
+    ContentStatus,
+    ContentType,
+    ImageSource,
 )
 
 __all__ = [
-    'ContentSource',
-    'ContentType',
-    'ContentStatus', 
-    'ContentInfo',
-    'ContentSourceRegistry',
-    'ImageSource'
+    "ContentSource",
+    "ContentType",
+    "ContentStatus",
+    "ContentInfo",
+    "ContentSourceRegistry",
+    "ImageSource",
 ]

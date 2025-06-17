@@ -7,5 +7,7 @@ This module contains components for the consumer process:
 - WLED communication and LED mapping
 """
 
+from typing import List
+
 # Future consumer components will be imported here
-__all__ = []
+__all__: List[str] = []

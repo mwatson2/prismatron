@@ -7,23 +7,22 @@ and provides a consistent interface for frame data access.
 """
 
 from .base import (
-    ContentSource,
-    ContentType,
-    ContentStatus,
     ContentInfo,
+    ContentSource,
     ContentSourceRegistry,
-    FrameData
+    ContentStatus,
+    ContentType,
+    FrameData,
 )
-
 from .image_source import ImageSource
 
 # Auto-register available content sources
 __all__ = [
-    'ContentSource',
-    'ContentType', 
-    'ContentStatus',
-    'ContentInfo',
-    'ContentSourceRegistry',
-    'FrameData',
-    'ImageSource'
+    "ContentSource",
+    "ContentType",
+    "ContentStatus",
+    "ContentInfo",
+    "ContentSourceRegistry",
+    "FrameData",
+    "ImageSource",
 ]
