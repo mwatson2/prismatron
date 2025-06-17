@@ -245,7 +245,7 @@ WebSocket /api/live       # Live updates to frontend
 ### Phase 3: Consumer Components  
 
 #### Task 3.1: LED Position Mapping System
-**Test**: Generate test LED positions, verify coordinate transformations, test position file I/O.
+**Test**: Capture LED position images (1 image per LED), manage storage of multiple capture versions
 
 #### Task 3.2: Basic LED Optimization Engine
 **Test**: Simple optimization with mock diffusion patterns, verify output format, benchmark performance.
