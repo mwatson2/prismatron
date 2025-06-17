@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Environment Setup
 
-This is a Python project that uses a virtual environment located in `env/`. 
+This is a Python project that uses a virtual environment located in `env/`.
 
 To activate the virtual environment:
 ```bash
@@ -373,3 +373,4 @@ python -m src.producer.producer
 python -m src.consumer.consumer
 python -m src.web.api_server
 ```
+# Test pre-commit hooks
