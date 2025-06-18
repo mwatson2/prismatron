@@ -14,7 +14,9 @@ import threading
 import time
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import numpy as np
 
 from ..const import (
     DDP_HEADER_SIZE,
@@ -48,6 +50,25 @@ class DDPDataType(IntEnum):
     RGB24 = 0x00  # 24-bit RGB data
     HSV24 = 0x01  # 24-bit HSV data
     RGBW32 = 0x02  # 32-bit RGBW data
+
+
+@dataclass
+class TransmissionResult:
+    """Result of LED data transmission."""
+
+    success: bool
+    packets_sent: int
+    bytes_sent: int
+    transmission_time: float
+    errors: List[str]
+    frame_rate: float = 0.0
+
+    def get_throughput_mbps(self) -> float:
+        """Calculate throughput in Mbps."""
+        if self.transmission_time > 0:
+            bits_per_second = (self.bytes_sent * 8) / self.transmission_time
+            return bits_per_second / 1_000_000
+        return 0.0
 
 
 @dataclass
@@ -335,25 +356,63 @@ class WLEDClient:
             logger.error(f"Query packet error: {e}")
             return False, None
 
-    def send_led_data(self, led_data: bytes) -> bool:
+    def send_led_data(self, led_data: Union[bytes, np.ndarray]) -> TransmissionResult:
         """
         Send LED data to WLED controller.
 
         Args:
-            led_data: RGB data for all LEDs (led_count * 3 bytes)
+            led_data: RGB data for all LEDs - either bytes (led_count * 3)
+                     or numpy array (led_count, 3)
 
         Returns:
-            True if transmission successful, False otherwise
+            TransmissionResult with transmission metrics
         """
+        start_time = time.time()
+        errors = []
         if not self.is_connected or not self.socket:
-            logger.error("Not connected to WLED controller")
-            return False
-
-        if len(led_data) != self.config.led_count * 3:
-            logger.error(
-                f"Invalid LED data size: expected {self.config.led_count * 3}, got {len(led_data)}"
+            error_msg = "Not connected to WLED controller"
+            logger.error(error_msg)
+            return TransmissionResult(
+                success=False,
+                packets_sent=0,
+                bytes_sent=0,
+                transmission_time=time.time() - start_time,
+                errors=[error_msg],
             )
-            return False
+
+        # Convert numpy array to bytes if needed
+        if isinstance(led_data, np.ndarray):
+            if led_data.shape != (self.config.led_count, 3):
+                error_msg = (
+                    f"Invalid LED data shape: expected {(self.config.led_count, 3)}, "
+                    f"got {led_data.shape}"
+                )
+                logger.error(error_msg)
+                return TransmissionResult(
+                    success=False,
+                    packets_sent=0,
+                    bytes_sent=0,
+                    transmission_time=time.time() - start_time,
+                    errors=[error_msg],
+                )
+            led_data_bytes = (
+                np.clip(led_data, 0, 255).astype(np.uint8).flatten().tobytes()
+            )
+        else:
+            if len(led_data) != self.config.led_count * 3:
+                error_msg = (
+                    f"Invalid LED data size: expected {self.config.led_count * 3}, "
+                    f"got {len(led_data)}"
+                )
+                logger.error(error_msg)
+                return TransmissionResult(
+                    success=False,
+                    packets_sent=0,
+                    bytes_sent=0,
+                    transmission_time=time.time() - start_time,
+                    errors=[error_msg],
+                )
+            led_data_bytes = led_data
 
         # Flow control - enforce minimum frame interval
         current_time = time.time()
@@ -369,18 +428,24 @@ class WLEDClient:
             self.last_frame_time = current_time
 
         # Send data in fragments
-        success = self._send_fragmented_data(led_data)
+        result = self._send_fragmented_data(led_data_bytes)
 
-        if success:
+        # Calculate frame rate
+        if result.success and self.last_frame_time > 0:
+            frame_interval = current_time - self.last_frame_time
+            result.frame_rate = 1.0 / frame_interval if frame_interval > 0 else 0.0
+
+        # Update statistics
+        if result.success:
             with self._lock:
                 self.frames_sent += 1
         else:
             with self._lock:
                 self.transmission_errors += 1
 
-        return success
+        return result
 
-    def _send_fragmented_data(self, led_data: bytes) -> bool:
+    def _send_fragmented_data(self, led_data: bytes) -> TransmissionResult:
         """
         Send LED data fragmented into multiple DDP packets.
 
@@ -388,8 +453,12 @@ class WLEDClient:
             led_data: Complete LED data to fragment and send
 
         Returns:
-            True if all packets sent successfully, False otherwise
+            TransmissionResult with transmission metrics
         """
+        start_time = time.time()
+        packets_sent = 0
+        bytes_sent = 0
+        errors = []
         try:
             data_offset = 0
 
@@ -405,28 +474,47 @@ class WLEDClient:
                 packet_data = led_data[data_offset : data_offset + packet_data_size]
 
                 # Create DDP packet
-                success = self._send_ddp_packet(
+                packet_result = self._send_ddp_packet(
                     data=packet_data,
                     data_offset=data_offset,
                     is_last_packet=(packet_index == self.packets_per_frame - 1),
                 )
 
-                if not success:
-                    logger.error(
-                        f"Failed to send packet {packet_index + 1}/{self.packets_per_frame}"
-                    )
-                    return False
+                if not packet_result:
+                    error_msg = f"Failed to send packet {packet_index + 1}/{self.packets_per_frame}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+                else:
+                    packets_sent += 1
+                    bytes_sent += len(packet_data) + DDP_HEADER_SIZE
 
                 data_offset += packet_data_size
 
                 with self._lock:
-                    self.packets_sent += 1
+                    if packet_result:
+                        self.packets_sent += 1
 
-            return True
+            transmission_time = time.time() - start_time
+            success = len(errors) == 0
+
+            return TransmissionResult(
+                success=success,
+                packets_sent=packets_sent,
+                bytes_sent=bytes_sent,
+                transmission_time=transmission_time,
+                errors=errors,
+            )
 
         except Exception as e:
-            logger.error(f"Fragmented transmission error: {e}")
-            return False
+            error_msg = f"Fragmented transmission error: {e}"
+            logger.error(error_msg)
+            return TransmissionResult(
+                success=False,
+                packets_sent=packets_sent,
+                bytes_sent=bytes_sent,
+                transmission_time=time.time() - start_time,
+                errors=[error_msg],
+            )
 
     def _send_ddp_packet(
         self, data: bytes, data_offset: int, is_last_packet: bool = False
@@ -495,7 +583,7 @@ class WLEDClient:
             logger.error(f"DDP packet creation error: {e}")
             return False
 
-    def set_solid_color(self, r: int, g: int, b: int) -> bool:
+    def set_solid_color(self, r: int, g: int, b: int) -> TransmissionResult:
         """
         Set all LEDs to a solid color.
 
@@ -503,15 +591,100 @@ class WLEDClient:
             r, g, b: RGB color values (0-255)
 
         Returns:
-            True if successful, False otherwise
+            TransmissionResult with transmission metrics
         """
         if not (0 <= r <= 255 and 0 <= g <= 255 and 0 <= b <= 255):
-            logger.error(f"Invalid RGB values: ({r}, {g}, {b})")
-            return False
+            error_msg = f"Invalid RGB values: ({r}, {g}, {b})"
+            logger.error(error_msg)
+            return TransmissionResult(
+                success=False,
+                packets_sent=0,
+                bytes_sent=0,
+                transmission_time=0.0,
+                errors=[error_msg],
+            )
 
         # Create solid color data
         led_data = bytes([r, g, b] * self.config.led_count)
         return self.send_led_data(led_data)
+
+    def send_test_pattern(self, pattern: str = "rainbow") -> TransmissionResult:
+        """
+        Send a test pattern to verify connection.
+
+        Args:
+            pattern: Test pattern type ("rainbow", "solid", "off")
+
+        Returns:
+            TransmissionResult with transmission metrics
+        """
+        try:
+            # Generate test pattern
+            led_data = self._generate_test_pattern(pattern)
+
+            # Send test data
+            result = self.send_led_data(led_data)
+
+            if result.success:
+                logger.info(f"Test pattern '{pattern}' sent successfully")
+            else:
+                logger.warning(f"Test pattern '{pattern}' failed: {result.errors}")
+
+            return result
+
+        except Exception as e:
+            error_msg = f"Test pattern failed: {e}"
+            logger.error(error_msg)
+            return TransmissionResult(
+                success=False,
+                packets_sent=0,
+                bytes_sent=0,
+                transmission_time=0.0,
+                errors=[error_msg],
+            )
+
+    def _generate_test_pattern(self, pattern: str) -> np.ndarray:
+        """
+        Generate test LED pattern.
+
+        Args:
+            pattern: Pattern type
+
+        Returns:
+            LED values array (led_count, 3)
+        """
+        led_data = np.zeros((self.config.led_count, 3), dtype=np.uint8)
+
+        if pattern == "rainbow":
+            # Rainbow pattern
+            for i in range(self.config.led_count):
+                hue = (i / self.config.led_count) * 360
+                # Simple HSV to RGB conversion for rainbow
+                c = 255  # Assume max saturation and value
+                x = int(c * (1 - abs((hue / 60) % 2 - 1)))
+
+                if 0 <= hue < 60:
+                    led_data[i] = [c, x, 0]
+                elif 60 <= hue < 120:
+                    led_data[i] = [x, c, 0]
+                elif 120 <= hue < 180:
+                    led_data[i] = [0, c, x]
+                elif 180 <= hue < 240:
+                    led_data[i] = [0, x, c]
+                elif 240 <= hue < 300:
+                    led_data[i] = [x, 0, c]
+                else:
+                    led_data[i] = [c, 0, x]
+
+        elif pattern == "solid":
+            # Solid white
+            led_data.fill(128)
+
+        elif pattern == "off":
+            # All LEDs off
+            led_data.fill(0)
+
+        return led_data.astype(np.float32)
 
     def get_statistics(self) -> dict:
         """
@@ -521,6 +694,22 @@ class WLEDClient:
             Dictionary with transmission statistics
         """
         with self._lock:
+            # Calculate throughput if we have transmission data
+            total_bytes = self.packets_sent * DDP_HEADER_SIZE  # Approximate
+            if self.last_frame_time > 0 and self.frames_sent > 0:
+                total_time = time.time() - (
+                    self.last_frame_time - (self.frames_sent / self.config.max_fps)
+                )
+                throughput_mbps = (
+                    (total_bytes * 8) / (total_time * 1_000_000)
+                    if total_time > 0
+                    else 0.0
+                )
+                avg_fps = self.frames_sent / total_time if total_time > 0 else 0.0
+            else:
+                throughput_mbps = 0.0
+                avg_fps = 0.0
+
             return {
                 "frames_sent": self.frames_sent,
                 "packets_sent": self.packets_sent,
@@ -531,6 +720,9 @@ class WLEDClient:
                 "port": self.config.port,
                 "led_count": self.config.led_count,
                 "wled_status": self.wled_status,
+                "max_fps": self.config.max_fps,
+                "estimated_throughput_mbps": throughput_mbps,
+                "average_fps": avg_fps,
             }
 
     def reset_statistics(self) -> None:

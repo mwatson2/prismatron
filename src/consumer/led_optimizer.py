@@ -1,9 +1,9 @@
 """
 LED Optimization Engine.
 
-This module implements the core optimization algorithm that maps texture data
-to LED brightness values by solving the optimization problem:
-minimize ||A×x - target||² where x = LED brightness values
+This module implements the core optimization algorithm that finds LED brightness
+values to best approximate a target image using diffusion patterns. The optimization
+solves: minimize ||Σ(weight_i * pattern_i) - target||² where weight_i = LED brightness.
 
 Uses diffusion pattern database and GPU-accelerated matrix operations for
 real-time performance targeting 15fps.
@@ -13,7 +13,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import numpy as np
 
@@ -28,7 +28,6 @@ except ImportError:
     F = None
 
 from ..const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
-from .led_mapper import LEDMapper
 
 logger = logging.getLogger(__name__)
 
@@ -59,12 +58,16 @@ class LEDOptimizer:
 
     Implements GPU-accelerated optimization to solve the inverse lighting
     problem: given a target image, find LED brightness values that best
-    approximate the image through the diffusion patterns.
+    approximate the image as a weighted sum of diffusion patterns.
+
+    Each LED has a diffusion pattern - a full-size image showing the light
+    distribution it creates on the diffuser. The optimization finds the
+    optimal weights (LED brightness) to minimize the difference between
+    the weighted sum of patterns and the target image.
     """
 
     def __init__(
         self,
-        led_mapper: LEDMapper,
         diffusion_patterns_path: Optional[str] = None,
         device: Optional[str] = None,
     ):
@@ -72,11 +75,9 @@ class LEDOptimizer:
         Initialize LED optimizer.
 
         Args:
-            led_mapper: LED position mapper
             diffusion_patterns_path: Path to diffusion pattern database
             device: PyTorch device ('cpu', 'cuda', etc.)
         """
-        self.led_mapper = led_mapper
         self.diffusion_patterns_path = (
             diffusion_patterns_path or "config/diffusion_patterns.npz"
         )
@@ -94,9 +95,10 @@ class LEDOptimizer:
         self.regularization_weight = 0.001
 
         # State
-        self._diffusion_matrix: Optional[torch.Tensor] = None
+        self._diffusion_patterns: Optional[
+            torch.Tensor
+        ] = None  # (led_count, height, width, 3)
         self._diffusion_patterns_loaded = False
-        self._led_positions_tensor: Optional[torch.Tensor] = None
 
         # Statistics
         self._optimization_count = 0
@@ -134,49 +136,18 @@ class LEDOptimizer:
                 logger.error("PyTorch not available for optimization")
                 return False
 
-            # Load LED positions
-            if not self.led_mapper.led_positions:
-                logger.error("LED mapper not initialized")
-                return False
-
-            # Convert LED positions to tensor
-            self._prepare_led_positions()
-
             # Try to load diffusion patterns
             if not self._load_diffusion_patterns():
                 logger.warning("Diffusion patterns not found, generating mock patterns")
                 self._generate_mock_diffusion_patterns()
 
             logger.info(f"LED optimizer initialized with device: {self.device}")
-            logger.info(f"Diffusion matrix shape: {self._diffusion_matrix.shape}")
+            logger.info(f"Diffusion patterns shape: {self._diffusion_patterns.shape}")
             return True
 
         except Exception as e:
             logger.error(f"LED optimizer initialization failed: {e}")
             return False
-
-    def _prepare_led_positions(self) -> None:
-        """Prepare LED positions as tensors."""
-        try:
-            x_pos, y_pos = self.led_mapper.get_position_arrays()
-            pixel_x, pixel_y = self.led_mapper.get_pixel_arrays()
-
-            # Convert to tensors
-            self._led_positions_tensor = torch.tensor(
-                np.column_stack([x_pos, y_pos]), dtype=torch.float32, device=self.device
-            )
-
-            self._led_pixel_coords = torch.tensor(
-                np.column_stack([pixel_x, pixel_y]),
-                dtype=torch.long,
-                device=self.device,
-            )
-
-            logger.debug(f"Prepared {len(x_pos)} LED positions as tensors")
-
-        except Exception as e:
-            logger.error(f"Failed to prepare LED positions: {e}")
-            raise
 
     def _load_diffusion_patterns(self) -> bool:
         """
@@ -209,13 +180,9 @@ class LEDOptimizer:
                 )
                 return False
 
-            # Convert to tensor and reshape for matrix operations
-            # Reshape to (num_pixels, led_count, 3) for matrix multiplication
-            num_pixels = FRAME_HEIGHT * FRAME_WIDTH
-            self._diffusion_matrix = torch.tensor(
-                diffusion_patterns.transpose(1, 2, 0, 3).reshape(
-                    num_pixels, LED_COUNT, 3
-                ),
+            # Convert to tensor
+            self._diffusion_patterns = torch.tensor(
+                diffusion_patterns,
                 dtype=torch.float32,
                 device=self.device,
             )
@@ -235,25 +202,27 @@ class LEDOptimizer:
         try:
             logger.info("Generating mock diffusion patterns...")
 
-            num_pixels = FRAME_HEIGHT * FRAME_WIDTH
-
-            # Create simple Gaussian diffusion patterns
-            diffusion_matrix = np.zeros((num_pixels, LED_COUNT, 3), dtype=np.float32)
+            # Create mock patterns with random Gaussian distributions
+            patterns = np.zeros(
+                (LED_COUNT, FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.float32
+            )
 
             # Create coordinate grids
             y_coords, x_coords = np.mgrid[0:FRAME_HEIGHT, 0:FRAME_WIDTH]
-            y_coords = y_coords.flatten()
-            x_coords = x_coords.flatten()
 
             # Generate patterns for each LED
-            for led_idx, led in enumerate(self.led_mapper.led_positions):
-                # Calculate Gaussian falloff from LED position
-                dx = x_coords - led.pixel_x
-                dy = y_coords - led.pixel_y
+            for led_idx in range(LED_COUNT):
+                # Random center position for this LED's pattern
+                center_x = np.random.uniform(0.1, 0.9) * FRAME_WIDTH
+                center_y = np.random.uniform(0.1, 0.9) * FRAME_HEIGHT
+
+                # Calculate Gaussian falloff from LED center
+                dx = x_coords - center_x
+                dy = y_coords - center_y
                 distances_sq = dx * dx + dy * dy
 
                 # Gaussian with different spread for each color channel
-                sigma_base = 20.0  # Base spread in pixels
+                sigma_base = 40.0  # Base spread in pixels
 
                 for channel in range(3):
                     sigma = sigma_base * (0.8 + 0.4 * np.random.random())  # Vary spread
@@ -265,11 +234,11 @@ class LEDOptimizer:
                         if np.max(intensity) > 0
                         else intensity
                     )
-                    diffusion_matrix[:, led_idx, channel] = intensity * 255.0
+                    patterns[led_idx, :, :, channel] = intensity * 255.0
 
             # Convert to tensor
-            self._diffusion_matrix = torch.tensor(
-                diffusion_matrix, dtype=torch.float32, device=self.device
+            self._diffusion_patterns = torch.tensor(
+                patterns, dtype=torch.float32, device=self.device
             )
 
             self._diffusion_patterns_loaded = True
@@ -286,7 +255,7 @@ class LEDOptimizer:
         max_iterations: Optional[int] = None,
     ) -> OptimizationResult:
         """
-        Optimize LED values to approximate target frame.
+        Optimize LED values to approximate target frame using diffusion patterns.
 
         Args:
             target_frame: Target image (height, width, 3) in range [0, 255]
@@ -308,9 +277,9 @@ class LEDOptimizer:
                     f"Target frame shape {target_frame.shape} != {(FRAME_HEIGHT, FRAME_WIDTH, 3)}"
                 )
 
-            # Convert target to tensor and flatten
+            # Convert target to tensor
             target_tensor = torch.tensor(
-                target_frame.reshape(-1, 3),  # (num_pixels, 3)
+                target_frame,
                 dtype=torch.float32,
                 device=self.device,
             )
@@ -342,15 +311,16 @@ class LEDOptimizer:
             for iteration in range(max_iters):
                 optimizer.zero_grad()
 
-                # Forward pass: compute reconstructed image
-                # diffusion_matrix: (num_pixels, led_count, 3)
+                # Forward pass: compute weighted sum of diffusion patterns
+                # diffusion_patterns: (led_count, height, width, 3)
                 # led_values: (led_count, 3)
-                # reconstructed: (num_pixels, 3)
-                reconstructed = torch.sum(
-                    self._diffusion_matrix
-                    * led_values.unsqueeze(0),  # Broadcast LED values
-                    dim=1,
-                )
+                # We need to compute: Σ(led_values[i] * diffusion_patterns[i])
+
+                # Reshape for broadcasting: led_values -> (led_count, 1, 1, 3)
+                led_weights = led_values.unsqueeze(1).unsqueeze(1)
+
+                # Element-wise multiply and sum over LED dimension
+                reconstructed = torch.sum(self._diffusion_patterns * led_weights, dim=0)
 
                 # Compute loss
                 mse_loss = F.mse_loss(reconstructed, target_tensor)
@@ -378,8 +348,9 @@ class LEDOptimizer:
 
             # Compute final metrics
             with torch.no_grad():
+                led_weights = led_values.unsqueeze(1).unsqueeze(1)
                 final_reconstructed = torch.sum(
-                    self._diffusion_matrix * led_values.unsqueeze(0), dim=1
+                    self._diffusion_patterns * led_weights, dim=0
                 )
 
                 mse = F.mse_loss(final_reconstructed, target_tensor).item()
@@ -420,71 +391,6 @@ class LEDOptimizer:
             logger.error(f"Optimization failed after {optimization_time:.3f}s: {e}")
 
             # Return error result
-            return OptimizationResult(
-                led_values=np.zeros((LED_COUNT, 3), dtype=np.float32),
-                error_metrics={
-                    "mse": float("inf"),
-                    "mae": float("inf"),
-                    "max_error": float("inf"),
-                },
-                optimization_time=optimization_time,
-                iterations=0,
-                converged=False,
-            )
-
-    def sample_and_optimize(self, frame_array: np.ndarray) -> OptimizationResult:
-        """
-        Sample frame at LED positions and optimize (simple approach).
-
-        This is a simplified approach that samples the frame at LED positions
-        and uses those as target values, bypassing full diffusion modeling.
-
-        Args:
-            frame_array: Input frame (height, width, 3)
-
-        Returns:
-            OptimizationResult with sampled LED values
-        """
-        start_time = time.time()
-
-        try:
-            # Validate frame dimensions first
-            if frame_array.shape[:2] != (FRAME_HEIGHT, FRAME_WIDTH):
-                raise ValueError(
-                    f"Frame shape {frame_array.shape[:2]} != expected {(FRAME_HEIGHT, FRAME_WIDTH)}"
-                )
-
-            # Sample colors at LED positions
-            sampled_colors = self.led_mapper.sample_frame_at_leds(frame_array)
-
-            # Check if sampling failed (all zeros might indicate error)
-            if np.all(sampled_colors == 0):
-                logger.warning("Frame sampling returned all zeros, possible error")
-
-            # Simple metrics (no optimization error since we're just sampling)
-            optimization_time = time.time() - start_time
-
-            result = OptimizationResult(
-                led_values=sampled_colors.astype(np.float32),
-                error_metrics={
-                    "mse": 0.0,  # No error for direct sampling
-                    "mae": 0.0,
-                    "max_error": 0.0,
-                    "rmse": 0.0,
-                },
-                optimization_time=optimization_time,
-                iterations=1,
-                converged=True,
-                target_frame=frame_array.copy(),
-            )
-
-            logger.debug(f"Frame sampling completed in {optimization_time:.3f}s")
-            return result
-
-        except Exception as e:
-            optimization_time = time.time() - start_time
-            logger.error(f"Frame sampling failed: {e}")
-
             return OptimizationResult(
                 led_values=np.zeros((LED_COUNT, 3), dtype=np.float32),
                 error_metrics={
@@ -550,8 +456,8 @@ class LEDOptimizer:
                 "convergence_threshold": self.convergence_threshold,
                 "regularization_weight": self.regularization_weight,
             },
-            "diffusion_matrix_shape": list(self._diffusion_matrix.shape)
-            if self._diffusion_matrix is not None
+            "diffusion_patterns_shape": list(self._diffusion_patterns.shape)
+            if self._diffusion_patterns is not None
             else None,
             "led_count": LED_COUNT,
             "frame_dimensions": (FRAME_WIDTH, FRAME_HEIGHT),

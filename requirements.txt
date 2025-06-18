@@ -15,6 +15,7 @@ fastapi>=0.68.0,<1.0.0
 # Video processing (FFmpeg Python bindings)
 ffmpeg-python>=0.2.0,<1.0.0
 flake8>=3.9.0,<7.0.0
+flask>=3.1.1
 
 # Template engine for web interface
 jinja2>=3.0.0,<4.0.0

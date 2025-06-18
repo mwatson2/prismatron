@@ -61,10 +61,8 @@ class TestConsumerProcess(unittest.TestCase):
         # Create consumer with mocked dependencies
         with patch("src.consumer.consumer.FrameConsumer"), patch(
             "src.consumer.consumer.ControlState"
-        ), patch("src.consumer.consumer.LEDMapper"), patch(
-            "src.consumer.consumer.LEDOptimizer"
-        ), patch(
-            "src.consumer.consumer.WLEDCommunicator"
+        ), patch("src.consumer.consumer.LEDOptimizer"), patch(
+            "src.consumer.consumer.WLEDClient"
         ):
             self.consumer = ConsumerProcess(
                 buffer_name="test_buffer",
@@ -92,35 +90,27 @@ class TestConsumerProcess(unittest.TestCase):
         self.assertEqual(self.consumer.target_fps, 15.0)
         self.assertTrue(self.consumer.use_optimization)
 
-    @patch("src.consumer.consumer.LEDMapper")
     @patch("src.consumer.consumer.LEDOptimizer")
-    @patch("src.consumer.consumer.WLEDCommunicator")
-    def test_component_initialization_success(
-        self, mock_wled, mock_optimizer, mock_mapper
-    ):
+    @patch("src.consumer.consumer.WLEDClient")
+    def test_component_initialization_success(self, mock_wled, mock_optimizer):
         """Test successful component initialization."""
         # Setup mocks to return success
-        mock_mapper.return_value.initialize.return_value = True
         mock_optimizer.return_value.initialize.return_value = True
-        mock_wled.return_value.initialize.return_value = True
+        mock_wled.return_value.connect.return_value = True
 
         consumer = ConsumerProcess()
         result = consumer.initialize()
 
         self.assertTrue(result)
-        mock_mapper.return_value.initialize.assert_called_once()
         mock_optimizer.return_value.initialize.assert_called_once()
-        mock_wled.return_value.initialize.assert_called_once()
+        mock_wled.return_value.connect.assert_called_once()
 
-    @patch("src.consumer.consumer.LEDMapper")
     @patch("src.consumer.consumer.LEDOptimizer")
-    @patch("src.consumer.consumer.WLEDCommunicator")
-    def test_component_initialization_failure(
-        self, mock_wled, mock_optimizer, mock_mapper
-    ):
+    @patch("src.consumer.consumer.WLEDClient")
+    def test_component_initialization_failure(self, mock_wled, mock_optimizer):
         """Test component initialization failure."""
-        # Setup mapper to fail
-        mock_mapper.return_value.initialize.return_value = False
+        # Setup optimizer to fail
+        mock_optimizer.return_value.initialize.return_value = False
 
         consumer = ConsumerProcess()
         result = consumer.initialize()
@@ -177,9 +167,9 @@ class TestConsumerProcess(unittest.TestCase):
         # Setup mock transmission result
         mock_transmission_result = Mock()
         mock_transmission_result.success = True
-        mock_transmission_result.error = None
+        mock_transmission_result.errors = []
 
-        self.consumer._wled_comm.send_led_data.return_value = mock_transmission_result
+        self.consumer._wled_client.send_led_data.return_value = mock_transmission_result
 
         # Process the frame
         self.consumer._process_frame(mock_buffer_info)
@@ -187,7 +177,7 @@ class TestConsumerProcess(unittest.TestCase):
         # Verify calls were made
         mock_buffer_info.get_array.assert_called_once()
         self.consumer._led_optimizer.optimize_frame.assert_called_once()
-        self.consumer._wled_comm.send_led_data.assert_called_once()
+        self.consumer._wled_client.send_led_data.assert_called_once()
 
         # Check stats were updated
         self.assertEqual(self.consumer._stats.frames_processed, 1)
@@ -225,7 +215,7 @@ class TestConsumerProcess(unittest.TestCase):
         # Setup successful transmission
         mock_transmission_result = Mock()
         mock_transmission_result.success = True
-        self.consumer._wled_comm.send_led_data.return_value = mock_transmission_result
+        self.consumer._wled_client.send_led_data.return_value = mock_transmission_result
 
         # Process the frame
         self.consumer._process_frame(mock_buffer_info)
@@ -253,8 +243,8 @@ class TestConsumerProcess(unittest.TestCase):
         # Setup transmission failure
         mock_transmission_result = Mock()
         mock_transmission_result.success = False
-        mock_transmission_result.error = "Network timeout"
-        self.consumer._wled_comm.send_led_data.return_value = mock_transmission_result
+        mock_transmission_result.errors = ["Network timeout"]
+        self.consumer._wled_client.send_led_data.return_value = mock_transmission_result
 
         # Process the frame
         self.consumer._process_frame(mock_buffer_info)
@@ -282,7 +272,7 @@ class TestConsumerProcess(unittest.TestCase):
         # Setup transmission
         mock_transmission_result = Mock()
         mock_transmission_result.success = True
-        self.consumer._wled_comm.send_led_data.return_value = mock_transmission_result
+        self.consumer._wled_client.send_led_data.return_value = mock_transmission_result
 
         # Set brightness scaling
         self.consumer.brightness_scale = 0.5
@@ -298,8 +288,8 @@ class TestConsumerProcess(unittest.TestCase):
         # Frame should be scaled down (255 * 0.5 = 127.5 -> 127)
         self.assertTrue(np.all(processed_frame <= 127))
 
-    def test_sampling_vs_optimization_mode(self):
-        """Test switching between sampling and optimization modes."""
+    def test_optimization_vs_speed_mode(self):
+        """Test switching between full optimization and speed modes."""
         mock_buffer_info = Mock()
         test_frame = np.random.randint(
             0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 4), dtype=np.uint8
@@ -314,26 +304,29 @@ class TestConsumerProcess(unittest.TestCase):
         ).astype(np.float32)
 
         self.consumer._led_optimizer.optimize_frame.return_value = mock_optimizer_result
-        self.consumer._led_optimizer.sample_and_optimize.return_value = (
-            mock_optimizer_result
-        )
 
         mock_transmission_result = Mock()
         mock_transmission_result.success = True
-        self.consumer._wled_comm.send_led_data.return_value = mock_transmission_result
+        self.consumer._wled_client.send_led_data.return_value = mock_transmission_result
 
-        # Test optimization mode
+        # Test full optimization mode (50 iterations)
         self.consumer.use_optimization = True
         self.consumer._process_frame(mock_buffer_info)
-        self.consumer._led_optimizer.optimize_frame.assert_called()
+
+        # Check that optimize_frame was called with higher max_iterations
+        call_args = self.consumer._led_optimizer.optimize_frame.call_args
+        self.assertEqual(call_args[1]["max_iterations"], 50)
 
         # Reset mocks
         self.consumer._led_optimizer.reset_mock()
 
-        # Test sampling mode
+        # Test speed mode (5 iterations)
         self.consumer.use_optimization = False
         self.consumer._process_frame(mock_buffer_info)
-        self.consumer._led_optimizer.sample_and_optimize.assert_called()
+
+        # Check that optimize_frame was called with lower max_iterations
+        call_args = self.consumer._led_optimizer.optimize_frame.call_args
+        self.assertEqual(call_args[1]["max_iterations"], 5)
 
     def test_get_stats(self):
         """Test getting consumer statistics."""
@@ -344,12 +337,9 @@ class TestConsumerProcess(unittest.TestCase):
         self.consumer._stats.transmission_errors = 1
 
         # Setup mock component stats
-        self.consumer._wled_comm.get_stats.return_value = {"packets_sent": 100}
+        self.consumer._wled_client.get_statistics.return_value = {"packets_sent": 100}
         self.consumer._led_optimizer.get_optimizer_stats.return_value = {
             "optimization_count": 50
-        }
-        self.consumer._led_mapper.get_mapper_stats.return_value = {
-            "led_count": LED_COUNT
         }
 
         stats = self.consumer.get_stats()
@@ -363,7 +353,6 @@ class TestConsumerProcess(unittest.TestCase):
         self.assertEqual(stats["led_count"], LED_COUNT)
         self.assertIn("wled_stats", stats)
         self.assertIn("optimizer_stats", stats)
-        self.assertIn("mapper_stats", stats)
 
     @patch("src.consumer.consumer.time.sleep")
     def test_process_loop_graceful_shutdown(self, mock_sleep):
@@ -420,14 +409,14 @@ class TestConsumerProcess(unittest.TestCase):
     def test_cleanup(self):
         """Test resource cleanup."""
         # Setup cleanup calls
-        self.consumer._wled_comm.cleanup = Mock()
+        self.consumer._wled_client.disconnect = Mock()
         self.consumer._frame_consumer.cleanup = Mock()
 
         # Call cleanup
         self.consumer._cleanup()
 
         # Verify cleanup was called
-        self.consumer._wled_comm.cleanup.assert_called_once()
+        self.consumer._wled_client.disconnect.assert_called_once()
         self.consumer._frame_consumer.cleanup.assert_called_once()
 
     def test_start_stop_integration(self):
@@ -467,10 +456,8 @@ class TestConsumerProcess(unittest.TestCase):
         # Create new consumer to trigger signal setup
         with patch("src.consumer.consumer.FrameConsumer"), patch(
             "src.consumer.consumer.ControlState"
-        ), patch("src.consumer.consumer.LEDMapper"), patch(
-            "src.consumer.consumer.LEDOptimizer"
-        ), patch(
-            "src.consumer.consumer.WLEDCommunicator"
+        ), patch("src.consumer.consumer.LEDOptimizer"), patch(
+            "src.consumer.consumer.WLEDClient"
         ):
             consumer = ConsumerProcess()
 
@@ -485,17 +472,15 @@ class TestConsumerProcessIntegration(unittest.TestCase):
 
     @patch("src.consumer.consumer.FrameConsumer")
     @patch("src.consumer.consumer.ControlState")
-    @patch("src.consumer.consumer.LEDMapper")
     @patch("src.consumer.consumer.LEDOptimizer")
-    @patch("src.consumer.consumer.WLEDCommunicator")
+    @patch("src.consumer.consumer.WLEDClient")
     def test_end_to_end_processing(
-        self, mock_wled, mock_optimizer, mock_mapper, mock_control, mock_frame_consumer
+        self, mock_wled, mock_optimizer, mock_control, mock_frame_consumer
     ):
         """Test complete end-to-end frame processing."""
         # Setup all components to succeed
-        mock_mapper.return_value.initialize.return_value = True
         mock_optimizer.return_value.initialize.return_value = True
-        mock_wled.return_value.initialize.return_value = True
+        mock_wled.return_value.connect.return_value = True
 
         # Setup frame data
         test_frame = np.random.randint(

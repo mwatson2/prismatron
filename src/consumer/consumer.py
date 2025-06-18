@@ -16,9 +16,8 @@ import numpy as np
 
 from ..const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
 from ..core import ControlState, FrameConsumer
-from .led_mapper import LEDMapper
 from .led_optimizer import LEDOptimizer
-from .wled_comm import WLEDCommunicator
+from .wled_client import WLEDClient, WLEDConfig
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +68,6 @@ class ConsumerProcess:
         control_name: str = "prismatron_control",
         wled_host: str = "192.168.1.100",
         wled_port: int = 4048,
-        led_config_path: Optional[str] = None,
         diffusion_patterns_path: Optional[str] = None,
     ):
         """
@@ -80,7 +78,6 @@ class ConsumerProcess:
             control_name: Control state name
             wled_host: WLED controller IP address
             wled_port: WLED controller port
-            led_config_path: Path to LED position configuration
             diffusion_patterns_path: Path to diffusion patterns
         """
         self.buffer_name = buffer_name
@@ -89,12 +86,16 @@ class ConsumerProcess:
         # Initialize components
         self._frame_consumer = FrameConsumer(buffer_name)
         self._control_state = ControlState(control_name)
-        self._led_mapper = LEDMapper(config_path=led_config_path)
         self._led_optimizer = LEDOptimizer(
-            led_mapper=self._led_mapper,
             diffusion_patterns_path=diffusion_patterns_path,
         )
-        self._wled_comm = WLEDCommunicator(host=wled_host, port=wled_port)
+        # Configure WLED client
+        wled_config = WLEDConfig(
+            host=wled_host,
+            port=wled_port,
+            led_count=LED_COUNT,
+        )
+        self._wled_client = WLEDClient(wled_config)
 
         # Process state
         self._running = False
@@ -122,19 +123,14 @@ class ConsumerProcess:
         try:
             logger.info("Initializing consumer process...")
 
-            # Initialize LED mapper
-            if not self._led_mapper.initialize():
-                logger.error("Failed to initialize LED mapper")
-                return False
-
             # Initialize LED optimizer
             if not self._led_optimizer.initialize():
                 logger.error("Failed to initialize LED optimizer")
                 return False
 
-            # Initialize WLED communicator
-            if not self._wled_comm.initialize():
-                logger.error("Failed to initialize WLED communicator")
+            # Connect to WLED controller
+            if not self._wled_client.connect():
+                logger.error("Failed to connect to WLED controller")
                 return False
 
             logger.info("Consumer process initialized successfully")
@@ -268,19 +264,18 @@ class ConsumerProcess:
             # Optimize LED values
             optimization_start = time.time()
 
-            if self.use_optimization:
-                # Use full optimization with diffusion patterns
-                result = self._led_optimizer.optimize_frame(
-                    rgb_frame, max_iterations=50
-                )
-            else:
-                # Use simple frame sampling
-                result = self._led_optimizer.sample_and_optimize(rgb_frame)
+            # Use diffusion pattern optimization
+            max_iters = (
+                50 if self.use_optimization else 5
+            )  # Fewer iterations for speed mode
+            result = self._led_optimizer.optimize_frame(
+                rgb_frame, max_iterations=max_iters
+            )
 
             optimization_time = time.time() - optimization_start
 
             # Check optimization result
-            if not result.converged and self.use_optimization:
+            if not result.converged:
                 logger.warning(
                     f"Optimization did not converge after {result.iterations} iterations"
                 )
@@ -290,11 +285,13 @@ class ConsumerProcess:
             transmission_start = time.time()
             led_values = result.led_values.astype(np.uint8)
 
-            transmission_result = self._wled_comm.send_led_data(led_values)
+            transmission_result = self._wled_client.send_led_data(led_values)
             transmission_time = time.time() - transmission_start
 
             if not transmission_result.success:
-                logger.warning(f"WLED transmission failed: {transmission_result.error}")
+                logger.warning(
+                    f"WLED transmission failed: {transmission_result.errors}"
+                )
                 self._stats.transmission_errors += 1
 
             # Update statistics
@@ -345,9 +342,8 @@ class ConsumerProcess:
             "brightness_scale": self.brightness_scale,
             "led_count": LED_COUNT,
             "frame_dimensions": (FRAME_WIDTH, FRAME_HEIGHT),
-            "wled_stats": self._wled_comm.get_stats(),
+            "wled_stats": self._wled_client.get_statistics(),
             "optimizer_stats": self._led_optimizer.get_optimizer_stats(),
-            "mapper_stats": self._led_mapper.get_mapper_stats(),
         }
 
     def set_performance_settings(
@@ -388,8 +384,8 @@ class ConsumerProcess:
         """Clean up resources."""
         try:
             # Cleanup components in reverse order
-            if hasattr(self, "_wled_comm"):
-                self._wled_comm.cleanup()
+            if hasattr(self, "_wled_client"):
+                self._wled_client.disconnect()
 
             if hasattr(self, "_frame_consumer"):
                 self._frame_consumer.cleanup()
