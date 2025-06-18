@@ -8,10 +8,17 @@ This module contains the fundamental building blocks for the Prismatron system:
 """
 
 from .control_state import ControlState, PlayState, SystemState, SystemStatus
-from .shared_buffer import SHARED_MEMORY_AVAILABLE, FrameRingBuffer
+from .shared_buffer import (
+    SHARED_MEMORY_AVAILABLE,
+    FrameConsumer,
+    FrameProducer,
+    FrameRingBuffer,
+)
 
 __all__ = [
     "FrameRingBuffer",
+    "FrameConsumer",
+    "FrameProducer",
     "SHARED_MEMORY_AVAILABLE",
     "ControlState",
     "PlayState",
