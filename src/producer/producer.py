@@ -114,6 +114,7 @@ class ContentPlaylist:
         self._items: List[PlaylistItem] = []
         self._current_index = 0
         self._loop_playlist = True
+        self._lock = threading.RLock()  # Reentrant lock for nested calls
 
     def add_item(
         self,
@@ -134,19 +135,20 @@ class ContentPlaylist:
         Returns:
             True if added successfully, False otherwise
         """
-        try:
-            if not os.path.exists(filepath):
-                logger.error(f"Content file not found: {filepath}")
+        with self._lock:
+            try:
+                if not os.path.exists(filepath):
+                    logger.error(f"Content file not found: {filepath}")
+                    return False
+
+                item = PlaylistItem(filepath, duration, repeat, metadata)
+                self._items.append(item)
+                logger.info(f"Added to playlist: {filepath}")
+                return True
+
+            except Exception as e:
+                logger.error(f"Failed to add playlist item: {e}")
                 return False
-
-            item = PlaylistItem(filepath, duration, repeat, metadata)
-            self._items.append(item)
-            logger.info(f"Added to playlist: {filepath}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to add playlist item: {e}")
-            return False
 
     def remove_item(self, index: int) -> bool:
         """
@@ -158,34 +160,36 @@ class ContentPlaylist:
         Returns:
             True if removed successfully, False otherwise
         """
-        try:
-            if 0 <= index < len(self._items):
-                item = self._items.pop(index)
-                item.cleanup()
+        with self._lock:
+            try:
+                if 0 <= index < len(self._items):
+                    item = self._items.pop(index)
+                    item.cleanup()
 
-                # Adjust current index if needed
-                if self._current_index >= len(self._items):
-                    self._current_index = 0
-                elif self._current_index > index:
-                    self._current_index -= 1
+                    # Adjust current index if needed
+                    if self._current_index >= len(self._items):
+                        self._current_index = 0
+                    elif self._current_index > index:
+                        self._current_index -= 1
 
-                logger.info(f"Removed from playlist: {item.filepath}")
-                return True
-            else:
-                logger.error(f"Invalid playlist index: {index}")
+                    logger.info(f"Removed from playlist: {item.filepath}")
+                    return True
+                else:
+                    logger.error(f"Invalid playlist index: {index}")
+                    return False
+
+            except Exception as e:
+                logger.error(f"Failed to remove playlist item: {e}")
                 return False
-
-        except Exception as e:
-            logger.error(f"Failed to remove playlist item: {e}")
-            return False
 
     def clear(self) -> None:
         """Clear all items from playlist."""
-        for item in self._items:
-            item.cleanup()
-        self._items.clear()
-        self._current_index = 0
-        logger.info("Playlist cleared")
+        with self._lock:
+            for item in self._items:
+                item.cleanup()
+            self._items.clear()
+            self._current_index = 0
+            logger.info("Playlist cleared")
 
     def get_current_item(self) -> Optional[PlaylistItem]:
         """
@@ -194,9 +198,10 @@ class ContentPlaylist:
         Returns:
             Current PlaylistItem or None if playlist is empty
         """
-        if 0 <= self._current_index < len(self._items):
-            return self._items[self._current_index]
-        return None
+        with self._lock:
+            if 0 <= self._current_index < len(self._items):
+                return self._items[self._current_index]
+            return None
 
     def advance_to_next(self) -> bool:
         """
@@ -205,38 +210,40 @@ class ContentPlaylist:
         Returns:
             True if advanced to next item, False if end of playlist
         """
-        current_item = self.get_current_item()
-        if current_item:
-            # Check if current item should repeat
-            current_item.current_repeat += 1
-            if current_item.should_repeat():
-                # Reset content source for repeat
-                if current_item._content_source:
-                    current_item._content_source.reset()
-                return True
+        with self._lock:
+            current_item = self.get_current_item()
+            if current_item:
+                # Check if current item should repeat
+                current_item.current_repeat += 1
+                if current_item.should_repeat():
+                    # Reset content source for repeat
+                    if current_item._content_source:
+                        current_item._content_source.reset()
+                    return True
 
-            # Reset repeat counter for next time
-            current_item.reset_repeats()
+                # Reset repeat counter for next time
+                current_item.reset_repeats()
 
-        # Move to next item
-        self._current_index += 1
+            # Move to next item
+            self._current_index += 1
 
-        # Check if we've reached the end
-        if self._current_index >= len(self._items):
-            if self._loop_playlist and self._items:
-                self._current_index = 0
-                logger.debug("Playlist looped to beginning")
-                return True
-            else:
-                logger.debug("End of playlist reached")
-                return False
+            # Check if we've reached the end
+            if self._current_index >= len(self._items):
+                if self._loop_playlist and self._items:
+                    self._current_index = 0
+                    logger.debug("Playlist looped to beginning")
+                    return True
+                else:
+                    logger.debug("End of playlist reached")
+                    return False
 
-        logger.debug(f"Advanced to playlist item {self._current_index}")
-        return True
+            logger.debug(f"Advanced to playlist item {self._current_index}")
+            return True
 
     def set_loop(self, loop: bool) -> None:
         """Set playlist loop mode."""
-        self._loop_playlist = loop
+        with self._lock:
+            self._loop_playlist = loop
 
     def get_playlist_info(self) -> Dict[str, Any]:
         """
@@ -245,29 +252,31 @@ class ContentPlaylist:
         Returns:
             Dictionary with playlist details
         """
-        total_duration = sum(item.get_effective_duration() for item in self._items)
+        with self._lock:
+            total_duration = sum(item.get_effective_duration() for item in self._items)
 
-        return {
-            "total_items": len(self._items),
-            "current_index": self._current_index,
-            "total_duration": total_duration,
-            "loop_enabled": self._loop_playlist,
-            "items": [
-                {
-                    "filepath": item.filepath,
-                    "duration": item.get_effective_duration(),
-                    "repeat": item.repeat_count,
-                    "type": item._detected_type.value
-                    if item._detected_type
-                    else "unknown",
-                }
-                for item in self._items
-            ],
-        }
+            return {
+                "total_items": len(self._items),
+                "current_index": self._current_index,
+                "total_duration": total_duration,
+                "loop_enabled": self._loop_playlist,
+                "items": [
+                    {
+                        "filepath": item.filepath,
+                        "duration": item.get_effective_duration(),
+                        "repeat": item.repeat_count,
+                        "type": item._detected_type.value
+                        if item._detected_type
+                        else "unknown",
+                    }
+                    for item in self._items
+                ],
+            }
 
     def __len__(self) -> int:
         """Get number of items in playlist."""
-        return len(self._items)
+        with self._lock:
+            return len(self._items)
 
 
 class ProducerProcess:
@@ -693,7 +702,10 @@ class ProducerProcess:
 
     def _scale_frame_to_buffer(self, frame_data: FrameData, buffer_array) -> None:
         """
-        Scale frame data to fit buffer with center crop/pad.
+        Scale frame data to fit buffer with 5:3 aspect ratio cropping.
+
+        Crops the source image to 5:3 aspect ratio (center crop) and scales
+        to fill the buffer completely with no padding.
 
         Args:
             frame_data: Source frame data
@@ -702,19 +714,35 @@ class ProducerProcess:
         try:
             import cv2
 
-            # Resize frame to buffer dimensions
-            if frame_data.channels == 3:
-                resized = cv2.resize(
-                    frame_data.array,
-                    (FRAME_WIDTH, FRAME_HEIGHT),
-                    interpolation=cv2.INTER_LINEAR,
-                )
+            src_h, src_w = frame_data.height, frame_data.width
+            target_aspect = FRAME_WIDTH / FRAME_HEIGHT  # 5:3 = 1.667
+            source_aspect = src_w / src_h
+
+            # Calculate crop dimensions to achieve 5:3 aspect ratio
+            if source_aspect > target_aspect:
+                # Source is wider than 5:3, crop width
+                crop_h = src_h
+                crop_w = int(src_h * target_aspect)
+                crop_x = (src_w - crop_w) // 2
+                crop_y = 0
             else:
-                resized = cv2.resize(
-                    frame_data.array,
-                    (FRAME_WIDTH, FRAME_HEIGHT),
-                    interpolation=cv2.INTER_LINEAR,
-                )
+                # Source is taller than 5:3, crop height
+                crop_w = src_w
+                crop_h = int(src_w / target_aspect)
+                crop_x = 0
+                crop_y = (src_h - crop_h) // 2
+
+            # Extract cropped region
+            cropped = frame_data.array[
+                crop_y : crop_y + crop_h, crop_x : crop_x + crop_w
+            ]
+
+            # Scale to target buffer dimensions
+            resized = cv2.resize(
+                cropped,
+                (FRAME_WIDTH, FRAME_HEIGHT),
+                interpolation=cv2.INTER_LINEAR,
+            )
 
             # Copy to buffer with channel conversion if needed
             if frame_data.channels == FRAME_CHANNELS:
@@ -726,15 +754,18 @@ class ProducerProcess:
                 buffer_array[:] = resized[:, :, :3]
 
         except ImportError:
-            # Fallback: simple center crop/pad without scaling
-            logger.warning("OpenCV not available, using simple crop/pad")
-            self._simple_crop_pad_frame(frame_data, buffer_array)
+            # Fallback: simple center crop without scaling
+            logger.warning("OpenCV not available, using simple crop")
+            self._simple_crop_frame(frame_data, buffer_array)
         except Exception as e:
             logger.error(f"Failed to scale frame: {e}")
 
-    def _simple_crop_pad_frame(self, frame_data: FrameData, buffer_array) -> None:
+    def _simple_crop_frame(self, frame_data: FrameData, buffer_array) -> None:
         """
-        Simple center crop/pad without scaling.
+        Simple center crop to 5:3 aspect ratio without scaling.
+
+        This fallback method crops to 5:3 aspect ratio but doesn't scale,
+        so the result may not fill the entire buffer if dimensions don't match.
 
         Args:
             frame_data: Source frame data
@@ -743,37 +774,53 @@ class ProducerProcess:
         try:
             src_h, src_w = frame_data.height, frame_data.width
             dst_h, dst_w = FRAME_HEIGHT, FRAME_WIDTH
+            target_aspect = dst_w / dst_h  # 5:3
+            source_aspect = src_w / src_h
 
-            # Calculate copy region
-            copy_h = min(src_h, dst_h)
-            copy_w = min(src_w, dst_w)
+            # Calculate crop dimensions to achieve 5:3 aspect ratio
+            if source_aspect > target_aspect:
+                # Source is wider than 5:3, crop width
+                crop_h = src_h
+                crop_w = int(src_h * target_aspect)
+                crop_x = (src_w - crop_w) // 2
+                crop_y = 0
+            else:
+                # Source is taller than 5:3, crop height
+                crop_w = src_w
+                crop_h = int(src_w / target_aspect)
+                crop_x = 0
+                crop_y = (src_h - crop_h) // 2
 
-            # Calculate offsets for centering
-            src_y = (src_h - copy_h) // 2
-            src_x = (src_w - copy_w) // 2
+            # Calculate how much of the cropped region fits in the buffer
+            copy_h = min(crop_h, dst_h)
+            copy_w = min(crop_w, dst_w)
+
+            # Center the copied region in the buffer
             dst_y = (dst_h - copy_h) // 2
             dst_x = (dst_w - copy_w) // 2
 
             # Clear buffer first
             buffer_array.fill(0)
 
-            # Copy overlapping region
+            # Copy the cropped region
             if frame_data.channels == FRAME_CHANNELS:
                 buffer_array[
                     dst_y : dst_y + copy_h, dst_x : dst_x + copy_w
-                ] = frame_data.array[src_y : src_y + copy_h, src_x : src_x + copy_w]
+                ] = frame_data.array[crop_y : crop_y + copy_h, crop_x : crop_x + copy_w]
             elif frame_data.channels == 3 and FRAME_CHANNELS == 4:
                 buffer_array[
                     dst_y : dst_y + copy_h, dst_x : dst_x + copy_w, :3
-                ] = frame_data.array[src_y : src_y + copy_h, src_x : src_x + copy_w]
+                ] = frame_data.array[crop_y : crop_y + copy_h, crop_x : crop_x + copy_w]
                 buffer_array[:, :, 3] = 255
             elif frame_data.channels == 4 and FRAME_CHANNELS == 3:
                 buffer_array[
                     dst_y : dst_y + copy_h, dst_x : dst_x + copy_w
-                ] = frame_data.array[src_y : src_y + copy_h, src_x : src_x + copy_w, :3]
+                ] = frame_data.array[
+                    crop_y : crop_y + copy_h, crop_x : crop_x + copy_w, :3
+                ]
 
         except Exception as e:
-            logger.error(f"Failed to crop/pad frame: {e}")
+            logger.error(f"Failed to crop frame: {e}")
 
     def _update_statistics(self) -> None:
         """Update producer statistics."""
@@ -819,6 +866,50 @@ class ProducerProcess:
         stats.update(buffer_stats)
 
         return stats
+
+    # External playlist manipulation methods
+    def remove_playlist_item(self, index: int) -> bool:
+        """
+        Remove item from playlist by index.
+
+        Args:
+            index: Index of item to remove
+
+        Returns:
+            True if removed successfully, False otherwise
+        """
+        return self._playlist.remove_item(index)
+
+    def clear_playlist(self) -> None:
+        """Clear all items from playlist."""
+        self._playlist.clear()
+
+    def set_playlist_loop(self, loop: bool) -> None:
+        """
+        Set playlist loop mode.
+
+        Args:
+            loop: True to enable looping, False to disable
+        """
+        self._playlist.set_loop(loop)
+
+    def get_playlist_info(self) -> Dict[str, Any]:
+        """
+        Get current playlist information.
+
+        Returns:
+            Dictionary with playlist details
+        """
+        return self._playlist.get_playlist_info()
+
+    def get_playlist_length(self) -> int:
+        """
+        Get number of items in playlist.
+
+        Returns:
+            Number of playlist items
+        """
+        return len(self._playlist)
 
     def cleanup(self) -> None:
         """Clean up producer resources."""

@@ -7,9 +7,10 @@ of the Prismatron software stack.
 
 import numpy as np
 
-# Frame dimensions for 1080p RGB
-FRAME_WIDTH = 1920
-FRAME_HEIGHT = 1080
+# Frame dimensions for 5:3 aspect ratio RGB
+# Using dimensions that are efficient for LED optimization
+FRAME_WIDTH = 1000  # 5:3 ratio, divisible by common factors
+FRAME_HEIGHT = 600  # 5:3 ratio, divisible by common factors
 FRAME_CHANNELS = 3  # RGB
 FRAME_SIZE = FRAME_WIDTH * FRAME_HEIGHT * FRAME_CHANNELS
 BUFFER_COUNT = 3  # Triple buffering
