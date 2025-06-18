@@ -1,0 +1,360 @@
+import React, { useState, useEffect } from 'react'
+import {
+  SunIcon,
+  CpuChipIcon,
+  WifiIcon,
+  ServerIcon,
+  PowerIcon,
+  InformationCircleIcon,
+  ExclamationTriangleIcon
+} from '@heroicons/react/24/outline'
+import { useWebSocket } from '../hooks/useWebSocket'
+
+const SettingsPage = () => {
+  const { settings, isConnected } = useWebSocket()
+  const [localSettings, setLocalSettings] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [saveStatus, setSaveStatus] = useState(null)
+
+  useEffect(() => {
+    fetchSettings()
+  }, [])
+
+  const fetchSettings = async () => {
+    try {
+      const response = await fetch('/api/settings')
+      if (response.ok) {
+        const data = await response.json()
+        setLocalSettings(data)
+      }
+    } catch (error) {
+      console.error('Failed to fetch settings:', error)
+    }
+  }
+
+  const updateSetting = (key, value) => {
+    setLocalSettings(prev => ({
+      ...prev,
+      [key]: value
+    }))
+  }
+
+  const updateNestedSetting = (parentKey, childKey, value) => {
+    setLocalSettings(prev => ({
+      ...prev,
+      [parentKey]: {
+        ...prev[parentKey],
+        [childKey]: value
+      }
+    }))
+  }
+
+  const saveSettings = async () => {
+    if (!localSettings) return
+
+    setSaving(true)
+    setSaveStatus(null)
+
+    try {
+      const response = await fetch('/api/settings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(localSettings)
+      })
+
+      if (response.ok) {
+        setSaveStatus({ type: 'success', message: 'Settings saved successfully' })
+      } else {
+        throw new Error('Failed to save settings')
+      }
+    } catch (error) {
+      setSaveStatus({ type: 'error', message: error.message })
+    } finally {
+      setSaving(false)
+      setTimeout(() => setSaveStatus(null), 3000)
+    }
+  }
+
+  const setBrightness = async (brightness) => {
+    try {
+      const response = await fetch('/api/settings/brightness', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(brightness)
+      })
+
+      if (response.ok) {
+        updateSetting('brightness', brightness)
+      }
+    } catch (error) {
+      console.error('Failed to set brightness:', error)
+    }
+  }
+
+  const currentSettings = settings || localSettings
+
+  if (!currentSettings) {
+    return (
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <div className="retro-spinner w-8 h-8" />
+        <span className="ml-3 text-neon-cyan font-mono">LOADING SETTINGS...</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="text-center py-4">
+        <h1 className="text-2xl font-retro font-bold text-neon-cyan text-neon">
+          SYSTEM SETTINGS
+        </h1>
+        <p className="text-metal-silver text-sm mt-1 font-mono">
+          CONFIGURE PRISMATRON DISPLAY
+        </p>
+        
+        {/* Connection Status */}
+        <div className={`inline-flex items-center gap-2 mt-2 px-3 py-1 rounded-retro text-xs font-mono ${
+          isConnected 
+            ? 'text-neon-green border border-neon-green border-opacity-30 bg-neon-green bg-opacity-5' 
+            : 'text-neon-orange border border-neon-orange border-opacity-30 bg-neon-orange bg-opacity-5'
+        }`}>
+          <WifiIcon className="w-4 h-4" />
+          {isConnected ? 'CONNECTED' : 'DISCONNECTED'}
+        </div>
+      </div>
+
+      {/* Display Settings */}
+      <div className="retro-container">
+        <h3 className="text-lg font-retro text-neon-pink mb-4 flex items-center gap-2">
+          <SunIcon className="w-5 h-5" />
+          DISPLAY SETTINGS
+        </h3>
+        
+        <div className="space-y-6">
+          {/* Brightness Control */}
+          <div>
+            <label className="block text-sm font-retro text-neon-cyan mb-2">
+              GLOBAL BRIGHTNESS
+            </label>
+            <div className="space-y-2">
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={currentSettings.brightness}
+                onChange={(e) => {
+                  const value = parseFloat(e.target.value)
+                  setBrightness(value)
+                }}
+                className="w-full h-2 bg-dark-700 rounded-retro appearance-none cursor-pointer"
+                style={{
+                  background: `linear-gradient(to right, #00ffff 0%, #00ffff ${currentSettings.brightness * 100}%, #333 ${currentSettings.brightness * 100}%, #333 100%)`
+                }}
+              />
+              <div className="flex justify-between text-xs font-mono text-metal-silver">
+                <span>0%</span>
+                <span className="text-neon-cyan">{Math.round(currentSettings.brightness * 100)}%</span>
+                <span>100%</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Frame Rate */}
+          <div>
+            <label className="block text-sm font-retro text-neon-cyan mb-2">
+              TARGET FRAME RATE
+            </label>
+            <select
+              value={currentSettings.frame_rate}
+              onChange={(e) => updateSetting('frame_rate', parseFloat(e.target.value))}
+              className="retro-select w-full"
+            >
+              <option value={15}>15 FPS (Power Saving)</option>
+              <option value={24}>24 FPS (Cinema)</option>
+              <option value={30}>30 FPS (Standard)</option>
+              <option value={60}>60 FPS (High Performance)</option>
+            </select>
+          </div>
+
+          {/* Preview Toggle */}
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-retro text-neon-cyan">
+              LIVE PREVIEW
+            </label>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={currentSettings.preview_enabled}
+                onChange={(e) => updateSetting('preview_enabled', e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-dark-700 peer-focus:outline-none rounded-retro peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-neon-cyan after:rounded-retro after:h-5 after:w-5 after:transition-all peer-checked:bg-neon-cyan peer-checked:bg-opacity-30"></div>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      {/* System Settings */}
+      <div className="retro-container">
+        <h3 className="text-lg font-retro text-neon-orange mb-4 flex items-center gap-2">
+          <CpuChipIcon className="w-5 h-5" />
+          SYSTEM SETTINGS
+        </h3>
+        
+        <div className="space-y-6">
+          {/* LED Count (Read-only) */}
+          <div>
+            <label className="block text-sm font-retro text-neon-cyan mb-2">
+              LED COUNT
+            </label>
+            <div className="retro-input bg-dark-700 text-metal-silver cursor-not-allowed">
+              {currentSettings.led_count} LEDs
+            </div>
+          </div>
+
+          {/* Display Resolution (Read-only) */}
+          <div>
+            <label className="block text-sm font-retro text-neon-cyan mb-2">
+              DISPLAY RESOLUTION
+            </label>
+            <div className="retro-input bg-dark-700 text-metal-silver cursor-not-allowed">
+              {currentSettings.display_resolution?.width} × {currentSettings.display_resolution?.height} (5:3)
+            </div>
+          </div>
+
+          {/* Auto-start Playlist */}
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-retro text-neon-cyan">
+              AUTO-START PLAYLIST ON BOOT
+            </label>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={currentSettings.auto_start_playlist}
+                onChange={(e) => updateSetting('auto_start_playlist', e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-dark-700 peer-focus:outline-none rounded-retro peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-neon-cyan after:rounded-retro after:h-5 after:w-5 after:transition-all peer-checked:bg-neon-cyan peer-checked:bg-opacity-30"></div>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      {/* Save Button */}
+      <div className="flex justify-center">
+        <button
+          onClick={saveSettings}
+          disabled={saving}
+          className="retro-button px-8 py-3 text-neon-green text-neon font-retro font-bold disabled:text-metal-silver disabled:cursor-not-allowed"
+        >
+          {saving ? 'SAVING...' : 'SAVE SETTINGS'}
+        </button>
+      </div>
+
+      {/* Save Status */}
+      {saveStatus && (
+        <div className={`retro-container border ${
+          saveStatus.type === 'success' 
+            ? 'border-neon-green border-opacity-50 bg-neon-green bg-opacity-10' 
+            : 'border-neon-orange border-opacity-50 bg-neon-orange bg-opacity-10'
+        }`}>
+          <div className="flex items-center gap-3">
+            {saveStatus.type === 'success' ? (
+              <InformationCircleIcon className="w-6 h-6 text-neon-green" />
+            ) : (
+              <ExclamationTriangleIcon className="w-6 h-6 text-neon-orange" />
+            )}
+            <p className={`font-mono text-sm ${
+              saveStatus.type === 'success' ? 'text-neon-green' : 'text-neon-orange'
+            }`}>
+              {saveStatus.message}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* System Information */}
+      <div className="retro-container">
+        <h3 className="text-lg font-retro text-neon-purple mb-4 flex items-center gap-2">
+          <ServerIcon className="w-5 h-5" />
+          SYSTEM INFORMATION
+        </h3>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm font-mono">
+          <div className="space-y-2">
+            <div className="flex justify-between">
+              <span className="text-metal-silver">Software Version:</span>
+              <span className="text-neon-cyan">v1.0.0</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-metal-silver">Hardware Platform:</span>
+              <span className="text-neon-cyan">Jetson Orin Nano</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-metal-silver">LED Controller:</span>
+              <span className="text-neon-cyan">WLED DigiOcta</span>
+            </div>
+          </div>
+          
+          <div className="space-y-2">
+            <div className="flex justify-between">
+              <span className="text-metal-silver">Communication:</span>
+              <span className="text-neon-cyan">UDP/WiFi</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-metal-silver">Processing:</span>
+              <span className="text-neon-cyan">GPU Accelerated</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-metal-silver">Display Type:</span>
+              <span className="text-neon-cyan">LED Matrix</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Danger Zone */}
+      <div className="retro-container border border-neon-orange border-opacity-50">
+        <h3 className="text-lg font-retro text-neon-orange mb-4 flex items-center gap-2">
+          <ExclamationTriangleIcon className="w-5 h-5" />
+          DANGER ZONE
+        </h3>
+        
+        <div className="space-y-4">
+          <div className="flex items-center justify-between p-3 bg-dark-800 rounded-retro">
+            <div>
+              <h4 className="text-sm font-retro text-neon-orange">SYSTEM RESTART</h4>
+              <p className="text-xs text-metal-silver font-mono">
+                Restart all system processes
+              </p>
+            </div>
+            <button className="retro-button px-4 py-2 text-neon-orange text-sm font-retro font-bold">
+              <PowerIcon className="w-4 h-4 inline mr-2" />
+              RESTART
+            </button>
+          </div>
+          
+          <div className="flex items-center justify-between p-3 bg-dark-800 rounded-retro">
+            <div>
+              <h4 className="text-sm font-retro text-neon-orange">FACTORY RESET</h4>
+              <p className="text-xs text-metal-silver font-mono">
+                Reset all settings to defaults
+              </p>
+            </div>
+            <button className="retro-button px-4 py-2 text-neon-orange text-sm font-retro font-bold">
+              RESET
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default SettingsPage

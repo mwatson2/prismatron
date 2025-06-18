@@ -1,0 +1,76 @@
+/* Additional App-specific styles */
+
+/* Logo animation */
+.prismatron-logo {
+  animation: glow 2s ease-in-out infinite alternate;
+}
+
+/* Loading spinner for retro aesthetic */
+.retro-spinner {
+  border: 2px solid rgba(0, 255, 255, 0.2);
+  border-top: 2px solid #00ffff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Retro button pressed state */
+.retro-button:active {
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+  transform: scale(0.98);
+}
+
+/* Mobile optimizations */
+@media (max-width: 640px) {
+  .nav-item {
+    padding: 0.5rem;
+  }
+  
+  .retro-container {
+    padding: 1rem;
+  }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .text-neon {
+    text-shadow: 0 0 2px currentColor;
+  }
+  
+  .border-neon {
+    box-shadow: 0 0 2px currentColor;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse-neon,
+  .animate-flicker,
+  .animate-glow,
+  .animate-float {
+    animation: none;
+  }
+  
+  .scan-line::before {
+    animation: none;
+  }
+}
+
+/* Focus styles for accessibility */
+.retro-button:focus,
+.retro-input:focus,
+.nav-item:focus {
+  outline: 2px solid #00ffff;
+  outline-offset: 2px;
+}
+
+/* Dark mode adjustments (if needed) */
+@media (prefers-color-scheme: dark) {
+  body {
+    background: radial-gradient(ellipse at center, #0a0a0a 0%, #000000 100%);
+  }
+}
