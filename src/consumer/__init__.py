@@ -2,12 +2,22 @@
 Consumer Process Components.
 
 This module contains components for the consumer process:
-- LED optimization engine
+- LED position mapping and calibration
+- LED optimization engine for image approximation
+- WLED communication protocols
 - Consumer process implementation
-- WLED communication and LED mapping
 """
 
-from typing import List
+from .led_mapper import LEDMapper, LEDPosition
+from .led_optimizer import LEDOptimizer, OptimizationResult
+from .wled_comm import TransmissionResult, WLEDCommunicator, WLEDProtocol
 
-# Future consumer components will be imported here
-__all__: List[str] = []
+__all__ = [
+    "LEDMapper",
+    "LEDPosition",
+    "LEDOptimizer",
+    "OptimizationResult",
+    "WLEDCommunicator",
+    "WLEDProtocol",
+    "TransmissionResult",
+]
