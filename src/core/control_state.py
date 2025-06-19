@@ -41,8 +41,12 @@ class SystemState(Enum):
     """System state enumeration."""
 
     INITIALIZING = "initializing"
+    STARTING = "starting"
     RUNNING = "running"
+    STOPPING = "stopping"
     SHUTTING_DOWN = "shutting_down"
+    RESTARTING = "restarting"
+    REBOOTING = "rebooting"
     ERROR = "error"
 
 
@@ -86,6 +90,8 @@ class ControlState:
 
         # Events for coordination
         self._shutdown_event = mp.Event()
+        self._restart_event = mp.Event()
+        self._reboot_event = mp.Event()
         self._config_updated_event = mp.Event()
         self._status_updated_event = mp.Event()
 
@@ -459,6 +465,34 @@ class ControlState:
         except Exception as e:
             logger.error(f"Failed to signal shutdown: {e}")
 
+    def signal_restart(self) -> None:
+        """Signal system restart."""
+        try:
+            current_status = self._read_status()
+            if current_status:
+                current_status.system_state = SystemState.RESTARTING
+                self._write_status(current_status)
+
+            self._restart_event.set()
+            logger.info("Restart signal sent")
+
+        except Exception as e:
+            logger.error(f"Failed to signal restart: {e}")
+
+    def signal_reboot(self) -> None:
+        """Signal device reboot."""
+        try:
+            current_status = self._read_status()
+            if current_status:
+                current_status.system_state = SystemState.REBOOTING
+                self._write_status(current_status)
+
+            self._reboot_event.set()
+            logger.info("Reboot signal sent")
+
+        except Exception as e:
+            logger.error(f"Failed to signal reboot: {e}")
+
     def is_shutdown_requested(self) -> bool:
         """
         Check if shutdown has been requested.
@@ -467,6 +501,37 @@ class ControlState:
             True if shutdown requested, False otherwise
         """
         return self._shutdown_event.is_set()
+
+    def is_restart_requested(self) -> bool:
+        """
+        Check if restart has been requested.
+
+        Returns:
+            True if restart requested, False otherwise
+        """
+        return self._restart_event.is_set()
+
+    def is_reboot_requested(self) -> bool:
+        """
+        Check if reboot has been requested.
+
+        Returns:
+            True if reboot requested, False otherwise
+        """
+        return self._reboot_event.is_set()
+
+    def should_shutdown(self) -> bool:
+        """
+        Check if any shutdown condition exists (shutdown, restart, or reboot).
+
+        Returns:
+            True if any shutdown condition is active, False otherwise
+        """
+        return (
+            self._shutdown_event.is_set()
+            or self._restart_event.is_set()
+            or self._reboot_event.is_set()
+        )
 
     def wait_for_shutdown(self, timeout: Optional[float] = None) -> bool:
         """

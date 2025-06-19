@@ -275,9 +275,6 @@ WebSocket /api/live       # Live updates to frontend
 #### Task 5.2: Real-time Web Interface Features
 **Test**: Live LED preview updates, system status monitoring, playlist control responsiveness.
 
-#### Task 5.3: Advanced LED Optimization
-**Test**: Load real diffusion pattern data, optimize complex images, verify output quality.
-
 ### Phase 6: System Integration
 
 #### Task 6.1: Hardware Integration Testing

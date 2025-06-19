@@ -618,6 +618,41 @@ async def websocket_endpoint(websocket: WebSocket):
 # Serve static files (for production)
 @app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# System control endpoints
+@app.post("/api/system/restart")
+async def restart_system():
+    """Restart the Prismatron system processes."""
+    try:
+        # Send restart signal via control state
+        if control_state:
+            control_state.signal_restart()
+
+        await manager.broadcast({"type": "system_restart", "timestamp": time.time()})
+
+        return {"status": "restart_initiated", "message": "System restart initiated"}
+
+    except Exception as e:
+        logger.error(f"Failed to restart system: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/system/reboot")
+async def reboot_system():
+    """Reboot the entire device."""
+    try:
+        # Send reboot signal via control state
+        if control_state:
+            control_state.signal_reboot()
+
+        await manager.broadcast({"type": "system_reboot", "timestamp": time.time()})
+
+        return {"status": "reboot_initiated", "message": "Device reboot initiated"}
+
+    except Exception as e:
+        logger.error(f"Failed to reboot system: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Health check endpoint
 @app.get("/api/health")
 async def health_check():
