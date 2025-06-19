@@ -242,7 +242,7 @@ def main():
         "-s",
         action="store_true",
         help="[DEPRECATED] Use pre-generated synthetic patterns from "
-             "generate_synthetic_patterns.py instead",
+        "generate_synthetic_patterns.py instead",
     )
     parser.add_argument("--output", "-o", help="Output image path")
     parser.add_argument(
