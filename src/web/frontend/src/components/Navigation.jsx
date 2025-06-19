@@ -1,18 +1,18 @@
 import React from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { 
-  HomeIcon, 
-  CloudArrowUpIcon, 
-  SparklesIcon, 
-  QueueListIcon, 
-  CogIcon 
+import {
+  HomeIcon,
+  CloudArrowUpIcon,
+  SparklesIcon,
+  QueueListIcon,
+  CogIcon
 } from '@heroicons/react/24/outline'
-import { 
-  HomeIcon as HomeSolidIcon, 
-  CloudArrowUpIcon as CloudArrowUpSolidIcon, 
-  SparklesIcon as SparklesSolidIcon, 
-  QueueListIcon as QueueListSolidIcon, 
-  CogIcon as CogSolidIcon 
+import {
+  HomeIcon as HomeSolidIcon,
+  CloudArrowUpIcon as CloudArrowUpSolidIcon,
+  SparklesIcon as SparklesSolidIcon,
+  QueueListIcon as QueueListSolidIcon,
+  CogIcon as CogSolidIcon
 } from '@heroicons/react/24/solid'
 
 const Navigation = () => {
@@ -64,7 +64,7 @@ const Navigation = () => {
           {navItems.map(({ path, label, Icon, IconSolid, description }) => {
             const isActive = location.pathname === path
             const IconComponent = isActive ? IconSolid : Icon
-            
+
             return (
               <NavLink
                 key={path}
@@ -76,27 +76,27 @@ const Navigation = () => {
               >
                 {/* Icon */}
                 <div className="relative mb-1">
-                  <IconComponent 
+                  <IconComponent
                     className={`w-6 h-6 transition-all duration-200 ${
-                      isActive 
-                        ? 'drop-shadow-[0_0_8px_currentColor]' 
+                      isActive
+                        ? 'drop-shadow-[0_0_8px_currentColor]'
                         : 'group-hover:drop-shadow-[0_0_4px_currentColor]'
-                    }`} 
+                    }`}
                   />
-                  
+
                   {/* Active indicator glow */}
                   {isActive && (
                     <div className="absolute inset-0 w-6 h-6 rounded-full bg-neon-cyan opacity-20 blur-sm animate-pulse-neon" />
                   )}
                 </div>
-                
+
                 {/* Label */}
                 <span className={`text-[10px] font-bold tracking-wider ${
                   isActive ? 'text-shadow-neon' : ''
                 }`}>
                   {label}
                 </span>
-                
+
                 {/* Hover tooltip */}
                 <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-dark-800 text-neon-cyan text-xs rounded-retro opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap border border-neon-cyan border-opacity-30">
                   {description}
@@ -106,7 +106,7 @@ const Navigation = () => {
             )
           })}
         </div>
-        
+
         {/* Bottom accent line */}
         <div className="h-0.5 bg-gradient-to-r from-transparent via-neon-cyan to-transparent opacity-30" />
       </div>

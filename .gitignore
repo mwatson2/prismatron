@@ -192,3 +192,13 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Prismatron specific
+# Diffusion patterns - large binary files that shouldn't be in git
+diffusion_patterns/
+*.npz
+
+# Generated test results
+*_result.png
+test_result*.png
+final_test.png

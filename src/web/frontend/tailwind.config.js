@@ -38,14 +38,14 @@ export default {
           brass: '#b5a642'
         }
       },
-      
+
       // Typography for retro-futurism
       fontFamily: {
         'retro': ['Orbitron', 'monospace'],
         'display': ['Exo 2', 'sans-serif'],
         'mono': ['JetBrains Mono', 'monospace']
       },
-      
+
       // Box shadows for neon glow effects
       boxShadow: {
         'neon-sm': '0 0 5px currentColor',
@@ -53,7 +53,7 @@ export default {
         'neon-lg': '0 0 20px currentColor, 0 0 40px currentColor, 0 0 60px currentColor',
         'inner-neon': 'inset 0 0 10px currentColor'
       },
-      
+
       // Animation for retro effects
       animation: {
         'pulse-neon': 'pulse-neon 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
@@ -62,7 +62,7 @@ export default {
         'glow': 'glow 2s ease-in-out infinite alternate',
         'float': 'float 3s ease-in-out infinite'
       },
-      
+
       keyframes: {
         'pulse-neon': {
           '0%, 100%': {
@@ -101,26 +101,26 @@ export default {
           '50%': { transform: 'translateY(-10px)' }
         }
       },
-      
+
       // Grid patterns for retro layouts
       backgroundImage: {
         'grid-pattern': 'linear-gradient(rgba(0,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(0,255,255,0.1) 1px, transparent 1px)',
         'diagonal-stripes': 'repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(0,255,255,0.1) 2px, rgba(0,255,255,0.1) 4px)',
         'neon-gradient': 'linear-gradient(45deg, #00ffff, #ff1493, #39ff14, #ff6600)'
       },
-      
+
       backgroundSize: {
         'grid': '20px 20px',
         'stripes': '20px 20px'
       },
-      
+
       // Spacing for consistent layouts
       spacing: {
         '18': '4.5rem',
         '88': '22rem',
         '128': '32rem'
       },
-      
+
       // Retro border radius
       borderRadius: {
         'retro': '0.125rem',

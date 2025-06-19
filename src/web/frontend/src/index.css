@@ -9,26 +9,26 @@
     min-height: 100vh;
     overflow-x: hidden;
   }
-  
+
   /* Smooth scrolling */
   html {
     scroll-behavior: smooth;
   }
-  
+
   /* Custom scrollbar */
   ::-webkit-scrollbar {
     width: 8px;
   }
-  
+
   ::-webkit-scrollbar-track {
     background: rgba(0, 0, 0, 0.3);
   }
-  
+
   ::-webkit-scrollbar-thumb {
     background: rgba(0, 255, 255, 0.3);
     border-radius: 4px;
   }
-  
+
   ::-webkit-scrollbar-thumb:hover {
     background: rgba(0, 255, 255, 0.5);
   }
@@ -39,46 +39,46 @@
   .retro-container {
     @apply retro-panel p-4 rounded-retro-lg;
   }
-  
+
   .nav-item {
     @apply flex flex-col items-center justify-center p-3 text-xs font-retro transition-all duration-200;
   }
-  
+
   .nav-item-active {
     @apply text-neon-cyan text-neon-strong animate-pulse-neon;
   }
-  
+
   .nav-item-inactive {
     @apply text-metal-silver hover:text-neon-cyan hover:text-neon;
   }
-  
+
   .retro-input {
     @apply bg-dark-800 border border-neon-cyan border-opacity-30 rounded-retro px-3 py-2 text-neon-cyan placeholder-metal-silver focus:border-neon-cyan focus:border-opacity-100 focus:ring-1 focus:ring-neon-cyan transition-all duration-200;
   }
-  
+
   .retro-select {
     @apply retro-input appearance-none bg-no-repeat bg-right;
     background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%2300ffff' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3e%3c/svg%3e");
     background-position: right 8px center;
     background-size: 16px;
   }
-  
+
   .playlist-item {
     @apply retro-panel p-3 rounded-retro border border-neon-cyan border-opacity-20 hover:border-opacity-40 transition-all duration-200 cursor-pointer;
   }
-  
+
   .playlist-item-active {
     @apply border-neon-pink border-opacity-60 bg-neon-pink bg-opacity-5;
   }
-  
+
   .effect-card {
     @apply retro-panel p-4 rounded-retro-lg border border-neon-purple border-opacity-30 hover:border-opacity-60 transition-all duration-200 cursor-pointer hover:shadow-neon;
   }
-  
+
   .upload-area {
     @apply border-2 border-dashed border-neon-cyan border-opacity-30 rounded-retro-lg p-8 text-center transition-all duration-200 hover:border-opacity-60 hover:bg-neon-cyan hover:bg-opacity-5;
   }
-  
+
   .upload-area-active {
     @apply border-neon-green border-opacity-80 bg-neon-green bg-opacity-10;
   }
@@ -96,9 +96,9 @@
     background: linear-gradient(90deg, transparent, #00ffff, transparent);
     animation: scan-line 3s linear infinite;
   }
-  
+
   .grid-bg {
-    background-image: 
+    background-image:
       linear-gradient(rgba(0,255,255,0.03) 1px, transparent 1px),
       linear-gradient(90deg, rgba(0,255,255,0.03) 1px, transparent 1px);
     background-size: 20px 20px;

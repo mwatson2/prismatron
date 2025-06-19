@@ -49,7 +49,7 @@ const PlaylistPage = () => {
 
   const handleDragEnd = async (result) => {
     setIsDragging(false)
-    
+
     if (!result.destination) return
 
     const items = Array.from(playlist.items || [])
@@ -89,7 +89,7 @@ const PlaylistPage = () => {
 
   const clearPlaylist = async () => {
     if (playlist.items?.length === 0) return
-    
+
     if (window.confirm('Clear entire playlist? This cannot be undone.')) {
       try {
         const response = await fetch('/api/playlist/clear', {
@@ -163,8 +163,8 @@ const PlaylistPage = () => {
           <button
             onClick={toggleShuffle}
             className={`retro-button px-4 py-2 text-sm font-retro font-bold ${
-              playlist.shuffle 
-                ? 'text-neon-orange text-neon border-neon-orange border-opacity-50' 
+              playlist.shuffle
+                ? 'text-neon-orange text-neon border-neon-orange border-opacity-50'
                 : 'text-metal-silver'
             }`}
           >
@@ -175,8 +175,8 @@ const PlaylistPage = () => {
           <button
             onClick={toggleRepeat}
             className={`retro-button px-4 py-2 text-sm font-retro font-bold ${
-              playlist.auto_repeat 
-                ? 'text-neon-green text-neon border-neon-green border-opacity-50' 
+              playlist.auto_repeat
+                ? 'text-neon-green text-neon border-neon-green border-opacity-50'
                 : 'text-metal-silver'
             }`}
           >
@@ -206,7 +206,7 @@ const PlaylistPage = () => {
             </div>
           </div>
 
-          <DragDropContext 
+          <DragDropContext
             onDragEnd={handleDragEnd}
             onDragStart={() => setIsDragging(true)}
           >
@@ -267,7 +267,7 @@ const PlaylistPage = () => {
                                     </div>
                                   )}
                                 </div>
-                                
+
                                 <div className="flex items-center justify-between text-xs text-metal-silver font-mono">
                                   <span className="uppercase">{item.type}</span>
                                   <span>{formatDuration(item.duration)}</span>
@@ -319,7 +319,7 @@ const PlaylistPage = () => {
       {playlist.items?.length > 0 && (
         <div className="retro-container">
           <h3 className="text-lg font-retro text-neon-green mb-4">STATISTICS</h3>
-          
+
           <div className="grid grid-cols-2 gap-4 text-sm font-mono">
             <div>
               <span className="text-metal-silver">Total Items:</span>

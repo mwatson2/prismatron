@@ -18,19 +18,19 @@ export const WebSocketProvider = ({ children }) => {
   const [settings, setSettings] = useState(null)
 
   const connect = useCallback(() => {
-    const wsUrl = import.meta.env.DEV 
-      ? 'ws://localhost:8000/ws' 
+    const wsUrl = import.meta.env.DEV
+      ? 'ws://localhost:8000/ws'
       : `ws://${window.location.host}/ws`
 
     try {
       const ws = new WebSocket(wsUrl)
-      
+
       ws.onopen = () => {
         console.log('WebSocket connected')
         setIsConnected(true)
         setSocket(ws)
       }
-      
+
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
@@ -39,21 +39,21 @@ export const WebSocketProvider = ({ children }) => {
           console.error('Failed to parse WebSocket message:', error)
         }
       }
-      
+
       ws.onclose = () => {
         console.log('WebSocket disconnected')
         setIsConnected(false)
         setSocket(null)
-        
+
         // Attempt to reconnect after 3 seconds
         setTimeout(connect, 3000)
       }
-      
+
       ws.onerror = (error) => {
         console.error('WebSocket error:', error)
         setIsConnected(false)
       }
-      
+
     } catch (error) {
       console.error('Failed to create WebSocket connection:', error)
       // Retry connection after 5 seconds
@@ -67,7 +67,7 @@ export const WebSocketProvider = ({ children }) => {
         setPlaylist(data.playlist || playlist)
         setSettings(data.settings || settings)
         break
-        
+
       case 'playback_state':
         setPlaylist(prev => ({
           ...prev,
@@ -75,21 +75,21 @@ export const WebSocketProvider = ({ children }) => {
           current_index: data.current_index ?? prev.current_index
         }))
         break
-        
+
       case 'playlist_position':
         setPlaylist(prev => ({
           ...prev,
           current_index: data.current_index
         }))
         break
-        
+
       case 'playlist_updated':
         setPlaylist(prev => ({
           ...prev,
           items: data.items || []
         }))
         break
-        
+
       case 'playlist_state':
         setPlaylist(prev => ({
           ...prev,
@@ -97,19 +97,19 @@ export const WebSocketProvider = ({ children }) => {
           auto_repeat: data.auto_repeat ?? prev.auto_repeat
         }))
         break
-        
+
       case 'settings_updated':
         setSettings(data.settings)
         break
-        
+
       case 'brightness_changed':
         setSettings(prev => prev ? { ...prev, brightness: data.brightness } : null)
         break
-        
+
       case 'system_status':
         setSystemStatus(data)
         break
-        
+
       default:
         console.log('Unknown WebSocket message type:', data.type)
     }
@@ -125,7 +125,7 @@ export const WebSocketProvider = ({ children }) => {
 
   useEffect(() => {
     connect()
-    
+
     return () => {
       if (socket) {
         socket.close()

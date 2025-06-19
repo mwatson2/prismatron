@@ -29,7 +29,7 @@
   .nav-item {
     padding: 0.5rem;
   }
-  
+
   .retro-container {
     padding: 1rem;
   }
@@ -40,7 +40,7 @@
   .text-neon {
     text-shadow: 0 0 2px currentColor;
   }
-  
+
   .border-neon {
     box-shadow: 0 0 2px currentColor;
   }
@@ -54,7 +54,7 @@
   .animate-float {
     animation: none;
   }
-  
+
   .scan-line::before {
     animation: none;
   }

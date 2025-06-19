@@ -16,7 +16,7 @@ function App() {
   useEffect(() => {
     // Check if we're running in development or production
     const apiBase = import.meta.env.DEV ? 'http://localhost:8000' : ''
-    
+
     // Test API connection
     const checkConnection = async () => {
       try {
@@ -31,10 +31,10 @@ function App() {
     }
 
     checkConnection()
-    
+
     // Check connection every 30 seconds
     const interval = setInterval(checkConnection, 30000)
-    
+
     return () => clearInterval(interval)
   }, [])
 
@@ -44,8 +44,8 @@ function App() {
         {/* Connection status indicator */}
         <div className="fixed top-2 right-2 z-50">
           <div className={`w-3 h-3 rounded-full ${
-            isConnected 
-              ? 'bg-neon-green shadow-neon animate-pulse-neon' 
+            isConnected
+              ? 'bg-neon-green shadow-neon animate-pulse-neon'
               : 'bg-metal-silver animate-flicker'
           }`} />
         </div>

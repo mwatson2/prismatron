@@ -116,11 +116,11 @@ const SettingsPage = () => {
         <p className="text-metal-silver text-sm mt-1 font-mono">
           CONFIGURE PRISMATRON DISPLAY
         </p>
-        
+
         {/* Connection Status */}
         <div className={`inline-flex items-center gap-2 mt-2 px-3 py-1 rounded-retro text-xs font-mono ${
-          isConnected 
-            ? 'text-neon-green border border-neon-green border-opacity-30 bg-neon-green bg-opacity-5' 
+          isConnected
+            ? 'text-neon-green border border-neon-green border-opacity-30 bg-neon-green bg-opacity-5'
             : 'text-neon-orange border border-neon-orange border-opacity-30 bg-neon-orange bg-opacity-5'
         }`}>
           <WifiIcon className="w-4 h-4" />
@@ -134,7 +134,7 @@ const SettingsPage = () => {
           <SunIcon className="w-5 h-5" />
           DISPLAY SETTINGS
         </h3>
-        
+
         <div className="space-y-6">
           {/* Brightness Control */}
           <div>
@@ -206,7 +206,7 @@ const SettingsPage = () => {
           <CpuChipIcon className="w-5 h-5" />
           SYSTEM SETTINGS
         </h3>
-        
+
         <div className="space-y-6">
           {/* LED Count (Read-only) */}
           <div>
@@ -260,8 +260,8 @@ const SettingsPage = () => {
       {/* Save Status */}
       {saveStatus && (
         <div className={`retro-container border ${
-          saveStatus.type === 'success' 
-            ? 'border-neon-green border-opacity-50 bg-neon-green bg-opacity-10' 
+          saveStatus.type === 'success'
+            ? 'border-neon-green border-opacity-50 bg-neon-green bg-opacity-10'
             : 'border-neon-orange border-opacity-50 bg-neon-orange bg-opacity-10'
         }`}>
           <div className="flex items-center gap-3">
@@ -285,7 +285,7 @@ const SettingsPage = () => {
           <ServerIcon className="w-5 h-5" />
           SYSTEM INFORMATION
         </h3>
-        
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm font-mono">
           <div className="space-y-2">
             <div className="flex justify-between">
@@ -301,7 +301,7 @@ const SettingsPage = () => {
               <span className="text-neon-cyan">WLED DigiOcta</span>
             </div>
           </div>
-          
+
           <div className="space-y-2">
             <div className="flex justify-between">
               <span className="text-metal-silver">Communication:</span>
@@ -325,7 +325,7 @@ const SettingsPage = () => {
           <ExclamationTriangleIcon className="w-5 h-5" />
           DANGER ZONE
         </h3>
-        
+
         <div className="space-y-4">
           <div className="flex items-center justify-between p-3 bg-dark-800 rounded-retro">
             <div>
@@ -339,7 +339,7 @@ const SettingsPage = () => {
               RESTART
             </button>
           </div>
-          
+
           <div className="flex items-center justify-between p-3 bg-dark-800 rounded-retro">
             <div>
               <h4 className="text-sm font-retro text-neon-orange">FACTORY RESET</h4>

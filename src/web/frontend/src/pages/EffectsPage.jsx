@@ -51,8 +51,8 @@ const EffectsPage = () => {
   }
 
   const categories = ['all', ...new Set(effects.map(e => e.category))]
-  const filteredEffects = selectedCategory === 'all' 
-    ? effects 
+  const filteredEffects = selectedCategory === 'all'
+    ? effects
     : effects.filter(e => e.category === selectedCategory)
 
   const handleConfigChange = (key, value) => {
@@ -93,7 +93,7 @@ const EffectsPage = () => {
       {/* Category Filter */}
       <div className="retro-container">
         <h3 className="text-lg font-retro text-neon-pink mb-4">CATEGORIES</h3>
-        
+
         <div className="flex flex-wrap gap-2">
           {categories.map(category => (
             <button
@@ -157,7 +157,7 @@ const EffectsPage = () => {
                 <PlusIcon className="w-4 h-4 inline mr-2" />
                 ADD TO PLAYLIST
               </button>
-              
+
               <button
                 onClick={() => setShowConfig(showConfig === effect.id ? null : effect.id)}
                 className="retro-button px-3 py-2 text-neon-yellow"
@@ -171,14 +171,14 @@ const EffectsPage = () => {
             {showConfig === effect.id && (
               <div className="mt-4 p-4 bg-dark-800 rounded-retro border border-neon-yellow border-opacity-30">
                 <h5 className="text-sm font-retro text-neon-yellow mb-3">CUSTOMIZE PARAMETERS</h5>
-                
+
                 <div className="space-y-3">
                   {Object.entries(effect.config).map(([key, defaultValue]) => (
                     <div key={key} className="space-y-1">
                       <label className="text-xs text-metal-silver font-mono">
                         {key.replace('_', ' ').toUpperCase()}
                       </label>
-                      
+
                       {typeof defaultValue === 'number' ? (
                         <input
                           type="number"
@@ -207,7 +207,7 @@ const EffectsPage = () => {
                       )}
                     </div>
                   ))}
-                  
+
                   <div className="flex gap-2 pt-2">
                     <button
                       onClick={() => handleAddWithConfig(effect)}
@@ -243,7 +243,7 @@ const EffectsPage = () => {
       {/* Effects Info */}
       <div className="retro-container">
         <h3 className="text-lg font-retro text-neon-green mb-4">EFFECT INFORMATION</h3>
-        
+
         <div className="space-y-3 text-sm font-mono text-metal-silver">
           <div className="flex items-start gap-2">
             <span className="text-neon-cyan">•</span>

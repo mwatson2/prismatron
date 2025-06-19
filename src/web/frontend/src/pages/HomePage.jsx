@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { 
-  PlayIcon, 
-  PauseIcon, 
-  ForwardIcon, 
+import {
+  PlayIcon,
+  PauseIcon,
+  ForwardIcon,
   BackwardIcon,
   SpeakerWaveIcon,
   SpeakerXMarkIcon
@@ -29,7 +29,7 @@ const HomePage = () => {
 
     fetchStatus()
     const interval = setInterval(fetchStatus, 5000) // Update every 5 seconds
-    
+
     return () => clearInterval(interval)
   }, [])
 
@@ -71,11 +71,11 @@ const HomePage = () => {
         <p className="text-metal-silver text-sm mt-1 font-mono">
           LED DISPLAY CONTROL INTERFACE
         </p>
-        
+
         {/* Connection status */}
         <div className={`inline-flex items-center gap-2 mt-2 px-3 py-1 rounded-retro text-xs font-mono ${
-          isConnected 
-            ? 'text-neon-green border border-neon-green border-opacity-30 bg-neon-green bg-opacity-5' 
+          isConnected
+            ? 'text-neon-green border border-neon-green border-opacity-30 bg-neon-green bg-opacity-5'
             : 'text-metal-silver border border-metal-silver border-opacity-30 bg-dark-800'
         }`}>
           <div className={`w-2 h-2 rounded-full ${
@@ -90,7 +90,7 @@ const HomePage = () => {
         <h2 className="text-lg font-retro text-neon-cyan mb-4 text-center">
           LED ARRAY PREVIEW
         </h2>
-        
+
         <div className="relative aspect-[5/3] bg-dark-800 rounded-retro border border-neon-cyan border-opacity-20 overflow-hidden">
           {/* Simulated LED grid */}
           <div className="absolute inset-0 grid grid-cols-20 gap-1 p-2">
@@ -98,8 +98,8 @@ const HomePage = () => {
               <div
                 key={i}
                 className={`aspect-square rounded-full transition-all duration-200 ${
-                  playlist.is_playing 
-                    ? 'bg-neon-cyan animate-pulse-neon shadow-neon' 
+                  playlist.is_playing
+                    ? 'bg-neon-cyan animate-pulse-neon shadow-neon'
                     : 'bg-metal-silver opacity-30'
                 }`}
                 style={{
@@ -108,7 +108,7 @@ const HomePage = () => {
               />
             ))}
           </div>
-          
+
           {/* Overlay text when not playing */}
           {!playlist.is_playing && (
             <div className="absolute inset-0 flex items-center justify-center">
@@ -173,17 +173,17 @@ const HomePage = () => {
             <ForwardIcon className="w-6 h-6" />
           </button>
         </div>
-        
+
         {/* Playlist position indicator */}
         {playlist.items?.length > 0 && (
           <div className="mt-4 text-center">
             <p className="text-xs text-metal-silver font-mono">
               {playlist.current_index + 1} / {playlist.items.length}
             </p>
-            
+
             {/* Progress bar */}
             <div className="mt-2 w-full bg-dark-700 rounded-retro h-1 overflow-hidden">
-              <div 
+              <div
                 className="h-full bg-neon-cyan transition-all duration-300"
                 style={{
                   width: `${((playlist.current_index + 1) / playlist.items.length) * 100}%`

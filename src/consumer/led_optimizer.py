@@ -99,6 +99,9 @@ class LEDOptimizer:
             torch.Tensor
         ] = None  # (led_count, height, width, 3)
         self._diffusion_patterns_loaded = False
+        self._actual_led_count = (
+            LED_COUNT  # Default to constant, updated when patterns loaded
+        )
 
         # Statistics
         self._optimization_count = 0
@@ -136,10 +139,13 @@ class LEDOptimizer:
                 logger.error("PyTorch not available for optimization")
                 return False
 
-            # Try to load diffusion patterns
+            # Load diffusion patterns
             if not self._load_diffusion_patterns():
-                logger.warning("Diffusion patterns not found, generating mock patterns")
-                self._generate_mock_diffusion_patterns()
+                logger.error("Diffusion patterns not found")
+                logger.error(
+                    "Generate patterns first with: python tools/generate_synthetic_patterns.py"
+                )
+                return False
 
             logger.info(f"LED optimizer initialized with device: {self.device}")
             logger.info(f"Diffusion patterns shape: {self._diffusion_patterns.shape}")
@@ -166,12 +172,14 @@ class LEDOptimizer:
                 "diffusion_patterns"
             ]  # Shape: (led_count, height, width, 3)
 
-            if diffusion_patterns.shape[0] != LED_COUNT:
-                logger.error(
-                    f"Diffusion patterns count mismatch: "
-                    f"{diffusion_patterns.shape[0]} != {LED_COUNT}"
-                )
+            # Use actual LED count from patterns file instead of hardcoded constant
+            actual_led_count = diffusion_patterns.shape[0]
+            if actual_led_count <= 0:
+                logger.error(f"Invalid LED count in patterns: {actual_led_count}")
                 return False
+
+            logger.info(f"Using {actual_led_count} LEDs from patterns file")
+            self._actual_led_count = actual_led_count  # Store actual LED count
 
             if diffusion_patterns.shape[1:3] != (FRAME_HEIGHT, FRAME_WIDTH):
                 logger.error(
@@ -196,57 +204,6 @@ class LEDOptimizer:
         except Exception as e:
             logger.error(f"Failed to load diffusion patterns: {e}")
             return False
-
-    def _generate_mock_diffusion_patterns(self) -> None:
-        """Generate mock diffusion patterns for testing."""
-        try:
-            logger.info("Generating mock diffusion patterns...")
-
-            # Create mock patterns with random Gaussian distributions
-            patterns = np.zeros(
-                (LED_COUNT, FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.float32
-            )
-
-            # Create coordinate grids
-            y_coords, x_coords = np.mgrid[0:FRAME_HEIGHT, 0:FRAME_WIDTH]
-
-            # Generate patterns for each LED
-            for led_idx in range(LED_COUNT):
-                # Random center position for this LED's pattern
-                center_x = np.random.uniform(0.1, 0.9) * FRAME_WIDTH
-                center_y = np.random.uniform(0.1, 0.9) * FRAME_HEIGHT
-
-                # Calculate Gaussian falloff from LED center
-                dx = x_coords - center_x
-                dy = y_coords - center_y
-                distances_sq = dx * dx + dy * dy
-
-                # Gaussian with different spread for each color channel
-                sigma_base = 40.0  # Base spread in pixels
-
-                for channel in range(3):
-                    sigma = sigma_base * (0.8 + 0.4 * np.random.random())  # Vary spread
-                    intensity = np.exp(-distances_sq / (2 * sigma * sigma))
-
-                    # Normalize and scale
-                    intensity = (
-                        intensity / np.max(intensity)
-                        if np.max(intensity) > 0
-                        else intensity
-                    )
-                    patterns[led_idx, :, :, channel] = intensity * 255.0
-
-            # Convert to tensor
-            self._diffusion_patterns = torch.tensor(
-                patterns, dtype=torch.float32, device=self.device
-            )
-
-            self._diffusion_patterns_loaded = True
-            logger.info("Generated mock diffusion patterns successfully")
-
-        except Exception as e:
-            logger.error(f"Failed to generate mock diffusion patterns: {e}")
-            raise
 
     def optimize_frame(
         self,
@@ -294,7 +251,7 @@ class LEDOptimizer:
                 )
             else:
                 led_values = torch.zeros(
-                    (LED_COUNT, 3),
+                    (self._actual_led_count, 3),
                     dtype=torch.float32,
                     device=self.device,
                     requires_grad=True,
@@ -392,7 +349,7 @@ class LEDOptimizer:
 
             # Return error result
             return OptimizationResult(
-                led_values=np.zeros((LED_COUNT, 3), dtype=np.float32),
+                led_values=np.zeros((self._actual_led_count, 3), dtype=np.float32),
                 error_metrics={
                     "mse": float("inf"),
                     "mae": float("inf"),
@@ -459,7 +416,7 @@ class LEDOptimizer:
             "diffusion_patterns_shape": list(self._diffusion_patterns.shape)
             if self._diffusion_patterns is not None
             else None,
-            "led_count": LED_COUNT,
+            "led_count": self._actual_led_count,
             "frame_dimensions": (FRAME_WIDTH, FRAME_HEIGHT),
         }
 
@@ -485,7 +442,7 @@ class LEDOptimizer:
             save_data = {
                 "diffusion_patterns": patterns,
                 "metadata": metadata or {},
-                "led_count": LED_COUNT,
+                "led_count": self._actual_led_count,
                 "frame_width": FRAME_WIDTH,
                 "frame_height": FRAME_HEIGHT,
             }

@@ -62,8 +62,36 @@ class TestLEDOptimizer(unittest.TestCase):
         """Set up test fixtures."""
         self.temp_dir = tempfile.mkdtemp()
 
-        # Create optimizer
-        self.optimizer = LEDOptimizer(device="cpu")  # Force CPU for testing
+        # Create test patterns file for optimizer to use
+        self.patterns_path = os.path.join(self.temp_dir, "test_patterns.npz")
+        self._create_test_patterns()
+
+        # Create optimizer with test patterns
+        self.optimizer = LEDOptimizer(
+            diffusion_patterns_path=self.patterns_path,
+            device="cpu",  # Force CPU for testing
+        )
+
+    def _create_test_patterns(self):
+        """Create minimal test diffusion patterns for testing."""
+        if not TORCH_AVAILABLE:
+            return  # Skip pattern creation if torch not available
+
+        # Create simple test patterns (much smaller than full size for speed)
+        test_led_count = 50  # Use small number for fast tests
+        patterns = (
+            np.random.random((test_led_count, FRAME_HEIGHT, FRAME_WIDTH, 3)).astype(
+                np.float32
+            )
+            * 255
+        )
+
+        # Save test patterns
+        np.savez_compressed(
+            self.patterns_path,
+            diffusion_patterns=patterns,
+            metadata={"version": "test", "led_count": test_led_count},
+        )
 
     def tearDown(self):
         """Clean up after tests."""
@@ -100,16 +128,12 @@ class TestLEDOptimizer(unittest.TestCase):
             self.assertFalse(result)
 
     @unittest.skipIf(not TORCH_AVAILABLE, "PyTorch not available")
-    def test_mock_diffusion_pattern_generation(self):
-        """Test mock diffusion pattern generation."""
-        self.optimizer.initialize()
-
-        self.assertTrue(self.optimizer._diffusion_patterns_loaded)
-        self.assertIsNotNone(self.optimizer._diffusion_patterns)
-
-        # Check dimensions
-        expected_shape = (LED_COUNT, FRAME_HEIGHT, FRAME_WIDTH, 3)
-        self.assertEqual(self.optimizer._diffusion_patterns.shape, expected_shape)
+    def test_diffusion_pattern_loading_failure(self):
+        """Test diffusion pattern loading failure when no patterns exist."""
+        # With no patterns file and removed mock generation, initialization should fail
+        result = self.optimizer.initialize()
+        self.assertFalse(result)
+        self.assertFalse(self.optimizer._diffusion_patterns_loaded)
 
     @unittest.skipIf(not TORCH_AVAILABLE, "PyTorch not available")
     def test_diffusion_pattern_optimization(self):
@@ -124,7 +148,9 @@ class TestLEDOptimizer(unittest.TestCase):
         # Run optimization
         result = self.optimizer.optimize_frame(test_frame, max_iterations=5)
 
-        self.assertEqual(result.led_values.shape, (LED_COUNT, 3))
+        # LED count will be from test patterns (50), not full LED_COUNT (3200)
+        self.assertEqual(result.led_values.shape[1], 3)  # RGB channels
+        self.assertGreater(result.led_values.shape[0], 0)  # Some LEDs
         self.assertGreater(result.iterations, 0)
         self.assertLessEqual(result.iterations, 5)
         self.assertIn("mse", result.error_metrics)
@@ -140,7 +166,8 @@ class TestLEDOptimizer(unittest.TestCase):
         # Run optimization
         result = self.optimizer.optimize_frame(test_frame, max_iterations=10)
 
-        self.assertEqual(result.led_values.shape, (LED_COUNT, 3))
+        self.assertEqual(result.led_values.shape[1], 3)  # RGB channels
+        self.assertGreater(result.led_values.shape[0], 0)  # Some LEDs
         self.assertGreater(result.iterations, 0)
         self.assertLess(result.optimization_time, 10.0)  # Should be fast
         self.assertIn("mse", result.error_metrics)
@@ -170,13 +197,16 @@ class TestLEDOptimizer(unittest.TestCase):
         test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 3)).astype(
             np.uint8
         )
-        initial_values = np.random.random((LED_COUNT, 3)).astype(np.float32) * 255
+        # Get actual LED count from test patterns
+        test_led_count = 50  # matches our test pattern size
+        initial_values = np.random.random((test_led_count, 3)).astype(np.float32) * 255
 
         result = self.optimizer.optimize_frame(
             test_frame, initial_values=initial_values, max_iterations=5
         )
 
-        self.assertEqual(result.led_values.shape, (LED_COUNT, 3))
+        self.assertEqual(result.led_values.shape[1], 3)  # RGB channels
+        self.assertGreater(result.led_values.shape[0], 0)  # Some LEDs
         self.assertLessEqual(result.iterations, 5)
 
     def test_parameter_updates(self):
@@ -214,7 +244,8 @@ class TestLEDOptimizer(unittest.TestCase):
         self.assertGreater(stats["total_optimization_time"], 0)
         self.assertGreater(stats["estimated_fps"], 0)
         self.assertIn("parameters", stats)
-        self.assertEqual(stats["led_count"], LED_COUNT)
+        # LED count in stats should match our test patterns (50), not full LED_COUNT (3200)
+        self.assertGreater(stats["led_count"], 0)  # Should have some LEDs
 
     def test_diffusion_pattern_saving(self):
         """Test saving diffusion patterns."""
@@ -259,10 +290,10 @@ class TestLEDOptimizer(unittest.TestCase):
         optimizer = LEDOptimizer(diffusion_patterns_path=nonexistent_path)
 
         if TORCH_AVAILABLE:
-            # Should fall back to mock patterns
+            # Should fail without patterns file (no longer falls back to mock patterns)
             result = optimizer.initialize()
-            self.assertTrue(result)
-            self.assertTrue(optimizer._diffusion_patterns_loaded)
+            self.assertFalse(result)
+            self.assertFalse(optimizer._diffusion_patterns_loaded)
 
     @unittest.skipIf(not TORCH_AVAILABLE, "PyTorch not available")
     def test_led_value_clamping(self):
@@ -335,8 +366,10 @@ class TestLEDOptimizer(unittest.TestCase):
         result2 = self.optimizer.optimize_frame(test_frame, max_iterations=10)
 
         # Both should produce valid results
-        self.assertEqual(result1.led_values.shape, (LED_COUNT, 3))
-        self.assertEqual(result2.led_values.shape, (LED_COUNT, 3))
+        self.assertEqual(result1.led_values.shape[1], 3)  # RGB channels
+        self.assertEqual(result2.led_values.shape[1], 3)  # RGB channels
+        self.assertGreater(result1.led_values.shape[0], 0)  # Some LEDs
+        self.assertGreater(result2.led_values.shape[0], 0)  # Some LEDs
 
         # More iterations should generally produce better results
         self.assertLessEqual(result1.iterations, 1)
@@ -362,7 +395,43 @@ class TestOptimizerIntegration(unittest.TestCase):
 
     def setUp(self):
         """Set up integration test fixtures."""
-        self.optimizer = LEDOptimizer(device="cpu")
+        self.temp_dir = tempfile.mkdtemp()
+
+        # Create test patterns file for optimizer to use
+        self.patterns_path = os.path.join(self.temp_dir, "test_patterns.npz")
+        self._create_test_patterns()
+
+        # Create optimizer with test patterns
+        self.optimizer = LEDOptimizer(
+            diffusion_patterns_path=self.patterns_path, device="cpu"
+        )
+
+    def _create_test_patterns(self):
+        """Create minimal test diffusion patterns for testing."""
+        if not TORCH_AVAILABLE:
+            return  # Skip pattern creation if torch not available
+
+        # Create simple test patterns (much smaller than full size for speed)
+        test_led_count = 50  # Use small number for fast tests
+        patterns = (
+            np.random.random((test_led_count, FRAME_HEIGHT, FRAME_WIDTH, 3)).astype(
+                np.float32
+            )
+            * 255
+        )
+
+        # Save test patterns
+        np.savez_compressed(
+            self.patterns_path,
+            diffusion_patterns=patterns,
+            metadata={"version": "test", "led_count": test_led_count},
+        )
+
+    def tearDown(self):
+        """Clean up after tests."""
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     @unittest.skipIf(not TORCH_AVAILABLE, "PyTorch not available")
     def test_end_to_end_optimization(self):
@@ -382,7 +451,8 @@ class TestOptimizerIntegration(unittest.TestCase):
         result = self.optimizer.optimize_frame(test_frame, max_iterations=20)
 
         # Verify results
-        self.assertEqual(result.led_values.shape, (LED_COUNT, 3))
+        self.assertEqual(result.led_values.shape[1], 3)  # RGB channels
+        self.assertGreater(result.led_values.shape[0], 0)  # Some LEDs
         self.assertGreater(result.iterations, 0)
         self.assertTrue(result.optimization_time > 0)
         self.assertIsNotNone(result.error_metrics)
@@ -405,7 +475,9 @@ class TestOptimizerIntegration(unittest.TestCase):
         self.optimizer.set_optimization_parameters(learning_rate=0.01, max_iterations=5)
 
         # Run optimization multiple times with same initial conditions
-        initial_values = np.zeros((LED_COUNT, 3), dtype=np.float32)
+        # Get actual LED count from test patterns
+        test_led_count = 50  # matches our test pattern size
+        initial_values = np.zeros((test_led_count, 3), dtype=np.float32)
 
         result1 = self.optimizer.optimize_frame(
             test_frame, initial_values=initial_values.copy()

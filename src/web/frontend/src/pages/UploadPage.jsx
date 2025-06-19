@@ -1,8 +1,8 @@
 import React, { useState, useCallback, useRef } from 'react'
-import { 
-  CloudArrowUpIcon, 
-  DocumentIcon, 
-  FilmIcon, 
+import {
+  CloudArrowUpIcon,
+  DocumentIcon,
+  FilmIcon,
   PhotoIcon,
   XMarkIcon,
   CheckCircleIcon
@@ -125,7 +125,7 @@ const UploadPage = () => {
 
       setUploadStatus({ type: 'success', message: `Successfully uploaded ${totalFiles} file(s)` })
       setSelectedFiles([])
-      
+
     } catch (error) {
       setUploadStatus({ type: 'error', message: error.message })
     } finally {
@@ -160,7 +160,7 @@ const UploadPage = () => {
           onClick={() => fileInputRef.current?.click()}
         >
           <CloudArrowUpIcon className="w-16 h-16 mx-auto mb-4 text-neon-cyan opacity-60" />
-          
+
           <div className="space-y-2 text-center">
             <p className="text-lg font-retro text-neon-cyan">
               {dragActive ? 'DROP FILES HERE' : 'DRAG & DROP FILES'}
@@ -188,26 +188,26 @@ const UploadPage = () => {
       {selectedFiles.length > 0 && (
         <div className="retro-container">
           <h3 className="text-lg font-retro text-neon-pink mb-4">SELECTED FILES</h3>
-          
+
           <div className="space-y-3">
             {selectedFiles.map((file, index) => {
               const fileType = getFileType(file.name)
               const FileIcon = getFileIcon(fileType)
               const isValid = fileType !== 'unknown'
-              
+
               return (
                 <div
                   key={index}
                   className={`flex items-center gap-3 p-3 rounded-retro border ${
-                    isValid 
-                      ? 'border-neon-cyan border-opacity-30 bg-neon-cyan bg-opacity-5' 
+                    isValid
+                      ? 'border-neon-cyan border-opacity-30 bg-neon-cyan bg-opacity-5'
                       : 'border-neon-orange border-opacity-50 bg-neon-orange bg-opacity-10'
                   }`}
                 >
                   <FileIcon className={`w-8 h-8 ${
                     isValid ? 'text-neon-cyan' : 'text-neon-orange'
                   }`} />
-                  
+
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-neon-cyan truncate">
                       {file.name}
@@ -217,7 +217,7 @@ const UploadPage = () => {
                       <span>{formatFileSize(file.size)}</span>
                     </div>
                   </div>
-                  
+
                   <button
                     onClick={() => removeFile(index)}
                     className="p-1 text-metal-silver hover:text-neon-orange transition-colors"
@@ -229,7 +229,7 @@ const UploadPage = () => {
               )
             })}
           </div>
-          
+
           {/* Upload Button */}
           <div className="mt-6 flex justify-center">
             <button
@@ -247,10 +247,10 @@ const UploadPage = () => {
       {uploading && (
         <div className="retro-container">
           <h3 className="text-lg font-retro text-neon-cyan mb-4">UPLOAD PROGRESS</h3>
-          
+
           <div className="space-y-2">
             <div className="w-full bg-dark-700 rounded-retro h-2 overflow-hidden">
-              <div 
+              <div
                 className="h-full bg-neon-green transition-all duration-300 animate-pulse-neon"
                 style={{ width: `${uploadProgress}%` }}
               />
@@ -265,8 +265,8 @@ const UploadPage = () => {
       {/* Upload Status */}
       {uploadStatus && (
         <div className={`retro-container border ${
-          uploadStatus.type === 'success' 
-            ? 'border-neon-green border-opacity-50 bg-neon-green bg-opacity-10' 
+          uploadStatus.type === 'success'
+            ? 'border-neon-green border-opacity-50 bg-neon-green bg-opacity-10'
             : 'border-neon-orange border-opacity-50 bg-neon-orange bg-opacity-10'
         }`}>
           <div className="flex items-center gap-3">
@@ -285,7 +285,7 @@ const UploadPage = () => {
       {/* Upload Guidelines */}
       <div className="retro-container">
         <h3 className="text-lg font-retro text-neon-purple mb-4">UPLOAD GUIDELINES</h3>
-        
+
         <div className="space-y-3 text-sm font-mono text-metal-silver">
           <div className="flex items-start gap-2">
             <span className="text-neon-cyan">•</span>

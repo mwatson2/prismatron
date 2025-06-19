@@ -9,7 +9,8 @@ This tool creates a web interface to visualize diffusion patterns with:
 4. Interactive controls and filtering
 
 Usage:
-    python visualize_diffusion_patterns.py --patterns captured_patterns.npz --host 0.0.0.0 --port 8080
+    python visualize_diffusion_patterns.py --patterns captured_patterns.npz \\
+        --host 0.0.0.0 --port 8080
 """
 
 import argparse
@@ -72,8 +73,11 @@ class DiffusionPatternVisualizer:
                 logger.info(f"Loading patterns from {self.patterns_file}")
                 return self._load_captured_patterns()
             elif self.use_synthetic:
-                logger.info("Generating synthetic diffusion patterns")
-                return self._generate_synthetic_patterns()
+                logger.error("Synthetic pattern generation moved to separate tool.")
+                logger.error(
+                    "Generate patterns first with: python tools/generate_synthetic_patterns.py"
+                )
+                return False
             else:
                 logger.error(
                     "No patterns file provided and synthetic patterns disabled"
@@ -100,86 +104,6 @@ class DiffusionPatternVisualizer:
         except Exception as e:
             logger.error(f"Failed to load captured patterns: {e}")
             return False
-
-    def _generate_synthetic_patterns(self) -> bool:
-        """Generate synthetic diffusion patterns for visualization."""
-        try:
-            logger.info("Generating synthetic diffusion patterns...")
-
-            # Create synthetic patterns with realistic LED diffusion
-            # Using uint8 to save memory: 3200×3×480×800×1 = ~3.5GB vs 14GB for float32
-            self.diffusion_patterns = np.zeros(
-                (LED_COUNT, 3, FRAME_HEIGHT, FRAME_WIDTH), dtype=np.uint8
-            )
-
-            # Generate random LED positions
-            np.random.seed(42)  # Reproducible positions
-            led_positions = np.random.randint(
-                0, min(FRAME_WIDTH, FRAME_HEIGHT), size=(LED_COUNT, 2)
-            )
-
-            for led_idx in range(LED_COUNT):
-                x_center, y_center = led_positions[led_idx]
-
-                # Ensure positions are within frame
-                x_center = min(x_center, FRAME_WIDTH - 1)
-                y_center = min(y_center, FRAME_HEIGHT - 1)
-
-                for channel in range(3):  # R, G, B
-                    # Create Gaussian diffusion pattern
-                    pattern = self._create_gaussian_pattern(
-                        x_center,
-                        y_center,
-                        sigma_x=np.random.uniform(20, 60),
-                        sigma_y=np.random.uniform(20, 60),
-                        intensity=np.random.uniform(80, 255),
-                    )
-
-                    self.diffusion_patterns[led_idx, channel] = pattern
-
-            # Create metadata
-            self.metadata = {
-                "led_count": LED_COUNT,
-                "frame_width": FRAME_WIDTH,
-                "frame_height": FRAME_HEIGHT,
-                "channels": 3,
-                "data_type": "synthetic",
-                "generation_timestamp": time.time(),
-            }
-
-            logger.info(
-                f"Generated synthetic patterns: {self.diffusion_patterns.shape}"
-            )
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to generate synthetic patterns: {e}")
-            return False
-
-    def _create_gaussian_pattern(
-        self,
-        x_center: int,
-        y_center: int,
-        sigma_x: float,
-        sigma_y: float,
-        intensity: float,
-    ) -> np.ndarray:
-        """Create a 2D Gaussian diffusion pattern."""
-        # Create coordinate grids
-        x = np.arange(FRAME_WIDTH)
-        y = np.arange(FRAME_HEIGHT)
-        X, Y = np.meshgrid(x, y)
-
-        # Calculate Gaussian
-        pattern = intensity * np.exp(
-            -(
-                (X - x_center) ** 2 / (2 * sigma_x**2)
-                + (Y - y_center) ** 2 / (2 * sigma_y**2)
-            )
-        )
-
-        # Clip to valid uint8 range and convert
-        return np.clip(pattern, 0, 255).astype(np.uint8)
 
     def _setup_routes(self):
         """Setup Flask routes."""
@@ -951,7 +875,7 @@ def main():
     parser.add_argument(
         "--no-synthetic",
         action="store_true",
-        help="Disable synthetic pattern generation",
+        help="[DEPRECATED] Use pre-generated patterns from generate_synthetic_patterns.py instead",
     )
     parser.add_argument("--debug", action="store_true", help="Enable Flask debug mode")
     parser.add_argument(
@@ -974,9 +898,16 @@ def main():
         logger.warning("PIL/Pillow not available - image generation will be disabled")
         logger.warning("Install with: pip install Pillow")
 
-    # Create visualizer
+    # Create visualizer - synthetic generation now deprecated
+    if not args.patterns:
+        logger.error("No patterns file provided.")
+        logger.error(
+            "Generate patterns first with: python tools/generate_synthetic_patterns.py"
+        )
+        return 1
+
     visualizer = DiffusionPatternVisualizer(
-        patterns_file=args.patterns, use_synthetic=not args.no_synthetic
+        patterns_file=args.patterns, use_synthetic=False
     )
 
     try:

@@ -2,12 +2,15 @@
 """
 Standalone LED Optimization Tool.
 
-This tool performs LED optimization on input images using either captured
-or synthetic diffusion patterns and renders the result.
+This tool performs LED optimization on input images using captured
+or synthetic diffusion patterns and renders the result using the
+production LEDOptimizer class.
 
 Usage:
-    python standalone_optimizer.py --input image.jpg --patterns captured.npz --output result.png
-    python standalone_optimizer.py --input image.jpg --synthetic --output result.png --preview
+    python standalone_optimizer.py --input image.jpg --patterns captured.npz \
+        --output result.png
+    python standalone_optimizer.py --input image.jpg --patterns synthetic.npz \
+        --output result.png --preview
 """
 
 import argparse
@@ -15,7 +18,7 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -27,623 +30,237 @@ try:
 except ImportError:
     PIL_AVAILABLE = False
 
-# Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
-from consumer.led_optimizer import LEDOptimizer
+from src.const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
+from src.consumer.led_optimizer import LEDOptimizer, OptimizationResult
+
+try:
+    import torch
+
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    torch = None
 
 logger = logging.getLogger(__name__)
 
 
-class StandaloneOptimizer:
-    """Standalone LED optimization tool."""
+class ProductionLEDOptimizerWrapper:
+    """Wrapper around production LEDOptimizer for standalone use."""
 
-    def __init__(
-        self, diffusion_patterns_path: Optional[str] = None, use_synthetic: bool = True
-    ):
-        """
-        Initialize optimizer.
-
-        Args:
-            diffusion_patterns_path: Path to captured diffusion patterns (.npz)
-            use_synthetic: Generate synthetic patterns if no file provided
-        """
-        self.diffusion_patterns_path = diffusion_patterns_path
-        self.use_synthetic = use_synthetic
-
-        # LED optimizer
-        self.optimizer: Optional[LEDOptimizer] = None
-        self.diffusion_patterns: Optional[np.ndarray] = None
+    def __init__(self, diffusion_patterns_path: str):
+        """Initialize wrapper with production optimizer."""
+        self.optimizer = LEDOptimizer(
+            diffusion_patterns_path=diffusion_patterns_path,
+            device=None,  # Auto-detect best device
+        )
+        self.initialized = False
 
     def initialize(self) -> bool:
-        """Initialize the LED optimizer."""
-        try:
-            # Load or generate diffusion patterns
-            if not self._load_diffusion_patterns():
-                return False
-
-            # Initialize LED optimizer with patterns
-            self.optimizer = LEDOptimizer(
-                diffusion_patterns_path=None,  # We'll set patterns directly
-                led_count=LED_COUNT,
-            )
-
-            # Set the diffusion patterns directly
-            if hasattr(self.optimizer, "_diffusion_patterns"):
-                self.optimizer._diffusion_patterns = self.diffusion_patterns
-                self.optimizer._patterns_loaded = True
-                logger.info("Diffusion patterns loaded into optimizer")
-
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to initialize optimizer: {e}")
-            return False
-
-    def _load_diffusion_patterns(self) -> bool:
-        """Load diffusion patterns from file or generate synthetic ones."""
-        try:
-            if (
-                self.diffusion_patterns_path
-                and Path(self.diffusion_patterns_path).exists()
-            ):
-                logger.info(
-                    f"Loading diffusion patterns from {self.diffusion_patterns_path}"
-                )
-                return self._load_captured_patterns()
-            elif self.use_synthetic:
-                logger.info("Generating synthetic diffusion patterns")
-                return self._generate_synthetic_patterns()
-            else:
-                logger.error(
-                    "No diffusion patterns provided and synthetic generation disabled"
-                )
-                return False
-
-        except Exception as e:
-            logger.error(f"Failed to load diffusion patterns: {e}")
-            return False
-
-    def _load_captured_patterns(self) -> bool:
-        """Load captured diffusion patterns from .npz file."""
-        try:
-            data = np.load(self.diffusion_patterns_path, allow_pickle=True)
-            self.diffusion_patterns = data["diffusion_patterns"]
-
-            # Validate shape
-            expected_shape = (LED_COUNT, 3, FRAME_HEIGHT, FRAME_WIDTH)
-            if self.diffusion_patterns.shape != expected_shape:
-                logger.error(
-                    f"Invalid pattern shape: {self.diffusion_patterns.shape}, expected: {expected_shape}"
-                )
-                return False
-
-            logger.info(f"Loaded captured patterns: {self.diffusion_patterns.shape}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to load captured patterns: {e}")
-            return False
-
-    def _generate_synthetic_patterns(self) -> bool:
-        """Generate synthetic diffusion patterns."""
-        try:
-            logger.info("Generating synthetic diffusion patterns...")
-
-            # Create synthetic patterns with realistic LED diffusion
-            # Using uint8 to save memory: 3200×3×480×800×1 = ~3.5GB vs 14GB for float32
-            self.diffusion_patterns = np.zeros(
-                (LED_COUNT, 3, FRAME_HEIGHT, FRAME_WIDTH), dtype=np.uint8
-            )
-
-            # Generate random LED positions (reproducible)
-            np.random.seed(42)
-            led_positions = np.random.randint(
-                20, min(FRAME_WIDTH, FRAME_HEIGHT) - 20, size=(LED_COUNT, 2)
-            )
-
-            for led_idx in range(LED_COUNT):
-                x_center, y_center = led_positions[led_idx]
-
-                # Ensure positions are within valid range
-                x_center = max(20, min(x_center, FRAME_WIDTH - 20))
-                y_center = max(20, min(y_center, FRAME_HEIGHT - 20))
-
-                for channel in range(3):  # R, G, B
-                    # Create realistic Gaussian diffusion pattern
-                    pattern = self._create_led_diffusion(
-                        x_center,
-                        y_center,
-                        sigma_x=np.random.uniform(25, 80),
-                        sigma_y=np.random.uniform(25, 80),
-                        intensity=np.random.uniform(100, 255),
-                        asymmetry=np.random.uniform(0.7, 1.3),
-                    )
-
-                    self.diffusion_patterns[led_idx, channel] = pattern
-
-            logger.info(
-                f"Generated synthetic patterns: {self.diffusion_patterns.shape}"
-            )
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to generate synthetic patterns: {e}")
-            return False
-
-    def _create_led_diffusion(
-        self,
-        x_center: int,
-        y_center: int,
-        sigma_x: float,
-        sigma_y: float,
-        intensity: float,
-        asymmetry: float = 1.0,
-    ) -> np.ndarray:
-        """
-        Create realistic LED diffusion pattern with asymmetry and falloff.
-
-        Args:
-            x_center, y_center: LED position
-            sigma_x, sigma_y: Gaussian spread parameters
-            intensity: Peak intensity
-            asymmetry: Asymmetry factor
-
-        Returns:
-            2D diffusion pattern
-        """
-        # Create coordinate grids
-        x = np.arange(FRAME_WIDTH)
-        y = np.arange(FRAME_HEIGHT)
-        X, Y = np.meshgrid(x, y)
-
-        # Apply asymmetry
-        sigma_y_eff = sigma_y * asymmetry
-
-        # Calculate Gaussian with some noise for realism
-        pattern = intensity * np.exp(
-            -(
-                (X - x_center) ** 2 / (2 * sigma_x**2)
-                + (Y - y_center) ** 2 / (2 * sigma_y_eff**2)
-            )
-        )
-
-        # Add subtle noise for realism (scale to uint8 range)
-        noise = np.random.normal(0, 5, pattern.shape)  # Scale noise for uint8
-        pattern = np.clip(pattern + noise, 0, 255)
-
-        # Add some subtle structured variation (simulating LED panel structure)
-        grid_x = np.sin(X * 0.1) * 12  # Scale grid effects for uint8
-        grid_y = np.sin(Y * 0.1) * 12
-        pattern = np.clip(pattern + grid_x + grid_y, 0, 255)
-
-        # Clip to valid uint8 range and convert
-        return np.clip(pattern, 0, 255).astype(np.uint8)
-
-    def load_input_image(self, image_path: str) -> Optional[np.ndarray]:
-        """
-        Load and preprocess input image.
-
-        Args:
-            image_path: Path to input image
-
-        Returns:
-            Preprocessed image as (FRAME_HEIGHT, FRAME_WIDTH, 3) float array, or None if failed
-        """
-        try:
-            # Load image
-            if PIL_AVAILABLE:
-                img = Image.open(image_path)
-                img = img.convert("RGB")
-                image = np.array(img)
-            else:
-                image = cv2.imread(image_path)
-                if image is None:
-                    logger.error(f"Failed to load image: {image_path}")
-                    return None
-                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
-            logger.info(f"Loaded image: {image.shape} from {image_path}")
-
-            # Resize to target dimensions while maintaining aspect ratio
-            processed_image = self._resize_and_crop_image(image)
-
-            # Convert to float and normalize
-            processed_image = processed_image.astype(np.float32) / 255.0
-
-            logger.info(f"Processed image: {processed_image.shape}")
-            return processed_image
-
-        except Exception as e:
-            logger.error(f"Failed to load image {image_path}: {e}")
-            return None
-
-    def _resize_and_crop_image(self, image: np.ndarray) -> np.ndarray:
-        """
-        Resize and crop image to target dimensions (800x480) with 5:3 aspect ratio.
-
-        Args:
-            image: Input image array
-
-        Returns:
-            Resized and cropped image
-        """
-        src_h, src_w = image.shape[:2]
-        target_aspect = FRAME_WIDTH / FRAME_HEIGHT  # 5:3
-        src_aspect = src_w / src_h
-
-        # Determine crop dimensions to maintain 5:3 aspect ratio
-        if src_aspect > target_aspect:
-            # Source is wider than target, crop width
-            crop_h = src_h
-            crop_w = int(src_h * target_aspect)
-            crop_x = (src_w - crop_w) // 2
-            crop_y = 0
-        else:
-            # Source is taller than target, crop height
-            crop_w = src_w
-            crop_h = int(src_w / target_aspect)
-            crop_x = 0
-            crop_y = (src_h - crop_h) // 2
-
-        # Apply crop
-        cropped = image[crop_y : crop_y + crop_h, crop_x : crop_x + crop_w]
-
-        # Resize to target dimensions
-        resized = cv2.resize(
-            cropped, (FRAME_WIDTH, FRAME_HEIGHT), interpolation=cv2.INTER_LANCZOS4
-        )
-
-        return resized
+        """Initialize the production optimizer."""
+        self.initialized = self.optimizer.initialize()
+        if self.initialized:
+            stats = self.optimizer.get_optimizer_stats()
+            logger.info(f"Production optimizer initialized")
+            logger.info(f"Device: {stats['device']}")
+            logger.info(f"LED count: {stats['led_count']}")
+            logger.info(f"Patterns shape: {stats['diffusion_patterns_shape']}")
+        return self.initialized
 
     def optimize_image(
-        self,
-        input_image: np.ndarray,
-        optimization_method: str = "least_squares",
-        max_iterations: int = 100,
-        convergence_threshold: float = 1e-6,
-    ) -> Optional[Tuple[np.ndarray, dict]]:
-        """
-        Optimize LED values for input image.
+        self, target_image: np.ndarray, max_iterations: int = 50
+    ) -> OptimizationResult:
+        """Optimize LED values for target image using production optimizer."""
+        if not self.initialized:
+            raise RuntimeError("Optimizer not initialized. Call initialize() first.")
 
-        Args:
-            input_image: Target image (FRAME_HEIGHT, FRAME_WIDTH, 3)
-            optimization_method: Optimization method to use
-            max_iterations: Maximum optimization iterations
-            convergence_threshold: Convergence threshold
+        logger.info(f"Optimizing image shape: {target_image.shape}")
 
-        Returns:
-            Tuple of (led_values, optimization_stats) or None if failed
-        """
-        if not self.optimizer:
-            logger.error("Optimizer not initialized")
-            return None
+        # Use production optimizer
+        result = self.optimizer.optimize_frame(
+            target_frame=target_image, max_iterations=max_iterations
+        )
 
-        try:
-            logger.info("Starting LED optimization...")
-            start_time = time.time()
+        logger.info(f"Optimization completed in {result.optimization_time:.3f}s")
+        logger.info(f"Iterations: {result.iterations}")
+        logger.info(f"Converged: {result.converged}")
+        logger.info(f"MSE: {result.error_metrics.get('mse', 'N/A')}")
+        logger.info(
+            f"LED values range: [{result.led_values.min()}, {result.led_values.max()}]"
+        )
 
-            # Convert image to the format expected by optimizer
-            # Optimizer expects (height, width, channels)
-            target_image = input_image.copy()
+        return result
 
-            # Run optimization
-            result = self.optimizer.optimize_frame(
-                target_frame=target_image, max_iterations=max_iterations
+    def render_result(self, result: OptimizationResult) -> np.ndarray:
+        """Render optimization result to image."""
+        if not self.initialized:
+            raise RuntimeError("Optimizer not initialized")
+
+        # Get diffusion patterns from optimizer
+        stats = self.optimizer.get_optimizer_stats()
+        patterns_shape = stats["diffusion_patterns_shape"]
+
+        # Access the internal patterns (this is a bit of a hack but needed for rendering)
+        patterns_tensor = self.optimizer._diffusion_patterns
+        led_values_tensor = torch.from_numpy(result.led_values.astype(np.float32)).to(
+            self.optimizer.device
+        )
+
+        # Render using the same approach as the production optimizer
+        led_weights = led_values_tensor.unsqueeze(1).unsqueeze(
+            1
+        )  # (led_count, 1, 1, 3)
+        reconstructed = torch.sum(
+            patterns_tensor * led_weights, dim=0
+        )  # (height, width, 3)
+
+        # Convert to numpy and uint8
+        result_np = reconstructed.detach().cpu().numpy()
+        result_np = np.clip(result_np, 0, 255).astype(np.uint8)
+
+        return result_np
+
+
+class StandaloneOptimizer:
+    """Standalone LED optimization tool using production optimizer."""
+
+    def __init__(self, diffusion_patterns_path: str):
+        """Initialize optimizer with patterns file."""
+        if not diffusion_patterns_path or not Path(diffusion_patterns_path).exists():
+            raise ValueError(
+                f"Diffusion patterns file not found: {diffusion_patterns_path}"
             )
 
-            optimization_time = time.time() - start_time
+        self.optimizer_wrapper = ProductionLEDOptimizerWrapper(diffusion_patterns_path)
 
-            if not result.success:
-                logger.error(f"Optimization failed: {result.error}")
-                return None
+        # Initialize the production optimizer
+        if not self.optimizer_wrapper.initialize():
+            raise RuntimeError("Failed to initialize production LED optimizer")
 
-            # Extract LED values and stats
-            led_values = result.led_values  # Shape: (LED_COUNT, 3)
+    def load_image(self, image_path: str) -> np.ndarray:
+        """Load and resize image to target dimensions."""
+        logger.info(f"Loading image: {image_path}")
 
-            stats = {
-                "optimization_time": optimization_time,
-                "iterations": result.iterations,
-                "final_error": result.final_error,
-                "convergence_achieved": result.convergence_achieved,
-                "method": optimization_method,
-                "led_count": LED_COUNT,
-                "max_led_value": float(np.max(led_values)),
-                "mean_led_value": float(np.mean(led_values)),
-                "active_leds": int(np.sum(np.max(led_values, axis=1) > 0.01)),
-            }
+        # Try PIL first if available
+        if PIL_AVAILABLE:
+            try:
+                img = Image.open(image_path)
+                img = img.convert("RGB")
+                img = img.resize((FRAME_WIDTH, FRAME_HEIGHT), Image.Resampling.LANCZOS)
+                image = np.array(img)
+            except Exception as e:
+                logger.warning(f"PIL failed: {e}, falling back to OpenCV")
+                image = cv2.imread(image_path)
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                image = cv2.resize(image, (FRAME_WIDTH, FRAME_HEIGHT))
+        else:
+            image = cv2.imread(image_path)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            image = cv2.resize(image, (FRAME_WIDTH, FRAME_HEIGHT))
 
-            logger.info(f"Optimization completed in {optimization_time:.2f}s")
-            logger.info(f"Final error: {result.final_error:.6f}")
-            logger.info(f"Iterations: {result.iterations}")
-            logger.info(f"Active LEDs: {stats['active_leds']}/{LED_COUNT}")
+        logger.info(f"Loaded image shape: {image.shape}")
+        return image
 
-            return led_values, stats
-
-        except Exception as e:
-            logger.error(f"Optimization failed: {e}")
-            return None
-
-    def render_result(self, led_values: np.ndarray) -> Optional[np.ndarray]:
-        """
-        Render the result by summing diffusion patterns weighted by LED values.
-
-        Args:
-            led_values: LED values array (LED_COUNT, 3)
-
-        Returns:
-            Rendered image (FRAME_HEIGHT, FRAME_WIDTH, 3) or None if failed
-        """
-        if self.diffusion_patterns is None:
-            logger.error("No diffusion patterns available")
-            return None
-
-        try:
-            logger.info("Rendering optimization result...")
-
-            # Initialize result image
-            result_image = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.float32)
-
-            # Sum weighted diffusion patterns
-            for led_idx in range(LED_COUNT):
-                for channel in range(3):
-                    led_intensity = led_values[led_idx, channel]
-                    if led_intensity > 0:
-                        # Convert uint8 pattern to float32 for accumulation
-                        pattern = (
-                            self.diffusion_patterns[led_idx, channel].astype(np.float32)
-                            / 255.0
-                        )
-                        result_image[:, :, channel] += pattern * led_intensity
-
-            # Clip to valid range (0-1 for float32 output)
-            result_image = np.clip(result_image, 0, 1)
-
-            logger.info("Result rendering completed")
-            return result_image
-
-        except Exception as e:
-            logger.error(f"Result rendering failed: {e}")
-            return None
-
-    def save_result(
-        self,
-        result_image: np.ndarray,
-        output_path: str,
-        led_values: Optional[np.ndarray] = None,
-        stats: Optional[dict] = None,
-    ) -> bool:
-        """
-        Save optimization result.
-
-        Args:
-            result_image: Rendered result image
-            output_path: Output file path
-            led_values: Optional LED values to save
-            stats: Optional optimization statistics
-
-        Returns:
-            True if save successful
-        """
-        try:
-            output_path = Path(output_path)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Convert to 8-bit
-            result_8bit = (np.clip(result_image, 0, 1) * 255).astype(np.uint8)
-
-            # Save main result image
+    def save_result(self, result: OptimizationResult, output_path: str):
+        """Save optimization result."""
+        if result.rendered_result is not None:
             if PIL_AVAILABLE:
-                img = Image.fromarray(result_8bit)
-                img.save(str(output_path))
+                img = Image.fromarray(result.rendered_result)
+                img.save(output_path)
             else:
-                result_bgr = cv2.cvtColor(result_8bit, cv2.COLOR_RGB2BGR)
-                cv2.imwrite(str(output_path), result_bgr)
+                # Convert RGB to BGR for OpenCV
+                bgr_image = cv2.cvtColor(result.rendered_result, cv2.COLOR_RGB2BGR)
+                cv2.imwrite(output_path, bgr_image)
 
-            logger.info(f"Result saved to {output_path}")
+            logger.info(f"Saved result to: {output_path}")
+        else:
+            logger.warning("No rendered result to save")
 
-            # Save additional data if requested
-            if led_values is not None or stats is not None:
-                data_path = output_path.with_suffix(".npz")
-                save_data = {"result_image": result_image}
+    def show_preview(self, result: OptimizationResult, target_image: np.ndarray):
+        """Show side-by-side comparison."""
+        if result.rendered_result is None:
+            logger.warning("No rendered result to preview")
+            return
 
-                if led_values is not None:
-                    save_data["led_values"] = led_values
+        # Create side-by-side comparison
+        target = target_image
+        rendered = result.rendered_result
 
-                if stats is not None:
-                    save_data["optimization_stats"] = stats
+        # Ensure same height
+        h = max(target.shape[0], rendered.shape[0])
+        target_resized = cv2.resize(target, (target.shape[1], h))
+        rendered_resized = cv2.resize(rendered, (rendered.shape[1], h))
 
-                np.savez_compressed(str(data_path), **save_data)
-                logger.info(f"Additional data saved to {data_path}")
+        comparison = np.hstack([target_resized, rendered_resized])
 
-            return True
+        # Convert to BGR for OpenCV display
+        comparison_bgr = cv2.cvtColor(comparison, cv2.COLOR_RGB2BGR)
 
-        except Exception as e:
-            logger.error(f"Failed to save result: {e}")
-            return False
+        cv2.imshow("Optimization Result (Original | Rendered)", comparison_bgr)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
 
-    def create_comparison_image(
-        self, original: np.ndarray, result: np.ndarray
-    ) -> np.ndarray:
-        """
-        Create side-by-side comparison image.
-
-        Args:
-            original: Original input image
-            result: Optimization result
-
-        Returns:
-            Comparison image
-        """
-        try:
-            # Ensure both images are the same size
-            if original.shape != result.shape:
-                original = cv2.resize(original, (result.shape[1], result.shape[0]))
-
-            # Create side-by-side comparison
-            comparison = np.hstack([original, result])
-
-            # Add labels
-            comparison = comparison.copy()
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 1
-            color = (1.0, 1.0, 1.0)  # White
-            thickness = 2
-
-            # Original label
-            cv2.putText(
-                comparison, "Original", (10, 30), font, font_scale, color, thickness
-            )
-
-            # Result label
-            cv2.putText(
-                comparison,
-                "Optimized",
-                (original.shape[1] + 10, 30),
-                font,
-                font_scale,
-                color,
-                thickness,
-            )
-
-            return comparison
-
-        except Exception as e:
-            logger.warning(f"Failed to create comparison image: {e}")
-            return result
-
-    def show_preview(
+    def run(
         self,
-        original: np.ndarray,
-        result: np.ndarray,
-        led_values: np.ndarray,
-        stats: dict,
+        input_path: str,
+        output_path: Optional[str] = None,
+        show_preview: bool = False,
     ):
-        """
-        Show live preview of optimization result.
+        """Run optimization on input image."""
+        # Load input image
+        target_image = self.load_image(input_path)
 
-        Args:
-            original: Original input image
-            result: Optimization result
-            led_values: LED values
-            stats: Optimization statistics
-        """
-        try:
-            # Create comparison image
-            comparison = self.create_comparison_image(original, result)
+        # Perform optimization using production optimizer
+        result = self.optimizer_wrapper.optimize_image(target_image, max_iterations=50)
 
-            # Convert to 8-bit for display
-            display_image = (np.clip(comparison, 0, 1) * 255).astype(np.uint8)
-            display_image = cv2.cvtColor(display_image, cv2.COLOR_RGB2BGR)
+        # Render the result for saving/preview
+        rendered_result = self.optimizer_wrapper.render_result(result)
 
-            # Add statistics overlay
-            self._add_stats_overlay(display_image, led_values, stats)
+        # Create a result object with rendered image
+        result.rendered_result = rendered_result
 
-            # Resize for display if too large
-            max_display_width = 1200
-            if display_image.shape[1] > max_display_width:
-                scale = max_display_width / display_image.shape[1]
-                new_width = max_display_width
-                new_height = int(display_image.shape[0] * scale)
-                display_image = cv2.resize(display_image, (new_width, new_height))
+        # Save result if output path provided
+        if output_path:
+            self.save_result(result, output_path)
 
-            # Show image
-            cv2.imshow("LED Optimization Result", display_image)
+        # Show preview if requested
+        if show_preview:
+            self.show_preview(result, target_image)
 
-            print("\nOptimization Results:")
-            print(f"  Optimization Time: {stats['optimization_time']:.2f}s")
-            print(f"  Final Error: {stats['final_error']:.6f}")
-            print(f"  Iterations: {stats['iterations']}")
-            print(f"  Active LEDs: {stats['active_leds']}/{LED_COUNT}")
-            print(f"  Max LED Value: {stats['max_led_value']:.3f}")
-            print("\nPress any key to continue...")
-
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
-
-        except Exception as e:
-            logger.warning(f"Preview display failed: {e}")
-
-    def _add_stats_overlay(
-        self, image: np.ndarray, led_values: np.ndarray, stats: dict
-    ):
-        """Add statistics overlay to image."""
-        try:
-            height, width = image.shape[:2]
-
-            # Statistics text
-            stat_lines = [
-                f"Time: {stats['optimization_time']:.1f}s",
-                f"Error: {stats['final_error']:.2e}",
-                f"Iterations: {stats['iterations']}",
-                f"Active LEDs: {stats['active_leds']}/{LED_COUNT}",
-                f"Max Value: {stats['max_led_value']:.2f}",
-            ]
-
-            # Add semi-transparent background
-            overlay = image.copy()
-            cv2.rectangle(overlay, (width - 200, 50), (width - 10, 200), (0, 0, 0), -1)
-            cv2.addWeighted(overlay, 0.7, image, 0.3, 0, image)
-
-            # Add text
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.5
-            color = (255, 255, 255)
-            thickness = 1
-
-            for i, line in enumerate(stat_lines):
-                y = 70 + i * 25
-                cv2.putText(
-                    image, line, (width - 195, y), font, font_scale, color, thickness
-                )
-
-        except Exception as e:
-            logger.warning(f"Failed to add stats overlay: {e}")
+        return result, target_image
 
 
 def main():
-    """Main entry point."""
-    parser = argparse.ArgumentParser(description="Standalone LED optimization tool")
-    parser.add_argument("--input", required=True, help="Input image path")
-    parser.add_argument("--output", required=True, help="Output image path")
-    parser.add_argument("--patterns", help="Diffusion patterns file (.npz)")
+    """Main function."""
+    parser = argparse.ArgumentParser(description="Standalone LED Optimization Tool")
+    parser.add_argument("--input", "-i", required=True, help="Input image path")
+    parser.add_argument("--patterns", "-p", help="Diffusion patterns file (.npz)")
     parser.add_argument(
         "--synthetic",
+        "-s",
         action="store_true",
-        help="Use synthetic patterns if no patterns file",
+        help="[DEPRECATED] Use pre-generated synthetic patterns from "
+             "generate_synthetic_patterns.py instead",
+    )
+    parser.add_argument("--output", "-o", help="Output image path")
+    parser.add_argument(
+        "--preview", action="store_true", help="Show preview comparison"
     )
     parser.add_argument(
-        "--method",
-        default="least_squares",
-        choices=["least_squares", "gradient_descent"],
-        help="Optimization method",
+        "--verbose", "-v", action="store_true", help="Enable verbose logging"
     )
     parser.add_argument(
-        "--max-iterations",
-        type=int,
-        default=100,
-        help="Maximum optimization iterations",
-    )
-    parser.add_argument(
-        "--preview", action="store_true", help="Show preview before saving"
-    )
-    parser.add_argument(
-        "--save-data", action="store_true", help="Save LED values and stats"
-    )
-    parser.add_argument(
-        "--log-level",
-        default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Logging level",
+        "--test", action="store_true", help="Use fewer LEDs for faster testing"
     )
 
     args = parser.parse_args()
 
     # Setup logging
+    level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(
-        level=getattr(logging, args.log_level),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
     # Validate inputs
@@ -651,71 +268,50 @@ def main():
         logger.error(f"Input file not found: {args.input}")
         return 1
 
-    if not args.patterns and not args.synthetic:
-        logger.error("Must provide --patterns file or use --synthetic")
+    if args.patterns and not Path(args.patterns).exists():
+        logger.error(f"Patterns file not found: {args.patterns}")
         return 1
 
-    # Create optimizer
-    optimizer = StandaloneOptimizer(
-        diffusion_patterns_path=args.patterns, use_synthetic=args.synthetic
-    )
+    if not args.patterns:
+        logger.error("Must specify --patterns with path to diffusion patterns file")
+        logger.error(
+            "Generate synthetic patterns first with: python tools/generate_synthetic_patterns.py"
+        )
+        return 1
 
     try:
-        # Initialize
-        if not optimizer.initialize():
-            logger.error("Failed to initialize optimizer")
-            return 1
+        # Test mode note: LED count is now determined by the patterns file
+        if args.test:
+            logger.info("Test mode: LED count determined by patterns file")
 
-        # Load input image
-        input_image = optimizer.load_input_image(args.input)
-        if input_image is None:
-            logger.error("Failed to load input image")
-            return 1
+        # Create optimizer
+        optimizer = StandaloneOptimizer(diffusion_patterns_path=args.patterns)
 
-        # Optimize
-        result = optimizer.optimize_image(
-            input_image,
-            optimization_method=args.method,
-            max_iterations=args.max_iterations,
+        # Run optimization
+        result, target_image = optimizer.run(
+            input_path=args.input, output_path=args.output, show_preview=args.preview
         )
 
-        if result is None:
-            logger.error("Optimization failed")
-            return 1
-
-        led_values, stats = result
-
-        # Render result
-        result_image = optimizer.render_result(led_values)
-        if result_image is None:
-            logger.error("Failed to render result")
-            return 1
-
-        # Show preview if requested
-        if args.preview:
-            optimizer.show_preview(input_image, result_image, led_values, stats)
-
-        # Save result
-        save_success = optimizer.save_result(
-            result_image,
-            args.output,
-            led_values if args.save_data else None,
-            stats if args.save_data else None,
+        # Print summary
+        logger.info("=== Optimization Summary ===")
+        logger.info(f"Input: {args.input}")
+        logger.info(f"Target shape: {target_image.shape}")
+        logger.info(f"LED count: {result.led_values.shape[0]}")
+        logger.info(f"Optimization time: {result.optimization_time:.3f}s")
+        logger.info(
+            f"LED values range: [{result.led_values.min()}, {result.led_values.max()}]"
         )
+        if args.output:
+            logger.info(f"Output saved: {args.output}")
 
-        if not save_success:
-            logger.error("Failed to save result")
-            return 1
-
-        logger.info("Optimization completed successfully!")
         return 0
-
-    except KeyboardInterrupt:
-        logger.info("Optimization interrupted by user")
-        return 1
 
     except Exception as e:
         logger.error(f"Optimization failed: {e}")
+        if args.verbose:
+            import traceback
+
+            traceback.print_exc()
         return 1
 
 
