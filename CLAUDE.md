@@ -337,11 +337,41 @@ prismatron/
 │           ├── package.json
 │           └── vite.config.js
 ├── tests/                    # Unit and integration tests
+├── diffusion_patterns/      # LED diffusion pattern storage
+│   ├── *.npz                # Dense format pattern files
+│   ├── *_matrix.npz         # Sparse CSC matrix files
+│   └── *_mapping.npz        # LED spatial mapping files
 └── config/                   # Configuration files
     ├── led_positions.json
-    ├── diffusion_patterns.npz
     └── system_config.yaml
 ```
+
+## Diffusion Patterns Directory
+
+The `diffusion_patterns/` directory stores LED diffusion pattern data for optimization:
+
+### File Types
+- **Dense Format**: `*.npz` files containing traditional dense pattern arrays
+- **Sparse Format**: `*_matrix.npz` and `*_mapping.npz` file pairs for memory-efficient sparse matrices
+  - `*_matrix.npz`: Sparse CSC matrix with diffusion patterns
+  - `*_mapping.npz`: LED spatial mapping and metadata
+
+### Pattern Generation
+```bash
+# Generate dense format patterns
+python tools/generate_synthetic_patterns.py --output diffusion_patterns/patterns_1000.npz --led-count 1000
+
+# Generate sparse format patterns (recommended)
+python tools/generate_synthetic_patterns.py --sparse --output diffusion_patterns/patterns_1000.npz --led-count 1000
+
+# Visualize patterns
+python tools/visualize_diffusion_patterns.py --patterns diffusion_patterns/patterns_1000_matrix.npz
+```
+
+### Directory Organization
+- Keep all diffusion patterns in this directory for centralized management
+- Use descriptive names indicating LED count and format type
+- Sparse format is preferred for memory efficiency and optimization performance
 
 ## Development Commands
 

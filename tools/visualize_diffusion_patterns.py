@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+import scipy.sparse as sp
 from flask import Flask, jsonify, render_template_string, request, send_from_directory
 
 try:
@@ -42,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 class DiffusionPatternVisualizer:
-    """Web-based diffusion pattern visualization tool."""
+    """Web-based diffusion pattern visualization tool with sparse matrix support."""
 
     def __init__(self, patterns_file: Optional[str] = None, use_synthetic: bool = True):
         """
@@ -55,9 +56,15 @@ class DiffusionPatternVisualizer:
         self.patterns_file = patterns_file
         self.use_synthetic = use_synthetic
 
-        # Pattern data
+        # Pattern data (dense format for visualization)
         self.diffusion_patterns: Optional[np.ndarray] = None
         self.metadata: Dict = {}
+
+        # Sparse matrix data
+        self.is_sparse_format = False
+        self.sparse_matrix: Optional[sp.csc_matrix] = None
+        self.led_positions: Optional[np.ndarray] = None
+        self.led_spatial_mapping: Optional[Dict] = None
 
         # Flask app
         self.app = Flask(__name__)
@@ -67,11 +74,28 @@ class DiffusionPatternVisualizer:
         self._setup_routes()
 
     def load_patterns(self) -> bool:
-        """Load diffusion patterns from file or generate synthetic ones."""
+        """Load diffusion patterns from file (dense or sparse format) or generate synthetic ones."""
         try:
             if self.patterns_file and Path(self.patterns_file).exists():
                 logger.info(f"Loading patterns from {self.patterns_file}")
-                return self._load_captured_patterns()
+
+                # Check if this is a sparse format file
+                if self.patterns_file.endswith("_matrix.npz"):
+                    return self._load_sparse_patterns()
+                else:
+                    # Try to auto-detect sparse format
+                    base_path = self.patterns_file.replace(".npz", "")
+                    matrix_path = f"{base_path}_matrix.npz"
+                    mapping_path = f"{base_path}_mapping.npz"
+
+                    if Path(matrix_path).exists() and Path(mapping_path).exists():
+                        logger.info(
+                            "Detected sparse format files, loading sparse matrix..."
+                        )
+                        return self._load_sparse_patterns_from_base(base_path)
+                    else:
+                        return self._load_captured_patterns()
+
             elif self.use_synthetic:
                 logger.error("Synthetic pattern generation moved to separate tool.")
                 logger.error(
@@ -89,14 +113,47 @@ class DiffusionPatternVisualizer:
             return False
 
     def _load_captured_patterns(self) -> bool:
-        """Load captured diffusion patterns from .npz file."""
+        """Load captured diffusion patterns from .npz file (dense format)."""
         try:
             data = np.load(self.patterns_file, allow_pickle=True)
 
-            self.diffusion_patterns = data["diffusion_patterns"]
-            self.metadata = data["metadata"].item() if "metadata" in data else {}
+            # Try different possible key names for patterns
+            pattern_keys = ["diffusion_patterns", "patterns"]
+            patterns = None
+            for key in pattern_keys:
+                if key in data:
+                    patterns = data[key]
+                    logger.info(f"Found patterns with key: {key}")
+                    break
 
-            logger.info(f"Loaded patterns: {self.diffusion_patterns.shape}")
+            if patterns is None:
+                logger.error(
+                    f"No pattern data found. Available keys: {list(data.keys())}"
+                )
+                return False
+
+            # Handle different pattern formats
+            if patterns.ndim == 4:
+                if patterns.shape[1] == 3:  # (led_count, 3, height, width) - CHW format
+                    logger.info("Converting from CHW to HWC format")
+                    self.diffusion_patterns = np.transpose(
+                        patterns, (0, 2, 3, 1)
+                    )  # -> (led_count, height, width, 3)
+                elif (
+                    patterns.shape[3] == 3
+                ):  # (led_count, height, width, 3) - HWC format
+                    self.diffusion_patterns = patterns
+                else:
+                    logger.error(f"Unsupported pattern shape: {patterns.shape}")
+                    return False
+            else:
+                logger.error(f"Unsupported pattern dimensions: {patterns.ndim}")
+                return False
+
+            self.metadata = data["metadata"].item() if "metadata" in data else {}
+            self.is_sparse_format = False
+
+            logger.info(f"Loaded dense patterns: {self.diffusion_patterns.shape}")
             logger.info(f"Metadata: {self.metadata}")
 
             return True
@@ -104,6 +161,183 @@ class DiffusionPatternVisualizer:
         except Exception as e:
             logger.error(f"Failed to load captured patterns: {e}")
             return False
+
+    def _load_sparse_patterns(self) -> bool:
+        """Load sparse diffusion patterns from _matrix.npz file."""
+        try:
+            # Extract base path from matrix file
+            base_path = self.patterns_file.replace("_matrix.npz", "")
+            return self._load_sparse_patterns_from_base(base_path)
+
+        except Exception as e:
+            logger.error(f"Failed to load sparse patterns: {e}")
+            return False
+
+    def _load_sparse_patterns_from_base(self, base_path: str) -> bool:
+        """Load sparse diffusion patterns from base path."""
+        try:
+            matrix_path = f"{base_path}_matrix.npz"
+            mapping_path = f"{base_path}_mapping.npz"
+
+            if not Path(matrix_path).exists():
+                logger.error(f"Sparse matrix file not found: {matrix_path}")
+                return False
+
+            if not Path(mapping_path).exists():
+                logger.error(f"Sparse mapping file not found: {mapping_path}")
+                return False
+
+            # Load sparse matrix
+            logger.info(f"Loading sparse matrix from {matrix_path}")
+            self.sparse_matrix = sp.load_npz(matrix_path)
+
+            # Load spatial mapping and metadata
+            logger.info(f"Loading spatial mapping from {mapping_path}")
+            mapping_data = np.load(mapping_path, allow_pickle=True)
+            self.led_spatial_mapping = mapping_data["led_spatial_mapping"].item()
+            self.led_positions = mapping_data["led_positions"]
+            self.metadata = (
+                mapping_data["metadata"].item() if "metadata" in mapping_data else {}
+            )
+
+            # Convert sparse matrix to dense patterns for visualization
+            logger.info("Converting sparse matrix to dense format for visualization...")
+            self.diffusion_patterns = self._sparse_to_dense_patterns()
+            self.is_sparse_format = True
+
+            logger.info(f"Loaded sparse patterns: {self.diffusion_patterns.shape}")
+            logger.info(f"Matrix shape: {self.sparse_matrix.shape}")
+            logger.info(
+                f"Matrix sparsity: {self.sparse_matrix.nnz / (self.sparse_matrix.shape[0] * self.sparse_matrix.shape[1]) * 100:.3f}%"
+            )
+            logger.info(f"Metadata: {self.metadata}")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to load sparse patterns from {base_path}: {e}")
+            return False
+
+    def _sparse_to_dense_patterns(self) -> np.ndarray:
+        """
+        Convert sparse CSC matrix back to dense diffusion patterns for visualization.
+
+        Returns:
+            Dense patterns array (led_count, height, width, 3)
+        """
+        try:
+            led_count = self.sparse_matrix.shape[1]
+
+            # Initialize dense patterns array
+            patterns = np.zeros(
+                (led_count, FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8
+            )
+
+            # Create reverse spatial mapping: matrix_index -> physical_led_id
+            reverse_mapping = {
+                matrix_idx: physical_id
+                for physical_id, matrix_idx in self.led_spatial_mapping.items()
+            }
+
+            # Convert sparse matrix back to dense patterns
+            logger.info("Converting sparse matrix columns to dense patterns...")
+            for physical_led_id in range(led_count):
+                # Get the matrix column index for this physical LED
+                matrix_idx = self.led_spatial_mapping.get(
+                    physical_led_id, physical_led_id
+                )
+                if matrix_idx >= led_count:
+                    logger.warning(
+                        f"Matrix index {matrix_idx} out of range for physical LED {physical_led_id}, using LED ID"
+                    )
+                    matrix_idx = physical_led_id
+
+                # Get the LED column from sparse matrix
+                led_column = self.sparse_matrix[:, matrix_idx].toarray().flatten()
+
+                # Reshape from flattened RGB to (height, width, 3)
+                # The sparse matrix uses channel-separate blocks format
+                total_pixels = FRAME_HEIGHT * FRAME_WIDTH * 3
+                if len(led_column) != total_pixels:
+                    logger.warning(
+                        f"Column length {len(led_column)} != expected {total_pixels}"
+                    )
+                    led_column = np.pad(
+                        led_column, (0, max(0, total_pixels - len(led_column)))
+                    )[:total_pixels]
+
+                # Reshape from channel-separate blocks format to (height, width, 3) format
+                try:
+                    # The sparse matrix uses channel-separate blocks format:
+                    # - First block: R channel data (pixels_per_channel elements)
+                    # - Second block: G channel data (pixels_per_channel elements)
+                    # - Third block: B channel data (pixels_per_channel elements)
+                    pixels_per_channel = FRAME_HEIGHT * FRAME_WIDTH
+
+                    if len(led_column) == pixels_per_channel * 3:
+                        # Extract each channel block
+                        r_block = led_column[:pixels_per_channel]
+                        g_block = led_column[
+                            pixels_per_channel : 2 * pixels_per_channel
+                        ]
+                        b_block = led_column[
+                            2 * pixels_per_channel : 3 * pixels_per_channel
+                        ]
+
+                        # Reshape each channel to (height, width)
+                        r_channel = r_block.reshape(FRAME_HEIGHT, FRAME_WIDTH)
+                        g_channel = g_block.reshape(FRAME_HEIGHT, FRAME_WIDTH)
+                        b_channel = b_block.reshape(FRAME_HEIGHT, FRAME_WIDTH)
+
+                        # Stack channels to create (height, width, 3)
+                        pattern_hwc = np.stack(
+                            [r_channel, g_channel, b_channel], axis=2
+                        )
+
+                        # Convert to uint8 and store
+                        patterns[physical_led_id] = (pattern_hwc * 255).astype(np.uint8)
+                    else:
+                        logger.warning(
+                            f"LED {matrix_idx}: Column length {len(led_column)} != expected {pixels_per_channel * 3}"
+                        )
+                        # Fallback to zeros
+                        patterns[physical_led_id] = np.zeros(
+                            (FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8
+                        )
+
+                except ValueError as ve:
+                    logger.warning(f"Reshape failed for LED {matrix_idx}: {ve}")
+                    # Fallback to zeros
+                    patterns[physical_led_id] = np.zeros(
+                        (FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8
+                    )
+
+                # Progress reporting
+                if (matrix_idx + 1) % max(1, led_count // 10) == 0:
+                    logger.info(
+                        f"Converted {matrix_idx + 1}/{led_count} patterns to dense format..."
+                    )
+
+            logger.info(
+                f"Successfully converted sparse matrix to dense patterns: {patterns.shape}"
+            )
+            return patterns
+
+        except Exception as e:
+            logger.error(f"Failed to convert sparse to dense patterns: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            # Return empty patterns array on error
+            return np.zeros(
+                (
+                    led_count if "led_count" in locals() else LED_COUNT,
+                    FRAME_HEIGHT,
+                    FRAME_WIDTH,
+                    3,
+                ),
+                dtype=np.uint8,
+            )
 
     def _setup_routes(self):
         """Setup Flask routes."""
@@ -116,15 +350,29 @@ class DiffusionPatternVisualizer:
         @self.app.route("/api/metadata")
         def get_metadata():
             """Get pattern metadata."""
-            return jsonify(
-                {
-                    "metadata": self.metadata,
-                    "led_count": LED_COUNT,
-                    "frame_width": FRAME_WIDTH,
-                    "frame_height": FRAME_HEIGHT,
-                    "patterns_loaded": self.diffusion_patterns is not None,
+            metadata_response = {
+                "metadata": self.metadata,
+                "led_count": LED_COUNT,
+                "frame_width": FRAME_WIDTH,
+                "frame_height": FRAME_HEIGHT,
+                "patterns_loaded": self.diffusion_patterns is not None,
+                "is_sparse_format": self.is_sparse_format,
+                "supports_storage_order": self.is_sparse_format
+                and self.led_spatial_mapping is not None,
+            }
+
+            # Add sparse matrix info if available
+            if self.is_sparse_format and self.sparse_matrix is not None:
+                metadata_response["sparse_info"] = {
+                    "matrix_shape": list(self.sparse_matrix.shape),
+                    "nnz": self.sparse_matrix.nnz,
+                    "sparsity_percent": self.sparse_matrix.nnz
+                    / (self.sparse_matrix.shape[0] * self.sparse_matrix.shape[1])
+                    * 100,
+                    "memory_mb": self.sparse_matrix.data.nbytes / (1024 * 1024),
                 }
-            )
+
+            return jsonify(metadata_response)
 
         @self.app.route("/api/patterns")
         def get_patterns():
@@ -136,26 +384,46 @@ class DiffusionPatternVisualizer:
                 page = int(request.args.get("page", 0))
                 per_page = int(request.args.get("per_page", 50))
                 channel = request.args.get("channel", "all")
+                order = request.args.get(
+                    "order", "numerical"
+                )  # "numerical" or "storage"
 
                 patterns = []
                 start_idx = page * per_page
                 end_idx = min(start_idx + per_page, LED_COUNT)
 
-                for led_idx in range(start_idx, end_idx):
+                # Create the LED order list based on the requested ordering
+                if (
+                    order == "storage"
+                    and self.is_sparse_format
+                    and self.led_spatial_mapping
+                ):
+                    # Storage order: show LEDs in the order they appear in the sparse matrix columns
+                    # Create reverse mapping: matrix_column -> physical_led_id
+                    reverse_mapping = {
+                        matrix_idx: physical_id
+                        for physical_id, matrix_idx in self.led_spatial_mapping.items()
+                    }
+                    led_order = [reverse_mapping.get(i, i) for i in range(LED_COUNT)]
+                else:
+                    # Numerical order: show LEDs in physical ID order (0, 1, 2, ...)
+                    led_order = list(range(LED_COUNT))
+
+                # Get the LEDs for this page
+                page_leds = led_order[start_idx:end_idx]
+
+                for led_idx in page_leds:
                     if channel == "all":
-                        # Create composite RGB image
-                        rgb_pattern = np.stack(
-                            [
-                                self.diffusion_patterns[led_idx, 0],  # R
-                                self.diffusion_patterns[led_idx, 1],  # G
-                                self.diffusion_patterns[led_idx, 2],  # B
-                            ],
-                            axis=-1,
-                        )
+                        # Create composite RGB image - patterns are (height, width, 3)
+                        rgb_pattern = self.diffusion_patterns[
+                            led_idx
+                        ]  # Already in HWC format
                     else:
-                        # Single channel
+                        # Single channel - extract the specific channel
                         channel_idx = {"red": 0, "green": 1, "blue": 2}.get(channel, 0)
-                        single_channel = self.diffusion_patterns[led_idx, channel_idx]
+                        single_channel = self.diffusion_patterns[
+                            led_idx, :, :, channel_idx
+                        ]  # (height, width)
                         rgb_pattern = np.stack([single_channel] * 3, axis=-1)
 
                     # Create thumbnail
@@ -179,6 +447,9 @@ class DiffusionPatternVisualizer:
                         "per_page": per_page,
                         "total_leds": LED_COUNT,
                         "total_pages": (LED_COUNT + per_page - 1) // per_page,
+                        "order": order,
+                        "supports_storage_order": self.is_sparse_format
+                        and self.led_spatial_mapping is not None,
                     }
                 )
 
@@ -201,7 +472,7 @@ class DiffusionPatternVisualizer:
                 channel_names = ["red", "green", "blue"]
 
                 for ch_idx, ch_name in enumerate(channel_names):
-                    pattern = self.diffusion_patterns[led_id, ch_idx]
+                    pattern = self.diffusion_patterns[led_id, :, :, ch_idx]
 
                     # Full resolution image
                     full_image = self._pattern_to_base64(pattern)
@@ -223,14 +494,9 @@ class DiffusionPatternVisualizer:
                     }
 
                 # Create composite RGB view
-                rgb_pattern = np.stack(
-                    [
-                        self.diffusion_patterns[led_id, 0],
-                        self.diffusion_patterns[led_id, 1],
-                        self.diffusion_patterns[led_id, 2],
-                    ],
-                    axis=-1,
-                )
+                rgb_pattern = self.diffusion_patterns[
+                    led_id
+                ]  # Already in (height, width, 3) format
 
                 pattern_data["composite"] = {
                     "image": self._create_full_image(rgb_pattern),
@@ -579,6 +845,14 @@ HTML_TEMPLATE = """
                 </select>
             </div>
 
+            <div class="control-group" id="orderGroup" style="display: none;">
+                <label>Order:</label>
+                <select id="orderSelect">
+                    <option value="numerical">Numerical (0, 1, 2...)</option>
+                    <option value="storage">Storage (Spatial)</option>
+                </select>
+            </div>
+
             <div class="control-group">
                 <label>Per Page:</label>
                 <select id="perPageSelect">
@@ -613,7 +887,9 @@ HTML_TEMPLATE = """
         let currentPage = 0;
         let currentChannel = 'all';
         let currentPerPage = 50;
+        let currentOrder = 'numerical';
         let totalPages = 0;
+        let supportsStorageOrder = false;
 
         // Load metadata and initial patterns
         document.addEventListener('DOMContentLoaded', function() {
@@ -623,6 +899,12 @@ HTML_TEMPLATE = """
             // Setup event listeners
             document.getElementById('channelSelect').addEventListener('change', function() {
                 currentChannel = this.value;
+                currentPage = 0;
+                loadPatterns();
+            });
+
+            document.getElementById('orderSelect').addEventListener('change', function() {
+                currentOrder = this.value;
                 currentPage = 0;
                 loadPatterns();
             });
@@ -642,6 +924,15 @@ HTML_TEMPLATE = """
                 if (data.metadata) {
                     displayMetadata(data);
                 }
+
+                // Show/hide storage order toggle based on support
+                supportsStorageOrder = data.supports_storage_order || false;
+                const orderGroup = document.getElementById('orderGroup');
+                if (supportsStorageOrder) {
+                    orderGroup.style.display = 'flex';
+                } else {
+                    orderGroup.style.display = 'none';
+                }
             } catch (error) {
                 console.error('Failed to load metadata:', error);
             }
@@ -659,8 +950,18 @@ HTML_TEMPLATE = """
                 ['LED Count', data.led_count],
                 ['Frame Size', `${data.frame_width} × ${data.frame_height}`],
                 ['Data Type', metadata.data_type || 'captured'],
-                ['Patterns Loaded', data.patterns_loaded ? 'Yes' : 'No']
+                ['Patterns Loaded', data.patterns_loaded ? 'Yes' : 'No'],
+                ['Format', data.is_sparse_format ? 'Sparse Matrix' : 'Dense Array']
             ];
+
+            // Add sparse matrix info if available
+            if (data.sparse_info) {
+                items.push(['Matrix Shape', `${data.sparse_info.matrix_shape[0]} × ${data.sparse_info.matrix_shape[1]}`]);
+                items.push(['Non-zero Entries', data.sparse_info.nnz.toLocaleString()]);
+                items.push(['Sparsity', `${data.sparse_info.sparsity_percent.toFixed(3)}%`]);
+                items.push(['Matrix Memory', `${data.sparse_info.memory_mb.toFixed(1)} MB`]);
+                items.push(['Spatial Ordering', data.supports_storage_order ? 'Available' : 'Not Available']);
+            }
 
             if (metadata.capture_timestamp) {
                 items.push(['Capture Time', new Date(metadata.capture_timestamp * 1000).toLocaleString()]);
@@ -679,7 +980,7 @@ HTML_TEMPLATE = """
             contentDiv.innerHTML = '<div class="loading">Loading patterns...</div>';
 
             try {
-                const url = `/api/patterns?page=${currentPage}&per_page=${currentPerPage}&channel=${currentChannel}`;
+                const url = `/api/patterns?page=${currentPage}&per_page=${currentPerPage}&channel=${currentChannel}&order=${currentOrder}`;
                 const response = await fetch(url);
                 const data = await response.json();
 
@@ -869,7 +1170,10 @@ def main():
     parser = argparse.ArgumentParser(
         description="Visualize diffusion patterns in web interface"
     )
-    parser.add_argument("--patterns", help="Path to diffusion patterns file (.npz)")
+    parser.add_argument(
+        "--patterns",
+        help="Path to diffusion patterns file (.npz). Supports both dense format and sparse matrix format (auto-detects sparse files)",
+    )
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind server")
     parser.add_argument("--port", type=int, default=8080, help="Port to bind server")
     parser.add_argument(
@@ -902,7 +1206,10 @@ def main():
     if not args.patterns:
         logger.error("No patterns file provided.")
         logger.error(
-            "Generate patterns first with: python tools/generate_synthetic_patterns.py"
+            "Generate patterns first with: python tools/generate_synthetic_patterns.py [--sparse]"
+        )
+        logger.error(
+            "For sparse format: python tools/generate_synthetic_patterns.py --sparse --output test_patterns.npz"
         )
         return 1
 
