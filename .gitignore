@@ -198,7 +198,5 @@ cython_debug/
 diffusion_patterns/
 *.npz
 
-# Generated test results
-*_result.png
-test_result*.png
-final_test.png
+# Test images
+test_images/
