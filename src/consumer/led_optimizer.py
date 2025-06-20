@@ -279,14 +279,12 @@ class LEDOptimizer:
                     f"Target frame shape {target_frame.shape} != {(FRAME_HEIGHT, FRAME_WIDTH, 3)}"
                 )
 
-            # Convert target to grayscale and flatten to 1D, normalize to [0,1]
-            # Use luminance formula: 0.299*R + 0.587*G + 0.114*B
-            target_gray = (
-                0.299 * target_frame[:, :, 0]
-                + 0.587 * target_frame[:, :, 1]
-                + 0.114 * target_frame[:, :, 2]
-            )
-            target_flat = target_gray.reshape(-1).astype(np.float32) / 255.0
+            # Keep target as RGB - we'll solve each channel independently
+            # Normalize to [0,1] and flatten each channel separately
+            target_rgb_normalized = target_frame.astype(np.float32) / 255.0
+            target_r = target_rgb_normalized[:, :, 0].reshape(-1)
+            target_g = target_rgb_normalized[:, :, 1].reshape(-1)
+            target_b = target_rgb_normalized[:, :, 2].reshape(-1)
 
             # Initialize LED values in range [0,1]
             if initial_values is not None:
@@ -307,43 +305,77 @@ class LEDOptimizer:
                 # Start with 50% brightness for better convergence
                 led_values = np.full((self._actual_led_count, 3), 0.5, dtype=np.float32)
 
-            # Matrix format is (384,000, led_count*3) - treat as 300 independent monochrome LEDs
-            # LED vector should be (300,) = [LED0_R, LED0_G, LED0_B, LED1_R, LED1_G, LED1_B, ...]
-            led_vector = led_values.flatten()  # Shape: (led_count * 3,)
-
-            # Use the sparse matrix directly
+            # Solve each RGB channel independently
+            # Matrix format: (384000, led_count*3) where columns are [R0,G0,B0,R1,G1,B1,...]
             A_csc = self._sparse_matrix_csc
             A_csr = self._sparse_matrix_csr
-            target_vector = target_flat
+            
+            # Initialize final LED values
+            led_values_optimized = np.zeros((self._actual_led_count, 3), dtype=np.float32)
+            
+            # Solve each channel independently  
+            channel_names = ['R', 'G', 'B']
+            targets = [target_r, target_g, target_b]
+            
+            for channel_idx, (channel_name, target_channel) in enumerate(zip(channel_names, targets)):
+                logger.info(f"Optimizing {channel_name} channel...")
+                
+                # Extract LED columns for this channel (every 3rd column starting from channel_idx)
+                channel_columns = list(range(channel_idx, A_csc.shape[1], 3))
+                A_channel_csc = A_csc[:, channel_columns]
+                A_channel_csr = A_csr[:, channel_columns]
+                
+                # Initialize LED values for this channel
+                led_channel_init = led_values[:, channel_idx]  # Shape: (led_count,)
+                
+                # Transfer to GPU if available
+                if self.use_gpu:
+                    gpu_A_csc = cupy_csc_matrix(A_channel_csc)
+                    gpu_A_csr = cupy_csr_matrix(A_channel_csr)
+                    target_gpu = cp.asarray(target_channel, dtype=cp.float32)
+                    x_gpu = cp.asarray(led_channel_init, dtype=cp.float32)
 
-            # Transfer to GPU if available
-            if self.use_gpu:
-                gpu_A_csc = cupy_csc_matrix(A_csc)
-                gpu_A_csr = cupy_csr_matrix(A_csr)
-                target_gpu = cp.asarray(target_vector, dtype=cp.float32)
-                x_gpu = cp.asarray(led_vector, dtype=cp.float32)
+                    # Run LSQR on GPU
+                    result_vector = self._solve_lsqr_gpu(
+                        gpu_A_csc, gpu_A_csr, target_gpu, x_gpu, max_iterations
+                    )
 
-                # Run LSQR on GPU
-                result_vector = self._solve_lsqr_gpu(
-                    gpu_A_csc, gpu_A_csr, target_gpu, x_gpu, max_iterations
-                )
+                    # Transfer back to CPU
+                    led_channel_result = cp.asnumpy(result_vector)
+                else:
+                    # Run LSQR on CPU
+                    led_channel_result = self._solve_lsqr_cpu(
+                        A_channel_csc, A_channel_csr, target_channel, led_channel_init, max_iterations
+                    )
+                
+                # Store optimized values for this channel
+                led_values_optimized[:, channel_idx] = led_channel_result
+            
+            led_values = led_values_optimized
 
-                # Transfer back to CPU
-                led_vector = cp.asnumpy(result_vector)
-            else:
-                # Run LSQR on CPU
-                led_vector = self._solve_lsqr_cpu(
-                    A_csc, A_csr, target_vector, led_vector, max_iterations
-                )
-
-            # Reshape back to (led_count, 3)
-            led_values = led_vector.reshape((self._actual_led_count, 3))
-
-            # Compute final error metrics
-            final_reconstruction = A_csr @ led_vector
-            mse = np.mean((final_reconstruction - target_vector) ** 2)
-            mae = np.mean(np.abs(final_reconstruction - target_vector))
-            max_error = np.max(np.abs(final_reconstruction - target_vector))
+            # Compute final error metrics (reconstruct full image for evaluation)
+            led_vector_full = led_values.flatten()  # [R0,G0,B0,R1,G1,B1,...]
+            target_combined = np.concatenate([target_r, target_g, target_b])  # For error computation
+            
+            # Reconstruct each channel and combine for error calculation
+            reconstruction_r = A_csr[:, 0::3] @ led_values[:, 0]
+            reconstruction_g = A_csr[:, 1::3] @ led_values[:, 1] 
+            reconstruction_b = A_csr[:, 2::3] @ led_values[:, 2]
+            
+            mse_r = np.mean((reconstruction_r - target_r) ** 2)
+            mse_g = np.mean((reconstruction_g - target_g) ** 2)
+            mse_b = np.mean((reconstruction_b - target_b) ** 2)
+            mse = (mse_r + mse_g + mse_b) / 3.0
+            
+            mae_r = np.mean(np.abs(reconstruction_r - target_r))
+            mae_g = np.mean(np.abs(reconstruction_g - target_g))
+            mae_b = np.mean(np.abs(reconstruction_b - target_b))
+            mae = (mae_r + mae_g + mae_b) / 3.0
+            
+            max_error_r = np.max(np.abs(reconstruction_r - target_r))
+            max_error_g = np.max(np.abs(reconstruction_g - target_g))
+            max_error_b = np.max(np.abs(reconstruction_b - target_b))
+            max_error = max(max_error_r, max_error_g, max_error_b)
 
             # Scale LED values from [0,1] to [0,255] for output
             led_values_output = (led_values * 255.0).astype(np.uint8)

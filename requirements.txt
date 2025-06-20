@@ -81,6 +81,10 @@ websockets>=10.0,<12.0
 # Optional dependencies for enhanced functionality
 # These may not be available on all systems but provide additional features
 
+# GPU acceleration for NVIDIA CUDA (Jetson Orin Nano)
+# Uncomment for systems with NVIDIA GPU and CUDA 12.x support
+# cupy-cuda12x>=13.0.0,<14.0.0
+
 # Hardware acceleration (NVIDIA only)
 # nvidia-ml-py3>=7.352.0,<12.0.0
 
