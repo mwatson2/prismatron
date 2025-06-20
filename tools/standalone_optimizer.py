@@ -54,7 +54,7 @@ class ProductionLEDOptimizerWrapper:
         """Initialize wrapper with production optimizer."""
         self.optimizer = LEDOptimizer(
             diffusion_patterns_path=diffusion_patterns_path,
-            device=None,  # Auto-detect best device
+            use_gpu=True,  # Auto-detect GPU availability
         )
         self.initialized = False
 
@@ -64,9 +64,11 @@ class ProductionLEDOptimizerWrapper:
         if self.initialized:
             stats = self.optimizer.get_optimizer_stats()
             logger.info(f"Production optimizer initialized")
-            logger.info(f"Device: {stats['device']}")
+            logger.info(f"Device: {stats['device_info']['device']}")
             logger.info(f"LED count: {stats['led_count']}")
-            logger.info(f"Patterns shape: {stats['diffusion_patterns_shape']}")
+            if "matrix_shape" in stats:
+                logger.info(f"Matrix shape: {stats['matrix_shape']}")
+                logger.info(f"Matrix sparsity: {stats['sparsity_percent']:.3f}%")
         return self.initialized
 
     def optimize_image(
@@ -94,33 +96,61 @@ class ProductionLEDOptimizerWrapper:
         return result
 
     def render_result(self, result: OptimizationResult) -> np.ndarray:
-        """Render optimization result to image."""
+        """Render optimization result to image using sparse matrix reconstruction."""
         if not self.initialized:
             raise RuntimeError("Optimizer not initialized")
 
-        # Get diffusion patterns from optimizer
-        stats = self.optimizer.get_optimizer_stats()
-        patterns_shape = stats["diffusion_patterns_shape"]
+        logger.info("Rendering result using sparse matrix reconstruction...")
 
-        # Access the internal patterns (this is a bit of a hack but needed for rendering)
-        patterns_tensor = self.optimizer._diffusion_patterns
-        led_values_tensor = torch.from_numpy(result.led_values.astype(np.float32)).to(
-            self.optimizer.device
-        )
+        # Get the sparse matrix from the optimizer
+        sparse_matrix_csr = (
+            self.optimizer._sparse_matrix_csr
+        )  # Use CSR for forward operation
 
-        # Render using the same approach as the production optimizer
-        led_weights = led_values_tensor.unsqueeze(1).unsqueeze(
-            1
-        )  # (led_count, 1, 1, 3)
-        reconstructed = torch.sum(
-            patterns_tensor * led_weights, dim=0
-        )  # (height, width, 3)
+        if sparse_matrix_csr is None:
+            raise RuntimeError("Sparse matrix not available in optimizer")
 
-        # Convert to numpy and uint8
-        result_np = reconstructed.detach().cpu().numpy()
-        result_np = np.clip(result_np, 0, 255).astype(np.uint8)
+        # Convert LED values from uint8 [0,255] to float32 [0,1] for matrix operations
+        led_values_normalized = result.led_values.astype(np.float32) / 255.0
 
-        return result_np
+        # The result.led_values is in (led_count, 3) RGB format, but we need
+        # to flatten it to match the sparse matrix structure: [LED0_R, LED0_G, LED0_B, LED1_R, ...]
+        led_vector = led_values_normalized.flatten()  # Shape: (led_count * 3,)
+
+        # Use the sparse matrix directly (format: 384000 × led_count*3)
+        A_csr = self.optimizer._sparse_matrix_csr
+
+        # Reconstruct RGB channels separately
+        pixels_per_channel = 480 * 800
+        reconstructed_rgb = np.zeros((480, 800, 3), dtype=np.float32)
+
+        logger.info(f"A_csr shape: {A_csr.shape}")
+        logger.info(f"LED vector shape: {led_vector.shape}")
+
+        # Reconstruct each RGB channel independently
+        for channel in range(3):
+            # Extract LED values for this channel: [LED0_C, LED1_C, LED2_C, ...]
+            channel_leds = led_vector[
+                channel::3
+            ]  # Every 3rd element starting from channel
+
+            # Get the subset of matrix columns for this channel
+            channel_columns = list(range(channel, A_csr.shape[1], 3))
+            A_channel = A_csr[:, channel_columns]
+
+            # Reconstruct this channel
+            channel_flat = A_channel @ channel_leds
+            channel_image = channel_flat.reshape((480, 800))
+            reconstructed_rgb[:, :, channel] = channel_image
+
+        # Convert to final RGB image
+        reconstructed_image = reconstructed_rgb
+
+        # Clamp to valid range and convert to uint8
+        result_image = np.clip(reconstructed_image * 255, 0, 255).astype(np.uint8)
+
+        logger.info(f"Rendered image shape: {result_image.shape}")
+        return result_image
 
 
 class StandaloneOptimizer:
@@ -128,12 +158,24 @@ class StandaloneOptimizer:
 
     def __init__(self, diffusion_patterns_path: str):
         """Initialize optimizer with patterns file."""
-        if not diffusion_patterns_path or not Path(diffusion_patterns_path).exists():
-            raise ValueError(
-                f"Diffusion patterns file not found: {diffusion_patterns_path}"
-            )
+        if not diffusion_patterns_path:
+            raise ValueError("Diffusion patterns path is required")
 
-        self.optimizer_wrapper = ProductionLEDOptimizerWrapper(diffusion_patterns_path)
+        # Handle cases where user passes legacy _matrix.npz files or .npz files
+        if diffusion_patterns_path.endswith("_matrix.npz"):
+            base_path = diffusion_patterns_path.replace("_matrix.npz", "")
+        elif diffusion_patterns_path.endswith(".npz"):
+            base_path = diffusion_patterns_path.replace(".npz", "")
+        else:
+            base_path = diffusion_patterns_path
+
+        # Verify the pattern file exists
+        patterns_path = f"{base_path}.npz"
+
+        if not Path(patterns_path).exists():
+            raise ValueError(f"Pattern file not found: {patterns_path}")
+
+        self.optimizer_wrapper = ProductionLEDOptimizerWrapper(base_path)
 
         # Initialize the production optimizer
         if not self.optimizer_wrapper.initialize():

@@ -184,32 +184,34 @@ class LEDOptimizer:
             True if loaded successfully, False otherwise
         """
         try:
-            # Try to load sparse matrix files
-            matrix_path = f"{self.diffusion_patterns_path}_matrix.npz"
-            mapping_path = f"{self.diffusion_patterns_path}_mapping.npz"
+            # Try to load single sparse matrix NPZ file
+            patterns_path = f"{self.diffusion_patterns_path}.npz"
 
-            if not Path(matrix_path).exists() or not Path(mapping_path).exists():
-                logger.warning(
-                    f"Sparse matrix files not found at {self.diffusion_patterns_path}"
-                )
+            if not Path(patterns_path).exists():
+                logger.warning(f"Sparse matrix file not found at {patterns_path}")
                 return False
 
-            # Load sparse matrix (CSC format)
-            self._sparse_matrix_csc = sp.load_npz(matrix_path)
+            # Load all data from single NPZ file
+            data = np.load(patterns_path, allow_pickle=True)
+
+            # Reconstruct sparse matrix from components
+            self._sparse_matrix_csc = sp.csc_matrix(
+                (data["matrix_data"], data["matrix_indices"], data["matrix_indptr"]),
+                shape=tuple(data["matrix_shape"]),
+            )
 
             # Convert to CSR for forward operations (A*x)
             self._sparse_matrix_csr = self._sparse_matrix_csc.tocsr()
 
             # Load spatial mapping and metadata
-            mapping_data = np.load(mapping_path, allow_pickle=True)
-            self._led_spatial_mapping = mapping_data["led_spatial_mapping"].item()
-            self._led_positions = mapping_data["led_positions"]
+            self._led_spatial_mapping = data["led_spatial_mapping"].item()
+            self._led_positions = data["led_positions"]
 
-            # Get actual LED count from matrix
-            self._actual_led_count = self._sparse_matrix_csc.shape[1]
+            # Get actual LED count from matrix (shape is pixels × led_count*3)
+            self._actual_led_count = self._sparse_matrix_csc.shape[1] // 3
 
-            # Validate matrix dimensions
-            expected_pixels = FRAME_HEIGHT * FRAME_WIDTH * 3
+            # Validate matrix dimensions (single channel format)
+            expected_pixels = FRAME_HEIGHT * FRAME_WIDTH
             if self._sparse_matrix_csc.shape[0] != expected_pixels:
                 logger.error(
                     f"Matrix pixel dimension mismatch: "
@@ -228,7 +230,7 @@ class LEDOptimizer:
                     self.use_gpu = False
 
             self._matrix_loaded = True
-            logger.info(f"Loaded sparse matrix from {matrix_path}")
+            logger.info(f"Loaded sparse matrix from {patterns_path}")
             logger.info(f"Matrix shape: {self._sparse_matrix_csc.shape}")
             logger.info(f"Non-zero entries: {self._sparse_matrix_csc.nnz:,}")
 
@@ -277,8 +279,14 @@ class LEDOptimizer:
                     f"Target frame shape {target_frame.shape} != {(FRAME_HEIGHT, FRAME_WIDTH, 3)}"
                 )
 
-            # Flatten target to 1D and normalize to [0,1]
-            target_flat = target_frame.reshape(-1).astype(np.float32) / 255.0
+            # Convert target to grayscale and flatten to 1D, normalize to [0,1]
+            # Use luminance formula: 0.299*R + 0.587*G + 0.114*B
+            target_gray = (
+                0.299 * target_frame[:, :, 0]
+                + 0.587 * target_frame[:, :, 1]
+                + 0.114 * target_frame[:, :, 2]
+            )
+            target_flat = target_gray.reshape(-1).astype(np.float32) / 255.0
 
             # Initialize LED values in range [0,1]
             if initial_values is not None:
@@ -299,43 +307,43 @@ class LEDOptimizer:
                 # Start with 50% brightness for better convergence
                 led_values = np.full((self._actual_led_count, 3), 0.5, dtype=np.float32)
 
-            # Convert to 1D for matrix operations (RGB interleaved)
+            # Matrix format is (384,000, led_count*3) - treat as 300 independent monochrome LEDs
+            # LED vector should be (300,) = [LED0_R, LED0_G, LED0_B, LED1_R, LED1_G, LED1_B, ...]
             led_vector = led_values.flatten()  # Shape: (led_count * 3,)
 
-            # Expand sparse matrix to handle RGB channels
-            A_expanded = self._expand_matrix_for_rgb()
-            target_expanded = target_flat
+            # Use the sparse matrix directly
+            A_csc = self._sparse_matrix_csc
+            A_csr = self._sparse_matrix_csr
+            target_vector = target_flat
 
             # Transfer to GPU if available
             if self.use_gpu:
-                A_csc = cupy_csc_matrix(A_expanded.tocsc())
-                A_csr = cupy_csr_matrix(A_expanded.tocsr())
-                target_gpu = cp.asarray(target_expanded, dtype=cp.float32)
+                gpu_A_csc = cupy_csc_matrix(A_csc)
+                gpu_A_csr = cupy_csr_matrix(A_csr)
+                target_gpu = cp.asarray(target_vector, dtype=cp.float32)
                 x_gpu = cp.asarray(led_vector, dtype=cp.float32)
 
                 # Run LSQR on GPU
                 result_vector = self._solve_lsqr_gpu(
-                    A_csc, A_csr, target_gpu, x_gpu, max_iterations
+                    gpu_A_csc, gpu_A_csr, target_gpu, x_gpu, max_iterations
                 )
 
                 # Transfer back to CPU
                 led_vector = cp.asnumpy(result_vector)
             else:
                 # Run LSQR on CPU
-                A_csc = A_expanded.tocsc()
-                A_csr = A_expanded.tocsr()
                 led_vector = self._solve_lsqr_cpu(
-                    A_csc, A_csr, target_expanded, led_vector, max_iterations
+                    A_csc, A_csr, target_vector, led_vector, max_iterations
                 )
 
             # Reshape back to (led_count, 3)
             led_values = led_vector.reshape((self._actual_led_count, 3))
 
             # Compute final error metrics
-            final_reconstruction = A_expanded @ led_vector
-            mse = np.mean((final_reconstruction - target_expanded) ** 2)
-            mae = np.mean(np.abs(final_reconstruction - target_expanded))
-            max_error = np.max(np.abs(final_reconstruction - target_expanded))
+            final_reconstruction = A_csr @ led_vector
+            mse = np.mean((final_reconstruction - target_vector) ** 2)
+            mae = np.mean(np.abs(final_reconstruction - target_vector))
+            max_error = np.max(np.abs(final_reconstruction - target_vector))
 
             # Scale LED values from [0,1] to [0,255] for output
             led_values_output = (led_values * 255.0).astype(np.uint8)

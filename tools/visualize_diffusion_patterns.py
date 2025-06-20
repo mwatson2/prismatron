@@ -8,6 +8,11 @@ This tool creates a web interface to visualize diffusion patterns with:
 3. Support for both captured and synthetic patterns
 4. Interactive controls and filtering
 
+Supported formats:
+- Dense format: Standard NPZ with diffusion patterns array
+- New sparse format: Single NPZ with sparse matrix components (matrix_data, matrix_indices, matrix_indptr, matrix_shape, led_positions, led_spatial_mapping, metadata)
+- Legacy sparse format: Dual NPZ files (*_matrix.npz and *_mapping.npz)
+
 Usage:
     python visualize_diffusion_patterns.py --patterns captured_patterns.npz \\
         --host 0.0.0.0 --port 8080
@@ -79,21 +84,40 @@ class DiffusionPatternVisualizer:
             if self.patterns_file and Path(self.patterns_file).exists():
                 logger.info(f"Loading patterns from {self.patterns_file}")
 
-                # Check if this is a sparse format file
+                # Check if this is an old sparse format file
                 if self.patterns_file.endswith("_matrix.npz"):
                     return self._load_sparse_patterns()
                 else:
-                    # Try to auto-detect sparse format
+                    # Try to detect format by examining file contents
+                    data = np.load(self.patterns_file, allow_pickle=True)
+
+                    # Check if this is the new single NPZ sparse format
+                    if all(
+                        key in data
+                        for key in [
+                            "matrix_data",
+                            "matrix_indices",
+                            "matrix_indptr",
+                            "matrix_shape",
+                        ]
+                    ):
+                        logger.info(
+                            "Detected new single NPZ sparse format, loading sparse matrix..."
+                        )
+                        return self._load_single_npz_sparse_patterns()
+
+                    # Check if this is the old dual-file sparse format
                     base_path = self.patterns_file.replace(".npz", "")
                     matrix_path = f"{base_path}_matrix.npz"
                     mapping_path = f"{base_path}_mapping.npz"
 
                     if Path(matrix_path).exists() and Path(mapping_path).exists():
                         logger.info(
-                            "Detected sparse format files, loading sparse matrix..."
+                            "Detected old dual-file sparse format, loading sparse matrix..."
                         )
                         return self._load_sparse_patterns_from_base(base_path)
                     else:
+                        # Default to dense format
                         return self._load_captured_patterns()
 
             elif self.use_synthetic:
@@ -173,8 +197,44 @@ class DiffusionPatternVisualizer:
             logger.error(f"Failed to load sparse patterns: {e}")
             return False
 
+    def _load_single_npz_sparse_patterns(self) -> bool:
+        """Load sparse diffusion patterns from single NPZ file (new format)."""
+        try:
+            logger.info(f"Loading single NPZ sparse format from {self.patterns_file}")
+            data = np.load(self.patterns_file, allow_pickle=True)
+
+            # Reconstruct sparse matrix from components
+            logger.info("Reconstructing sparse matrix from components...")
+            self.sparse_matrix = sp.csc_matrix(
+                (data["matrix_data"], data["matrix_indices"], data["matrix_indptr"]),
+                shape=tuple(data["matrix_shape"]),
+            )
+
+            # Load LED positions and spatial mapping
+            self.led_positions = data["led_positions"]
+            self.led_spatial_mapping = data["led_spatial_mapping"].item()
+            self.metadata = data["metadata"].item() if "metadata" in data else {}
+
+            # Convert sparse matrix to dense patterns for visualization
+            logger.info("Converting sparse matrix to dense format for visualization...")
+            self.diffusion_patterns = self._sparse_to_dense_patterns()
+            self.is_sparse_format = True
+
+            logger.info(f"Loaded sparse patterns: {self.diffusion_patterns.shape}")
+            logger.info(f"Matrix shape: {self.sparse_matrix.shape}")
+            logger.info(
+                f"Matrix sparsity: {self.sparse_matrix.nnz / (self.sparse_matrix.shape[0] * self.sparse_matrix.shape[1]) * 100:.3f}%"
+            )
+            logger.info(f"Metadata: {self.metadata}")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to load single NPZ sparse patterns: {e}")
+            return False
+
     def _load_sparse_patterns_from_base(self, base_path: str) -> bool:
-        """Load sparse diffusion patterns from base path."""
+        """Load sparse diffusion patterns from base path (old dual-file format)."""
         try:
             matrix_path = f"{base_path}_matrix.npz"
             mapping_path = f"{base_path}_mapping.npz"
@@ -222,11 +282,17 @@ class DiffusionPatternVisualizer:
         """
         Convert sparse CSC matrix back to dense diffusion patterns for visualization.
 
+        The sparse matrix is stored as (384000, led_count*3) where:
+        - 384000 = 800 * 480 pixels (single channel)
+        - led_count*3 = independent LED color parameters (R, G, B)
+
         Returns:
             Dense patterns array (led_count, height, width, 3)
         """
         try:
-            led_count = self.sparse_matrix.shape[1]
+            # Calculate actual LED count: matrix columns / 3 channels
+            led_count = self.sparse_matrix.shape[1] // 3
+            pixels_per_channel = FRAME_HEIGHT * FRAME_WIDTH
 
             # Initialize dense patterns array
             patterns = np.zeros(
@@ -240,82 +306,57 @@ class DiffusionPatternVisualizer:
             }
 
             # Convert sparse matrix back to dense patterns
-            logger.info("Converting sparse matrix columns to dense patterns...")
+            logger.info(
+                f"Converting sparse matrix to dense patterns for {led_count} LEDs..."
+            )
             for physical_led_id in range(led_count):
                 # Get the matrix column index for this physical LED
-                matrix_idx = self.led_spatial_mapping.get(
+                matrix_led_idx = self.led_spatial_mapping.get(
                     physical_led_id, physical_led_id
                 )
-                if matrix_idx >= led_count:
+
+                if matrix_led_idx >= led_count:
                     logger.warning(
-                        f"Matrix index {matrix_idx} out of range for physical LED {physical_led_id}, using LED ID"
+                        f"Matrix index {matrix_led_idx} out of range for physical LED {physical_led_id}, using LED ID"
                     )
-                    matrix_idx = physical_led_id
+                    matrix_led_idx = physical_led_id
 
-                # Get the LED column from sparse matrix
-                led_column = self.sparse_matrix[:, matrix_idx].toarray().flatten()
+                # Extract R, G, B columns for this LED
+                # Matrix column layout: [R0, G0, B0, R1, G1, B1, ...]
+                r_col_idx = matrix_led_idx * 3 + 0  # Red channel
+                g_col_idx = matrix_led_idx * 3 + 1  # Green channel
+                b_col_idx = matrix_led_idx * 3 + 2  # Blue channel
 
-                # Reshape from flattened RGB to (height, width, 3)
-                # The sparse matrix uses channel-separate blocks format
-                total_pixels = FRAME_HEIGHT * FRAME_WIDTH * 3
-                if len(led_column) != total_pixels:
-                    logger.warning(
-                        f"Column length {len(led_column)} != expected {total_pixels}"
-                    )
-                    led_column = np.pad(
-                        led_column, (0, max(0, total_pixels - len(led_column)))
-                    )[:total_pixels]
-
-                # Reshape from channel-separate blocks format to (height, width, 3) format
                 try:
-                    # The sparse matrix uses channel-separate blocks format:
-                    # - First block: R channel data (pixels_per_channel elements)
-                    # - Second block: G channel data (pixels_per_channel elements)
-                    # - Third block: B channel data (pixels_per_channel elements)
-                    pixels_per_channel = FRAME_HEIGHT * FRAME_WIDTH
+                    # Get sparse columns and convert to dense
+                    r_column = self.sparse_matrix[:, r_col_idx].toarray().flatten()
+                    g_column = self.sparse_matrix[:, g_col_idx].toarray().flatten()
+                    b_column = self.sparse_matrix[:, b_col_idx].toarray().flatten()
 
-                    if len(led_column) == pixels_per_channel * 3:
-                        # Extract each channel block
-                        r_block = led_column[:pixels_per_channel]
-                        g_block = led_column[
-                            pixels_per_channel : 2 * pixels_per_channel
-                        ]
-                        b_block = led_column[
-                            2 * pixels_per_channel : 3 * pixels_per_channel
-                        ]
+                    # Reshape each channel from flattened pixels to (height, width)
+                    r_channel = r_column.reshape(FRAME_HEIGHT, FRAME_WIDTH)
+                    g_channel = g_column.reshape(FRAME_HEIGHT, FRAME_WIDTH)
+                    b_channel = b_column.reshape(FRAME_HEIGHT, FRAME_WIDTH)
 
-                        # Reshape each channel to (height, width)
-                        r_channel = r_block.reshape(FRAME_HEIGHT, FRAME_WIDTH)
-                        g_channel = g_block.reshape(FRAME_HEIGHT, FRAME_WIDTH)
-                        b_channel = b_block.reshape(FRAME_HEIGHT, FRAME_WIDTH)
+                    # Stack channels to create (height, width, 3)
+                    pattern_hwc = np.stack([r_channel, g_channel, b_channel], axis=2)
 
-                        # Stack channels to create (height, width, 3)
-                        pattern_hwc = np.stack(
-                            [r_channel, g_channel, b_channel], axis=2
-                        )
+                    # Convert to uint8 and store
+                    patterns[physical_led_id] = (pattern_hwc * 255).astype(np.uint8)
 
-                        # Convert to uint8 and store
-                        patterns[physical_led_id] = (pattern_hwc * 255).astype(np.uint8)
-                    else:
-                        logger.warning(
-                            f"LED {matrix_idx}: Column length {len(led_column)} != expected {pixels_per_channel * 3}"
-                        )
-                        # Fallback to zeros
-                        patterns[physical_led_id] = np.zeros(
-                            (FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8
-                        )
-
-                except ValueError as ve:
-                    logger.warning(f"Reshape failed for LED {matrix_idx}: {ve}")
+                except (ValueError, IndexError) as e:
+                    logger.warning(
+                        f"Failed to extract pattern for LED {physical_led_id}: {e}"
+                    )
                     # Fallback to zeros
                     patterns[physical_led_id] = np.zeros(
                         (FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8
                     )
 
                 # Progress reporting
-                if (matrix_idx + 1) % max(1, led_count // 10) == 0:
+                if (physical_led_id + 1) % max(1, led_count // 10) == 0:
                     logger.info(
-                        f"Converted {matrix_idx + 1}/{led_count} patterns to dense format..."
+                        f"Converted {physical_led_id + 1}/{led_count} patterns to dense format..."
                     )
 
             logger.info(
@@ -1172,7 +1213,7 @@ def main():
     )
     parser.add_argument(
         "--patterns",
-        help="Path to diffusion patterns file (.npz). Supports both dense format and sparse matrix format (auto-detects sparse files)",
+        help="Path to diffusion patterns file (.npz). Supports dense format, single NPZ sparse format, and legacy dual-file sparse format (auto-detects format)",
     )
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind server")
     parser.add_argument("--port", type=int, default=8080, help="Port to bind server")
@@ -1211,6 +1252,7 @@ def main():
         logger.error(
             "For sparse format: python tools/generate_synthetic_patterns.py --sparse --output test_patterns.npz"
         )
+        logger.error("The new sparse format stores everything in a single NPZ file.")
         return 1
 
     visualizer = DiffusionPatternVisualizer(

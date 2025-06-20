@@ -333,8 +333,8 @@ class SyntheticPatternGenerator:
         cols = []
         values = []
 
-        # Total number of pixels (RGB channels flattened)
-        total_pixels = self.frame_height * self.frame_width * 3
+        # Total number of pixels (single channel)
+        pixels_per_channel = self.frame_height * self.frame_width
 
         for physical_led_id in range(led_count):
             # Vary intensity between LEDs if requested
@@ -359,14 +359,14 @@ class SyntheticPatternGenerator:
 
             # Add to sparse matrix data
             for pixel_row, pixel_col, channel, intensity in significant_pixels:
-                # Calculate flattened pixel index (channel-separate blocks format)
-                # This matches the format expected by LED optimizer
-                pixels_per_channel = self.frame_height * self.frame_width
-                pixel_in_channel = pixel_row * self.frame_width + pixel_col
-                pixel_idx = channel * pixels_per_channel + pixel_in_channel
+                # Calculate flattened pixel index (single channel format)
+                pixel_idx = pixel_row * self.frame_width + pixel_col
+
+                # Each LED has 3 columns (R, G, B) - treat as 300 independent monochrome LEDs
+                matrix_column_idx = matrix_led_idx * 3 + channel
 
                 rows.append(pixel_idx)
-                cols.append(matrix_led_idx)
+                cols.append(matrix_column_idx)
                 values.append(intensity)
 
             # Progress reporting
@@ -375,7 +375,9 @@ class SyntheticPatternGenerator:
             elif (physical_led_id + 1) % 500 == 0:
                 elapsed = time.time() - start_time
                 eta = elapsed * (led_count / (physical_led_id + 1) - 1)
-                sparsity = len(values) / ((physical_led_id + 1) * total_pixels) * 100
+                sparsity = (
+                    len(values) / ((physical_led_id + 1) * pixels_per_channel * 3) * 100
+                )
                 logger.info(
                     f"Generated {physical_led_id + 1}/{led_count} sparse patterns... "
                     f"ETA: {eta:.1f}s, Sparsity: {sparsity:.2f}%"
@@ -384,7 +386,9 @@ class SyntheticPatternGenerator:
         # Create CSC matrix (optimal for A^T operations in LSQR)
         logger.info(f"Creating CSC matrix from {len(values)} non-zero entries...")
         A_sparse_csc = sp.csc_matrix(
-            (values, (rows, cols)), shape=(total_pixels, led_count), dtype=np.float32
+            (values, (rows, cols)),
+            shape=(pixels_per_channel, led_count * 3),
+            dtype=np.float32,
         )
 
         # Eliminate duplicate entries and compress
@@ -398,6 +402,106 @@ class SyntheticPatternGenerator:
         memory_mb = A_sparse_csc.data.nbytes / (1024 * 1024)
 
         logger.info(f"Generated sparse CSC matrix in {generation_time:.2f}s")
+        logger.info(f"Matrix shape: {A_sparse_csc.shape}")
+        logger.info(f"Non-zero entries: {A_sparse_csc.nnz:,}")
+        logger.info(f"Actual sparsity: {actual_sparsity:.3f}%")
+        logger.info(f"Memory usage: {memory_mb:.1f} MB")
+
+        return A_sparse_csc, self.led_spatial_mapping
+
+    def convert_dense_to_sparse_csc(
+        self, dense_patterns: np.ndarray, sparsity_threshold: float
+    ) -> Tuple[sp.csc_matrix, dict]:
+        """
+        Convert dense patterns to sparse CSC matrix format.
+
+        Args:
+            dense_patterns: Dense patterns array (led_count, height, width, 3)
+            sparsity_threshold: Threshold below which pixels are considered zero
+
+        Returns:
+            Tuple of (sparse_csc_matrix, led_spatial_mapping)
+        """
+        logger.info(
+            f"Converting dense patterns {dense_patterns.shape} to sparse matrix..."
+        )
+        logger.info(f"Sparsity threshold: {sparsity_threshold}")
+
+        start_time = time.time()
+        led_count = dense_patterns.shape[0]
+
+        # Generate LED positions and spatial mapping if not already done
+        if self.led_positions is None or len(self.led_positions) != led_count:
+            self.generate_led_positions(led_count)
+
+        # Prepare sparse matrix data structures
+        rows = []
+        cols = []
+        values = []
+
+        # Total number of pixels (single channel)
+        pixels_per_channel = self.frame_height * self.frame_width
+
+        for physical_led_id in range(led_count):
+            # Get spatially-ordered matrix column index
+            matrix_led_idx = self.led_spatial_mapping[physical_led_id]
+
+            # Process all three color channels for this LED
+            for channel in range(3):
+                # Extract the pattern for this LED and channel (HWC format)
+                pattern = dense_patterns[physical_led_id, :, :, channel]
+
+                # Convert to [0,1] range and find significant pixels
+                pattern_normalized = pattern.astype(np.float32) / 255.0
+                significant_pixels = np.where(pattern_normalized > sparsity_threshold)
+                pixel_rows, pixel_cols = significant_pixels
+
+                for idx in range(len(pixel_rows)):
+                    pixel_row = pixel_rows[idx]
+                    pixel_col = pixel_cols[idx]
+                    intensity = pattern_normalized[pixel_row, pixel_col]
+
+                    # Calculate flattened pixel index (single channel format)
+                    pixel_idx = pixel_row * self.frame_width + pixel_col
+
+                    # Each LED has 3 columns (R, G, B) - treat as independent monochrome LEDs
+                    matrix_column_idx = matrix_led_idx * 3 + channel
+
+                    rows.append(pixel_idx)
+                    cols.append(matrix_column_idx)
+                    values.append(intensity)
+
+            # Progress reporting
+            if (physical_led_id + 1) % 100 == 0:
+                elapsed = time.time() - start_time
+                eta = elapsed * (led_count / (physical_led_id + 1) - 1)
+                sparsity = (
+                    len(values) / ((physical_led_id + 1) * pixels_per_channel * 3) * 100
+                )
+                logger.info(
+                    f"Converted {physical_led_id + 1}/{led_count} patterns... "
+                    f"ETA: {eta:.1f}s, Sparsity: {sparsity:.2f}%"
+                )
+
+        # Create CSC matrix (optimal for A^T operations in LSQR)
+        logger.info(f"Creating CSC matrix from {len(values)} non-zero entries...")
+        A_sparse_csc = sp.csc_matrix(
+            (values, (rows, cols)),
+            shape=(pixels_per_channel, led_count * 3),
+            dtype=np.float32,
+        )
+
+        # Eliminate duplicate entries and compress
+        A_sparse_csc.eliminate_zeros()
+        A_sparse_csc = A_sparse_csc.tocsc()  # Ensure proper CSC format
+
+        conversion_time = time.time() - start_time
+        actual_sparsity = (
+            A_sparse_csc.nnz / (A_sparse_csc.shape[0] * A_sparse_csc.shape[1]) * 100
+        )
+        memory_mb = A_sparse_csc.data.nbytes / (1024 * 1024)
+
+        logger.info(f"Converted to sparse CSC matrix in {conversion_time:.2f}s")
         logger.info(f"Matrix shape: {A_sparse_csc.shape}")
         logger.info(f"Non-zero entries: {A_sparse_csc.nnz:,}")
         logger.info(f"Actual sparsity: {actual_sparsity:.3f}%")
@@ -528,15 +632,11 @@ class SyntheticPatternGenerator:
             output_dir = Path(output_path).parent
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Save sparse matrix
-            matrix_path = output_path.replace(".npz", "_matrix.npz")
-            sp.save_npz(matrix_path, sparse_matrix)
-
-            # Prepare metadata for mapping file
+            # Prepare metadata
             save_metadata = {
                 "generator": "SyntheticPatternGenerator",
                 "format": "sparse_csc",
-                "led_count": sparse_matrix.shape[1],
+                "led_count": sparse_matrix.shape[1] // 3,
                 "frame_width": self.frame_width,
                 "frame_height": self.frame_height,
                 "matrix_shape": list(sparse_matrix.shape),
@@ -551,23 +651,27 @@ class SyntheticPatternGenerator:
             if metadata:
                 save_metadata.update(metadata)
 
-            # Save LED spatial mapping and metadata
-            mapping_path = output_path.replace(".npz", "_mapping.npz")
+            # Save everything in a single NPZ file
+            # Convert sparse matrix to component arrays for storage
             np.savez_compressed(
-                mapping_path,
+                output_path,
+                # Sparse matrix components
+                matrix_data=sparse_matrix.data,
+                matrix_indices=sparse_matrix.indices,
+                matrix_indptr=sparse_matrix.indptr,
+                matrix_shape=sparse_matrix.shape,
+                # LED information
                 led_positions=self.led_positions,
                 led_spatial_mapping=led_spatial_mapping,
+                # Metadata
                 metadata=save_metadata,
             )
 
             # Log file info
-            matrix_size = Path(matrix_path).stat().st_size / (1024 * 1024)  # MB
-            mapping_size = Path(mapping_path).stat().st_size / (1024 * 1024)  # MB
+            file_size = Path(output_path).stat().st_size / (1024 * 1024)  # MB
 
-            logger.info(f"Saved sparse matrix to {matrix_path}")
-            logger.info(f"Saved spatial mapping to {mapping_path}")
-            logger.info(f"Matrix file size: {matrix_size:.1f} MB")
-            logger.info(f"Mapping file size: {mapping_size:.1f} MB")
+            logger.info(f"Saved sparse matrix and mapping to {output_path}")
+            logger.info(f"File size: {file_size:.1f} MB")
             logger.info(f"Matrix shape: {sparse_matrix.shape}")
             logger.info(f"Non-zero entries: {sparse_matrix.nnz:,}")
 
@@ -707,12 +811,17 @@ def main():
         }
 
         if args.sparse:
-            # Generate sparse CSC matrix
-            logger.info("Generating sparse CSC matrix format...")
-            sparse_matrix, led_mapping = generator.generate_sparse_csc_matrix(
+            # Generate dense patterns first, then convert to sparse
+            logger.info("Generating dense patterns first...")
+            patterns = generator.generate_patterns(
                 led_count=args.led_count,
                 pattern_type=args.pattern_type,
                 intensity_variation=not args.no_intensity_variation,
+            )
+
+            logger.info("Converting dense patterns to sparse CSC matrix...")
+            sparse_matrix, led_mapping = generator.convert_dense_to_sparse_csc(
+                patterns, args.sparsity_threshold
             )
 
             # Add sparse-specific metadata

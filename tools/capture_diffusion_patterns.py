@@ -493,8 +493,8 @@ class DiffusionPatternCapture:
         cols = []
         values = []
 
-        # Total number of pixels (RGB channels flattened)
-        total_pixels = FRAME_HEIGHT * FRAME_WIDTH * 3
+        # Total number of pixels (single channel)
+        pixels_per_channel = FRAME_HEIGHT * FRAME_WIDTH
         threshold_uint8 = int(sparsity_threshold * 255)  # Convert to uint8 scale
 
         for physical_led_id in range(LED_COUNT):
@@ -516,19 +516,21 @@ class DiffusionPatternCapture:
                         float(pattern[pixel_row, pixel_col]) / 255.0
                     )  # Normalize to [0,1]
 
-                    # Calculate flattened pixel index (channel-separate blocks format)
-                    # This matches the format expected by LED optimizer
-                    pixels_per_channel = FRAME_HEIGHT * FRAME_WIDTH
-                    pixel_in_channel = pixel_row * FRAME_WIDTH + pixel_col
-                    pixel_idx = channel * pixels_per_channel + pixel_in_channel
+                    # Calculate flattened pixel index (single channel format)
+                    pixel_idx = pixel_row * FRAME_WIDTH + pixel_col
+
+                    # Each LED has 3 columns (R, G, B) - treat as independent monochrome LEDs
+                    matrix_column_idx = matrix_led_idx * 3 + channel
 
                     rows.append(pixel_idx)
-                    cols.append(matrix_led_idx)
+                    cols.append(matrix_column_idx)
                     values.append(intensity)
 
             # Progress reporting
             if (physical_led_id + 1) % 500 == 0:
-                sparsity = len(values) / ((physical_led_id + 1) * total_pixels) * 100
+                sparsity = (
+                    len(values) / ((physical_led_id + 1) * pixels_per_channel * 3) * 100
+                )
                 logger.info(
                     f"Processed {physical_led_id + 1}/{LED_COUNT} LEDs... "
                     f"Sparsity: {sparsity:.2f}%"
@@ -537,7 +539,9 @@ class DiffusionPatternCapture:
         # Create CSC matrix (optimal for A^T operations in LSQR)
         logger.info(f"Creating CSC matrix from {len(values)} non-zero entries...")
         A_sparse_csc = sp.csc_matrix(
-            (values, (rows, cols)), shape=(total_pixels, LED_COUNT), dtype=np.float32
+            (values, (rows, cols)),
+            shape=(pixels_per_channel, LED_COUNT * 3),
+            dtype=np.float32,
         )
 
         # Eliminate duplicate entries and compress
@@ -583,15 +587,11 @@ class DiffusionPatternCapture:
             output_dir = Path(output_path).parent
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Save sparse matrix
-            matrix_path = output_path.replace(".npz", "_matrix.npz")
-            sp.save_npz(matrix_path, sparse_matrix)
-
-            # Prepare metadata for mapping file
+            # Prepare metadata
             save_metadata = {
                 "generator": "DiffusionPatternCapture",
                 "format": "sparse_csc",
-                "led_count": LED_COUNT,
+                "led_count": sparse_matrix.shape[1] // 3,
                 "frame_width": FRAME_WIDTH,
                 "frame_height": FRAME_HEIGHT,
                 "matrix_shape": list(sparse_matrix.shape),
@@ -606,23 +606,26 @@ class DiffusionPatternCapture:
                 "capture_fps": self.capture_fps,
             }
 
-            # Save LED spatial mapping and metadata
-            mapping_path = output_path.replace(".npz", "_mapping.npz")
+            # Save everything in a single NPZ file
             np.savez_compressed(
-                mapping_path,
+                output_path,
+                # Sparse matrix components
+                matrix_data=sparse_matrix.data,
+                matrix_indices=sparse_matrix.indices,
+                matrix_indptr=sparse_matrix.indptr,
+                matrix_shape=sparse_matrix.shape,
+                # LED information
                 led_positions=led_positions,
                 led_spatial_mapping=led_spatial_mapping,
+                # Metadata
                 metadata=save_metadata,
             )
 
             # Log file info
-            matrix_size = Path(matrix_path).stat().st_size / (1024 * 1024)  # MB
-            mapping_size = Path(mapping_path).stat().st_size / (1024 * 1024)  # MB
+            file_size = Path(output_path).stat().st_size / (1024 * 1024)  # MB
 
-            logger.info(f"Saved sparse matrix to {matrix_path}")
-            logger.info(f"Saved spatial mapping to {mapping_path}")
-            logger.info(f"Matrix file size: {matrix_size:.1f} MB")
-            logger.info(f"Mapping file size: {mapping_size:.1f} MB")
+            logger.info(f"Saved sparse matrix and mapping to {output_path}")
+            logger.info(f"File size: {file_size:.1f} MB")
 
             return True
 
