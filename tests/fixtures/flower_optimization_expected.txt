@@ -1,0 +1,7 @@
+Test fixture created for optimization regression test
+Input image: env/lib/python3.10/site-packages/sklearn/datasets/images/flower.jpg
+Patterns: tests/fixtures/test_clean
+Max iterations: 15
+LED count: 100
+MSE: 0.040909
+Optimization time: 0.549s

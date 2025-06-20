@@ -196,7 +196,6 @@ cython_debug/
 # Prismatron specific
 # Diffusion patterns - large binary files that shouldn't be in git
 diffusion_patterns/
-*.npz
 
 # Test images
 test_images/
