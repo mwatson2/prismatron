@@ -83,10 +83,10 @@ class LEDOptimizer:
         )
         self.use_gpu = use_gpu and CUPY_AVAILABLE
 
-        # Optimization parameters for LSQR
-        self.max_iterations = 50  # Fewer iterations for real-time performance
-        self.convergence_threshold = 1e-6
-        self.step_size_scaling = 0.8  # Conservative step scaling for stability
+        # Optimization parameters for LSQR (tuned for real-time performance)
+        self.max_iterations = 10  # Further reduced for sub-100ms performance
+        self.convergence_threshold = 1e-3  # Further relaxed for faster convergence
+        self.step_size_scaling = 0.9  # Slightly more aggressive for faster convergence
 
         # Sparse matrix state (pre-computed for performance)
         self._sparse_matrix_csc: Optional[
@@ -95,6 +95,29 @@ class LEDOptimizer:
         self._sparse_matrix_csr: Optional[
             sp.csr_matrix
         ] = None  # CSR for A operations (optimized for forward)
+
+        # Pre-computed RGB channel matrices (moved from frame optimization)
+        self._A_r_csc: Optional[sp.csc_matrix] = None
+        self._A_g_csc: Optional[sp.csc_matrix] = None
+        self._A_b_csc: Optional[sp.csc_matrix] = None
+        self._A_r_csr: Optional[sp.csr_matrix] = None
+        self._A_g_csr: Optional[sp.csr_matrix] = None
+        self._A_b_csr: Optional[sp.csr_matrix] = None
+
+        # Pre-computed GPU matrices (if using GPU)
+        self._A_r_csc_gpu = None
+        self._A_g_csc_gpu = None
+        self._A_b_csc_gpu = None
+        self._A_r_csr_gpu = None
+        self._A_g_csr_gpu = None
+        self._A_b_csr_gpu = None
+
+        # Pre-allocated arrays for target vectors (avoid repeated allocation)
+        self._target_r_buffer = None
+        self._target_g_buffer = None
+        self._target_b_buffer = None
+        self._led_init_buffer = None
+
         self._led_spatial_mapping: Optional[Dict[int, int]] = None
         self._led_positions: Optional[np.ndarray] = None
         self._matrix_loaded = False
@@ -161,7 +184,8 @@ class LEDOptimizer:
             if not self._load_sparse_matrix():
                 logger.error("Sparse diffusion matrix not found")
                 logger.error(
-                    "Generate patterns first with: python tools/generate_synthetic_patterns.py --sparse"
+                    "Generate patterns first with: "
+                    "python tools/generate_synthetic_patterns.py --sparse"
                 )
                 return False
 
@@ -219,8 +243,40 @@ class LEDOptimizer:
                 )
                 return False
 
-            # Note: With unified memory, no explicit GPU transfers needed
-            # CuPy will work directly with the sparse matrices as needed
+            # Pre-compute RGB channel matrices to avoid per-frame overhead
+            logger.info("Pre-computing RGB channel matrices...")
+            self._A_r_csc = self._sparse_matrix_csc[:, 0::3]  # Red channels
+            self._A_g_csc = self._sparse_matrix_csc[:, 1::3]  # Green channels
+            self._A_b_csc = self._sparse_matrix_csc[:, 2::3]  # Blue channels
+
+            self._A_r_csr = self._sparse_matrix_csr[:, 0::3]
+            self._A_g_csr = self._sparse_matrix_csr[:, 1::3]
+            self._A_b_csr = self._sparse_matrix_csr[:, 2::3]
+
+            # Pre-compute GPU matrices if using GPU
+            if self.use_gpu and CUPY_AVAILABLE:
+                try:
+                    logger.info("Pre-computing GPU matrices...")
+                    self._A_r_csc_gpu = cupy_csc_matrix(self._A_r_csc)
+                    self._A_g_csc_gpu = cupy_csc_matrix(self._A_g_csc)
+                    self._A_b_csc_gpu = cupy_csc_matrix(self._A_b_csc)
+
+                    self._A_r_csr_gpu = cupy_csr_matrix(self._A_r_csr)
+                    self._A_g_csr_gpu = cupy_csr_matrix(self._A_g_csr)
+                    self._A_b_csr_gpu = cupy_csr_matrix(self._A_b_csr)
+                    logger.info("GPU matrices pre-computed successfully")
+                except Exception as e:
+                    logger.warning(
+                        f"GPU matrix pre-computation failed, will fallback to CPU: {e}"
+                    )
+                    self.use_gpu = False
+
+            # Pre-allocate target buffers to avoid repeated memory allocation
+            pixels = FRAME_HEIGHT * FRAME_WIDTH
+            self._target_r_buffer = np.empty(pixels, dtype=np.float32)
+            self._target_g_buffer = np.empty(pixels, dtype=np.float32)
+            self._target_b_buffer = np.empty(pixels, dtype=np.float32)
+            self._led_init_buffer = np.empty(self._actual_led_count, dtype=np.float32)
 
             self._matrix_loaded = True
             logger.info(f"Loaded sparse matrix from {patterns_path}")
@@ -260,6 +316,7 @@ class LEDOptimizer:
         Returns:
             OptimizationResult with LED values and metrics
         """
+        # Initialize timing before any potential errors
         start_time = time.time()
 
         try:
@@ -272,49 +329,38 @@ class LEDOptimizer:
                     f"Target frame shape {target_frame.shape} != {(FRAME_HEIGHT, FRAME_WIDTH, 3)}"
                 )
 
-            # Process RGB channels separately - matrix has columns [LED0_R, LED0_G, LED0_B, LED1_R, LED1_G, LED1_B, ...]
-            # For proper RGB optimization, we solve 3 separate problems:
-            # A_red @ led_red_values = target_red_channel
-            # A_green @ led_green_values = target_green_channel
-            # A_blue @ led_blue_values = target_blue_channel
+            # Process RGB channels separately using pre-allocated buffers
             target_rgb_normalized = target_frame.astype(np.float32) / 255.0
 
-            # Extract RGB channels as flat arrays (384000 pixels each)
-            target_r = target_rgb_normalized[:, :, 0].reshape(-1)  # Red channel
-            target_g = target_rgb_normalized[:, :, 1].reshape(-1)  # Green channel
-            target_b = target_rgb_normalized[:, :, 2].reshape(-1)  # Blue channel
+            # Extract RGB channels into pre-allocated buffers (avoid memory allocation)
+            np.copyto(self._target_r_buffer, target_rgb_normalized[:, :, 0].ravel())
+            np.copyto(self._target_g_buffer, target_rgb_normalized[:, :, 1].ravel())
+            np.copyto(self._target_b_buffer, target_rgb_normalized[:, :, 2].ravel())
 
-            # Extract RGB matrix columns (every 3rd column starting from 0, 1, 2)
-            A_csc = self._sparse_matrix_csc
-            A_csr = self._sparse_matrix_csr
+            target_r = self._target_r_buffer
+            target_g = self._target_g_buffer
+            target_b = self._target_b_buffer
 
-            # Split matrix into R, G, B components
-            A_r_csc = A_csc[:, 0::3]  # Columns 0, 3, 6, ... (Red LEDs)
-            A_g_csc = A_csc[:, 1::3]  # Columns 1, 4, 7, ... (Green LEDs)
-            A_b_csc = A_csc[:, 2::3]  # Columns 2, 5, 8, ... (Blue LEDs)
+            # Use pre-computed RGB matrices (no matrix splitting per frame)
+            A_r_csc = self._A_r_csc
+            A_g_csc = self._A_g_csc
+            A_b_csc = self._A_b_csc
+            A_r_csr = self._A_r_csr
+            A_g_csr = self._A_g_csr
+            A_b_csr = self._A_b_csr
 
-            A_r_csr = A_csr[:, 0::3]
-            A_g_csr = A_csr[:, 1::3]
-            A_b_csr = A_csr[:, 2::3]
-
-            # Initialize LED values for each channel
+            # Initialize LED values for each channel using pre-allocated buffer
             if initial_values is not None:
                 if initial_values.ndim == 1:
-                    led_r_init = np.full(
-                        self._actual_led_count,
-                        initial_values[0] / 255.0,
-                        dtype=np.float32,
+                    init_val = (
+                        initial_values[0] / 255.0
+                        if initial_values[0] > 1.0
+                        else initial_values[0]
                     )
-                    led_g_init = np.full(
-                        self._actual_led_count,
-                        initial_values[0] / 255.0,
-                        dtype=np.float32,
-                    )
-                    led_b_init = np.full(
-                        self._actual_led_count,
-                        initial_values[0] / 255.0,
-                        dtype=np.float32,
-                    )
+                    self._led_init_buffer.fill(init_val)
+                    led_r_init = self._led_init_buffer.copy()
+                    led_g_init = self._led_init_buffer.copy()
+                    led_b_init = self._led_init_buffer.copy()
                 else:
                     initial_normalized = (
                         initial_values / 255.0
@@ -325,15 +371,16 @@ class LEDOptimizer:
                     led_g_init = initial_normalized[:, 1]
                     led_b_init = initial_normalized[:, 2]
             else:
-                # Start with 50% brightness for better convergence
-                led_r_init = np.full(self._actual_led_count, 0.5, dtype=np.float32)
-                led_g_init = np.full(self._actual_led_count, 0.5, dtype=np.float32)
-                led_b_init = np.full(self._actual_led_count, 0.5, dtype=np.float32)
+                # Start with 50% brightness for better convergence - reuse buffer
+                self._led_init_buffer.fill(0.5)
+                led_r_init = self._led_init_buffer.copy()
+                led_g_init = self._led_init_buffer.copy()
+                led_b_init = self._led_init_buffer.copy()
 
             # Solve 3 separate optimization problems
-            if self.use_gpu and CUPY_AVAILABLE:
+            if self.use_gpu and CUPY_AVAILABLE and self._A_r_csc_gpu is not None:
                 try:
-                    # GPU solve for all channels
+                    # GPU solve for all channels using pre-computed matrices
                     target_r_gpu = cp.asarray(target_r, dtype=cp.float32)
                     target_g_gpu = cp.asarray(target_g, dtype=cp.float32)
                     target_b_gpu = cp.asarray(target_b, dtype=cp.float32)
@@ -342,33 +389,25 @@ class LEDOptimizer:
                     led_g_gpu = cp.asarray(led_g_init, dtype=cp.float32)
                     led_b_gpu = cp.asarray(led_b_init, dtype=cp.float32)
 
-                    # Convert matrices to CuPy
-                    A_r_csc_gpu = cupy_csc_matrix(A_r_csc)
-                    A_g_csc_gpu = cupy_csc_matrix(A_g_csc)
-                    A_b_csc_gpu = cupy_csc_matrix(A_b_csc)
-
-                    A_r_csr_gpu = cupy_csr_matrix(A_r_csr)
-                    A_g_csr_gpu = cupy_csr_matrix(A_g_csr)
-                    A_b_csr_gpu = cupy_csr_matrix(A_b_csr)
-
+                    # Use pre-computed GPU matrices (no conversion per frame)
                     # Solve each channel
                     led_r_solved = self._solve_lsqr_gpu(
-                        A_r_csc_gpu,
-                        A_r_csr_gpu,
+                        self._A_r_csc_gpu,
+                        self._A_r_csr_gpu,
                         target_r_gpu,
                         led_r_gpu,
                         max_iterations,
                     )
                     led_g_solved = self._solve_lsqr_gpu(
-                        A_g_csc_gpu,
-                        A_g_csr_gpu,
+                        self._A_g_csc_gpu,
+                        self._A_g_csr_gpu,
                         target_g_gpu,
                         led_g_gpu,
                         max_iterations,
                     )
                     led_b_solved = self._solve_lsqr_gpu(
-                        A_b_csc_gpu,
-                        A_b_csr_gpu,
+                        self._A_b_csc_gpu,
+                        self._A_b_csr_gpu,
                         target_b_gpu,
                         led_b_gpu,
                         max_iterations,
@@ -393,6 +432,13 @@ class LEDOptimizer:
                     )
             else:
                 # CPU solve for all channels
+                if not self.use_gpu:
+                    logger.debug("Using CPU for optimization (GPU disabled)")
+                elif not CUPY_AVAILABLE:
+                    logger.warning("Falling back to CPU: CuPy not available")
+                elif self._A_r_csc_gpu is None:
+                    logger.warning("Falling back to CPU: GPU matrices not pre-computed")
+
                 led_r_values = self._solve_lsqr_cpu(
                     A_r_csc, A_r_csr, target_r, led_r_init, max_iterations
                 )
