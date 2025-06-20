@@ -401,3 +401,40 @@ python -m src.consumer.consumer
 python -m src.web.api_server
 ```
 # Test pre-commit hooks
+
+## WLED Keepalive Feature
+
+The WLED client now includes automatic keepalive functionality to prevent WLED controllers from reverting to local patterns when no new data is received for a few seconds.
+
+### How it works:
+- When connected, the WLED client automatically starts a background thread
+- The thread repeats the last sent LED pattern every second (configurable)
+- Only activates when no new data has been sent for the keepalive interval
+- Automatically stops when disconnected or disabled
+
+### Configuration:
+```python
+config = WLEDConfig(
+    host="wled.local",
+    led_count=2600,
+    enable_keepalive=True,      # Enable/disable keepalive (default: True)
+    keepalive_interval=1.0      # Interval in seconds (default: 1.0)
+)
+```
+
+### Runtime control:
+```python
+client.set_keepalive_enabled(True)      # Enable keepalive
+client.set_keepalive_enabled(False)     # Disable keepalive
+client.set_keepalive_interval(2.0)      # Change interval to 2 seconds
+```
+
+### Monitoring:
+```python
+stats = client.get_statistics()
+print(f"Keepalive enabled: {stats['keepalive_enabled']}")
+print(f"Keepalive active: {stats['keepalive_active']}")
+print(f"Keepalive interval: {stats['keepalive_interval']}s")
+```
+
+This ensures that LED patterns remain stable and don't flicker back to WLED's default patterns during playback.

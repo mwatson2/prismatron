@@ -84,6 +84,8 @@ class WLEDConfig:
     max_fps: float = 60.0  # Maximum frame rate
     persistent_retry: bool = False  # Retry connection indefinitely
     retry_interval: float = 10.0  # Seconds between connection retries
+    keepalive_interval: float = 1.0  # Seconds between keepalive transmissions
+    enable_keepalive: bool = True  # Whether to enable keepalive functionality
 
 
 class WLEDClient:
@@ -117,6 +119,14 @@ class WLEDClient:
 
         # WLED status from last query
         self.wled_status: Optional[Dict[str, Any]] = None
+
+        # Keepalive functionality to prevent WLED from reverting to local patterns
+        self._last_led_data: Optional[bytes] = None
+        self._keepalive_thread: Optional[threading.Thread] = None
+        self._keepalive_stop_event = threading.Event()
+        self._keepalive_interval = self.config.keepalive_interval
+        self._enable_keepalive = self.config.enable_keepalive
+        self._last_data_time = 0.0
 
         # Calculate packet fragmentation info
         self._calculate_fragmentation()
@@ -194,6 +204,9 @@ class WLEDClient:
                             f"(no status response)"
                         )
 
+                    # Start keepalive thread if enabled
+                    if self._enable_keepalive:
+                        self._start_keepalive_thread()
                     return True
                 else:
                     if not self.config.persistent_retry:
@@ -242,6 +255,9 @@ class WLEDClient:
 
     def disconnect(self) -> None:
         """Disconnect from WLED controller."""
+        # Stop keepalive thread first
+        self._stop_keepalive_thread()
+
         if self.socket:
             try:
                 self.socket.close()
@@ -442,6 +458,12 @@ class WLEDClient:
 
         # Send data in fragments
         result = self._send_fragmented_data(led_data_bytes)
+
+        # Store last LED data for keepalive if transmission was successful
+        if result.success:
+            with self._lock:
+                self._last_led_data = led_data_bytes
+                self._last_data_time = current_time
 
         # Calculate frame rate
         if result.success and self.last_frame_time > 0:
@@ -736,6 +758,11 @@ class WLEDClient:
                 "max_fps": self.config.max_fps,
                 "estimated_throughput_mbps": throughput_mbps,
                 "average_fps": avg_fps,
+                "keepalive_enabled": self._enable_keepalive,
+                "keepalive_active": self._keepalive_thread is not None
+                and self._keepalive_thread.is_alive(),
+                "keepalive_interval": self._keepalive_interval,
+                "last_data_time": self._last_data_time,
             }
 
     def reset_statistics(self) -> None:
@@ -773,6 +800,116 @@ class WLEDClient:
             logger.warning(f"Failed to refresh WLED status: {e}")
 
         return False
+
+    def _start_keepalive_thread(self) -> None:
+        """Start the keepalive thread to repeat last LED pattern."""
+        if self._keepalive_thread and self._keepalive_thread.is_alive():
+            return  # Thread already running
+
+        self._keepalive_stop_event.clear()
+        self._keepalive_thread = threading.Thread(
+            target=self._keepalive_worker, name="WLEDKeepalive", daemon=True
+        )
+        self._keepalive_thread.start()
+        logger.info("Started WLED keepalive thread")
+
+    def _stop_keepalive_thread(self) -> None:
+        """Stop the keepalive thread."""
+        if self._keepalive_thread and self._keepalive_thread.is_alive():
+            self._keepalive_stop_event.set()
+            self._keepalive_thread.join(timeout=2.0)
+            if self._keepalive_thread.is_alive():
+                logger.warning("Keepalive thread did not stop cleanly")
+            else:
+                logger.info("Stopped WLED keepalive thread")
+
+        # Always clear the thread reference
+        self._keepalive_thread = None
+
+    def _keepalive_worker(self) -> None:
+        """
+        Background thread worker that sends keepalive packets.
+
+        Repeats the last LED pattern every second if no new data has been sent
+        to prevent WLED from reverting to local patterns.
+        """
+        logger.debug("WLED keepalive worker thread started")
+
+        while not self._keepalive_stop_event.is_set():
+            try:
+                # Wait for the keepalive interval or stop event
+                if self._keepalive_stop_event.wait(self._keepalive_interval):
+                    break  # Stop event was set
+
+                # Check if we're still connected
+                if not self.is_connected or not self.socket:
+                    continue
+
+                current_time = time.time()
+
+                # Check if we have data to repeat and if enough time has passed
+                with self._lock:
+                    last_data = self._last_led_data
+                    last_time = self._last_data_time
+
+                # Only send keepalive if:
+                # 1. We have LED data to repeat
+                # 2. It's been more than keepalive_interval since last data
+                if (
+                    last_data is not None
+                    and current_time - last_time >= self._keepalive_interval
+                ):
+                    try:
+                        # Send the same data again (bypass flow control for keepalive)
+                        result = self._send_fragmented_data(last_data)
+                        if result.success:
+                            logger.debug("Sent WLED keepalive packet")
+                        else:
+                            logger.warning(f"Keepalive packet failed: {result.errors}")
+
+                    except Exception as e:
+                        logger.warning(f"Keepalive transmission error: {e}")
+
+            except Exception as e:
+                logger.error(f"Keepalive worker error: {e}")
+                # Continue running despite errors
+
+        logger.debug("WLED keepalive worker thread stopped")
+
+    def set_keepalive_interval(self, interval: float) -> None:
+        """
+        Set the keepalive interval.
+
+        Args:
+            interval: Keepalive interval in seconds
+        """
+        if interval < 0.1:
+            raise ValueError("Keepalive interval must be at least 0.1 seconds")
+
+        with self._lock:
+            self._keepalive_interval = interval
+
+        logger.info(f"Set WLED keepalive interval to {interval}s")
+
+    def set_keepalive_enabled(self, enabled: bool) -> None:
+        """
+        Enable or disable keepalive functionality.
+
+        Args:
+            enabled: Whether to enable keepalive
+        """
+        with self._lock:
+            was_enabled = self._enable_keepalive
+            self._enable_keepalive = enabled
+
+        if enabled and not was_enabled and self.is_connected:
+            # Start keepalive if we're connected and it wasn't running
+            self._start_keepalive_thread()
+        elif not enabled and was_enabled:
+            # Stop keepalive if it was running
+            self._stop_keepalive_thread()
+
+        logger.info(f"WLED keepalive {'enabled' if enabled else 'disabled'}")
 
     def __enter__(self):
         """Context manager entry."""
