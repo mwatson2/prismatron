@@ -17,6 +17,7 @@ from enum import IntEnum
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+import requests
 
 from ..const import (
     DDP_HEADER_SIZE,
@@ -254,107 +255,119 @@ class WLEDClient:
 
     def _send_query(self) -> Tuple[bool, Optional[Dict[str, Any]]]:
         """
-        Send a query packet to test connectivity and get WLED status.
+        Query WLED device via HTTP to test connectivity and get status.
+
+        WLED does not respond to DDP query packets, so we use the HTTP API instead.
+        Fetches device information from http://wled.local/json/info
 
         Returns:
             Tuple of (success, status_dict) where status_dict contains WLED info
         """
         try:
-            # Create DDP query packet for JSON status (Destination ID 251)
-            flags = DDPFlags.VER1 | DDPFlags.QUERY
+            # Construct HTTP URL - support both hostname and IP address
+            if self.config.host in ["wled.local", "WLED.local"]:
+                base_url = f"http://{self.config.host}"
+            else:
+                # For IP addresses, use the IP directly
+                base_url = f"http://{self.config.host}"
+
+            info_url = f"{base_url}/json/info"
+
+            # Send HTTP GET request with timeout
+            response = requests.get(
+                info_url,
+                timeout=self.config.timeout,
+                headers={"Accept": "application/json"},
+            )
+
+            # Check if request was successful
+            if response.status_code == 200:
+                try:
+                    status = response.json()
+
+                    # Validate this is a WLED device by checking the brand field
+                    if status.get("brand") == "WLED":
+                        logger.info(
+                            f"WLED device detected: {status.get('name', 'Unknown')} "
+                            f"v{status.get('ver', 'Unknown')} at {base_url}"
+                        )
+
+                        # Log additional useful info
+                        leds_info = status.get("leds", {})
+                        if isinstance(leds_info, dict) and "count" in leds_info:
+                            logger.info(f"LED count: {leds_info['count']}")
+
+                        # Test UDP connectivity by sending a simple packet
+                        # (without expecting a response since WLED doesn't reply to DDP queries)
+                        udp_success = self._test_udp_connectivity()
+                        if not udp_success:
+                            logger.warning(
+                                "UDP connectivity test failed, but HTTP works"
+                            )
+
+                        return True, status
+                    else:
+                        logger.warning(
+                            f"Device at {base_url} responded but is not WLED "
+                            f"(brand: {status.get('brand', 'Unknown')})"
+                        )
+                        return False, None
+
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Invalid JSON response from {info_url}: {e}")
+                    return False, None
+
+            else:
+                logger.warning(
+                    f"HTTP request to {info_url} failed with status {response.status_code}"
+                )
+                return False, None
+
+        except requests.exceptions.Timeout:
+            logger.warning(
+                f"HTTP request to WLED timed out after {self.config.timeout}s"
+            )
+            return False, None
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"Failed to connect to WLED at {self.config.host}")
+            return False, None
+        except Exception as e:
+            logger.error(f"WLED HTTP query error: {e}")
+            return False, None
+
+    def _test_udp_connectivity(self) -> bool:
+        """
+        Test UDP connectivity by sending a simple DDP packet.
+
+        WLED doesn't respond to DDP queries, but we can verify that
+        we can send UDP packets to the device.
+
+        Returns:
+            True if UDP packet was sent successfully, False otherwise
+        """
+        try:
+            if self.socket is None:
+                return False
+
+            # Send a minimal DDP packet with no data (just header)
+            flags = DDPFlags.VER1
             packet = struct.pack(
                 ">BBBBLH",
                 flags,  # Flags
-                0,  # Sequence (not used for query)
+                0,  # Sequence
                 DDPDataType.RGB24,  # Data type
-                251,  # Destination ID 251 for JSON status
+                0,  # Destination ID
                 0,  # Data offset (4 bytes)
-                0,
-            )  # Data length
+                0,  # Data length
+            )
 
-            # Send query packet
-            if self.socket is None:
-                return False, None
+            # Send the packet - don't wait for response since WLED doesn't reply to queries
             self.socket.sendto(packet, (self.config.host, self.config.port))
-
-            # Wait for response
-            try:
-                # Use a larger buffer to accommodate JSON responses
-                # WLED JSON status can be quite large (1KB+ with all info)
-                max_response_size = 8192
-                response_data, addr = self.socket.recvfrom(max_response_size)
-
-                # Validate minimum packet size for DDP header
-                if len(response_data) < DDP_HEADER_SIZE:
-                    logger.warning(
-                        f"Received truncated packet: {len(response_data)} bytes, "
-                        f"expected at least {DDP_HEADER_SIZE}"
-                    )
-                    return True, None  # Connection works, but invalid packet
-
-                # Parse DDP response header
-                (
-                    flags,
-                    sequence,
-                    data_type,
-                    dest_id,
-                    offset,
-                    data_length,
-                ) = struct.unpack(">BBBBLH", response_data[:DDP_HEADER_SIZE])
-
-                # Check if this is a valid DDP reply
-                if not ((flags & DDPFlags.VER1) and (flags & DDPFlags.REPLY)):
-                    logger.warning(
-                        f"Received non-DDP reply packet (flags=0x{flags:02x})"
-                    )
-                    return True, None  # Connection works, but unexpected response
-
-                # Validate packet completeness
-                expected_total_size = DDP_HEADER_SIZE + data_length
-                if len(response_data) < expected_total_size:
-                    logger.warning(
-                        f"Received incomplete packet: {len(response_data)} bytes, "
-                        f"expected {expected_total_size} (header + {data_length} data)"
-                    )
-                    return True, None  # Connection works, but truncated data
-
-                # Check for reasonable data length (prevent excessive memory usage)
-                if data_length > max_response_size - DDP_HEADER_SIZE:
-                    logger.warning(
-                        f"Response data length too large: {data_length} bytes"
-                    )
-                    return True, None  # Connection works, but data too large
-
-                # Extract JSON payload using actual data length from header
-                if data_length > 0:
-                    json_data = response_data[
-                        DDP_HEADER_SIZE : DDP_HEADER_SIZE + data_length
-                    ]
-
-                    try:
-                        status = json.loads(json_data.decode("utf-8"))
-                        logger.info(
-                            f"WLED status received: {status.get('name', 'Unknown')} "
-                            f"v{status.get('ver', 'Unknown')} ({data_length} bytes)"
-                        )
-                        return True, status
-                    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                        logger.warning(f"Failed to parse WLED JSON response: {e}")
-                        logger.debug(
-                            f"Raw JSON data: {json_data[:100]!r}..."
-                        )  # Log first 100 chars
-                        return True, None  # Connection works, but no valid JSON
-                else:
-                    logger.warning("Received DDP reply with no data payload")
-                    return True, None  # Connection works, but no data
-
-            except socket.timeout:
-                logger.warning("No response to query packet (timeout)")
-                return False, None  # No response - connection failed
+            return True
 
         except Exception as e:
-            logger.error(f"Query packet error: {e}")
-            return False, None
+            logger.warning(f"UDP connectivity test failed: {e}")
+            return False
 
     def send_led_data(self, led_data: Union[bytes, np.ndarray]) -> TransmissionResult:
         """

@@ -19,6 +19,7 @@ import os
 import signal
 import sys
 import time
+import logging
 from typing import List, Optional, Tuple
 
 # Add parent directory to path for imports
@@ -386,6 +387,12 @@ Examples:
     if not args.pattern:
         parser.print_help()
         return 1
+
+    # Setup logging
+    level = logging.DEBUG if args.verbose else logging.INFO
+    logging.basicConfig(
+        level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
 
     # Create WLED configuration
     config = WLEDConfig(
