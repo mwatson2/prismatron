@@ -110,22 +110,20 @@ class OptimizationPipeline:
     shared between standalone_optimizer.py and regression tests.
     """
 
-    def __init__(self, diffusion_patterns_path: str, use_gpu: bool = True):
+    def __init__(self, diffusion_patterns_path: str):
         """
-        Initialize optimization pipeline.
+        Initialize optimization pipeline (GPU-only).
 
         Args:
             diffusion_patterns_path: Path to diffusion patterns file
-            use_gpu: Whether to use GPU acceleration
         """
         self.diffusion_patterns_path = self._normalize_patterns_path(
             diffusion_patterns_path
         )
-        self.use_gpu = use_gpu
 
-        # Initialize the LED optimizer
+        # Initialize the LED optimizer (GPU-only)
         self.optimizer = LEDOptimizer(
-            diffusion_patterns_path=self.diffusion_patterns_path, use_gpu=use_gpu
+            diffusion_patterns_path=self.diffusion_patterns_path
         )
 
         self.initialized = False
@@ -196,14 +194,14 @@ class OptimizationPipeline:
         return image.astype(np.uint8)
 
     def optimize_image(
-        self, target_image: np.ndarray, max_iterations: int = 50
+        self, target_image: np.ndarray, max_iterations: Optional[int] = None
     ) -> OptimizationResult:
         """
         Optimize LED values for target image.
 
         Args:
             target_image: RGB target image (FRAME_HEIGHT, FRAME_WIDTH, 3)
-            max_iterations: Maximum optimization iterations
+            max_iterations: Maximum optimization iterations (None uses optimizer default)
 
         Returns:
             OptimizationResult with LED values and metrics
@@ -237,8 +235,8 @@ class OptimizationPipeline:
 
         logger.info("Rendering result using sparse matrix reconstruction...")
 
-        # Get the sparse matrix
-        A_csr = self.optimizer._sparse_matrix_csr
+        # Get the sparse matrix from CPU reference
+        A_csr = self.optimizer._A_combined_csr_cpu
         if A_csr is None:
             raise RuntimeError("Sparse matrix not available in optimizer")
 
@@ -251,19 +249,29 @@ class OptimizationPipeline:
         logger.info(f"Matrix shape: {A_csr.shape}")
         logger.info(f"LED values shape: {result.led_values.shape}")
 
-        # Process each RGB channel independently
-        for channel in range(3):
-            # Extract LED values for this channel from the (led_count, 3) array
-            channel_leds = led_values_normalized[:, channel]  # Shape: (led_count,)
+        # For combined block diagonal matrix, we need to reconstruct differently
+        # The combined matrix has structure: [[A_r, 0, 0], [0, A_g, 0], [0, 0, A_b]]
+        # LED values are stacked: [R_leds; G_leds; B_leds]
+        led_count = result.led_values.shape[0]
+        led_combined = np.zeros(3 * led_count, dtype=np.float32)
+        led_combined[:led_count] = led_values_normalized[:, 0]  # R
+        led_combined[led_count : 2 * led_count] = led_values_normalized[:, 1]  # G
+        led_combined[2 * led_count :] = led_values_normalized[:, 2]  # B
 
-            # Get matrix columns for this channel (every 3rd column starting from channel)
-            channel_columns = list(range(channel, A_csr.shape[1], 3))
-            A_channel = A_csr[:, channel_columns]
+        # Reconstruct all channels at once with combined matrix
+        reconstructed_flat = A_csr @ led_combined  # Shape: (3 * pixels,)
 
-            # Reconstruct this channel: A_channel @ channel_leds
-            channel_flat = A_channel @ channel_leds  # Shape: (384000,)
-            channel_image = channel_flat.reshape((FRAME_HEIGHT, FRAME_WIDTH))
-            reconstructed_rgb[:, :, channel] = channel_image
+        # Reshape back to (height, width, 3)
+        pixels = FRAME_HEIGHT * FRAME_WIDTH
+        reconstructed_rgb[:, :, 0] = reconstructed_flat[:pixels].reshape(
+            (FRAME_HEIGHT, FRAME_WIDTH)
+        )
+        reconstructed_rgb[:, :, 1] = reconstructed_flat[pixels : 2 * pixels].reshape(
+            (FRAME_HEIGHT, FRAME_WIDTH)
+        )
+        reconstructed_rgb[:, :, 2] = reconstructed_flat[2 * pixels :].reshape(
+            (FRAME_HEIGHT, FRAME_WIDTH)
+        )
 
         # Convert to uint8 and clamp to valid range
         result_image = np.clip(reconstructed_rgb * 255, 0, 255).astype(np.uint8)
@@ -272,14 +280,14 @@ class OptimizationPipeline:
         return result_image
 
     def run_full_pipeline(
-        self, input_path: str, max_iterations: int = 50
+        self, input_path: str, max_iterations: Optional[int] = None
     ) -> Tuple[np.ndarray, OptimizationResult, np.ndarray]:
         """
         Run the complete optimization pipeline.
 
         Args:
             input_path: Path to input image
-            max_iterations: Maximum optimization iterations
+            max_iterations: Maximum optimization iterations (None uses optimizer default)
 
         Returns:
             Tuple of (original_image, optimization_result, rendered_image)

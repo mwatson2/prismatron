@@ -59,9 +59,9 @@ class StandaloneOptimizer:
         if not diffusion_patterns_path:
             raise ValueError("Diffusion patterns path is required")
 
-        # Create shared optimization pipeline
+        # Create shared optimization pipeline (GPU-only)
         self.pipeline = OptimizationPipeline(
-            diffusion_patterns_path=diffusion_patterns_path, use_gpu=True
+            diffusion_patterns_path=diffusion_patterns_path
         )
 
         # Initialize the pipeline
@@ -98,15 +98,43 @@ class StandaloneOptimizer:
         output_path: Optional[str] = None,
         show_preview: bool = False,
     ):
-        """Run optimization on input image."""
-        # Use shared pipeline for complete workflow
-        target_image, result, rendered_result = self.pipeline.run_full_pipeline(
-            input_path, max_iterations=50
-        )
+        """Run optimization on input image with detailed timing."""
 
-        # Save result if output path provided
+        # Track timing for each phase
+        total_start = time.time()
+
+        # Phase 1: Load image
+        load_start = time.time()
+        target_image = self.pipeline.load_image(input_path)
+        load_time = time.time() - load_start
+
+        # Phase 2: Optimize
+        optimize_start = time.time()
+        result = self.pipeline.optimize_image(target_image, max_iterations=None)
+        optimize_time = time.time() - optimize_start
+
+        # Phase 3: Render result
+        render_start = time.time()
+        rendered_result = self.pipeline.render_result(result)
+        render_time = time.time() - render_start
+
+        # Phase 4: Save (if requested)
+        save_time = 0.0
         if output_path:
+            save_start = time.time()
             self.pipeline.save_image(rendered_result, output_path)
+            save_time = time.time() - save_start
+
+        total_time = time.time() - total_start
+
+        # Store timing breakdown in result for reporting
+        result.timing_breakdown = {
+            "load_time": load_time,
+            "optimize_time": optimize_time,
+            "render_time": render_time,
+            "save_time": save_time,
+            "total_time": total_time,
+        }
 
         # Show preview if requested
         if show_preview:
@@ -183,7 +211,46 @@ def main():
         logger.info(f"Input: {args.input}")
         logger.info(f"Target shape: {target_image.shape}")
         logger.info(f"LED count: {result.led_values.shape[0]}")
-        logger.info(f"Optimization time: {result.optimization_time:.3f}s")
+
+        # Print detailed timing breakdown
+        if hasattr(result, "timing_breakdown"):
+            timing = result.timing_breakdown
+            logger.info("=== Timing Breakdown ===")
+            load_pct = timing["load_time"] / timing["total_time"] * 100
+            opt_pct = timing["optimize_time"] / timing["total_time"] * 100
+            render_pct = timing["render_time"] / timing["total_time"] * 100
+
+            logger.info(
+                f"Image loading:     {timing['load_time']:.3f}s ({load_pct:.1f}%)"
+            )
+            logger.info(
+                f"LED optimization:  {timing['optimize_time']:.3f}s ({opt_pct:.1f}%)"
+            )
+            logger.info(
+                f"Result rendering:  {timing['render_time']:.3f}s ({render_pct:.1f}%)"
+            )
+            if timing["save_time"] > 0:
+                save_pct = timing["save_time"] / timing["total_time"] * 100
+                logger.info(
+                    f"Image saving:      {timing['save_time']:.3f}s ({save_pct:.1f}%)"
+                )
+            logger.info(f"Total time:        {timing['total_time']:.3f}s")
+        else:
+            logger.info(f"Total time: {result.optimization_time:.3f}s")
+
+        # Print optimization quality metrics
+        if hasattr(result, "error_metrics") and result.error_metrics:
+            logger.info("=== Quality Metrics ===")
+            logger.info(f"MSE: {result.error_metrics.get('mse', 'N/A'):.6f}")
+            logger.info(f"RMSE: {result.error_metrics.get('rmse', 'N/A'):.6f}")
+
+        # Print FLOP performance if available
+        if hasattr(result, "flop_info") and result.flop_info:
+            flop_info = result.flop_info
+            logger.info("=== Performance Metrics ===")
+            logger.info(f"Total FLOPs: {flop_info.get('total_flops', 0):,}")
+            logger.info(f"GFLOPS/second: {flop_info.get('gflops_per_second', 0):.1f}")
+
         logger.info(
             f"LED values range: [{result.led_values.min()}, {result.led_values.max()}]"
         )

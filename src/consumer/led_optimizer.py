@@ -15,18 +15,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+import cupy as cp
 import numpy as np
 import scipy.sparse as sp
-
-try:
-    import cupy as cp
-    from cupyx.scipy.sparse import csc_matrix as cupy_csc_matrix
-    from cupyx.scipy.sparse import csr_matrix as cupy_csr_matrix
-
-    CUPY_AVAILABLE = True
-except ImportError:
-    CUPY_AVAILABLE = False
-    cp = None
+from cupyx.scipy.sparse import csc_matrix as cupy_csc_matrix
+from cupyx.scipy.sparse import csr_matrix as cupy_csr_matrix
 
 from ..const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
 
@@ -44,6 +37,7 @@ class OptimizationResult:
     converged: bool  # Whether optimization converged
     target_frame: Optional[np.ndarray] = None  # Original target frame (for debugging)
     sparsity_info: Optional[Dict[str, Any]] = None  # Sparse matrix information
+    flop_info: Optional[Dict[str, Any]] = None  # FLOP analysis information
 
     def get_led_count(self) -> int:
         """Get number of LEDs in result."""
@@ -69,54 +63,37 @@ class LEDOptimizer:
     def __init__(
         self,
         diffusion_patterns_path: Optional[str] = None,
-        use_gpu: bool = True,
     ):
         """
-        Initialize sparse LED optimizer.
+        Initialize sparse LED optimizer (GPU-only).
 
         Args:
             diffusion_patterns_path: Path to sparse diffusion matrix files
-            use_gpu: Whether to use GPU acceleration (requires CuPy)
         """
         self.diffusion_patterns_path = (
-            diffusion_patterns_path or "config/diffusion_patterns"
+            diffusion_patterns_path or "diffusion_patterns/synthetic_1000"
         )
-        self.use_gpu = use_gpu and CUPY_AVAILABLE
 
         # Optimization parameters for LSQR (tuned for real-time performance)
         self.max_iterations = 10  # Further reduced for sub-100ms performance
         self.convergence_threshold = 1e-3  # Further relaxed for faster convergence
         self.step_size_scaling = 0.9  # Slightly more aggressive for faster convergence
 
-        # Sparse matrix state (pre-computed for performance)
-        self._sparse_matrix_csc: Optional[
-            sp.csc_matrix
-        ] = None  # CSC for A^T operations (optimized for transpose)
-        self._sparse_matrix_csr: Optional[
-            sp.csr_matrix
-        ] = None  # CSR for A operations (optimized for forward)
+        # GPU sparse matrices (primary storage)
+        self._A_combined_csc_gpu = None  # Combined block diagonal CSC matrix on GPU
+        self._A_combined_csr_gpu = None  # Combined block diagonal CSR matrix on GPU
 
-        # Pre-computed RGB channel matrices (moved from frame optimization)
-        self._A_r_csc: Optional[sp.csc_matrix] = None
-        self._A_g_csc: Optional[sp.csc_matrix] = None
-        self._A_b_csc: Optional[sp.csc_matrix] = None
-        self._A_r_csr: Optional[sp.csr_matrix] = None
-        self._A_g_csr: Optional[sp.csr_matrix] = None
-        self._A_b_csr: Optional[sp.csr_matrix] = None
-
-        # Pre-computed GPU matrices (if using GPU)
-        self._A_r_csc_gpu = None
-        self._A_g_csc_gpu = None
-        self._A_b_csc_gpu = None
-        self._A_r_csr_gpu = None
-        self._A_g_csr_gpu = None
-        self._A_b_csr_gpu = None
+        # CPU reference matrices (for loading and metadata only)
+        self._A_combined_csc_cpu: Optional[sp.csc_matrix] = None
+        self._A_combined_csr_cpu: Optional[sp.csr_matrix] = None
 
         # Pre-allocated arrays for target vectors (avoid repeated allocation)
-        self._target_r_buffer = None
-        self._target_g_buffer = None
-        self._target_b_buffer = None
-        self._led_init_buffer = None
+        self._target_combined_buffer = None  # Stacked [R; G; B] channels (CPU)
+        self._target_combined_gpu = None  # Target on GPU
+        self._led_combined_buffer = None  # Combined [R_leds; G_leds; B_leds] (CPU)
+
+        # Pre-allocated GPU workspace arrays for optimization loop
+        self._gpu_workspace = None  # GPU workspace arrays
 
         self._led_spatial_mapping: Optional[Dict[int, int]] = None
         self._led_positions: Optional[np.ndarray] = None
@@ -127,48 +104,34 @@ class LEDOptimizer:
         self._optimization_count = 0
         self._total_optimization_time = 0.0
 
+        # FLOP counting for performance analysis
+        self._total_flops = 0
+        self._flops_per_iteration = 0  # Will be calculated after matrix loading
+
         # Detect compute capability
         self.device_info = self._detect_compute_device()
 
     def _detect_compute_device(self) -> Dict[str, Any]:
         """
-        Detect best available compute device and capabilities.
+        Detect GPU device and capabilities (GPU-only implementation).
 
         Returns:
             Dictionary with device information
         """
         device_info = {
-            "cupy_available": CUPY_AVAILABLE,
-            "use_gpu": self.use_gpu,
-            "device": "cpu",
+            "device": "gpu",
+            "gpu_name": cp.cuda.runtime.getDeviceProperties(0)["name"].decode(),
             "memory_info": {},
         }
 
-        if CUPY_AVAILABLE and self.use_gpu:
-            try:
-                device_info["device"] = "gpu"
-                device_info["gpu_name"] = cp.cuda.runtime.getDeviceProperties(0)[
-                    "name"
-                ].decode()
-
-                # Get memory info
-                meminfo = cp.cuda.runtime.memGetInfo()
-                device_info["memory_info"] = {
-                    "free_mb": meminfo[0] / (1024 * 1024),
-                    "total_mb": meminfo[1] / (1024 * 1024),
-                }
-                logger.info(f"Using GPU: {device_info['gpu_name']}")
-                logger.info(
-                    f"GPU Memory: {device_info['memory_info']['free_mb']:.0f}MB free"
-                )
-            except Exception as e:
-                logger.warning(f"GPU detection failed, falling back to CPU: {e}")
-                self.use_gpu = False
-                device_info["use_gpu"] = False
-                device_info["device"] = "cpu"
-
-        if not self.use_gpu:
-            logger.info("Using CPU for sparse matrix operations")
+        # Get memory info
+        meminfo = cp.cuda.runtime.memGetInfo()
+        device_info["memory_info"] = {
+            "free_mb": meminfo[0] / (1024 * 1024),
+            "total_mb": meminfo[1] / (1024 * 1024),
+        }
+        logger.info(f"Using GPU: {device_info['gpu_name']}")
+        logger.info(f"GPU Memory: {device_info['memory_info']['free_mb']:.0f}MB free")
 
         return device_info
 
@@ -192,7 +155,7 @@ class LEDOptimizer:
             logger.info(
                 f"LED optimizer initialized with device: {self.device_info['device']}"
             )
-            logger.info(f"Sparse matrix shape: {self._sparse_matrix_csc.shape}")
+            logger.info(f"Combined matrix shape: {self._A_combined_csr_gpu.shape}")
             logger.info(f"Matrix sparsity: {self._get_sparsity_percentage():.3f}%")
             return True
 
@@ -218,70 +181,69 @@ class LEDOptimizer:
             # Load all data from single NPZ file
             data = np.load(patterns_path, allow_pickle=True)
 
-            # Reconstruct sparse matrix from components
-            self._sparse_matrix_csc = sp.csc_matrix(
+            # Reconstruct sparse matrix from components (temporary CPU matrix for loading)
+            sparse_matrix_csc = sp.csc_matrix(
                 (data["matrix_data"], data["matrix_indices"], data["matrix_indptr"]),
                 shape=tuple(data["matrix_shape"]),
             )
-
-            # Convert to CSR for forward operations (A*x)
-            self._sparse_matrix_csr = self._sparse_matrix_csc.tocsr()
 
             # Load spatial mapping and metadata
             self._led_spatial_mapping = data["led_spatial_mapping"].item()
             self._led_positions = data["led_positions"]
 
             # Get actual LED count from matrix (shape is pixels × led_count*3)
-            self._actual_led_count = self._sparse_matrix_csc.shape[1] // 3
+            self._actual_led_count = sparse_matrix_csc.shape[1] // 3
 
             # Validate matrix dimensions (single channel format)
             expected_pixels = FRAME_HEIGHT * FRAME_WIDTH
-            if self._sparse_matrix_csc.shape[0] != expected_pixels:
+            if sparse_matrix_csc.shape[0] != expected_pixels:
                 logger.error(
                     f"Matrix pixel dimension mismatch: "
-                    f"{self._sparse_matrix_csc.shape[0]} != {expected_pixels}"
+                    f"{sparse_matrix_csc.shape[0]} != {expected_pixels}"
                 )
                 return False
 
-            # Pre-compute RGB channel matrices to avoid per-frame overhead
-            logger.info("Pre-computing RGB channel matrices...")
-            self._A_r_csc = self._sparse_matrix_csc[:, 0::3]  # Red channels
-            self._A_g_csc = self._sparse_matrix_csc[:, 1::3]  # Green channels
-            self._A_b_csc = self._sparse_matrix_csc[:, 2::3]  # Blue channels
+            # Pre-compute RGB channel matrices and create combined block diagonal matrix
+            logger.info("Creating combined block diagonal matrix on CPU...")
+            A_r_csc = sparse_matrix_csc[:, 0::3]  # Red channels
+            A_g_csc = sparse_matrix_csc[:, 1::3]  # Green channels
+            A_b_csc = sparse_matrix_csc[:, 2::3]  # Blue channels
 
-            self._A_r_csr = self._sparse_matrix_csr[:, 0::3]
-            self._A_g_csr = self._sparse_matrix_csr[:, 1::3]
-            self._A_b_csr = self._sparse_matrix_csr[:, 2::3]
+            # Create combined block diagonal matrix for single large optimization
+            self._A_combined_csc_cpu = sp.block_diag([A_r_csc, A_g_csc, A_b_csc])
+            self._A_combined_csr_cpu = self._A_combined_csc_cpu.tocsr()
+            logger.info(f"Combined matrix shape: {self._A_combined_csc_cpu.shape}")
+            logger.info(f"Combined matrix nnz: {self._A_combined_csc_cpu.nnz:,}")
 
-            # Pre-compute GPU matrices if using GPU
-            if self.use_gpu and CUPY_AVAILABLE:
-                try:
-                    logger.info("Pre-computing GPU matrices...")
-                    self._A_r_csc_gpu = cupy_csc_matrix(self._A_r_csc)
-                    self._A_g_csc_gpu = cupy_csc_matrix(self._A_g_csc)
-                    self._A_b_csc_gpu = cupy_csc_matrix(self._A_b_csc)
+            # Transfer to GPU immediately
+            logger.info("Transferring matrices to GPU...")
+            self._A_combined_csc_gpu = cupy_csc_matrix(self._A_combined_csc_cpu)
+            self._A_combined_csr_gpu = cupy_csr_matrix(self._A_combined_csr_cpu)
+            logger.info("GPU matrices loaded successfully")
 
-                    self._A_r_csr_gpu = cupy_csr_matrix(self._A_r_csr)
-                    self._A_g_csr_gpu = cupy_csr_matrix(self._A_g_csr)
-                    self._A_b_csr_gpu = cupy_csr_matrix(self._A_b_csr)
-                    logger.info("GPU matrices pre-computed successfully")
-                except Exception as e:
-                    logger.warning(
-                        f"GPU matrix pre-computation failed, will fallback to CPU: {e}"
-                    )
-                    self.use_gpu = False
-
-            # Pre-allocate target buffers to avoid repeated memory allocation
+            # Pre-allocate target buffers on CPU and GPU
             pixels = FRAME_HEIGHT * FRAME_WIDTH
-            self._target_r_buffer = np.empty(pixels, dtype=np.float32)
-            self._target_g_buffer = np.empty(pixels, dtype=np.float32)
-            self._target_b_buffer = np.empty(pixels, dtype=np.float32)
-            self._led_init_buffer = np.empty(self._actual_led_count, dtype=np.float32)
+            self._target_combined_buffer = np.empty(
+                3 * pixels, dtype=np.float32
+            )  # CPU buffer for preprocessing
+            self._target_combined_gpu = cp.empty(
+                3 * pixels, dtype=cp.float32
+            )  # GPU target vector
+            self._led_combined_buffer = np.empty(
+                3 * self._actual_led_count, dtype=np.float32
+            )  # CPU result buffer
+
+            # Calculate FLOPs per iteration for performance analysis
+            self._calculate_flops_per_iteration()
+
+            # Initialize workspace arrays for optimization loops
+            self._initialize_workspace()
 
             self._matrix_loaded = True
             logger.info(f"Loaded sparse matrix from {patterns_path}")
-            logger.info(f"Matrix shape: {self._sparse_matrix_csc.shape}")
-            logger.info(f"Non-zero entries: {self._sparse_matrix_csc.nnz:,}")
+            logger.info(f"Combined matrix shape: {self._A_combined_csr_cpu.shape}")
+            logger.info(f"Non-zero entries: {self._A_combined_csr_cpu.nnz:,}")
+            logger.info(f"Estimated FLOPs per iteration: {self._flops_per_iteration:,}")
 
             return True
 
@@ -291,13 +253,170 @@ class LEDOptimizer:
 
     def _get_sparsity_percentage(self) -> float:
         """Get sparsity percentage of the matrix."""
-        if self._sparse_matrix_csc is None:
+        if self._A_combined_csr_gpu is None:
             return 0.0
 
         total_elements = (
-            self._sparse_matrix_csc.shape[0] * self._sparse_matrix_csc.shape[1]
+            self._A_combined_csr_gpu.shape[0] * self._A_combined_csr_gpu.shape[1]
         )
-        return (self._sparse_matrix_csc.nnz / total_elements) * 100
+        return (self._A_combined_csr_gpu.nnz / total_elements) * 100
+
+    def _calculate_flops_per_iteration(self) -> None:
+        """Calculate floating point operations per LSQR iteration for performance analysis."""
+        if self._A_combined_csr_cpu is None:
+            return
+
+        # FLOPs for combined block diagonal matrix per iteration:
+        # 1. Forward SpMV: A_combined @ x  -> 2 * nnz operations
+        # 2. Residual calculation: A*x - b  -> 2 * matrix_rows operations
+        # 3. Transpose SpMV: A_combined.T @ residual  -> 2 * nnz operations
+        # 4. Gradient norm: dot(gradient, gradient)  -> 2 * led_count operations
+        # 5. Step calculation: Ag = A @ gradient  -> 2 * nnz operations
+        # 6. Step norm: dot(Ag, Ag)  -> 2 * matrix_rows operations
+        # 7. Vector updates: x_new = x - step_size * gradient  -> 2 * led_count operations
+
+        nnz_combined = (
+            self._A_combined_csr_cpu.nnz
+        )  # Total non-zeros in combined matrix
+        pixels_combined = self._A_combined_csr_cpu.shape[0]  # 3 * (width * height)
+        leds_combined = self._A_combined_csr_cpu.shape[1]  # 3 * led_count
+
+        self._flops_per_iteration = (
+            2 * nnz_combined  # Forward SpMV
+            + 2 * pixels_combined  # Residual calculation
+            + 2 * nnz_combined  # Transpose SpMV
+            + 2 * leds_combined  # Gradient norm
+            + 2 * nnz_combined  # Step calculation SpMV
+            + 2 * pixels_combined  # Step norm
+            + 2 * leds_combined  # Vector update
+        )
+
+        logger.debug(
+            f"FLOP calculation (combined): {nnz_combined:,} nnz, "
+            f"{pixels_combined:,} pixels, {leds_combined:,} LEDs"
+        )
+        logger.debug(f"Combined FLOPs per iteration: {self._flops_per_iteration:,}")
+
+    def _initialize_workspace(self) -> None:
+        """
+        Pre-initialize GPU workspace arrays for optimization loops.
+        """
+        if self._A_combined_csr_gpu is None:
+            return
+
+        m, n = self._A_combined_csr_gpu.shape  # Combined matrix dimensions
+
+        logger.info(f"Initializing GPU workspace arrays for matrix shape {m}x{n}")
+
+        # GPU workspace arrays only
+        self._gpu_workspace = {
+            "residual": cp.zeros(m, dtype=cp.float32),  # Size: 3 * pixels
+            "gradient": cp.zeros(n, dtype=cp.float32),  # Size: 3 * led_count
+            "Ag": cp.zeros(m, dtype=cp.float32),  # Size: 3 * pixels
+            "x_new": cp.zeros(n, dtype=cp.float32),  # Size: 3 * led_count
+            "x_diff": cp.zeros(n, dtype=cp.float32),  # Size: 3 * led_count
+            "x_init": cp.full(n, 0.5, dtype=cp.float32),  # Initialize to 0.5 on GPU
+        }
+
+        workspace_mb = (m + n) * 6 * 4 / (1024 * 1024)  # 6 arrays * 4 bytes per float32
+        logger.info(f"GPU workspace memory: {workspace_mb:.1f}MB")
+
+    def _optimize_frame_combined(
+        self,
+        target_frame: np.ndarray,
+        initial_values: Optional[np.ndarray] = None,
+        max_iterations: Optional[int] = None,
+    ) -> OptimizationResult:
+        """
+        Optimize LED values using combined block diagonal matrix approach.
+
+        This uses a single large matrix operation instead of 3 separate RGB optimizations,
+        which should provide much better GPU utilization.
+        """
+        # Process target frame into combined format
+        target_rgb_normalized = target_frame.astype(np.float32) / 255.0
+
+        # Stack RGB channels: [R_pixels; G_pixels; B_pixels]
+        pixels = FRAME_HEIGHT * FRAME_WIDTH
+        self._target_combined_buffer[:pixels] = target_rgb_normalized[:, :, 0].ravel()
+        self._target_combined_buffer[pixels : 2 * pixels] = target_rgb_normalized[
+            :, :, 1
+        ].ravel()
+        self._target_combined_buffer[2 * pixels :] = target_rgb_normalized[
+            :, :, 2
+        ].ravel()
+
+        target_combined = self._target_combined_buffer
+
+        # Transfer target to GPU
+        self._target_combined_gpu[:] = cp.asarray(target_combined, dtype=cp.float32)
+
+        # Initialize combined LED values: [R_leds; G_leds; B_leds]
+        if initial_values is not None:
+            if initial_values.ndim == 1:
+                init_val = (
+                    initial_values[0] / 255.0
+                    if initial_values[0] > 1.0
+                    else initial_values[0]
+                )
+                led_combined_init = cp.full(
+                    3 * self._actual_led_count, init_val, dtype=cp.float32
+                )
+            else:
+                initial_normalized = (
+                    initial_values / 255.0
+                    if initial_values.max() > 1.0
+                    else initial_values
+                ).astype(np.float32)
+                # Stack: [R_leds; G_leds; B_leds] and transfer to GPU
+                self._led_combined_buffer[
+                    : self._actual_led_count
+                ] = initial_normalized[:, 0]
+                self._led_combined_buffer[
+                    self._actual_led_count : 2 * self._actual_led_count
+                ] = initial_normalized[:, 1]
+                self._led_combined_buffer[
+                    2 * self._actual_led_count :
+                ] = initial_normalized[:, 2]
+                led_combined_init = cp.asarray(
+                    self._led_combined_buffer, dtype=cp.float32
+                )
+        else:
+            # Use pre-initialized GPU array (already at 0.5)
+            led_combined_init = self._gpu_workspace["x_init"]
+
+        # GPU-only optimization using combined matrices
+        led_combined_solved = self._solve_lsqr_gpu(
+            self._A_combined_csc_gpu,
+            self._A_combined_csr_gpu,
+            self._target_combined_gpu,
+            led_combined_init,
+            max_iterations,
+        )
+
+        # Convert back to numpy for output
+        led_combined_values = cp.asnumpy(led_combined_solved)
+
+        # Reshape combined result back to (led_count, 3) format
+        led_values = np.zeros((self._actual_led_count, 3), dtype=np.float32)
+        led_values[:, 0] = led_combined_values[: self._actual_led_count]  # R
+        led_values[:, 1] = led_combined_values[
+            self._actual_led_count : 2 * self._actual_led_count
+        ]  # G
+        led_values[:, 2] = led_combined_values[2 * self._actual_led_count :]  # B
+
+        # Compute error metrics using GPU combined matrix
+        residual_combined_gpu = (
+            self._A_combined_csr_gpu @ led_combined_solved - self._target_combined_gpu
+        )
+        residual_combined = cp.asnumpy(residual_combined_gpu)
+
+        mse = np.mean(residual_combined**2)
+        mae = np.mean(np.abs(residual_combined))
+        max_error = np.max(np.abs(residual_combined))
+        rmse = np.sqrt(mse)
+
+        return led_values, mse, mae, max_error, rmse
 
     def optimize_frame(
         self,
@@ -329,148 +448,19 @@ class LEDOptimizer:
                     f"Target frame shape {target_frame.shape} != {(FRAME_HEIGHT, FRAME_WIDTH, 3)}"
                 )
 
-            # Process RGB channels separately using pre-allocated buffers
-            target_rgb_normalized = target_frame.astype(np.float32) / 255.0
-
-            # Extract RGB channels into pre-allocated buffers (avoid memory allocation)
-            np.copyto(self._target_r_buffer, target_rgb_normalized[:, :, 0].ravel())
-            np.copyto(self._target_g_buffer, target_rgb_normalized[:, :, 1].ravel())
-            np.copyto(self._target_b_buffer, target_rgb_normalized[:, :, 2].ravel())
-
-            target_r = self._target_r_buffer
-            target_g = self._target_g_buffer
-            target_b = self._target_b_buffer
-
-            # Use pre-computed RGB matrices (no matrix splitting per frame)
-            A_r_csc = self._A_r_csc
-            A_g_csc = self._A_g_csc
-            A_b_csc = self._A_b_csc
-            A_r_csr = self._A_r_csr
-            A_g_csr = self._A_g_csr
-            A_b_csr = self._A_b_csr
-
-            # Initialize LED values for each channel using pre-allocated buffer
-            if initial_values is not None:
-                if initial_values.ndim == 1:
-                    init_val = (
-                        initial_values[0] / 255.0
-                        if initial_values[0] > 1.0
-                        else initial_values[0]
-                    )
-                    self._led_init_buffer.fill(init_val)
-                    led_r_init = self._led_init_buffer.copy()
-                    led_g_init = self._led_init_buffer.copy()
-                    led_b_init = self._led_init_buffer.copy()
-                else:
-                    initial_normalized = (
-                        initial_values / 255.0
-                        if initial_values.max() > 1.0
-                        else initial_values
-                    ).astype(np.float32)
-                    led_r_init = initial_normalized[:, 0]
-                    led_g_init = initial_normalized[:, 1]
-                    led_b_init = initial_normalized[:, 2]
-            else:
-                # Start with 50% brightness for better convergence - reuse buffer
-                self._led_init_buffer.fill(0.5)
-                led_r_init = self._led_init_buffer.copy()
-                led_g_init = self._led_init_buffer.copy()
-                led_b_init = self._led_init_buffer.copy()
-
-            # Solve 3 separate optimization problems
-            if self.use_gpu and CUPY_AVAILABLE and self._A_r_csc_gpu is not None:
-                try:
-                    # GPU solve for all channels using pre-computed matrices
-                    target_r_gpu = cp.asarray(target_r, dtype=cp.float32)
-                    target_g_gpu = cp.asarray(target_g, dtype=cp.float32)
-                    target_b_gpu = cp.asarray(target_b, dtype=cp.float32)
-
-                    led_r_gpu = cp.asarray(led_r_init, dtype=cp.float32)
-                    led_g_gpu = cp.asarray(led_g_init, dtype=cp.float32)
-                    led_b_gpu = cp.asarray(led_b_init, dtype=cp.float32)
-
-                    # Use pre-computed GPU matrices (no conversion per frame)
-                    # Solve each channel
-                    led_r_solved = self._solve_lsqr_gpu(
-                        self._A_r_csc_gpu,
-                        self._A_r_csr_gpu,
-                        target_r_gpu,
-                        led_r_gpu,
-                        max_iterations,
-                    )
-                    led_g_solved = self._solve_lsqr_gpu(
-                        self._A_g_csc_gpu,
-                        self._A_g_csr_gpu,
-                        target_g_gpu,
-                        led_g_gpu,
-                        max_iterations,
-                    )
-                    led_b_solved = self._solve_lsqr_gpu(
-                        self._A_b_csc_gpu,
-                        self._A_b_csr_gpu,
-                        target_b_gpu,
-                        led_b_gpu,
-                        max_iterations,
-                    )
-
-                    # Convert back to numpy
-                    led_r_values = cp.asnumpy(led_r_solved)
-                    led_g_values = cp.asnumpy(led_g_solved)
-                    led_b_values = cp.asnumpy(led_b_solved)
-
-                except Exception as e:
-                    logger.warning(f"GPU optimization failed, falling back to CPU: {e}")
-                    # Fall back to CPU
-                    led_r_values = self._solve_lsqr_cpu(
-                        A_r_csc, A_r_csr, target_r, led_r_init, max_iterations
-                    )
-                    led_g_values = self._solve_lsqr_cpu(
-                        A_g_csc, A_g_csr, target_g, led_g_init, max_iterations
-                    )
-                    led_b_values = self._solve_lsqr_cpu(
-                        A_b_csc, A_b_csr, target_b, led_b_init, max_iterations
-                    )
-            else:
-                # CPU solve for all channels
-                if not self.use_gpu:
-                    logger.debug("Using CPU for optimization (GPU disabled)")
-                elif not CUPY_AVAILABLE:
-                    logger.warning("Falling back to CPU: CuPy not available")
-                elif self._A_r_csc_gpu is None:
-                    logger.warning("Falling back to CPU: GPU matrices not pre-computed")
-
-                led_r_values = self._solve_lsqr_cpu(
-                    A_r_csc, A_r_csr, target_r, led_r_init, max_iterations
-                )
-                led_g_values = self._solve_lsqr_cpu(
-                    A_g_csc, A_g_csr, target_g, led_g_init, max_iterations
-                )
-                led_b_values = self._solve_lsqr_cpu(
-                    A_b_csc, A_b_csr, target_b, led_b_init, max_iterations
-                )
-
-            # Combine RGB channels into final LED values
-            led_values = np.stack(
-                [led_r_values, led_g_values, led_b_values], axis=1
-            )  # Shape: (led_count, 3)
-
-            # Compute error metrics by reconstructing each channel and combining
-            r_residual = A_r_csr @ led_r_values - target_r
-            g_residual = A_g_csr @ led_g_values - target_g
-            b_residual = A_b_csr @ led_b_values - target_b
-
-            # Combine residuals for overall error metrics
-            total_residual = np.concatenate([r_residual, g_residual, b_residual])
-
-            mse = np.mean(total_residual**2)
-            mae = np.mean(np.abs(total_residual))
-            max_error = np.max(np.abs(total_residual))
-            rmse = np.sqrt(mse)
+            # Use combined block diagonal matrix optimization for better GPU utilization
+            led_values, mse, mae, max_error, rmse = self._optimize_frame_combined(
+                target_frame, initial_values, max_iterations
+            )
 
             # Scale LED values from [0,1] to [0,255] for output
             led_values_output = (led_values * 255.0).astype(np.uint8)
 
             optimization_time = time.time() - start_time
+
+            # Calculate FLOPs for this optimization
+            iterations_used = max_iterations or self.max_iterations
+            frame_flops = iterations_used * self._flops_per_iteration
 
             # Create result
             result = OptimizationResult(
@@ -486,13 +476,20 @@ class LEDOptimizer:
                 converged=True,  # LSQR always converges
                 target_frame=target_frame.copy(),
                 sparsity_info={
-                    "matrix_shape": self._sparse_matrix_csc.shape,
-                    "nnz": self._sparse_matrix_csc.nnz,
+                    "matrix_shape": self._A_combined_csr_gpu.shape,
+                    "nnz": self._A_combined_csr_gpu.nnz,
                     "sparsity_percent": self._get_sparsity_percentage(),
+                },
+                flop_info={
+                    "total_flops": int(frame_flops),
+                    "flops_per_iteration": int(self._flops_per_iteration),
+                    "gflops": frame_flops / 1e9,
+                    "gflops_per_second": frame_flops / (optimization_time * 1e9),
                 },
             )
 
-            # Update statistics
+            # Update statistics including FLOP tracking
+            self._total_flops += frame_flops
             self._optimization_count += 1
             self._total_optimization_time += optimization_time
 
@@ -519,65 +516,19 @@ class LEDOptimizer:
                 optimization_time=optimization_time,
                 iterations=0,
                 converged=False,
+                flop_info={
+                    "total_flops": 0,
+                    "flops_per_iteration": int(self._flops_per_iteration)
+                    if self._flops_per_iteration > 0
+                    else 0,
+                    "gflops": 0.0,
+                    "gflops_per_second": 0.0,
+                },
             )
-
-    def _solve_lsqr_cpu(
-        self,
-        A_csc: sp.csc_matrix,
-        A_csr: sp.csr_matrix,
-        b: np.ndarray,
-        x0: np.ndarray,
-        max_iterations: Optional[int],
-    ) -> np.ndarray:
-        """
-        Solve LSQR with projection on CPU using projected gradient descent.
-
-        Args:
-            A_csc: Sparse matrix in CSC format (for A^T operations)
-            A_csr: Sparse matrix in CSR format (for A operations)
-            b: Target vector
-            x0: Initial solution vector
-            max_iterations: Maximum iterations
-
-        Returns:
-            Solution vector
-        """
-        x = x0.copy()
-        max_iters = max_iterations or self.max_iterations
-
-        for iteration in range(max_iters):
-            # Compute residual: r = A*x - b
-            residual = A_csr @ x - b
-
-            # Compute gradient: g = A^T * r
-            gradient = A_csc.T @ residual
-
-            # Estimate step size using simple line search
-            Ag = A_csr @ gradient
-            if np.dot(Ag, Ag) > 0:
-                step_size = (
-                    self.step_size_scaling * np.dot(gradient, gradient) / np.dot(Ag, Ag)
-                )
-            else:
-                step_size = 0.01  # Fallback step size
-
-            # Gradient descent step
-            x_new = x - step_size * gradient
-
-            # Project onto feasible region [0, 1]
-            x_new = np.clip(x_new, 0, 1)
-
-            # Check convergence
-            if np.linalg.norm(x_new - x) < self.convergence_threshold:
-                break
-
-            x = x_new
-
-        return x
 
     def _solve_lsqr_gpu(self, A_csc, A_csr, b, x0, max_iterations: Optional[int]):
         """
-        Solve LSQR with projection on GPU using CuPy.
+        Solve LSQR with projection on GPU using CuPy with pre-allocated workspace.
 
         Args:
             A_csc: Sparse matrix in CSC format (CuPy)
@@ -589,18 +540,30 @@ class LEDOptimizer:
         Returns:
             Solution vector (CuPy)
         """
-        x = x0.copy()
+        # Use x0 directly if it's the pre-allocated workspace array, otherwise copy
+        if x0 is self._gpu_workspace["x_init"]:
+            x = x0  # No copy needed, use pre-allocated array directly
+        else:
+            x = x0.copy()
+
         max_iters = max_iterations or self.max_iterations
 
+        # Use pre-allocated workspace arrays (GPU-only, no fallback)
+        residual = self._gpu_workspace["residual"]
+        gradient = self._gpu_workspace["gradient"]
+        Ag = self._gpu_workspace["Ag"]
+        x_new = self._gpu_workspace["x_new"]
+        x_diff = self._gpu_workspace["x_diff"]
+
         for iteration in range(max_iters):
-            # Compute residual: r = A*x - b
-            residual = A_csr @ x - b
+            # Compute residual: r = A*x - b (assign to pre-allocated array)
+            residual[:] = A_csr @ x - b
 
-            # Compute gradient: g = A^T * r
-            gradient = A_csc.T @ residual
+            # Compute gradient: g = A^T * r (assign to pre-allocated array)
+            gradient[:] = A_csc.T @ residual
 
-            # Estimate step size
-            Ag = A_csr @ gradient
+            # Estimate step size (assign to pre-allocated array)
+            Ag[:] = A_csr @ gradient
             grad_norm_sq = cp.dot(gradient, gradient)
             Ag_norm_sq = cp.dot(Ag, Ag)
 
@@ -609,17 +572,22 @@ class LEDOptimizer:
             else:
                 step_size = 0.01
 
-            # Gradient descent step
-            x_new = x - step_size * gradient
+            # Gradient descent step (use pre-allocated array)
+            cp.multiply(gradient, step_size, out=x_new)  # x_new = step_size * gradient
+            cp.subtract(x, x_new, out=x_new)  # x_new = x - step_size * gradient
 
-            # Project onto feasible region [0, 1]
-            x_new = cp.clip(x_new, 0, 1)
+            # Project onto feasible region [0, 1] (in-place)
+            cp.clip(x_new, 0, 1, out=x_new)
 
-            # Check convergence
-            if cp.linalg.norm(x_new - x) < self.convergence_threshold:
+            # Check convergence (use pre-allocated array)
+            cp.subtract(x_new, x, out=x_diff)  # x_diff = x_new - x
+            convergence_norm = cp.linalg.norm(x_diff)
+
+            if convergence_norm < self.convergence_threshold:
                 break
 
-            x = x_new
+            # Update x (swap references to avoid copy)
+            x, x_new = x_new, x
 
         return x
 
@@ -649,13 +617,29 @@ class LEDOptimizer:
         }
 
         if self._matrix_loaded:
+            # Calculate average GFLOPS performance
+            avg_gflops_per_second = 0.0
+            if avg_time > 0 and self._flops_per_iteration > 0:
+                avg_gflops_per_second = (
+                    self.max_iterations * self._flops_per_iteration
+                ) / (avg_time * 1e9)
+
             stats.update(
                 {
-                    "matrix_shape": self._sparse_matrix_csc.shape,
-                    "matrix_nnz": self._sparse_matrix_csc.nnz,
+                    "matrix_shape": self._A_combined_csr_gpu.shape,
+                    "matrix_nnz": self._A_combined_csr_gpu.nnz,
                     "sparsity_percent": self._get_sparsity_percentage(),
-                    "memory_usage_mb": self._sparse_matrix_csc.data.nbytes
+                    "memory_usage_mb": self._A_combined_csr_gpu.data.nbytes
                     / (1024 * 1024),
+                    "flop_analysis": {
+                        "flops_per_iteration": int(self._flops_per_iteration),
+                        "total_flops_computed": int(self._total_flops),
+                        "average_gflops_per_frame": (
+                            self.max_iterations * self._flops_per_iteration
+                        )
+                        / 1e9,
+                        "average_gflops_per_second": avg_gflops_per_second,
+                    },
                 }
             )
 

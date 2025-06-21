@@ -166,8 +166,8 @@ class ContentSource:
 1. Load sparse diffusion matrices from preprocessed files
 2. Flatten input texture to target vector (800x640x3 → 1.5M elements)
 3. Solve: minimize ||A×x - target||² using LSQR where A=diffusion matrix, x=LED RGB values
-4. Handle color channels by treating as <led count> * 3 monochrome LEDs, i.e. x shape is (<led count> *3,)
-4. Clamp and format output as LED brightness values [0,255]
+4. Process RGB channels separately for color accuracy
+5. Clamp and format output as LED brightness values [0,255]
 
 ### 6. Consumer Process (`consumer.py`)
 
@@ -441,7 +441,7 @@ This ensures that LED patterns remain stable and don't flicker back to WLED's de
 - **Benefits**: Scalable to 3,200 LEDs, GPU acceleration with CPU fallback
 
 ### RGB Channel Optimization
-- **Approach**: Consider as 3*<led count> monochrome LEDs and re-arrange into RGB at the end
+- **Approach**: Separate R, G, B channel optimization for color accuracy
 - **Result**: Improved color reproduction and optimization convergence
 - **Performance**: Maintains real-time requirements with channel separation
 
