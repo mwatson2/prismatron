@@ -20,8 +20,16 @@ try:
 except ImportError:
     PIL_AVAILABLE = False
 
+import sys
+
 from ..const import FRAME_HEIGHT, FRAME_WIDTH
-from ..consumer.led_optimizer import LEDOptimizer, OptimizationResult
+
+# Import sparse optimizer from archive
+archive_path = str(Path(__file__).parent.parent.parent / "archive")
+sys.path.insert(0, archive_path)
+from led_optimizer_sparse import LEDOptimizer, OptimizationResult
+
+from ..consumer.led_optimizer_dense import DenseLEDOptimizer, DenseOptimizationResult
 
 logger = logging.getLogger(__name__)
 
@@ -110,21 +118,29 @@ class OptimizationPipeline:
     shared between standalone_optimizer.py and regression tests.
     """
 
-    def __init__(self, diffusion_patterns_path: str):
+    def __init__(self, diffusion_patterns_path: str, use_dense: bool = True):
         """
-        Initialize optimization pipeline (GPU-only).
+        Initialize optimization pipeline.
 
         Args:
             diffusion_patterns_path: Path to diffusion patterns file
+            use_dense: If True, use dense tensor optimizer; if False, use sparse optimizer
+                (default: True)
         """
         self.diffusion_patterns_path = self._normalize_patterns_path(
             diffusion_patterns_path
         )
+        self.use_dense = use_dense
 
-        # Initialize the LED optimizer (GPU-only)
-        self.optimizer = LEDOptimizer(
-            diffusion_patterns_path=self.diffusion_patterns_path
-        )
+        # Initialize the appropriate optimizer
+        if use_dense:
+            self.optimizer = DenseLEDOptimizer(
+                diffusion_patterns_path=self.diffusion_patterns_path
+            )
+        else:
+            self.optimizer = LEDOptimizer(
+                diffusion_patterns_path=self.diffusion_patterns_path
+            )
 
         self.initialized = False
 
@@ -147,12 +163,27 @@ class OptimizationPipeline:
 
         if self.initialized:
             stats = self.optimizer.get_optimizer_stats()
-            logger.info(f"Optimization pipeline initialized")
-            logger.info(f"Device: {stats['device_info']['device']}")
-            logger.info(f"LED count: {stats['led_count']}")
-            if "matrix_shape" in stats:
-                logger.info(f"Matrix shape: {stats['matrix_shape']}")
-                logger.info(f"Sparsity: {stats['sparsity_percent']:.3f}%")
+            optimizer_type = "Dense" if self.use_dense else "Sparse"
+            logger.info(f"{optimizer_type} optimization pipeline initialized")
+
+            # Handle different stat formats between optimizers
+            if hasattr(stats, "get"):
+                device = stats.get("device", "unknown")
+                led_count = stats.get("led_count", "unknown")
+                logger.info(f"Device: {device}")
+                logger.info(f"LED count: {led_count}")
+
+                if self.use_dense:
+                    if "ata_tensor_shape" in stats:
+                        logger.info(f"ATA tensor shape: {stats['ata_tensor_shape']}")
+                        logger.info(
+                            f"ATA memory: {stats.get('ata_memory_mb', 'N/A'):.1f}MB"
+                        )
+                else:
+                    if "matrix_shape" in stats:
+                        logger.info(f"Matrix shape: {stats['matrix_shape']}")
+                        if "sparsity_percent" in stats:
+                            logger.info(f"Sparsity: {stats['sparsity_percent']:.3f}%")
 
         return self.initialized
 
@@ -211,12 +242,21 @@ class OptimizationPipeline:
 
         logger.info(f"Optimizing image shape: {target_image.shape}")
 
-        result = self.optimizer.optimize_frame(
-            target_frame=target_image, max_iterations=max_iterations
-        )
+        # Use debug version for testing/analysis tools to get error metrics
+        if self.use_dense and hasattr(self.optimizer, "optimize_frame_with_debug"):
+            result = self.optimizer.optimize_frame_with_debug(
+                target_frame=target_image, max_iterations=max_iterations
+            )
+        else:
+            result = self.optimizer.optimize_frame(
+                target_frame=target_image, max_iterations=max_iterations
+            )
 
         logger.info(f"Optimization completed in {result.optimization_time:.3f}s")
-        logger.info(f"MSE: {result.error_metrics.get('mse', 'N/A'):.6f}")
+        if result.error_metrics:
+            logger.info(f"MSE: {result.error_metrics.get('mse', 'N/A'):.6f}")
+        else:
+            logger.info("No error metrics computed (production mode)")
 
         return result
 
@@ -235,43 +275,82 @@ class OptimizationPipeline:
 
         logger.info("Rendering result using sparse matrix reconstruction...")
 
-        # Get the sparse matrix from CPU reference
-        A_csr = self.optimizer._A_combined_csr_cpu
-        if A_csr is None:
-            raise RuntimeError("Sparse matrix not available in optimizer")
+        # Handle different optimizer types
+        if self.use_dense:
+            # Dense optimizer: use sparse matrices kept for A^T*b calculation
+            A_r = self.optimizer._A_r_csc_gpu.tocsr()
+            A_g = self.optimizer._A_g_csc_gpu.tocsr()
+            A_b = self.optimizer._A_b_csc_gpu.tocsr()
+
+            # Convert to CPU for rendering
+            try:
+                import cupy as cp
+
+                A_r_cpu = A_r.get().tocsr()
+                A_g_cpu = A_g.get().tocsr()
+                A_b_cpu = A_b.get().tocsr()
+            except Exception:
+                A_r_cpu = A_r
+                A_g_cpu = A_g
+                A_b_cpu = A_b
+        else:
+            # Sparse optimizer: use combined matrix
+            A_csr = self.optimizer._A_combined_csr_cpu
+            if A_csr is None:
+                raise RuntimeError("Sparse matrix not available in optimizer")
 
         # Convert LED values from uint8 [0,255] to float32 [0,1]
         led_values_normalized = result.led_values.astype(np.float32) / 255.0
 
-        # Reconstruct RGB channels separately using the new RGB-aware format
+        # Reconstruct RGB channels
         reconstructed_rgb = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.float32)
 
-        logger.info(f"Matrix shape: {A_csr.shape}")
         logger.info(f"LED values shape: {result.led_values.shape}")
 
-        # For combined block diagonal matrix, we need to reconstruct differently
-        # The combined matrix has structure: [[A_r, 0, 0], [0, A_g, 0], [0, 0, A_b]]
-        # LED values are stacked: [R_leds; G_leds; B_leds]
-        led_count = result.led_values.shape[0]
-        led_combined = np.zeros(3 * led_count, dtype=np.float32)
-        led_combined[:led_count] = led_values_normalized[:, 0]  # R
-        led_combined[led_count : 2 * led_count] = led_values_normalized[:, 1]  # G
-        led_combined[2 * led_count :] = led_values_normalized[:, 2]  # B
+        if self.use_dense:
+            # Dense optimizer: reconstruct each channel separately
+            logger.info(f"Dense reconstruction - RGB matrix shapes: {A_r_cpu.shape}")
 
-        # Reconstruct all channels at once with combined matrix
-        reconstructed_flat = A_csr @ led_combined  # Shape: (3 * pixels,)
+            reconstructed_r = A_r_cpu @ led_values_normalized[:, 0]
+            reconstructed_g = A_g_cpu @ led_values_normalized[:, 1]
+            reconstructed_b = A_b_cpu @ led_values_normalized[:, 2]
 
-        # Reshape back to (height, width, 3)
-        pixels = FRAME_HEIGHT * FRAME_WIDTH
-        reconstructed_rgb[:, :, 0] = reconstructed_flat[:pixels].reshape(
-            (FRAME_HEIGHT, FRAME_WIDTH)
-        )
-        reconstructed_rgb[:, :, 1] = reconstructed_flat[pixels : 2 * pixels].reshape(
-            (FRAME_HEIGHT, FRAME_WIDTH)
-        )
-        reconstructed_rgb[:, :, 2] = reconstructed_flat[2 * pixels :].reshape(
-            (FRAME_HEIGHT, FRAME_WIDTH)
-        )
+            reconstructed_rgb[:, :, 0] = reconstructed_r.reshape(
+                (FRAME_HEIGHT, FRAME_WIDTH)
+            )
+            reconstructed_rgb[:, :, 1] = reconstructed_g.reshape(
+                (FRAME_HEIGHT, FRAME_WIDTH)
+            )
+            reconstructed_rgb[:, :, 2] = reconstructed_b.reshape(
+                (FRAME_HEIGHT, FRAME_WIDTH)
+            )
+        else:
+            # Sparse optimizer: use combined block diagonal matrix
+            logger.info(f"Sparse reconstruction - Matrix shape: {A_csr.shape}")
+
+            # For combined block diagonal matrix, we need to reconstruct differently
+            # The combined matrix has structure: [[A_r, 0, 0], [0, A_g, 0], [0, 0, A_b]]
+            # LED values are stacked: [R_leds; G_leds; B_leds]
+            led_count = result.led_values.shape[0]
+            led_combined = np.zeros(3 * led_count, dtype=np.float32)
+            led_combined[:led_count] = led_values_normalized[:, 0]  # R
+            led_combined[led_count : 2 * led_count] = led_values_normalized[:, 1]  # G
+            led_combined[2 * led_count :] = led_values_normalized[:, 2]  # B
+
+            # Reconstruct all channels at once with combined matrix
+            reconstructed_flat = A_csr @ led_combined  # Shape: (3 * pixels,)
+
+            # Reshape back to (height, width, 3)
+            pixels = FRAME_HEIGHT * FRAME_WIDTH
+            reconstructed_rgb[:, :, 0] = reconstructed_flat[:pixels].reshape(
+                (FRAME_HEIGHT, FRAME_WIDTH)
+            )
+            reconstructed_rgb[:, :, 1] = reconstructed_flat[
+                pixels : 2 * pixels
+            ].reshape((FRAME_HEIGHT, FRAME_WIDTH))
+            reconstructed_rgb[:, :, 2] = reconstructed_flat[2 * pixels :].reshape(
+                (FRAME_HEIGHT, FRAME_WIDTH)
+            )
 
         # Convert to uint8 and clamp to valid range
         result_image = np.clip(reconstructed_rgb * 255, 0, 255).astype(np.uint8)

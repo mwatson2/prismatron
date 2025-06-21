@@ -16,7 +16,7 @@ import numpy as np
 
 from ..const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
 from ..core import ControlState, FrameConsumer
-from .led_optimizer import LEDOptimizer
+from .led_optimizer_dense import DenseLEDOptimizer
 from .wled_client import WLEDClient, WLEDConfig
 
 logger = logging.getLogger(__name__)
@@ -86,7 +86,7 @@ class ConsumerProcess:
         # Initialize components
         self._frame_consumer = FrameConsumer(buffer_name)
         self._control_state = ControlState(control_name)
-        self._led_optimizer = LEDOptimizer(
+        self._led_optimizer = DenseLEDOptimizer(
             diffusion_patterns_path=diffusion_patterns_path,
         )
         # Configure WLED client

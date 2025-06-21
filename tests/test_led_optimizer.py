@@ -17,7 +17,14 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
-from src.consumer.led_optimizer import CUPY_AVAILABLE, LEDOptimizer, OptimizationResult
+
+# Add archive directory to path for sparse optimizer
+archive_path = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "archive",
+)
+sys.path.insert(0, archive_path)
+from led_optimizer_sparse import CUPY_AVAILABLE, LEDOptimizer, OptimizationResult
 
 
 class TestOptimizationResult(unittest.TestCase):

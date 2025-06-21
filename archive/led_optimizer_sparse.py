@@ -10,6 +10,9 @@ real-time performance targeting 15fps with memory efficiency.
 """
 
 import logging
+
+# Import constants from parent directory
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,7 +24,9 @@ import scipy.sparse as sp
 from cupyx.scipy.sparse import csc_matrix as cupy_csc_matrix
 from cupyx.scipy.sparse import csr_matrix as cupy_csr_matrix
 
-from ..const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
+src_path = str(Path(__file__).parent.parent / "src")
+sys.path.insert(0, src_path)
+from const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
 
 logger = logging.getLogger(__name__)
 

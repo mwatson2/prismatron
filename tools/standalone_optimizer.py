@@ -34,7 +34,7 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
-from src.consumer.led_optimizer import LEDOptimizer, OptimizationResult
+from src.consumer.led_optimizer_dense import DenseLEDOptimizer, DenseOptimizationResult
 
 try:
     import torch
@@ -54,14 +54,14 @@ from src.utils.optimization_utils import OptimizationPipeline
 class StandaloneOptimizer:
     """Standalone LED optimization tool using shared OptimizationPipeline."""
 
-    def __init__(self, diffusion_patterns_path: str):
-        """Initialize optimizer with patterns file."""
+    def __init__(self, diffusion_patterns_path: str, use_dense: bool = True):
+        """Initialize optimizer with patterns file and optimizer type."""
         if not diffusion_patterns_path:
             raise ValueError("Diffusion patterns path is required")
 
-        # Create shared optimization pipeline (GPU-only)
+        # Create shared optimization pipeline with specified optimizer type
         self.pipeline = OptimizationPipeline(
-            diffusion_patterns_path=diffusion_patterns_path
+            diffusion_patterns_path=diffusion_patterns_path, use_dense=use_dense
         )
 
         # Initialize the pipeline
@@ -168,6 +168,11 @@ def main():
     parser.add_argument(
         "--test", action="store_true", help="Use fewer LEDs for faster testing"
     )
+    parser.add_argument(
+        "--sparse",
+        action="store_true",
+        help="Use sparse optimizer instead of dense tensor optimizer (default: dense)",
+    )
 
     args = parser.parse_args()
 
@@ -198,8 +203,12 @@ def main():
         if args.test:
             logger.info("Test mode: LED count determined by patterns file")
 
-        # Create optimizer
-        optimizer = StandaloneOptimizer(diffusion_patterns_path=args.patterns)
+        # Create optimizer with specified type
+        optimizer_type = "sparse" if args.sparse else "dense"
+        logger.info(f"Using {optimizer_type} tensor optimizer")
+        optimizer = StandaloneOptimizer(
+            diffusion_patterns_path=args.patterns, use_dense=not args.sparse
+        )
 
         # Run optimization
         result, target_image = optimizer.run(
