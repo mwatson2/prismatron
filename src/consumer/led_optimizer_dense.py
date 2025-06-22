@@ -37,6 +37,7 @@ class DenseOptimizationResult:
     target_frame: Optional[np.ndarray] = None  # Original target frame (for debugging)
     precomputation_info: Optional[Dict[str, Any]] = None  # Dense matrix information
     flop_info: Optional[Dict[str, Any]] = None  # FLOP analysis information
+    timing_breakdown: Optional[Dict[str, float]] = None  # Detailed timing breakdown
 
     def get_led_count(self) -> int:
         """Get number of LEDs in result."""
@@ -217,17 +218,9 @@ class DenseLEDOptimizer:
             logger.info("Precomputing dense A^T*A matrices...")
 
             # Compute A^T*A on CPU first (sparse @ sparse -> dense)
-            ATA_r = A_r_csc.T @ A_r_csc  # (leds, leds) - should be dense
-            ATA_g = A_g_csc.T @ A_g_csc
-            ATA_b = A_b_csc.T @ A_b_csc
-
-            # Convert to dense arrays if they're sparse
-            if sp.issparse(ATA_r):
-                ATA_r = ATA_r.toarray()
-            if sp.issparse(ATA_g):
-                ATA_g = ATA_g.toarray()
-            if sp.issparse(ATA_b):
-                ATA_b = ATA_b.toarray()
+            ATA_r = (A_r_csc.T @ A_r_csc).toarray()  # (leds, leds) - should be dense
+            ATA_g = (A_g_csc.T @ A_g_csc).toarray()
+            ATA_b = (A_b_csc.T @ A_b_csc).toarray()
 
             logger.info(f"Dense ATA matrix shapes: {ATA_r.shape}")
             logger.info(
@@ -378,21 +371,27 @@ class DenseLEDOptimizer:
             DenseOptimizationResult with LED values (no error metrics computed)
         """
         start_time = time.time()
+        timing_breakdown = {}
 
         try:
             if not self._matrix_loaded:
                 raise RuntimeError("Dense matrices not loaded")
 
             # Validate input
+            validation_start = time.time()
             if target_frame.shape != (FRAME_HEIGHT, FRAME_WIDTH, 3):
                 raise ValueError(
                     f"Target frame shape {target_frame.shape} != {(FRAME_HEIGHT, FRAME_WIDTH, 3)}"
                 )
+            timing_breakdown["validation_time"] = time.time() - validation_start
 
             # KEY STEP 2: Calculate A^T*b for current frame
+            atb_start = time.time()
             ATb = self._calculate_ATb(target_frame)
+            timing_breakdown["atb_calculation_time"] = time.time() - atb_start
 
             # Initialize LED values
+            init_start = time.time()
             if initial_values is not None:
                 initial_normalized = (
                     initial_values / 255.0
@@ -403,17 +402,31 @@ class DenseLEDOptimizer:
             else:
                 # Use pre-initialized 0.5 values
                 self._led_values_gpu.fill(0.5)
+            timing_breakdown["initialization_time"] = time.time() - init_start
 
             # Dense tensor optimization loop with detailed timing
             led_values_solved, loop_timing = self._solve_dense_gradient_descent(
                 ATb, max_iterations
             )
+            timing_breakdown["optimization_loop_time"] = loop_timing["total_time"]
+            timing_breakdown["loop_iterations"] = loop_timing["iterations"]
 
             # Convert back to numpy
+            convert_start = time.time()
             led_values_normalized = cp.asnumpy(led_values_solved)
             led_values_output = (led_values_normalized * 255.0).astype(np.uint8)
+            timing_breakdown["conversion_time"] = time.time() - convert_start
 
             optimization_time = time.time() - start_time
+            timing_breakdown["total_time"] = optimization_time
+
+            # Calculate core per-frame time (excluding validation and conversion overhead)
+            core_time = (
+                timing_breakdown["atb_calculation_time"]
+                + timing_breakdown["initialization_time"]
+                + timing_breakdown["optimization_loop_time"]
+            )
+            timing_breakdown["core_per_frame_time"] = core_time
 
             # Calculate FLOPs for this optimization
             iterations_used = max_iterations or self.max_iterations
@@ -450,6 +463,7 @@ class DenseLEDOptimizer:
                     "gflops": frame_flops / 1e9,
                     "gflops_per_second": frame_flops / (optimization_time * 1e9),
                 },
+                timing_breakdown=timing_breakdown,
             )
 
             # Update statistics

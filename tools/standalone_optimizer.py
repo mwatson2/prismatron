@@ -244,8 +244,39 @@ def main():
                     f"Image saving:      {timing['save_time']:.3f}s ({save_pct:.1f}%)"
                 )
             logger.info(f"Total time:        {timing['total_time']:.3f}s")
+
+            # Print core per-frame timing
+            if "core_per_frame_time" in timing:
+                core_time = timing["core_per_frame_time"]
+                core_pct = core_time / timing["total_time"] * 100
+                logger.info(f"Core per-frame:    {core_time:.3f}s ({core_pct:.1f}%)")
+                fps = 1.0 / core_time if core_time > 0 else 0.0
+                logger.info(f"Estimated FPS:     {fps:.1f}")
         else:
             logger.info(f"Total time: {result.optimization_time:.3f}s")
+
+        # Print core optimizer timing details if available
+        if (
+            hasattr(result, "flop_info")
+            and result.flop_info
+            and "detailed_timing" in result.flop_info
+        ):
+            detailed = result.flop_info["detailed_timing"]
+            logger.info("=== Core Optimizer Timing ===")
+            if "atb_time" in detailed:
+                logger.info(f"A^T*b calculation: {detailed['atb_time']:.3f}s")
+            if "loop_time" in detailed:
+                logger.info(f"Optimization loop: {detailed['loop_time']:.3f}s")
+            if "einsum_time" in detailed:
+                logger.info(f"  - Dense einsum:  {detailed['einsum_time']:.3f}s")
+            if "step_size_time" in detailed:
+                logger.info(f"  - Step size:     {detailed['step_size_time']:.3f}s")
+            if "iterations_completed" in detailed:
+                logger.info(f"  - Iterations:    {detailed['iterations_completed']}")
+            if "core_optimization_time" in detailed:
+                core_opt = detailed["core_optimization_time"]
+                fps = 1.0 / core_opt if core_opt > 0 else 0.0
+                logger.info(f"Core optimization: {core_opt:.3f}s ({fps:.1f} FPS)")
 
         # Print optimization quality metrics
         if hasattr(result, "error_metrics") and result.error_metrics:

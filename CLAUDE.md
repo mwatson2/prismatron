@@ -349,6 +349,21 @@ python tools/visualize_diffusion_patterns.py --patterns diffusion_patterns/synth
 python tools/standalone_optimizer.py --input test_image.jpg --patterns diffusion_patterns/synthetic_1000 --output result.png
 ```
 
+## Code Management Principles
+
+### Archive Directory Policy
+**IMPORTANT**: The `archive/` directory contains deprecated code for reference only.
+- **Never modify files in `archive/`** - they are read-only references
+- Archive contains older implementations (PyTorch 4D COO, older sparse implementations)
+- Current active code is in `src/` directory only
+- If archived code is needed, copy it to `src/` and modify the copy
+
+### Current Active Components
+- **Dense LED Optimizer**: `src/consumer/led_optimizer_dense.py` (primary optimizer)
+- **Sparse LED Optimizer**: Uses archived sparse code via import in `src/utils/optimization_utils.py`
+- **Main Consumer**: `src/consumer/consumer.py`
+- **Standalone Tools**: `tools/standalone_optimizer.py` (production testing tool)
+
 ## Development Commands
 
 ```bash
