@@ -473,3 +473,11 @@ This ensures that LED patterns remain stable and don't flicker back to WLED's de
 - **Visualization**: Diffusion pattern analysis and debugging tools
 
 This architecture provides a robust foundation for the final hardware integration phase.
+
+## Development Guidelines
+
+### Code Management Principles
+- **Never create unnecessary duplicate code or test files**
+- **Use existing standard tools and utilities** (e.g., `standalone_optimizer.py`, comprehensive test suite)
+- **Prefer editing existing files over creating new ones**
+- **Only create new files when absolutely necessary for the specific goal**
