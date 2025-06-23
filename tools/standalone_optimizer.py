@@ -205,13 +205,46 @@ class StandaloneOptimizer:
     def _render_result_mixed(
         self, result: DenseOptimizationResult, target_image: np.ndarray
     ) -> np.ndarray:
-        """Render optimization result for mixed tensor (placeholder)."""
-        # For now, return target image as placeholder
-        # In full implementation, this would use the mixed tensor to render
-        logger.info(
-            "Mixed tensor rendering not yet implemented, returning target image"
-        )
-        return target_image
+        """Render optimization result for mixed tensor using CSC matrices."""
+        logger.info("Rendering result using CSC matrices...")
+        
+        # Use the CSC matrices that were loaded alongside the mixed tensor
+        # These are available in the unified optimizer when use_mixed_tensor=True
+        A_r = self.optimizer._A_r_csc_gpu.tocsr()
+        A_g = self.optimizer._A_g_csc_gpu.tocsr()
+        A_b = self.optimizer._A_b_csc_gpu.tocsr()
+
+        # Convert to CPU for rendering
+        try:
+            import cupy as cp
+            A_r_cpu = A_r.get().tocsr()
+            A_g_cpu = A_g.get().tocsr()
+            A_b_cpu = A_b.get().tocsr()
+        except Exception:
+            A_r_cpu = A_r
+            A_g_cpu = A_g
+            A_b_cpu = A_b
+
+        # Convert LED values from uint8 [0,255] to float32 [0,1]
+        led_values_normalized = result.led_values.astype(np.float32) / 255.0
+        
+        logger.info(f"LED values shape: {result.led_values.shape}")
+        logger.info(f"Dense reconstruction - RGB matrix shapes: {A_r_cpu.shape}")
+
+        # Render each channel separately: A @ x
+        rendered_r = A_r_cpu @ led_values_normalized[:, 0]  # (pixels,)
+        rendered_g = A_g_cpu @ led_values_normalized[:, 1]
+        rendered_b = A_b_cpu @ led_values_normalized[:, 2]
+
+        # Combine channels and reshape to image
+        rendered_flat = np.stack([rendered_r, rendered_g, rendered_b], axis=1)  # (pixels, 3)
+        rendered_image = rendered_flat.reshape(FRAME_HEIGHT, FRAME_WIDTH, 3)
+
+        # Convert back to uint8 [0, 255] and clip
+        rendered_image = np.clip(rendered_image * 255.0, 0, 255).astype(np.uint8)
+
+        logger.info(f"Rendered image shape: {rendered_image.shape}")
+        return rendered_image
 
     def _save_image_mixed(self, image: np.ndarray, output_path: str) -> None:
         """Save image for mixed tensor optimization."""
