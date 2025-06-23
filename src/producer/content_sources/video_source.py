@@ -281,10 +281,15 @@ class VideoSource(ContentSource):
                     logger.debug("End of video stream reached")
                     break
 
-                # Convert to numpy array
+                # Convert to numpy array in interleaved format
                 frame_array = np.frombuffer(frame_bytes, dtype=np.uint8)
-                frame_array = frame_array.reshape(
+                frame_array_interleaved = frame_array.reshape(
                     (self._frame_height, self._frame_width, 3)
+                )
+
+                # Convert to planar format (3, H, W) for system consistency
+                frame_array_planar = FrameData.convert_interleaved_to_planar(
+                    frame_array_interleaved
                 )
 
                 # Calculate presentation timestamp
@@ -292,9 +297,9 @@ class VideoSource(ContentSource):
                     frame_number / self._frame_rate if self._frame_rate > 0 else 0
                 )
 
-                # Create frame data
+                # Create frame data with planar format
                 frame_data = FrameData(
-                    array=frame_array,
+                    array=frame_array_planar,  # Now in planar format (3, H, W)
                     width=self._frame_width,
                     height=self._frame_height,
                     channels=3,

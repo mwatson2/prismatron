@@ -32,7 +32,7 @@ def get_buffer_array(
     buffer_info, width=FRAME_WIDTH, height=FRAME_HEIGHT, channels=FRAME_CHANNELS
 ):
     """Helper function to get array from BufferInfo for backwards compatibility."""
-    return buffer_info.get_array(width, height, channels)
+    return buffer_info.get_array_interleaved(width, height, channels)
 
 
 @unittest.skipUnless(

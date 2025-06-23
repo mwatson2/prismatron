@@ -125,9 +125,9 @@ class ImageSource(ContentSource):
         try:
             # Open and process image
             with Image.open(self.filepath) as img:
-                # Convert to RGBA if needed
-                if img.mode != "RGBA":
-                    img = img.convert("RGBA")
+                # Convert to RGB (not RGBA) for consistent channel handling
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
 
                 # Auto-orient based on EXIF data
                 img = ImageOps.exif_transpose(img)
@@ -169,7 +169,7 @@ class ImageSource(ContentSource):
                 self.set_error(f"OpenCV could not load image: {self.filepath}")
                 return False
 
-            # Handle different channel counts
+            # Handle different channel counts and ensure RGB output
             if len(img_bgr.shape) == 2:
                 # Grayscale - convert to RGB
                 img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2RGB)
@@ -184,7 +184,7 @@ class ImageSource(ContentSource):
                 self.set_error(f"Unsupported image format: {img_bgr.shape[2]} channels")
                 return False
 
-            self._image_data = img_rgb
+            self._image_data = img_rgb  # Always RGB format (H, W, 3)
             self.content_info.width = img_rgb.shape[1]
             self.content_info.height = img_rgb.shape[0]
 
@@ -220,9 +220,18 @@ class ImageSource(ContentSource):
                 self._display_start_time = 0.0
                 self._has_been_displayed = True
 
-            # Create frame data with the loaded image
+            # Convert image data to planar format (3, H, W)
+            image_copy = self._image_data.copy()  # Copy to avoid modification
+            # Handle both RGB (3 channels) and RGBA (4 channels) cases
+            if image_copy.shape[2] == 4:  # RGBA
+                image_copy = image_copy[:, :, :3]  # Drop alpha channel
+
+            # Convert from interleaved (H, W, C) to planar (C, H, W)
+            planar_image = FrameData.convert_interleaved_to_planar(image_copy)
+
+            # Create frame data with planar format
             frame_data = FrameData(
-                array=self._image_data.copy(),  # Copy to avoid modification
+                array=planar_image,  # Now in planar format (3, H, W)
                 width=self.content_info.width,
                 height=self.content_info.height,
                 channels=3,  # RGB

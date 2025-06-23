@@ -61,7 +61,7 @@ class TestConsumerProcess(unittest.TestCase):
         # Create consumer with mocked dependencies
         with patch("src.consumer.consumer.FrameConsumer"), patch(
             "src.consumer.consumer.ControlState"
-        ), patch("src.consumer.consumer.LEDOptimizer"), patch(
+        ), patch("src.consumer.consumer.DenseLEDOptimizer"), patch(
             "src.consumer.consumer.WLEDClient"
         ):
             self.consumer = ConsumerProcess(
@@ -90,7 +90,7 @@ class TestConsumerProcess(unittest.TestCase):
         self.assertEqual(self.consumer.target_fps, 15.0)
         self.assertTrue(self.consumer.use_optimization)
 
-    @patch("src.consumer.consumer.LEDOptimizer")
+    @patch("src.consumer.consumer.DenseLEDOptimizer")
     @patch("src.consumer.consumer.WLEDClient")
     def test_component_initialization_success(self, mock_wled, mock_optimizer):
         """Test successful component initialization."""
@@ -105,7 +105,7 @@ class TestConsumerProcess(unittest.TestCase):
         mock_optimizer.return_value.initialize.assert_called_once()
         mock_wled.return_value.connect.assert_called_once()
 
-    @patch("src.consumer.consumer.LEDOptimizer")
+    @patch("src.consumer.consumer.DenseLEDOptimizer")
     @patch("src.consumer.consumer.WLEDClient")
     def test_component_initialization_failure(self, mock_wled, mock_optimizer):
         """Test component initialization failure."""
@@ -456,7 +456,7 @@ class TestConsumerProcess(unittest.TestCase):
         # Create new consumer to trigger signal setup
         with patch("src.consumer.consumer.FrameConsumer"), patch(
             "src.consumer.consumer.ControlState"
-        ), patch("src.consumer.consumer.LEDOptimizer"), patch(
+        ), patch("src.consumer.consumer.DenseLEDOptimizer"), patch(
             "src.consumer.consumer.WLEDClient"
         ):
             consumer = ConsumerProcess()
@@ -472,7 +472,7 @@ class TestConsumerProcessIntegration(unittest.TestCase):
 
     @patch("src.consumer.consumer.FrameConsumer")
     @patch("src.consumer.consumer.ControlState")
-    @patch("src.consumer.consumer.LEDOptimizer")
+    @patch("src.consumer.consumer.DenseLEDOptimizer")
     @patch("src.consumer.consumer.WLEDClient")
     def test_end_to_end_processing(
         self, mock_wled, mock_optimizer, mock_control, mock_frame_consumer

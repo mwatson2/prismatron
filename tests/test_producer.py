@@ -384,8 +384,9 @@ class TestProducerProcess(unittest.TestCase):
     def test_frame_rendering_simulation(self):
         """Test frame rendering to buffer."""
         # Create mock frame data
+        interleaved_array = np.zeros((480, 640, 3), dtype=np.uint8)
         frame_data = FrameData(
-            array=np.zeros((480, 640, 3), dtype=np.uint8),
+            array=FrameData.convert_interleaved_to_planar(interleaved_array),
             width=640,
             height=480,
             channels=3,

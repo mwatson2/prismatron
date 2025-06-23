@@ -243,9 +243,9 @@ class OptimizationPipeline:
         logger.info(f"Optimizing image shape: {target_image.shape}")
 
         # Use debug version for testing/analysis tools to get error metrics
-        if self.use_dense and hasattr(self.optimizer, "optimize_frame_with_debug"):
-            result = self.optimizer.optimize_frame_with_debug(
-                target_frame=target_image, max_iterations=max_iterations
+        if self.use_dense:
+            result = self.optimizer.optimize_frame(
+                target_frame=target_image, debug=True, max_iterations=max_iterations
             )
         else:
             result = self.optimizer.optimize_frame(

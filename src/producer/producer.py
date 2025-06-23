@@ -648,12 +648,12 @@ class ProducerProcess:
                 logger.warning("Failed to get write buffer")
                 return False
 
-            # Get buffer array
+            # Get buffer array in planar format (3, H, W)
             buffer_array = buffer_info.get_array(
                 FRAME_WIDTH, FRAME_HEIGHT, FRAME_CHANNELS
             )
 
-            # Scale and copy frame data to buffer
+            # Scale and copy frame data to buffer (both in planar format)
             self._copy_frame_to_buffer(frame_data, buffer_array)
 
             # Advance write buffer
@@ -694,8 +694,8 @@ class ProducerProcess:
                         # RGBA to RGB
                         buffer_array[:] = frame_data.array[:, :, :3]
             else:
-                # Scale frame (simplified - center crop/pad)
-                self._scale_frame_to_buffer(frame_data, buffer_array)
+                # Scale frame using planar-aware scaling
+                self._scale_frame_to_buffer_planar(frame_data, buffer_array)
 
         except Exception as e:
             logger.error(f"Failed to copy frame to buffer: {e}")
@@ -818,6 +818,126 @@ class ProducerProcess:
                 ] = frame_data.array[
                     crop_y : crop_y + copy_h, crop_x : crop_x + copy_w, :3
                 ]
+
+        except Exception as e:
+            logger.error(f"Failed to crop frame: {e}")
+
+    def _scale_frame_to_buffer_planar(
+        self, frame_data: FrameData, buffer_array
+    ) -> None:
+        """
+        Scale frame data to fit buffer with 5:3 aspect ratio cropping (planar format).
+
+        Crops the source image to 5:3 aspect ratio (center crop) and scales
+        to fill the buffer completely with no padding.
+
+        Args:
+            frame_data: Source frame data in planar format (3, H, W)
+            buffer_array: Target buffer array in planar format (3, H, W)
+        """
+        try:
+            import cv2
+
+            src_h, src_w = frame_data.height, frame_data.width
+            target_aspect = FRAME_WIDTH / FRAME_HEIGHT  # 5:3 = 1.667
+            source_aspect = src_w / src_h
+
+            # Calculate crop dimensions to achieve 5:3 aspect ratio
+            if source_aspect > target_aspect:
+                # Source is wider than 5:3, crop width
+                crop_h = src_h
+                crop_w = int(src_h * target_aspect)
+                crop_x = (src_w - crop_w) // 2
+                crop_y = 0
+            else:
+                # Source is taller than 5:3, crop height
+                crop_w = src_w
+                crop_h = int(src_w / target_aspect)
+                crop_x = 0
+                crop_y = (src_h - crop_h) // 2
+
+            # Process each channel separately in planar format
+            for c in range(frame_data.channels):
+                # Extract cropped region for this channel
+                cropped_channel = frame_data.array[
+                    c, crop_y : crop_y + crop_h, crop_x : crop_x + crop_w
+                ]
+
+                # Scale to target buffer dimensions
+                resized_channel = cv2.resize(
+                    cropped_channel,
+                    (FRAME_WIDTH, FRAME_HEIGHT),
+                    interpolation=cv2.INTER_LINEAR,
+                )
+
+                # Copy to buffer
+                if c < FRAME_CHANNELS:
+                    buffer_array[c] = resized_channel
+
+            # Handle channel conversion if needed
+            if frame_data.channels == 3 and FRAME_CHANNELS == 4:
+                buffer_array[3] = 255  # Alpha channel
+
+        except ImportError:
+            # Fallback: simple center crop without scaling
+            logger.warning("OpenCV not available, using simple crop")
+            self._simple_crop_frame_planar(frame_data, buffer_array)
+        except Exception as e:
+            logger.error(f"Failed to scale frame: {e}")
+
+    def _simple_crop_frame_planar(self, frame_data: FrameData, buffer_array) -> None:
+        """
+        Simple center crop to 5:3 aspect ratio without scaling (planar format).
+
+        This fallback method crops to 5:3 aspect ratio but doesn't scale,
+        so the result may not fill the entire buffer if dimensions don't match.
+
+        Args:
+            frame_data: Source frame data in planar format (3, H, W)
+            buffer_array: Target buffer array in planar format (3, H, W)
+        """
+        try:
+            src_h, src_w = frame_data.height, frame_data.width
+            dst_h, dst_w = FRAME_HEIGHT, FRAME_WIDTH
+            target_aspect = dst_w / dst_h  # 5:3
+            source_aspect = src_w / src_h
+
+            # Calculate crop dimensions to achieve 5:3 aspect ratio
+            if source_aspect > target_aspect:
+                # Source is wider than 5:3, crop width
+                crop_h = src_h
+                crop_w = int(src_h * target_aspect)
+                crop_x = (src_w - crop_w) // 2
+                crop_y = 0
+            else:
+                # Source is taller than 5:3, crop height
+                crop_w = src_w
+                crop_h = int(src_w / target_aspect)
+                crop_x = 0
+                crop_y = (src_h - crop_h) // 2
+
+            # Calculate how much of the cropped region fits in the buffer
+            copy_h = min(crop_h, dst_h)
+            copy_w = min(crop_w, dst_w)
+
+            # Center the copied region in the buffer
+            dst_y = (dst_h - copy_h) // 2
+            dst_x = (dst_w - copy_w) // 2
+
+            # Clear buffer first
+            buffer_array.fill(0)
+
+            # Copy the cropped region for each channel in planar format
+            for c in range(min(frame_data.channels, FRAME_CHANNELS)):
+                buffer_array[
+                    c, dst_y : dst_y + copy_h, dst_x : dst_x + copy_w
+                ] = frame_data.array[
+                    c, crop_y : crop_y + copy_h, crop_x : crop_x + copy_w
+                ]
+
+            # Handle channel conversion if needed
+            if frame_data.channels == 3 and FRAME_CHANNELS == 4:
+                buffer_array[3] = 255  # Alpha channel
 
         except Exception as e:
             logger.error(f"Failed to crop frame: {e}")

@@ -84,7 +84,7 @@ class MockContentSource(ContentSource):
         )
 
         frame_data = FrameData(
-            array=test_array,
+            array=FrameData.convert_interleaved_to_planar(test_array),
             width=self.content_info.width,
             height=self.content_info.height,
             channels=3,

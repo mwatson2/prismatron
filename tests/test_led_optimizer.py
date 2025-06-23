@@ -18,13 +18,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
 
-# Add archive directory to path for sparse optimizer
-archive_path = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "archive",
-)
-sys.path.insert(0, archive_path)
-from led_optimizer_sparse import CUPY_AVAILABLE, LEDOptimizer, OptimizationResult
+# Import current dense optimizer
+from src.consumer.led_optimizer_dense import DenseLEDOptimizer, DenseOptimizationResult
+
+# GPU availability check
+try:
+    import cupy as cp
+
+    CUPY_AVAILABLE = True
+except ImportError:
+    CUPY_AVAILABLE = False
+
+# Create aliases for compatibility
+LEDOptimizer = DenseLEDOptimizer
+OptimizationResult = DenseOptimizationResult
 
 
 class TestOptimizationResult(unittest.TestCase):
@@ -75,8 +82,7 @@ class TestLEDOptimizer(unittest.TestCase):
 
         # Create optimizer with test patterns
         self.optimizer = LEDOptimizer(
-            diffusion_patterns_path=self.patterns_path.replace(".npz", ""),
-            use_gpu=False,  # Force CPU for testing
+            diffusion_patterns_path=self.patterns_path.replace(".npz", "")
         )
 
     def _create_test_patterns(self):
@@ -121,14 +127,15 @@ class TestLEDOptimizer(unittest.TestCase):
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_gpu_detection(self):
-        """Test GPU usage detection logic."""
-        # Test explicit GPU setting
-        optimizer_cpu = LEDOptimizer(use_gpu=False)
-        self.assertFalse(optimizer_cpu.use_gpu)
+        """Test GPU detection and device info."""
+        # Test default initialization (automatic GPU detection)
+        optimizer = LEDOptimizer()
+        self.assertIsNotNone(optimizer.device_info)
+        self.assertIn("device", optimizer.device_info)
 
-        # Test automatic detection (will depend on system)
-        optimizer_auto = LEDOptimizer(use_gpu=True)
-        # Should fall back to CPU if no GPU available, which is fine
+        # Device should be either 'gpu' or 'cpu'
+        device_type = optimizer.device_info.get("device")
+        self.assertIn(device_type, ["gpu", "cpu"])
 
     def test_initialization_success(self):
         """Test successful optimizer initialization."""
@@ -162,8 +169,8 @@ class TestLEDOptimizer(unittest.TestCase):
             np.uint8
         )
 
-        # Run optimization
-        result = self.optimizer.optimize_frame(test_frame, max_iterations=5)
+        # Run optimization with debug mode to get error metrics
+        result = self.optimizer.optimize_frame(test_frame, debug=True, max_iterations=5)
 
         # LED count will be from test patterns (50), not full LED_COUNT (3200)
         self.assertEqual(result.led_values.shape[1], 3)  # RGB channels
@@ -181,7 +188,9 @@ class TestLEDOptimizer(unittest.TestCase):
         test_frame = np.full((FRAME_HEIGHT, FRAME_WIDTH, 3), 128, dtype=np.uint8)
 
         # Run optimization
-        result = self.optimizer.optimize_frame(test_frame, max_iterations=10)
+        result = self.optimizer.optimize_frame(
+            test_frame, debug=True, max_iterations=10
+        )
 
         self.assertEqual(result.led_values.shape[1], 3)  # RGB channels
         self.assertGreater(result.led_values.shape[0], 0)  # Some LEDs
@@ -228,11 +237,10 @@ class TestLEDOptimizer(unittest.TestCase):
 
     def test_parameter_updates(self):
         """Test optimization parameter updates."""
-        self.optimizer.set_optimization_parameters(
-            max_iterations=200,
-            convergence_threshold=1e-8,
-            step_size_scaling=0.5,
-        )
+        # Set parameters directly (DenseLEDOptimizer doesn't have set_optimization_parameters)
+        self.optimizer.max_iterations = 200
+        self.optimizer.convergence_threshold = 1e-8
+        self.optimizer.step_size_scaling = 0.5
 
         self.assertEqual(self.optimizer.max_iterations, 200)
         self.assertEqual(self.optimizer.convergence_threshold, 1e-8)
@@ -251,12 +259,11 @@ class TestLEDOptimizer(unittest.TestCase):
 
         stats = self.optimizer.get_optimizer_stats()
 
-        self.assertEqual(stats["device_info"]["device"], "cpu")
+        self.assertIn(stats["device"], ["gpu", "cpu"])  # Device type from stats
         self.assertTrue(stats["matrix_loaded"])
         self.assertEqual(stats["optimization_count"], 2)
         self.assertGreater(stats["total_optimization_time"], 0)
         self.assertGreater(stats["estimated_fps"], 0)
-        self.assertIn("parameters", stats)
         # LED count in stats should match our test patterns (50), not full LED_COUNT (3200)
         self.assertEqual(stats["led_count"], 50)  # Should match test pattern size
 
@@ -266,7 +273,7 @@ class TestLEDOptimizer(unittest.TestCase):
         fixture_path = "tests/fixtures/test_clean"
 
         # Create optimizer with fixture patterns
-        optimizer = LEDOptimizer(diffusion_patterns_path=fixture_path, use_gpu=False)
+        optimizer = LEDOptimizer(diffusion_patterns_path=fixture_path)
 
         # Should successfully initialize with fixture patterns
         result = optimizer.initialize()
@@ -276,12 +283,9 @@ class TestLEDOptimizer(unittest.TestCase):
         # Get stats to verify pattern details
         stats = optimizer.get_optimizer_stats()
         self.assertEqual(stats["led_count"], 100, "Should have 100 LEDs from fixture")
-        self.assertIn("matrix_shape", stats, "Should have matrix shape info")
-        self.assertIn("sparsity_percent", stats, "Should have sparsity info")
-        self.assertGreater(
-            stats["sparsity_percent"], 0, "Should be sparse (>0% sparsity)"
-        )
-        self.assertLess(stats["sparsity_percent"], 100, "Should not be 100% sparse")
+        self.assertIn("ata_tensor_shape", stats, "Should have ATA tensor shape info")
+        # Dense optimizer provides ATA memory info instead of sparsity
+        self.assertIn("ata_memory_mb", stats, "Should have ATA memory info")
 
     def test_load_nonexistent_diffusion_patterns(self):
         """Test loading non-existent diffusion patterns."""
@@ -402,8 +406,7 @@ class TestOptimizerIntegration(unittest.TestCase):
 
         # Create optimizer with test patterns
         self.optimizer = LEDOptimizer(
-            diffusion_patterns_path=self.patterns_path.replace(".npz", ""),
-            use_gpu=False,
+            diffusion_patterns_path=self.patterns_path.replace(".npz", "")
         )
 
     def _create_test_patterns(self):
@@ -485,7 +488,7 @@ class TestOptimizerIntegration(unittest.TestCase):
         test_frame = np.full((FRAME_HEIGHT, FRAME_WIDTH, 3), 128, dtype=np.uint8)
 
         # Set deterministic parameters
-        self.optimizer.set_optimization_parameters(max_iterations=5)
+        self.optimizer.max_iterations = 5
 
         # Run optimization multiple times with same initial conditions
         # Get actual LED count from test patterns

@@ -57,7 +57,7 @@ class TestOptimizationRegression:
         """Create and initialize optimization pipeline."""
         pipeline = OptimizationPipeline(
             diffusion_patterns_path=self.PATTERNS_PATH,
-            use_gpu=True,  # Will auto-fallback to CPU if GPU unavailable
+            use_dense=True,  # Use dense tensor optimizer (default)
         )
 
         success = pipeline.initialize()

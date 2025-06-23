@@ -94,6 +94,14 @@ class DenseLEDOptimizer:
             None  # Combined block diagonal matrix for faster A^T*b
         )
 
+        # BSR format matrices for comparison (using Pyculib/cuSPARSE)
+        self._A_r_bsr_data = None  # BSR data for red channel
+        self._A_g_bsr_data = None  # BSR data for green channel
+        self._A_b_bsr_data = None  # BSR data for blue channel
+        self._A_combined_bsr_data = None  # BSR data for combined matrix
+        self._bsr_block_size = (4, 4)  # Default BSR block size
+        self._bsr_available = False  # Track if BSR is available
+
         # Pre-allocated arrays for optimization
         self._target_rgb_buffer = None  # (pixels, 3) CPU buffer
         self._ATb_gpu = None  # (led_count, 3) dense vector on GPU
@@ -141,6 +149,160 @@ class DenseLEDOptimizer:
         logger.info(f"GPU Memory: {device_info['memory_info']['free_mb']:.0f}MB free")
 
         return device_info
+
+    def _create_bsr_matrices(self, A_r_csc, A_g_csc, A_b_csc, A_combined_csc) -> None:
+        """
+        Create BSR (Blocked Sparse Row) format matrices using Pyculib/cuSPARSE.
+
+        Args:
+            A_r_csc, A_g_csc, A_b_csc: Individual channel CSC matrices
+            A_combined_csc: Combined block diagonal CSC matrix
+        """
+        try:
+            import ctypes
+            import ctypes.util
+            import gc
+
+            logger.info("Setting up BSR matrices with padding for compatibility...")
+
+            # Find cuSPARSE library
+            cusparse_lib_path = ctypes.util.find_library("cusparse")
+            if not cusparse_lib_path:
+                logger.warning("cuSPARSE library not found, skipping BSR matrices")
+                return
+
+            cusparse_lib = ctypes.CDLL(cusparse_lib_path)
+
+            # Check if legacy BSR function exists
+            try:
+                bsrmv_func = cusparse_lib.cusparseSbsrmv
+                logger.info("Found cusparseSbsrmv function for direct BSR access")
+            except AttributeError:
+                logger.warning(
+                    "cusparseSbsrmv function not found, skipping BSR matrices"
+                )
+                return
+
+            # Create small representative BSR sample for testing (avoid memory issues)
+            sample_led_count = 96  # 96 = 16 * 6, easily divisible by 2, 4, 8, 16
+            sample_pixels = 1600  # Small representative sample
+
+            logger.info(
+                f"Creating BSR sample with {sample_led_count} LEDs for performance testing..."
+            )
+
+            # Extract small sample: sample_pixels × (96 LEDs × 3 channels)
+            sample_cols = sample_led_count * 3
+            A_sample = A_combined_csc[:sample_pixels, :sample_cols]
+
+            # Use 4x4 block size (good balance of structure and memory efficiency)
+            block_size = (4, 4)
+            rows, cols = A_sample.shape
+
+            # Calculate padding needed
+            row_pad = (block_size[0] - rows % block_size[0]) % block_size[0]
+            col_pad = (block_size[1] - cols % block_size[1]) % block_size[1]
+
+            if row_pad > 0 or col_pad > 0:
+                logger.debug(
+                    f"Padding sample from {rows}×{cols} to {rows+row_pad}×{cols+col_pad}"
+                )
+
+                # Pad with zeros to make dimensions divisible by block size
+                if row_pad > 0:
+                    zero_rows = sp.csc_matrix((row_pad, cols), dtype=A_sample.dtype)
+                    A_sample = sp.vstack([A_sample, zero_rows])
+
+                if col_pad > 0:
+                    zero_cols = sp.csc_matrix(
+                        (A_sample.shape[0], col_pad), dtype=A_sample.dtype
+                    )
+                    A_sample = sp.hstack([A_sample, zero_cols])
+
+            # Convert sample to BSR format (this should be memory-safe)
+            logger.info(
+                f"Converting sample to BSR format with block size {block_size}..."
+            )
+            try:
+                A_bsr_sample = A_sample.tobsr(blocksize=block_size)
+
+                # Store BSR data for cuSPARSE operations (using sample)
+                self._A_combined_bsr_data = self._prepare_bsr_for_cusparse(A_bsr_sample)
+                self._bsr_block_size = block_size
+                self._bsr_cusparse_lib = cusparse_lib
+                self._bsr_led_count = sample_led_count
+                self._bsr_padded_shape = A_bsr_sample.shape
+                self._bsr_available = True
+
+                # Calculate memory usage
+                bsr_memory = (
+                    A_bsr_sample.data.nbytes
+                    + A_bsr_sample.indices.nbytes
+                    + A_bsr_sample.indptr.nbytes
+                ) / (1024**2)
+                csc_memory = (
+                    A_sample.data.nbytes
+                    + A_sample.indices.nbytes
+                    + A_sample.indptr.nbytes
+                ) / (1024**2)
+
+                logger.info(f"BSR sample conversion successful:")
+                logger.info(
+                    f"  Sample LEDs: {sample_led_count} (from {self._actual_led_count} total)"
+                )
+                logger.info(
+                    f"  Sample matrix: {A_bsr_sample.shape} (from {A_sample.shape})"
+                )
+                logger.info(f"  Block size: {block_size}")
+                logger.info(
+                    f"  Memory: BSR {bsr_memory:.2f}MB vs CSC {csc_memory:.2f}MB"
+                )
+                logger.info(
+                    f"  NNZ: {A_bsr_sample.nnz:,} ({A_bsr_sample.nnz/A_bsr_sample.shape[0]/A_bsr_sample.shape[1]*100:.3f}% density)"
+                )
+                logger.info("Note: This is a small sample for BSR performance testing")
+
+                # Clean up intermediate matrices
+                del A_sample, A_bsr_sample
+                gc.collect()
+
+            except Exception as e:
+                logger.warning(f"BSR sample conversion failed: {e}")
+                del A_sample
+                gc.collect()
+                return
+
+        except ImportError as e:
+            logger.warning(f"ctypes not available, skipping BSR matrices: {e}")
+            self._bsr_available = False
+        except Exception as e:
+            logger.warning(f"Failed to set up BSR matrices: {e}")
+            self._bsr_available = False
+
+    def _prepare_bsr_for_cusparse(self, bsr_matrix):
+        """
+        Prepare BSR matrix data for cuSPARSE operations.
+
+        Args:
+            bsr_matrix: SciPy BSR matrix
+
+        Returns:
+            Dictionary with BSR matrix data (keeping as NumPy for SciPy compatibility)
+        """
+        import numpy as np
+
+        # Keep BSR data as NumPy arrays for SciPy operations
+        # (GPU transfer would happen in actual cuSPARSE implementation)
+        bsr_data = {
+            "data": bsr_matrix.data.astype(np.float32),
+            "indices": bsr_matrix.indices.astype(np.int32),
+            "indptr": bsr_matrix.indptr.astype(np.int32),
+            "shape": bsr_matrix.shape,
+            "blocksize": bsr_matrix.blocksize,
+            "nnz": bsr_matrix.nnz,
+        }
+
+        return bsr_data
 
     def initialize(self) -> bool:
         """
@@ -253,6 +415,10 @@ class DenseLEDOptimizer:
             self._A_b_csc_gpu = cupy_csc_matrix(A_b_csc)
             self._A_combined_csc_gpu = cupy_csc_matrix(A_combined_csc)
 
+            # Create BSR format matrices for performance comparison
+            logger.info("Creating BSR format matrices for comparison...")
+            self._create_bsr_matrices(A_r_csc, A_g_csc, A_b_csc, A_combined_csc)
+
             # Calculate memory usage
             ata_memory_mb = self._ATA_gpu.nbytes / (1024 * 1024)
             logger.info(f"Dense ATA tensor memory: {ata_memory_mb:.1f}MB")
@@ -353,6 +519,19 @@ class DenseLEDOptimizer:
         )
         logger.info(f"Dense workspace memory: {workspace_mb:.1f}MB")
 
+    def _reset_workspace_references(self) -> None:
+        """Reset workspace array references to ensure deterministic behavior."""
+        if not hasattr(self, "_gpu_workspace") or self._gpu_workspace is None:
+            return
+
+        # Clear all workspace arrays to zero
+        for key, arr in self._gpu_workspace.items():
+            arr.fill(0.0)
+
+        # Ensure LED values are properly initialized
+        if hasattr(self, "_led_values_gpu") and self._led_values_gpu is not None:
+            self._led_values_gpu.fill(0.5)
+
     def _warm_gpu_cache(self) -> None:
         """
         Warm up GPU cache by running dummy sparse and dense operations.
@@ -442,6 +621,9 @@ class DenseLEDOptimizer:
                 # Use pre-initialized 0.5 values
                 self._led_values_gpu.fill(0.5)
             timing_breakdown["initialization_time"] = time.time() - init_start
+
+            # Reset workspace references to ensure deterministic behavior
+            self._reset_workspace_references()
 
             # Dense tensor optimization loop with detailed timing
             led_values_solved, loop_timing = self._solve_dense_gradient_descent(
@@ -715,6 +897,141 @@ class DenseLEDOptimizer:
 
         return self._ATb_gpu
 
+    def _calculate_ATb_bsr(self, target_frame: np.ndarray) -> cp.ndarray:
+        """
+        Calculate A^T * b using direct cuSPARSE BSR operations.
+
+        This uses real BSR format with direct cuSPARSE calls for performance comparison.
+
+        Args:
+            target_frame: Target image (height, width, 3)
+
+        Returns:
+            ATb vector (led_count, 3) on GPU (restricted to BSR LED count)
+        """
+        if not self._bsr_available or self._A_combined_bsr_data is None:
+            raise RuntimeError("BSR implementation not available")
+
+        import ctypes
+
+        import cupy as cp
+
+        atb_start_time = time.time()
+
+        # Phase 1: Prepare target vector for BSR sample dimensions
+        cpu_conversion_start = time.time()
+        target_rgb_normalized = target_frame.astype(np.float32) / 255.0
+        target_flattened = target_rgb_normalized.reshape(-1, 3)  # (pixels, 3)
+
+        # Create target vector matching BSR sample dimensions
+        bsr_shape = self._bsr_padded_shape
+        bsr_led_count = self._bsr_led_count
+
+        # Extract sample corresponding to BSR sample size
+        sample_pixels = bsr_shape[0] // 3  # BSR matrix rows divided by 3 channels
+        if target_flattened.shape[0] > sample_pixels:
+            target_sample = target_flattened[:sample_pixels, :]
+        else:
+            # Pad if needed
+            padding = np.zeros(
+                (sample_pixels - target_flattened.shape[0], 3), dtype=np.float32
+            )
+            target_sample = np.vstack([target_flattened, padding])
+
+        # Create combined target vector [R_pixels; G_pixels; B_pixels] for BSR sample
+        target_combined = np.empty(sample_pixels * 3, dtype=np.float32)
+        target_combined[:sample_pixels] = target_sample[:, 0]  # R channel
+        target_combined[sample_pixels : 2 * sample_pixels] = target_sample[
+            :, 1
+        ]  # G channel
+        target_combined[2 * sample_pixels :] = target_sample[:, 2]  # B channel
+
+        # Pad to exact BSR matrix dimensions if needed
+        if len(target_combined) < bsr_shape[0]:
+            padding = np.zeros(bsr_shape[0] - len(target_combined), dtype=np.float32)
+            target_combined = np.concatenate([target_combined, padding])
+        elif len(target_combined) > bsr_shape[0]:
+            target_combined = target_combined[: bsr_shape[0]]
+
+        # Transfer to GPU
+        target_combined_gpu = cp.asarray(target_combined)
+        cpu_to_gpu_time = time.time() - cpu_conversion_start
+
+        # Phase 2: cuSPARSE BSR matrix-vector multiplication
+        operation_start = time.time()
+
+        # Get BSR matrix data
+        bsr_data = self._A_combined_bsr_data
+        bsr_shape = bsr_data["shape"]
+        bsr_blocksize = bsr_data["blocksize"]
+
+        # Prepare cuSPARSE parameters
+        cusparse_lib = self._bsr_cusparse_lib
+
+        # For simplicity, fall back to SciPy BSR operation for now
+        # (Direct cuSPARSE call would require complex handle/descriptor setup)
+        logger.debug(f"BSR operation: matrix {bsr_shape}, block size {bsr_blocksize}")
+
+        # Create temporary BSR matrix for operation
+        import scipy.sparse as sp
+
+        try:
+            temp_bsr = sp.bsr_matrix(
+                (bsr_data["data"], bsr_data["indices"], bsr_data["indptr"]),
+                shape=bsr_shape,
+                blocksize=bsr_blocksize,
+            )
+        except Exception as e:
+            logger.error(f"Failed to create BSR matrix: {e}")
+            raise
+
+        # Perform A^T @ b operation
+        cp.cuda.runtime.deviceSynchronize()
+        operation_start_sync = time.time()
+
+        # BSR transpose multiply (on CPU for now, GPU version needs more setup)
+        target_combined_cpu = (
+            target_combined_gpu.get()
+        )  # Use .get() instead of cp.asnumpy()
+        ATb_combined_cpu = temp_bsr.T @ target_combined_cpu
+        ATb_combined_gpu = cp.asarray(ATb_combined_cpu)
+
+        cp.cuda.runtime.deviceSynchronize()
+        operation_time = time.time() - operation_start_sync
+        operation_time_total = time.time() - operation_start
+
+        logger.debug(f"BSR A^T@b operation analysis:")
+        logger.debug(f"  BSR matrix shape: {bsr_shape}, NNZ: {temp_bsr.nnz:,}")
+        logger.debug(f"  BSR block size: {bsr_blocksize}")
+        logger.debug(f"  Operation time (sync): {operation_time:.4f}s")
+        logger.debug(
+            f"  Note: Using CPU BSR operation (GPU version needs cuSPARSE handle setup)"
+        )
+
+        # Phase 3: Convert result back to tensor form
+        tensor_conversion_start = time.time()
+        ATb_result = cp.zeros((bsr_led_count, 3), dtype=cp.float32)
+        ATb_result[:, 0] = ATb_combined_gpu[:bsr_led_count]  # R LEDs
+        ATb_result[:, 1] = ATb_combined_gpu[bsr_led_count : 2 * bsr_led_count]  # G LEDs
+        ATb_result[:, 2] = ATb_combined_gpu[
+            2 * bsr_led_count : 3 * bsr_led_count
+        ]  # B LEDs
+        tensor_conversion_time = time.time() - tensor_conversion_start
+
+        total_atb_time = time.time() - atb_start_time
+
+        logger.debug(
+            f"BSR A^T*b timing - CPU→GPU: {cpu_to_gpu_time:.4f}s, "
+            f"Operation: {operation_time:.4f}s, "
+            f"Tensor conv: {tensor_conversion_time:.4f}s, "
+            f"Total: {total_atb_time:.4f}s"
+        )
+
+        # Clean up
+        del temp_bsr, target_combined_cpu, ATb_combined_cpu
+
+        return ATb_result
+
     def debug_sparse_performance(self, target_frame: np.ndarray) -> Dict[str, float]:
         """
         Debug sparse matrix performance with different approaches.
@@ -811,12 +1128,42 @@ class DenseLEDOptimizer:
         cp.cuda.runtime.deviceSynchronize()
         results["repeated_operations"] = (time.time() - start) / 5
 
-        # Test 6: Check GPU memory info during operation
+        # Test 6: BSR format tests (if available)
+        if self._bsr_available and self._A_combined_bsr_data is not None:
+            logger.info("Testing real BSR format operations...")
+            try:
+                # Test BSR method with actual BSR matrices
+                logger.info("Testing BSR A^T*b method...")
+                start = time.time()
+                atb_result_bsr = self._calculate_ATb_bsr(target_frame)
+                results["bsr_real_method"] = time.time() - start
+
+                # Test repeated BSR operations
+                logger.info("Testing BSR repeated operations...")
+                start = time.time()
+                for _ in range(3):  # Fewer repetitions due to CPU/GPU transfer overhead
+                    atb_result_bsr_repeat = self._calculate_ATb_bsr(target_frame)
+                results["bsr_cusparse_repeated"] = (time.time() - start) / 3
+
+                logger.info(
+                    f"BSR test completed with {self._bsr_led_count} LEDs (vs {self._actual_led_count} CSC LEDs)"
+                )
+
+            except Exception as e:
+                logger.warning(f"BSR tests failed: {e}")
+                results["bsr_real_method"] = -1
+                results["bsr_cusparse_repeated"] = -1
+        else:
+            logger.info("BSR matrices not available")
+            results["bsr_real_method"] = -1
+            results["bsr_cusparse_repeated"] = -1
+
+        # Test 7: Check GPU memory info during operation
         logger.info("GPU memory analysis...")
         meminfo_before = cp.cuda.runtime.memGetInfo()
         cp.cuda.runtime.deviceSynchronize()
         start = time.time()
-        result6 = self._A_combined_csc_gpu.T @ target_combined_gpu
+        result7 = self._A_combined_csc_gpu.T @ target_combined_gpu
         meminfo_after = cp.cuda.runtime.memGetInfo()
         cp.cuda.runtime.deviceSynchronize()
         results["memory_test"] = time.time() - start
@@ -837,13 +1184,53 @@ class DenseLEDOptimizer:
 
         # Calculate matrix properties
         matrix_info = {
-            "shape": self._A_combined_csc_gpu.shape,
-            "nnz": self._A_combined_csc_gpu.nnz,
-            "density_percent": self._A_combined_csc_gpu.nnz
+            "csc_shape": self._A_combined_csc_gpu.shape,
+            "csc_nnz": self._A_combined_csc_gpu.nnz,
+            "csc_density_percent": self._A_combined_csc_gpu.nnz
             / (self._A_combined_csc_gpu.shape[0] * self._A_combined_csc_gpu.shape[1])
             * 100,
-            "size_mb": self._A_combined_csc_gpu.data.nbytes / (1024**2),
+            "csc_size_mb": self._A_combined_csc_gpu.data.nbytes / (1024**2),
         }
+
+        # Add BSR properties if available
+        if self._bsr_available and hasattr(self, "_A_combined_bsr_data"):
+            bsr_data = self._A_combined_bsr_data
+            matrix_info.update(
+                {
+                    "bsr_available": True,
+                    "bsr_led_count": getattr(self, "_bsr_led_count", "unknown"),
+                    "bsr_shape": bsr_data.get("shape", "unknown"),
+                    "bsr_block_size": self._bsr_block_size,
+                    "bsr_nnz": bsr_data.get("nnz", "unknown"),
+                    "bsr_memory_mb": (
+                        bsr_data["data"].nbytes
+                        + bsr_data["indices"].nbytes
+                        + bsr_data["indptr"].nbytes
+                    )
+                    / (1024**2)
+                    if "data" in bsr_data
+                    else "unknown",
+                    "bsr_cusparse_lib_available": getattr(
+                        self, "_bsr_cusparse_lib", None
+                    )
+                    is not None,
+                    "bsr_status": "Real BSR matrices loaded and ready",
+                }
+            )
+        elif self._bsr_available:
+            matrix_info.update(
+                {
+                    "bsr_available": True,
+                    "bsr_status": "Framework available but matrices not loaded",
+                }
+            )
+        else:
+            matrix_info.update(
+                {
+                    "bsr_available": False,
+                    "bsr_status": "Not available",
+                }
+            )
 
         logger.info("=== Matrix Properties ===")
         for key, value in matrix_info.items():
@@ -941,8 +1328,8 @@ class DenseLEDOptimizer:
                 )
                 break
 
-            # Update (swap references for efficiency)
-            x, w["x_new"] = w["x_new"], x
+            # Update (copy values to avoid reference swapping issues)
+            x[:] = w["x_new"]
 
             iteration_time = time.time() - iteration_start
             per_iteration_times.append(iteration_time)

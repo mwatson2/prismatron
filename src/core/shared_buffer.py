@@ -59,8 +59,17 @@ class BufferInfo:
     def get_array(
         self, width: int, height: int, channels: int = FRAME_CHANNELS
     ) -> np.ndarray:
-        """Create numpy array view of the buffer with specified dimensions."""
-        return np.ndarray((height, width, channels), dtype=np.uint8, buffer=self.buffer)
+        """Create numpy array view of the buffer with specified dimensions in PLANAR format."""
+        # Buffer stores data in planar format (C, H, W)
+        return np.ndarray((channels, height, width), dtype=np.uint8, buffer=self.buffer)
+
+    def get_array_interleaved(
+        self, width: int, height: int, channels: int = FRAME_CHANNELS
+    ) -> np.ndarray:
+        """Create numpy array view of the buffer in interleaved format (H, W, C) for legacy support."""
+        # Get planar array and convert to interleaved
+        planar_array = self.get_array(width, height, channels)
+        return np.transpose(planar_array, (1, 2, 0))  # (C, H, W) -> (H, W, C)
 
 
 class FrameRingBuffer:
