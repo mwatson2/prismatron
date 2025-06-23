@@ -51,7 +51,7 @@ class SingleBlockMixedSparseTensor:
         channels: int,
         height: int,
         width: int,
-        block_size: int,
+        block_size: int = 96,
         device: str = "cuda",
     ):
         """
@@ -177,7 +177,7 @@ class SingleBlockMixedSparseTensor:
         self.blocks_set[:] = True
 
     def transpose_dot_product(
-        self, dense_matrix: cp.ndarray, chunk_size: int = 128
+        self, dense_matrix: cp.ndarray, chunk_size: int = 512
     ) -> cp.ndarray:
         """
         Compute A^T @ b operation efficiently using chunked block extraction.
@@ -228,6 +228,224 @@ class SingleBlockMixedSparseTensor:
             results[batch_indices, channel_indices] = chunk_results
 
         return results
+
+    def transpose_dot_product_cuda(self, dense_matrix: cp.ndarray) -> cp.ndarray:
+        """
+        Compute A^T @ b operation using custom CUDA kernel (optimized).
+
+        This method uses a custom CUDA kernel for maximum performance,
+        eliminating chunking overhead and optimizing memory access patterns.
+
+        Args:
+            dense_matrix: Target image, shape (height, width)
+
+        Returns:
+            Result of A^T @ b, shape (batch_size, channels)
+        """
+        if dense_matrix.shape != (self.height, self.width):
+            raise ValueError(
+                f"dense_matrix shape {dense_matrix.shape} != expected "
+                f"({self.height}, {self.width})"
+            )
+
+        try:
+            from .cuda_kernels import cuda_transpose_dot_product
+
+            # Use CUDA kernel implementation
+            result = cuda_transpose_dot_product(
+                self.sparse_values,
+                self.block_positions,
+                self.blocks_set,
+                dense_matrix,
+                self.batch_size,
+                self.channels,
+                self.block_size,
+            )
+
+            return result
+
+        except ImportError as e:
+            logger.warning(
+                f"CUDA kernel not available: {e}. Falling back to chunked implementation."
+            )
+            # Fall back to chunked implementation
+            return self.transpose_dot_product(dense_matrix)
+
+    def transpose_dot_product_cuda_corrected(
+        self, dense_matrix: cp.ndarray
+    ) -> cp.ndarray:
+        """
+        Compute A^T @ b operation using corrected CUDA kernel with proper parallelism.
+
+        This method uses a corrected CUDA kernel where 256 threads collaborate on each
+        (LED, channel) dot product for maximum performance and correctness.
+
+        Args:
+            dense_matrix: Target image, shape (height, width)
+
+        Returns:
+            Result of A^T @ b, shape (batch_size, channels)
+        """
+        if dense_matrix.shape != (self.height, self.width):
+            raise ValueError(
+                f"dense_matrix shape {dense_matrix.shape} != expected "
+                f"({self.height}, {self.width})"
+            )
+
+        try:
+            from .cuda_kernels import cuda_transpose_dot_product_corrected
+
+            # Use corrected CUDA kernel implementation
+            result = cuda_transpose_dot_product_corrected(
+                self.sparse_values,
+                self.block_positions,
+                self.blocks_set,
+                dense_matrix,
+                self.batch_size,
+                self.channels,
+                self.block_size,
+            )
+
+            return result
+
+        except ImportError as e:
+            logger.warning(
+                f"Corrected CUDA kernel not available: {e}. Falling back to standard CUDA kernel."
+            )
+            # Fall back to standard CUDA kernel
+            return self.transpose_dot_product_cuda(dense_matrix)
+
+    def transpose_dot_product_cuda_high_performance(
+        self, dense_matrix: cp.ndarray
+    ) -> cp.ndarray:
+        """
+        Compute A^T @ b operation using high-performance CUDA kernel targeting 20+ GFLOPS.
+
+        This method uses an optimized CUDA kernel designed for maximum throughput on
+        high-end GPUs, targeting 2600+ LEDs with 10s of GFLOPS performance.
+
+        Args:
+            dense_matrix: Target image, shape (height, width)
+
+        Returns:
+            Result of A^T @ b, shape (batch_size, channels)
+        """
+        if dense_matrix.shape != (self.height, self.width):
+            raise ValueError(
+                f"dense_matrix shape {dense_matrix.shape} != expected "
+                f"({self.height}, {self.width})"
+            )
+
+        try:
+            from .cuda_kernels import cuda_transpose_dot_product_high_performance
+
+            # Use high-performance CUDA kernel implementation
+            result = cuda_transpose_dot_product_high_performance(
+                self.sparse_values,
+                self.block_positions,
+                self.blocks_set,
+                dense_matrix,
+                self.batch_size,
+                self.channels,
+                self.block_size,
+            )
+
+            return result
+
+        except ImportError as e:
+            logger.warning(
+                f"High-performance CUDA kernel not available: {e}. Falling back to corrected kernel."
+            )
+            # Fall back to corrected CUDA kernel
+            return self.transpose_dot_product_cuda_corrected(dense_matrix)
+
+    def transpose_dot_product_cuda_high_parallelism(
+        self, dense_matrix: cp.ndarray
+    ) -> cp.ndarray:
+        """
+        Compute A^T @ b operation using high-parallelism CUDA kernel (maximum performance).
+
+        This method uses a high-parallelism CUDA kernel with 256 threads per LED computation
+        for maximum GPU utilization and performance.
+
+        Args:
+            dense_matrix: Target image, shape (height, width)
+
+        Returns:
+            Result of A^T @ b, shape (batch_size, channels)
+        """
+        if dense_matrix.shape != (self.height, self.width):
+            raise ValueError(
+                f"dense_matrix shape {dense_matrix.shape} != expected "
+                f"({self.height}, {self.width})"
+            )
+
+        try:
+            from .cuda_kernels import cuda_transpose_dot_product_high_parallelism
+
+            # Use high-parallelism CUDA kernel implementation
+            result = cuda_transpose_dot_product_high_parallelism(
+                self.sparse_values,
+                self.block_positions,
+                self.blocks_set,
+                dense_matrix,
+                self.batch_size,
+                self.channels,
+                self.block_size,
+            )
+
+            return result
+
+        except ImportError as e:
+            logger.warning(
+                f"High-parallelism CUDA kernel not available: {e}. Falling back to standard CUDA kernel."
+            )
+            # Fall back to standard CUDA kernel
+            return self.transpose_dot_product_cuda(dense_matrix)
+
+    def transpose_dot_product_cuda_compute_optimized(
+        self, dense_matrix: cp.ndarray
+    ) -> cp.ndarray:
+        """
+        Compute A^T @ b operation using compute-optimized CUDA kernel (targeting ~14 GFLOPS).
+
+        This method uses an architecture-matched CUDA kernel with 8-way parallelism
+        targeting the SM architecture for maximum compute throughput and memory efficiency.
+
+        Args:
+            dense_matrix: Target image, shape (height, width)
+
+        Returns:
+            Result of A^T @ b, shape (batch_size, channels)
+        """
+        if dense_matrix.shape != (self.height, self.width):
+            raise ValueError(
+                f"dense_matrix shape {dense_matrix.shape} != expected "
+                f"({self.height}, {self.width})"
+            )
+
+        try:
+            from .cuda_kernels import cuda_transpose_dot_product_compute_optimized
+
+            # Use compute-optimized CUDA kernel implementation
+            result = cuda_transpose_dot_product_compute_optimized(
+                self.sparse_values,
+                self.block_positions,
+                self.blocks_set,
+                dense_matrix,
+                self.batch_size,
+                self.channels,
+                self.block_size,
+            )
+
+            return result
+
+        except ImportError as e:
+            logger.warning(
+                f"Compute-optimized CUDA kernel not available: {e}. Falling back to high-parallelism CUDA kernel."
+            )
+            # Fall back to high-parallelism CUDA kernel
+            return self.transpose_dot_product_cuda_high_parallelism(dense_matrix)
 
     def _extract_dense_blocks_vectorized(
         self,
