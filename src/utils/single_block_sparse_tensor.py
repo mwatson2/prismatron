@@ -354,7 +354,8 @@ class SingleBlockMixedSparseTensor:
 
         except ImportError as e:
             logger.warning(
-                f"High-performance CUDA kernel not available: {e}. Falling back to corrected kernel."
+                f"High-performance CUDA kernel not available: {e}. "
+                f"Falling back to corrected kernel."
             )
             # Fall back to corrected CUDA kernel
             return self.transpose_dot_product_cuda_corrected(dense_matrix)
@@ -398,7 +399,8 @@ class SingleBlockMixedSparseTensor:
 
         except ImportError as e:
             logger.warning(
-                f"High-parallelism CUDA kernel not available: {e}. Falling back to standard CUDA kernel."
+                f"High-parallelism CUDA kernel not available: {e}. "
+                f"Falling back to standard CUDA kernel."
             )
             # Fall back to standard CUDA kernel
             return self.transpose_dot_product_cuda(dense_matrix)
@@ -442,7 +444,8 @@ class SingleBlockMixedSparseTensor:
 
         except ImportError as e:
             logger.warning(
-                f"Compute-optimized CUDA kernel not available: {e}. Falling back to high-parallelism CUDA kernel."
+                f"Compute-optimized CUDA kernel not available: {e}. "
+                f"Falling back to high-parallelism CUDA kernel."
             )
             # Fall back to high-parallelism CUDA kernel
             return self.transpose_dot_product_cuda_high_parallelism(dense_matrix)

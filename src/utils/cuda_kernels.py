@@ -58,7 +58,8 @@ void compute_optimized_transpose_dot_product_kernel(
     // Load only sparse block into shared memory, access target directly
     extern __shared__ float shared_mem[];
     float* sparse_block = shared_mem;                    // block_size * block_size floats (36KB for 96x96)
-    float* reduction_workspace = &shared_mem[block_size * block_size];  // 32 floats (128 bytes)
+    // 32 floats (128 bytes)
+    float* reduction_workspace = &shared_mem[block_size * block_size];
     // Total: 36KB + 128 bytes = ~36.1KB (well under 48KB limit)
 
     int block_elements = block_size * block_size;  // 9216 for 96x96
@@ -535,7 +536,8 @@ void high_performance_transpose_dot_product_kernel(
     // Block: (512, 1, 1) - large blocks for better occupancy
 
     const int THREADS_PER_BLOCK = 512;
-    const int PAIRS_PER_BLOCK = 1;  // Process 1 (LED, channel) pair per thread block for memory efficiency
+    // Process 1 (LED, channel) pair per thread block for memory efficiency
+    const int PAIRS_PER_BLOCK = 1;
 
     // Shared memory within 48KB limit: 1 target block + reduction array
     __shared__ float target_block[96 * 96];     // 1 block * 96*96 * 4 bytes = 36KB
@@ -593,7 +595,8 @@ void high_performance_transpose_dot_product_kernel(
     for (int elem = 0; elem < elements_per_thread; elem++) {
         int element_idx = thread_id * elements_per_thread + elem;
         if (element_idx < block_elements) {
-            // Calculate 4D sparse array index: [led_id][channel_id][block_row][block_col]
+            // Calculate 4D sparse array index:
+            // [led_id][channel_id][block_row][block_col]
             int block_row = element_idx / block_size;
             int block_col = element_idx % block_size;
             int sparse_4d_idx = ((led_id * channels + channel_id) * block_size + block_row) * block_size + block_col;
@@ -727,7 +730,7 @@ def cuda_transpose_dot_product(
     block_size: int,
 ) -> cp.ndarray:
     """
-    DEPRECATED: Use cuda_transpose_dot_product_corrected or cuda_transpose_dot_product_high_performance instead.
+    DEPRECATED: Use corrected or high_performance version instead.
 
     This function previously used a flawed kernel with race conditions.
     """

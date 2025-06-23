@@ -52,21 +52,34 @@ from src.utils.optimization_utils import OptimizationPipeline
 
 
 class StandaloneOptimizer:
-    """Standalone LED optimization tool using shared OptimizationPipeline."""
+    """Standalone LED optimization tool with support for dense, sparse, and mixed tensor optimizers."""
 
-    def __init__(self, diffusion_patterns_path: str, use_dense: bool = True):
+    def __init__(self, diffusion_patterns_path: str, optimizer_type: str = "dense"):
         """Initialize optimizer with patterns file and optimizer type."""
         if not diffusion_patterns_path:
             raise ValueError("Diffusion patterns path is required")
 
-        # Create shared optimization pipeline with specified optimizer type
-        self.pipeline = OptimizationPipeline(
-            diffusion_patterns_path=diffusion_patterns_path, use_dense=use_dense
-        )
+        self.diffusion_patterns_path = diffusion_patterns_path
+        self.optimizer_type = optimizer_type.lower()
 
-        # Initialize the pipeline
-        if not self.pipeline.initialize():
-            raise RuntimeError("Failed to initialize optimization pipeline")
+        if self.optimizer_type == "mixed":
+            # Use unified optimizer with mixed tensor mode
+            self.optimizer = DenseLEDOptimizer(
+                diffusion_patterns_path=diffusion_patterns_path, 
+                use_mixed_tensor=True
+            )
+            if not self.optimizer.initialize():
+                raise RuntimeError("Failed to initialize mixed tensor optimizer")
+            self.pipeline = None
+        else:
+            # Use shared optimization pipeline for dense/sparse
+            use_dense = self.optimizer_type == "dense"
+            self.pipeline = OptimizationPipeline(
+                diffusion_patterns_path=diffusion_patterns_path, use_dense=use_dense
+            )
+            if not self.pipeline.initialize():
+                raise RuntimeError("Failed to initialize optimization pipeline")
+            self.optimizer = None
 
     def show_preview(self, rendered_result: np.ndarray, target_image: np.ndarray):
         """Show side-by-side comparison."""
@@ -103,27 +116,52 @@ class StandaloneOptimizer:
         # Track timing for each phase
         total_start = time.time()
 
-        # Phase 1: Load image
-        load_start = time.time()
-        target_image = self.pipeline.load_image(input_path)
-        load_time = time.time() - load_start
+        if self.optimizer_type == "mixed":
+            # Use mixed tensor optimizer directly
+            # Phase 1: Load image
+            load_start = time.time()
+            target_image = self._load_image_mixed(input_path)
+            load_time = time.time() - load_start
 
-        # Phase 2: Optimize
-        optimize_start = time.time()
-        result = self.pipeline.optimize_image(target_image, max_iterations=None)
-        optimize_time = time.time() - optimize_start
+            # Phase 2: Optimize
+            optimize_start = time.time()
+            result = self.optimizer.optimize_frame(target_image, debug=True)
+            optimize_time = time.time() - optimize_start
 
-        # Phase 3: Render result
-        render_start = time.time()
-        rendered_result = self.pipeline.render_result(result)
-        render_time = time.time() - render_start
+            # Phase 3: Render result (placeholder for now)
+            render_start = time.time()
+            rendered_result = self._render_result_mixed(result, target_image)
+            render_time = time.time() - render_start
 
-        # Phase 4: Save (if requested)
-        save_time = 0.0
-        if output_path:
-            save_start = time.time()
-            self.pipeline.save_image(rendered_result, output_path)
-            save_time = time.time() - save_start
+            # Phase 4: Save (if requested)
+            save_time = 0.0
+            if output_path:
+                save_start = time.time()
+                self._save_image_mixed(rendered_result, output_path)
+                save_time = time.time() - save_start
+        else:
+            # Use pipeline for dense/sparse
+            # Phase 1: Load image
+            load_start = time.time()
+            target_image = self.pipeline.load_image(input_path)
+            load_time = time.time() - load_start
+
+            # Phase 2: Optimize
+            optimize_start = time.time()
+            result = self.pipeline.optimize_image(target_image, max_iterations=None)
+            optimize_time = time.time() - optimize_start
+
+            # Phase 3: Render result
+            render_start = time.time()
+            rendered_result = self.pipeline.render_result(result)
+            render_time = time.time() - render_start
+
+            # Phase 4: Save (if requested)
+            save_time = 0.0
+            if output_path:
+                save_start = time.time()
+                self.pipeline.save_image(rendered_result, output_path)
+                save_time = time.time() - save_start
 
         total_time = time.time() - total_start
 
@@ -144,6 +182,47 @@ class StandaloneOptimizer:
         result.rendered_result = rendered_result
 
         return result, target_image
+
+    def _load_image_mixed(self, input_path: str) -> np.ndarray:
+        """Load and resize image for mixed tensor optimization."""
+        if PIL_AVAILABLE:
+            try:
+                image = Image.open(input_path).convert("RGB")
+                image = image.resize((FRAME_WIDTH, FRAME_HEIGHT))
+                return np.array(image, dtype=np.uint8)
+            except Exception as e:
+                logger.warning(f"PIL failed to load {input_path}: {e}")
+
+        # Fallback to OpenCV
+        image = cv2.imread(input_path)
+        if image is None:
+            raise ValueError(f"Could not load image: {input_path}")
+        
+        # Convert BGR to RGB and resize
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        image = cv2.resize(image, (FRAME_WIDTH, FRAME_HEIGHT))
+        return image.astype(np.uint8)
+
+    def _render_result_mixed(self, result: DenseOptimizationResult, target_image: np.ndarray) -> np.ndarray:
+        """Render optimization result for mixed tensor (placeholder)."""
+        # For now, return target image as placeholder
+        # In full implementation, this would use the mixed tensor to render
+        logger.info("Mixed tensor rendering not yet implemented, returning target image")
+        return target_image
+
+    def _save_image_mixed(self, image: np.ndarray, output_path: str) -> None:
+        """Save image for mixed tensor optimization."""
+        if PIL_AVAILABLE:
+            try:
+                pil_image = Image.fromarray(image.astype(np.uint8))
+                pil_image.save(output_path)
+                return
+            except Exception as e:
+                logger.warning(f"PIL failed to save {output_path}: {e}")
+
+        # Fallback to OpenCV
+        image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(output_path, image_bgr)
 
 
 def main():
@@ -173,6 +252,17 @@ def main():
         action="store_true",
         help="Use sparse optimizer instead of dense tensor optimizer (default: dense)",
     )
+    parser.add_argument(
+        "--mixed",
+        action="store_true",
+        help="Use mixed tensor optimizer with custom CUDA kernels",
+    )
+    parser.add_argument(
+        "--optimizer",
+        choices=["dense", "sparse", "mixed"],
+        default="dense",
+        help="Optimizer type to use (default: dense)",
+    )
 
     args = parser.parse_args()
 
@@ -187,9 +277,11 @@ def main():
         logger.error(f"Input file not found: {args.input}")
         return 1
 
-    if args.patterns and not Path(args.patterns).exists():
-        logger.error(f"Patterns file not found: {args.patterns}")
-        return 1
+    if args.patterns:
+        patterns_file = f"{args.patterns}.npz" if not args.patterns.endswith('.npz') else args.patterns
+        if not Path(patterns_file).exists():
+            logger.error(f"Patterns file not found: {patterns_file}")
+            return 1
 
     if not args.patterns:
         logger.error("Must specify --patterns with path to diffusion patterns file")
@@ -203,11 +295,19 @@ def main():
         if args.test:
             logger.info("Test mode: LED count determined by patterns file")
 
-        # Create optimizer with specified type
-        optimizer_type = "sparse" if args.sparse else "dense"
+        # Determine optimizer type
+        if args.optimizer != "dense":
+            optimizer_type = args.optimizer
+        elif args.mixed:
+            optimizer_type = "mixed"
+        elif args.sparse:
+            optimizer_type = "sparse"
+        else:
+            optimizer_type = "dense"
+
         logger.info(f"Using {optimizer_type} tensor optimizer")
         optimizer = StandaloneOptimizer(
-            diffusion_patterns_path=args.patterns, use_dense=not args.sparse
+            diffusion_patterns_path=args.patterns, optimizer_type=optimizer_type
         )
 
         # Run optimization
