@@ -306,11 +306,19 @@ class DiffusionPatternManager:
             (self.led_count, 3, self.frame_height, self.frame_width), dtype=np.float32
         )
 
-        # Fill tensor from accumulated patterns
-        for pattern_data in self._accumulated_patterns:
-            led_id = pattern_data["led_id"]
-            pattern = pattern_data["pattern"]
-            self._diffusion_tensor[led_id] = pattern
+        # Fill tensor from accumulated patterns or loaded patterns
+        if self._accumulated_patterns:
+            # Use accumulated patterns (during generation)
+            for pattern_data in self._accumulated_patterns:
+                led_id = pattern_data["led_id"]
+                pattern = pattern_data["pattern"]
+                self._diffusion_tensor[led_id] = pattern
+        elif self._patterns:
+            # Use loaded patterns (from converted data)
+            for led_id, pattern in self._patterns.items():
+                self._diffusion_tensor[led_id] = pattern
+        else:
+            raise ValueError("No patterns available to build diffusion tensor")
 
         logger.info(f"Diffusion tensor built: {self._diffusion_tensor.shape}")
 
@@ -477,6 +485,117 @@ class DiffusionPatternManager:
         """Load and convert patterns from old interleaved format."""
         logger.info("Converting from interleaved to planar format...")
 
-        # This would implement conversion from the old (H, W, 3) format
-        # to the new (3, H, W) format - implementation depends on old format structure
-        raise NotImplementedError("Conversion from old format not yet implemented")
+        # Import required modules
+        import scipy.sparse as sp
+
+        # Load sparse matrix components
+        matrix_data = data["matrix_data"]
+        matrix_indices = data["matrix_indices"]
+        matrix_indptr = data["matrix_indptr"]
+        matrix_shape = tuple(data["matrix_shape"])
+
+        logger.info(f"Loading sparse matrix with shape {matrix_shape}")
+
+        # Reconstruct the sparse matrix (CSC format)
+        A_combined = sp.csc_matrix(
+            (matrix_data, matrix_indices, matrix_indptr), shape=matrix_shape
+        )
+
+        # The matrix shape is (pixels, led_count * 3)
+        # Where pixels = frame_height * frame_width = 480 * 800 = 384000
+        # And led_count * 3 = 1000 * 3 = 3000
+        pixels = matrix_shape[0]
+        led_count_times_3 = matrix_shape[1]
+        led_count = led_count_times_3 // 3
+
+        if pixels != self.frame_height * self.frame_width:
+            raise ValueError(
+                f"Matrix pixels {pixels} != expected "
+                f"{self.frame_height * self.frame_width}"
+            )
+
+        if led_count != self.led_count:
+            raise ValueError(
+                f"Matrix LED count {led_count} != expected {self.led_count}"
+            )
+
+        logger.info(f"Matrix format: {pixels} pixels, {led_count} LEDs")
+
+        # Extract RGB channel matrices
+        # The matrix structure is: columns 0-999 are R channels, 1000-1999 are G channels, 2000-2999 are B channels
+        # Each LED's diffusion pattern spans the full frame (all pixels) for each channel
+        logger.info("Extracting RGB channel patterns...")
+
+        # Convert sparse matrices to dense and reshape to planar format
+        # For each LED, we need to convert from (H*W) vector to (H, W) and then to planar
+        self._patterns = {}
+
+        logger.info("Converting LED patterns to planar format...")
+        for led_id in range(led_count):
+            # Extract diffusion pattern for this LED from each channel
+            # Red channel: column led_id (0-999)
+            pattern_r_vec = A_combined[:, led_id].toarray().flatten()
+            # Green channel: column led_id + led_count (1000-1999)
+            pattern_g_vec = A_combined[:, led_id + led_count].toarray().flatten()
+            # Blue channel: column led_id + 2*led_count (2000-2999)
+            pattern_b_vec = A_combined[:, led_id + 2 * led_count].toarray().flatten()
+
+            # Reshape each channel from flat vector to (H, W)
+            pattern_r = pattern_r_vec.reshape(self.frame_height, self.frame_width)
+            pattern_g = pattern_g_vec.reshape(self.frame_height, self.frame_width)
+            pattern_b = pattern_b_vec.reshape(self.frame_height, self.frame_width)
+
+            # Combine into planar format (3, H, W)
+            pattern_planar = np.stack([pattern_r, pattern_g, pattern_b], axis=0).astype(
+                np.float32
+            )
+
+            self._patterns[led_id] = pattern_planar
+
+            if led_id % 100 == 0:
+                logger.debug(f"Converted LED {led_id}/{led_count}")
+
+        logger.info(f"Converted {len(self._patterns)} LED patterns to planar format")
+
+        # Load LED positions and mapping if available
+        if "led_positions" in data:
+            self._led_positions = data["led_positions"]
+            logger.info(f"Loaded {len(self._led_positions)} LED positions")
+
+        if "led_spatial_mapping" in data:
+            mapping_data = data["led_spatial_mapping"]
+            if hasattr(mapping_data, "item"):
+                self._led_spatial_mapping = mapping_data.item()
+            else:
+                self._led_spatial_mapping = dict(mapping_data)
+            logger.info(
+                f"Loaded LED spatial mapping with {len(self._led_spatial_mapping)} entries"
+            )
+
+        # Build diffusion tensor from loaded patterns
+        logger.info("Building diffusion tensor from loaded patterns...")
+        self._build_diffusion_tensor()
+
+        # Create sparse matrices and dense ATA for compatibility
+        logger.info("Creating sparse matrices from loaded data...")
+        sparse_stats = self._create_sparse_matrices("csc")
+
+        logger.info("Computing dense A^T*A matrices...")
+        ata_stats = self._compute_dense_ata()
+
+        # Update metadata
+        metadata = data.get("metadata", {})
+        if hasattr(metadata, "item"):
+            metadata = metadata.item()
+
+        return {
+            "led_count": led_count,
+            "pattern_count": len(self._patterns),
+            "frame_dimensions": (self.frame_height, self.frame_width),
+            "format": "planar",
+            "converted_from": "sparse_interleaved",
+            "original_matrix_shape": matrix_shape,
+            "metadata": metadata,
+            "sparse_stats": sparse_stats,
+            "ata_stats": ata_stats,
+        }

@@ -33,7 +33,7 @@ def load_test_image():
 
     # Convert BGR to RGB and resize to expected dimensions
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    image = cv2.resize(image, (800, 640))  # W, H
+    image = cv2.resize(image, (800, 480))  # W, H
 
     # Normalize to [0, 1]
     image = image.astype(np.float32) / 255.0
@@ -46,7 +46,7 @@ def test_dense_optimizer():
     logger.info("=== Testing Dense LED Optimizer ===")
 
     # Load test image in interleaved format (H, W, C)
-    test_image = load_test_image()  # (640, 800, 3)
+    test_image = load_test_image()  # (480, 800, 3)
     logger.info(f"Test image shape (interleaved): {test_image.shape}")
 
     # Initialize dense optimizer
@@ -77,27 +77,27 @@ def test_planar_optimizer():
     logger.info("=== Testing Planar LED Optimizer ===")
 
     # Load test image and convert to planar format (C, H, W)
-    test_image_interleaved = load_test_image()  # (640, 800, 3)
-    test_image_planar = np.transpose(test_image_interleaved, (2, 0, 1))  # (3, 640, 800)
+    test_image_interleaved = load_test_image()  # (480, 800, 3)
+    test_image_planar = np.transpose(test_image_interleaved, (2, 0, 1))  # (3, 480, 800)
     logger.info(f"Test image shape (planar): {test_image_planar.shape}")
 
     # Create pattern manager and generate patterns
     pattern_manager = DiffusionPatternManager(
-        led_count=1000, frame_height=640, frame_width=800
+        led_count=1000, frame_height=480, frame_width=800
     )
 
     # Load patterns from existing file (if available)
     try:
         pattern_manager.load_patterns("diffusion_patterns/synthetic_1000.npz")
         logger.info("Loaded existing patterns")
-    except:
+    except FileNotFoundError:
         logger.info("Generating synthetic patterns...")
         # Generate synthetic patterns
         pattern_manager.start_pattern_generation()
 
         for led_id in range(1000):
             # Create simple synthetic pattern
-            pattern = np.random.exponential(0.1, (3, 640, 800)).astype(np.float32)
+            pattern = np.random.exponential(0.1, (3, 480, 800)).astype(np.float32)
             pattern = np.where(pattern > 0.2, pattern, 0)
             pattern = np.clip(pattern, 0, 1)
             pattern_manager.add_led_pattern(led_id, pattern)
