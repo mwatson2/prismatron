@@ -300,7 +300,11 @@ class DenseLEDOptimizer:
             True if loaded and precomputed successfully, False otherwise
         """
         try:
-            patterns_path = f"{self.diffusion_patterns_path}.npz"
+            patterns_path = (
+                self.diffusion_patterns_path
+                if self.diffusion_patterns_path.endswith(".npz")
+                else f"{self.diffusion_patterns_path}.npz"
+            )
             if not Path(patterns_path).exists():
                 logger.warning(f"Patterns file not found at {patterns_path}")
                 return False
