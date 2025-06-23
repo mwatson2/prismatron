@@ -65,8 +65,7 @@ class StandaloneOptimizer:
         if self.optimizer_type == "mixed":
             # Use unified optimizer with mixed tensor mode
             self.optimizer = DenseLEDOptimizer(
-                diffusion_patterns_path=diffusion_patterns_path, 
-                use_mixed_tensor=True
+                diffusion_patterns_path=diffusion_patterns_path, use_mixed_tensor=True
             )
             if not self.optimizer.initialize():
                 raise RuntimeError("Failed to initialize mixed tensor optimizer")
@@ -197,17 +196,21 @@ class StandaloneOptimizer:
         image = cv2.imread(input_path)
         if image is None:
             raise ValueError(f"Could not load image: {input_path}")
-        
+
         # Convert BGR to RGB and resize
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         image = cv2.resize(image, (FRAME_WIDTH, FRAME_HEIGHT))
         return image.astype(np.uint8)
 
-    def _render_result_mixed(self, result: DenseOptimizationResult, target_image: np.ndarray) -> np.ndarray:
+    def _render_result_mixed(
+        self, result: DenseOptimizationResult, target_image: np.ndarray
+    ) -> np.ndarray:
         """Render optimization result for mixed tensor (placeholder)."""
         # For now, return target image as placeholder
         # In full implementation, this would use the mixed tensor to render
-        logger.info("Mixed tensor rendering not yet implemented, returning target image")
+        logger.info(
+            "Mixed tensor rendering not yet implemented, returning target image"
+        )
         return target_image
 
     def _save_image_mixed(self, image: np.ndarray, output_path: str) -> None:
@@ -278,7 +281,11 @@ def main():
         return 1
 
     if args.patterns:
-        patterns_file = f"{args.patterns}.npz" if not args.patterns.endswith('.npz') else args.patterns
+        patterns_file = (
+            f"{args.patterns}.npz"
+            if not args.patterns.endswith(".npz")
+            else args.patterns
+        )
         if not Path(patterns_file).exists():
             logger.error(f"Patterns file not found: {patterns_file}")
             return 1

@@ -109,7 +109,7 @@ class DenseLEDOptimizer:
 
         # Mixed tensor storage (used when use_mixed_tensor=True)
         self._mixed_tensor = None  # SingleBlockMixedSparseTensor instance
-        
+
         self._led_spatial_mapping: Optional[Dict[int, int]] = None
         self._led_positions: Optional[np.ndarray] = None
         self._matrix_loaded = False
@@ -182,10 +182,10 @@ class DenseLEDOptimizer:
     def _load_precomputed_ata_matrices(self, data: np.lib.npyio.NpzFile) -> bool:
         """
         Load precomputed A^T@A matrices from the pattern file if available.
-        
+
         Args:
             data: Loaded NPZ file data
-            
+
         Returns:
             True if precomputed matrices were loaded successfully, False otherwise
         """
@@ -196,16 +196,18 @@ class DenseLEDOptimizer:
                 "dense_ata_led_count",
                 "dense_ata_channels",
             ]
-            
+
             if not all(key in data for key in required_keys):
                 logger.debug("Precomputed A^T@A matrices not found in pattern file")
                 return False
-                
+
             # Load A^T@A data
-            dense_ata_matrices = data["dense_ata_matrices"]  # Shape: (led_count, led_count, channels)
+            dense_ata_matrices = data[
+                "dense_ata_matrices"
+            ]  # Shape: (led_count, led_count, channels)
             dense_ata_led_count = int(data["dense_ata_led_count"])
             dense_ata_channels = int(data["dense_ata_channels"])
-            
+
             # Validate dimensions
             if dense_ata_led_count != self._actual_led_count or dense_ata_channels != 3:
                 logger.warning(
@@ -213,19 +215,19 @@ class DenseLEDOptimizer:
                     f"({dense_ata_led_count}, {dense_ata_channels}) != ({self._actual_led_count}, 3)"
                 )
                 return False
-            
+
             # Store the precomputed matrices
             self._ATA_cpu = dense_ata_matrices.astype(np.float32)
-            
+
             ata_memory_mb = self._ATA_cpu.nbytes / (1024 * 1024)
             computation_time = data.get("dense_ata_computation_time", 0.0)
-            
+
             logger.info(f"Loaded precomputed A^T@A matrices: {self._ATA_cpu.shape}")
             logger.info(f"A^T@A memory: {ata_memory_mb:.1f}MB")
             logger.info(f"Original computation time: {computation_time:.2f}s")
-            
+
             return True
-            
+
         except Exception as e:
             logger.warning(f"Failed to load precomputed A^T@A matrices: {e}")
             return False
@@ -251,17 +253,19 @@ class DenseLEDOptimizer:
     def _load_mixed_tensor_format(self, data: np.lib.npyio.NpzFile) -> None:
         """Load mixed tensor format for A^T@b calculation."""
         from ..utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
-        
+
         # Check if mixed tensor data is available
         required_keys = [
             "mixed_tensor_values",
-            "mixed_tensor_positions", 
+            "mixed_tensor_positions",
             "mixed_tensor_blocks_set",
             "mixed_tensor_led_count",
         ]
-        
+
         if not all(key in data for key in required_keys):
-            raise ValueError("Mixed tensor data not found in patterns file. Regenerate patterns with mixed tensor support.")
+            raise ValueError(
+                "Mixed tensor data not found in patterns file. Regenerate patterns with mixed tensor support."
+            )
 
         # Extract mixed tensor parameters
         led_count = int(data["mixed_tensor_led_count"])
@@ -339,7 +343,9 @@ class DenseLEDOptimizer:
                 logger.info("Precomputing dense A^T*A matrices from sparse matrices...")
 
                 # Compute A^T*A on CPU first (sparse @ sparse -> dense)
-                ATA_r = (A_r_csc.T @ A_r_csc).toarray()  # (leds, leds) - should be dense
+                ATA_r = (
+                    A_r_csc.T @ A_r_csc
+                ).toarray()  # (leds, leds) - should be dense
                 ATA_g = (A_g_csc.T @ A_g_csc).toarray()
                 ATA_b = (A_b_csc.T @ A_b_csc).toarray()
 
@@ -349,7 +355,9 @@ class DenseLEDOptimizer:
                 )
 
                 # Stack into 3D tensor: (led_count, led_count, 3)
-                self._ATA_cpu = np.stack([ATA_r, ATA_g, ATA_b], axis=2).astype(np.float32)
+                self._ATA_cpu = np.stack([ATA_r, ATA_g, ATA_b], axis=2).astype(
+                    np.float32
+                )
 
             # Transfer to GPU
             logger.info("Transferring dense ATA tensor to GPU...")
@@ -358,7 +366,9 @@ class DenseLEDOptimizer:
             # Load A matrix format based on use_mixed_tensor flag
             if self.use_mixed_tensor:
                 logger.info("Loading both mixed tensor and CSC formats...")
-                logger.info("Mixed tensor for A^T@b calculation, CSC for error metrics...")
+                logger.info(
+                    "Mixed tensor for A^T@b calculation, CSC for error metrics..."
+                )
                 self._load_mixed_tensor_format(data)
                 self._load_csc_format(A_r_csc, A_g_csc, A_b_csc)
             else:
@@ -408,7 +418,9 @@ class DenseLEDOptimizer:
             if hasattr(self, "_mixed_tensor") and self._mixed_tensor is not None:
                 blocks_stored = int(cp.sum(self._mixed_tensor.blocks_set))
                 block_size = self._mixed_tensor.block_size
-                estimated_nnz_per_block = block_size * block_size * 0.4  # Assume 40% density
+                estimated_nnz_per_block = (
+                    block_size * block_size * 0.4
+                )  # Assume 40% density
                 estimated_total_nnz = blocks_stored * estimated_nnz_per_block
                 atb_flops_per_frame = estimated_total_nnz * 2
             else:
@@ -443,7 +455,9 @@ class DenseLEDOptimizer:
         if not self.use_mixed_tensor:
             logger.debug(f"Sparse matrix non-zeros (total): {total_nnz:,}")
         else:
-            logger.debug(f"Mixed tensor blocks stored: {int(cp.sum(self._mixed_tensor.blocks_set)) if self._mixed_tensor else 0}")
+            logger.debug(
+                f"Mixed tensor blocks stored: {int(cp.sum(self._mixed_tensor.blocks_set)) if self._mixed_tensor else 0}"
+            )
 
     def _initialize_workspace(self) -> None:
         """Initialize GPU workspace arrays for dense optimization."""
@@ -502,7 +516,9 @@ class DenseLEDOptimizer:
             # Warm mixed tensor CUDA kernels (single channel)
             dummy_channel = cp.ones((FRAME_HEIGHT, FRAME_WIDTH), dtype=cp.float32)
             for i in range(3):
-                _ = self._mixed_tensor.transpose_dot_product_cuda_high_performance(dummy_channel)
+                _ = self._mixed_tensor.transpose_dot_product_cuda_high_performance(
+                    dummy_channel
+                )
         else:
             # Warm CSC sparse operations
             dummy_size = self._A_combined_csc_gpu.shape[0]
@@ -760,7 +776,7 @@ class DenseLEDOptimizer:
     def _calculate_ATb(self, target_frame: np.ndarray) -> cp.ndarray:
         """
         Calculate A^T * b for the current target frame.
-        
+
         Uses either CSC sparse format or mixed tensor format based on use_mixed_tensor flag.
 
         Args:
@@ -793,10 +809,10 @@ class DenseLEDOptimizer:
         """Convert frame to planar format for mixed tensor operations."""
         # Normalize and convert to float32
         target_normalized = target_frame.astype(np.float32) / 255.0
-        
+
         # Convert from HWC to CHW format for mixed tensor
         target_planar = np.transpose(target_normalized, (2, 0, 1))  # (3, height, width)
-        
+
         # Transfer to GPU
         return cp.asarray(target_planar)
 
@@ -892,8 +908,10 @@ class DenseLEDOptimizer:
         target_normalized = target_frame.astype(np.float32) / 255.0
         target_gpu = cp.asarray(target_normalized)
         cpu_to_gpu_time = time.time() - cpu_conversion_start
-        
-        logger.debug(f"Mixed tensor A^T@b - target_frame shape: {target_frame.shape}, target_gpu shape: {target_gpu.shape}")
+
+        logger.debug(
+            f"Mixed tensor A^T@b - target_frame shape: {target_frame.shape}, target_gpu shape: {target_gpu.shape}"
+        )
 
         # Mixed tensor operation using CUDA kernel
         operation_start = time.time()
@@ -903,7 +921,9 @@ class DenseLEDOptimizer:
         # Use the mixed tensor's CUDA kernel for A^T @ b
         # Following the original implementation: pass single channel (2D) and expect (led_count, 3) result
         result = self._mixed_tensor.transpose_dot_product_cuda_high_performance(
-            target_gpu[:, :, 0]  # Use first channel (red) as in original implementation - 2D array
+            target_gpu[
+                :, :, 0
+            ]  # Use first channel (red) as in original implementation - 2D array
         )
 
         cp.cuda.runtime.deviceSynchronize()
@@ -911,8 +931,10 @@ class DenseLEDOptimizer:
 
         # Store result in the same format as CSC (following archived implementation)
         tensor_conversion_start = time.time()
-        logger.debug(f"Mixed tensor result shape: {result.shape}, ATb_gpu shape: {self._ATb_gpu.shape}")
-        
+        logger.debug(
+            f"Mixed tensor result shape: {result.shape}, ATb_gpu shape: {self._ATb_gpu.shape}"
+        )
+
         # Following the original implementation exactly
         if result.shape == (self._actual_led_count, 3):
             # Direct copy if shapes match
@@ -920,13 +942,17 @@ class DenseLEDOptimizer:
             self._ATb_gpu[:, 1] = result[:, 1]
             self._ATb_gpu[:, 2] = result[:, 2]
         else:
-            raise ValueError(f"Mixed tensor result shape {result.shape} does not match expected ({self._actual_led_count}, 3)")
-        
+            raise ValueError(
+                f"Mixed tensor result shape {result.shape} does not match expected ({self._actual_led_count}, 3)"
+            )
+
         tensor_conversion_time = time.time() - tensor_conversion_start
 
         total_atb_time = time.time() - atb_start_time
 
-        logger.debug(f"A^T*b timing (Mixed) - CPU→GPU: {cpu_to_gpu_time:.4f}s, Operation: {operation_time:.4f}s, Tensor conv: {tensor_conversion_time:.4f}s, Total: {total_atb_time:.4f}s")
+        logger.debug(
+            f"A^T*b timing (Mixed) - CPU→GPU: {cpu_to_gpu_time:.4f}s, Operation: {operation_time:.4f}s, Tensor conv: {tensor_conversion_time:.4f}s, Total: {total_atb_time:.4f}s"
+        )
 
         return self._ATb_gpu
 
@@ -1128,10 +1154,10 @@ class DenseLEDOptimizer:
             # einsum 'ijk,jk->ik' computes all 3 channels in parallel
             cp.cuda.runtime.deviceSynchronize()  # Ensure accurate timing
             einsum_start = time.time()
-            
+
             w["ATA_x"][:] = cp.einsum("ijk,jk->ik", self._ATA_gpu, x)
             w["gradient"][:] = w["ATA_x"] - ATb
-            
+
             cp.cuda.runtime.deviceSynchronize()
             einsum_duration = time.time() - einsum_start
             einsum_time += einsum_duration

@@ -366,56 +366,58 @@ class SyntheticPatternGenerator:
     def _generate_mixed_tensor_format(self, sparse_matrix: sp.csc_matrix) -> dict:
         """
         Generate SingleBlockMixedSparseTensor format from sparse matrix.
-        
+
         Args:
             sparse_matrix: Sparse CSC matrix to convert
-            
+
         Returns:
             Dictionary with mixed tensor data for saving
         """
         logger.info("Converting sparse matrix to mixed tensor format...")
-        
+
         led_count = sparse_matrix.shape[1] // 3
         channels = 3
         height, width = self.frame_height, self.frame_width
         block_size = 96  # Standard block size
-        
+
         # Initialize mixed tensor data structures
-        mixed_tensor_values = np.zeros((led_count, channels, block_size, block_size), dtype=np.float32)
+        mixed_tensor_values = np.zeros(
+            (led_count, channels, block_size, block_size), dtype=np.float32
+        )
         mixed_tensor_positions = np.zeros((led_count, channels, 2), dtype=np.int32)
         mixed_tensor_blocks_set = np.zeros((led_count, channels), dtype=bool)
-        
+
         blocks_stored = 0
-        
+
         # Process each LED and channel
         for led_id in range(led_count):
             for channel in range(channels):
                 # Get the column for this LED/channel
                 col_idx = led_id * channels + channel
-                
+
                 # Extract the sparse column
                 col_start = sparse_matrix.indptr[col_idx]
                 col_end = sparse_matrix.indptr[col_idx + 1]
-                
+
                 if col_start == col_end:  # No non-zeros
                     continue
-                    
+
                 # Get non-zero indices and values
                 row_indices = sparse_matrix.indices[col_start:col_end]
                 values = sparse_matrix.data[col_start:col_end]
-                
+
                 # Convert linear indices to 2D coordinates
                 pixel_rows = row_indices // width
                 pixel_cols = row_indices % width
-                
+
                 # Find bounding box of the pattern
                 min_row, max_row = pixel_rows.min(), pixel_rows.max()
                 min_col, max_col = pixel_cols.min(), pixel_cols.max()
-                
+
                 # Determine block position (try to center the pattern)
                 pattern_height = max_row - min_row + 1
                 pattern_width = max_col - min_col + 1
-                
+
                 # If pattern fits in block size, center it
                 if pattern_height <= block_size and pattern_width <= block_size:
                     # Place block to contain the entire pattern
@@ -423,38 +425,48 @@ class SyntheticPatternGenerator:
                     top_col = max(0, min(width - block_size, min_col))
                 else:
                     # Pattern is larger than block, use LED position as center
-                    if self.led_positions is not None and led_id < len(self.led_positions):
+                    if self.led_positions is not None and led_id < len(
+                        self.led_positions
+                    ):
                         led_x, led_y = self.led_positions[led_id]
-                        top_row = max(0, min(height - block_size, led_y - block_size // 2))
-                        top_col = max(0, min(width - block_size, led_x - block_size // 2))
+                        top_row = max(
+                            0, min(height - block_size, led_y - block_size // 2)
+                        )
+                        top_col = max(
+                            0, min(width - block_size, led_x - block_size // 2)
+                        )
                     else:
                         # Fallback: use pattern center
                         center_row = (min_row + max_row) // 2
                         center_col = (min_col + max_col) // 2
-                        top_row = max(0, min(height - block_size, center_row - block_size // 2))
-                        top_col = max(0, min(width - block_size, center_col - block_size // 2))
-                
+                        top_row = max(
+                            0, min(height - block_size, center_row - block_size // 2)
+                        )
+                        top_col = max(
+                            0, min(width - block_size, center_col - block_size // 2)
+                        )
+
                 # Create the dense block
                 block = np.zeros((block_size, block_size), dtype=np.float32)
-                
+
                 # Fill the block with pattern values
                 for i, (pr, pc, val) in enumerate(zip(pixel_rows, pixel_cols, values)):
                     block_r = pr - top_row
                     block_c = pc - top_col
-                    
+
                     # Only include values that fit in the block
                     if 0 <= block_r < block_size and 0 <= block_c < block_size:
                         block[block_r, block_c] = val
-                
+
                 # Store the block data
                 mixed_tensor_values[led_id, channel] = block
                 mixed_tensor_positions[led_id, channel, 0] = top_row
                 mixed_tensor_positions[led_id, channel, 1] = top_col
                 mixed_tensor_blocks_set[led_id, channel] = True
                 blocks_stored += 1
-        
+
         logger.info(f"Converted {blocks_stored} blocks to mixed tensor format")
-        
+
         return {
             "mixed_tensor_values": mixed_tensor_values,
             "mixed_tensor_positions": mixed_tensor_positions,
@@ -470,47 +482,47 @@ class SyntheticPatternGenerator:
     def _precompute_dense_ata_matrices(self, sparse_matrix: sp.csc_matrix) -> dict:
         """
         Precompute dense A^T @ A matrices for each RGB channel using CSC matrix.
-        
+
         Args:
             sparse_matrix: Sparse CSC matrix to compute A^T @ A from
-            
+
         Returns:
             Dictionary with precomputed dense A^T @ A matrices
         """
         logger.info("Precomputing dense A^T @ A matrices from CSC sparse matrix...")
-        
+
         led_count = sparse_matrix.shape[1] // 3
         channels = 3
-        
+
         # Initialize dense A^T @ A tensor: (led_count, led_count, channels)
         ATA_dense = np.zeros((led_count, led_count, channels), dtype=np.float32)
-        
+
         start_time = time.time()
-        
+
         # Compute A^T @ A for each channel separately
         for c in range(channels):
             logger.info(f"Computing A^T @ A for channel {c+1}/{channels}")
-            
+
             # Extract channel matrix (pixels, leds) for this channel
             channel_cols = list(range(c, sparse_matrix.shape[1], channels))
             A_channel = sparse_matrix[:, channel_cols]
-            
+
             # Compute A_c^T @ A_c (led_count, led_count) - this is dense
             ATA_channel = A_channel.T @ A_channel
-            
+
             # Convert to dense and store
             ATA_dense[:, :, c] = ATA_channel.toarray().astype(np.float32)
-            
+
             channel_time = time.time() - start_time
             logger.info(f"Channel {c+1} A^T @ A computed in {channel_time:.2f}s")
-        
+
         total_time = time.time() - start_time
         memory_mb = ATA_dense.nbytes / (1024 * 1024)
-        
+
         logger.info(f"Dense A^T @ A precomputation completed in {total_time:.2f}s")
         logger.info(f"Dense A^T @ A tensor shape: {ATA_dense.shape}")
         logger.info(f"Dense A^T @ A memory: {memory_mb:.1f}MB")
-        
+
         return {
             "dense_ata_matrices": ATA_dense,
             "dense_ata_led_count": led_count,
@@ -586,7 +598,7 @@ class SyntheticPatternGenerator:
 
             # Add mixed tensor data
             save_dict.update(mixed_tensor_data)
-            
+
             # Add dense A^T @ A data
             save_dict.update(dense_ata_data)
 
@@ -599,9 +611,15 @@ class SyntheticPatternGenerator:
             logger.info(f"File size: {file_size:.1f} MB")
             logger.info(f"Matrix shape: {sparse_matrix.shape}")
             logger.info(f"Non-zero entries: {sparse_matrix.nnz:,}")
-            logger.info(f"Mixed tensor blocks: {mixed_tensor_data['mixed_tensor_blocks_stored']}")
-            logger.info(f"Dense A^T @ A tensor shape: {dense_ata_data['dense_ata_matrices'].shape}")
-            logger.info(f"Dense A^T @ A memory: {dense_ata_data['dense_ata_matrices'].nbytes / (1024*1024):.1f}MB")
+            logger.info(
+                f"Mixed tensor blocks: {mixed_tensor_data['mixed_tensor_blocks_stored']}"
+            )
+            logger.info(
+                f"Dense A^T @ A tensor shape: {dense_ata_data['dense_ata_matrices'].shape}"
+            )
+            logger.info(
+                f"Dense A^T @ A memory: {dense_ata_data['dense_ata_matrices'].nbytes / (1024*1024):.1f}MB"
+            )
 
             return True
 

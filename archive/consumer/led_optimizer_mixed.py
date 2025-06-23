@@ -5,7 +5,7 @@ This module implements a mixed tensor optimization approach using the SingleBloc
 format. It combines the advantages of sparse storage with efficient GPU computation using the
 custom CUDA kernels for A^T @ b operations.
 
-The key insight: use the mixed tensor format with custom CUDA kernels for optimal 
+The key insight: use the mixed tensor format with custom CUDA kernels for optimal
 GPU utilization while maintaining memory efficiency through sparse block storage.
 """
 
@@ -84,7 +84,7 @@ class MixedTensorLEDOptimizer:
 
         # Mixed tensor storage
         self._mixed_tensor: Optional[SingleBlockMixedSparseTensor] = None
-        
+
         # Precomputed dense matrices for optimization (computed on first use)
         self._ATA_gpu = None  # Shape: (led_count, led_count, 3) - dense on GPU
         self._ATA_computed = False
@@ -154,7 +154,9 @@ class MixedTensorLEDOptimizer:
 
             logger.info("Mixed tensor LED optimizer initialized successfully")
             logger.info(f"LED count: {self._actual_led_count}")
-            logger.info(f"Mixed tensor memory: {self._mixed_tensor.memory_info()['total_mb']:.1f}MB")
+            logger.info(
+                f"Mixed tensor memory: {self._mixed_tensor.memory_info()['total_mb']:.1f}MB"
+            )
             logger.info(f"Device: {self.device_info['device']}")
             return True
 
@@ -181,14 +183,16 @@ class MixedTensorLEDOptimizer:
             # Check if mixed tensor data is available
             required_keys = [
                 "mixed_tensor_values",
-                "mixed_tensor_positions", 
+                "mixed_tensor_positions",
                 "mixed_tensor_blocks_set",
                 "mixed_tensor_led_count",
             ]
-            
+
             if not all(key in data for key in required_keys):
                 logger.error("Mixed tensor data not found in patterns file")
-                logger.error("Regenerate patterns with updated generate_synthetic_patterns.py")
+                logger.error(
+                    "Regenerate patterns with updated generate_synthetic_patterns.py"
+                )
                 return False
 
             # Check if precomputed dense A^T @ A matrices are available
@@ -197,10 +201,14 @@ class MixedTensorLEDOptimizer:
                 "dense_ata_led_count",
                 "dense_ata_channels",
             ]
-            
+
             if not all(key in data for key in dense_ata_keys):
-                logger.error("Precomputed dense A^T @ A matrices not found in patterns file")
-                logger.error("Regenerate patterns with updated generate_synthetic_patterns.py")
+                logger.error(
+                    "Precomputed dense A^T @ A matrices not found in patterns file"
+                )
+                logger.error(
+                    "Regenerate patterns with updated generate_synthetic_patterns.py"
+                )
                 return False
 
             # Extract mixed tensor parameters
@@ -217,14 +225,18 @@ class MixedTensorLEDOptimizer:
 
             # Load the tensor data
             self._mixed_tensor.sparse_values = cp.asarray(data["mixed_tensor_values"])
-            self._mixed_tensor.block_positions = cp.asarray(data["mixed_tensor_positions"])
+            self._mixed_tensor.block_positions = cp.asarray(
+                data["mixed_tensor_positions"]
+            )
             self._mixed_tensor.blocks_set = cp.asarray(data["mixed_tensor_blocks_set"])
 
             # Load precomputed dense A^T @ A matrices
-            dense_ata_matrices = data["dense_ata_matrices"]  # Shape: (led_count, led_count, channels)
+            dense_ata_matrices = data[
+                "dense_ata_matrices"
+            ]  # Shape: (led_count, led_count, channels)
             dense_ata_led_count = int(data["dense_ata_led_count"])
             dense_ata_channels = int(data["dense_ata_channels"])
-            
+
             # Validate A^T @ A dimensions
             if dense_ata_led_count != led_count or dense_ata_channels != channels:
                 logger.error(
@@ -232,11 +244,11 @@ class MixedTensorLEDOptimizer:
                     f"({dense_ata_led_count}, {dense_ata_channels}) != ({led_count}, {channels})"
                 )
                 return False
-            
+
             # Load A^T @ A to GPU
             self._ATA_gpu = cp.asarray(dense_ata_matrices)
             self._ATA_computed = True
-            
+
             ata_memory_mb = self._ATA_gpu.nbytes / (1024 * 1024)
             logger.info(f"Loaded precomputed A^T @ A matrices: {self._ATA_gpu.shape}")
             logger.info(f"A^T @ A memory: {ata_memory_mb:.1f}MB")
@@ -278,7 +290,7 @@ class MixedTensorLEDOptimizer:
         # 1. A^T @ b: Uses CUDA kernel, approximately 2 * nnz operations
         # 2. ATA @ x: Dense matrix-vector multiply per channel
         # 3. Step size computation: Dense operations
-        
+
         # Estimate non-zero elements (approximate)
         blocks_stored = int(cp.sum(self._mixed_tensor.blocks_set))
         estimated_nnz_per_block = block_size * block_size * 0.4  # Assume 40% density
@@ -288,18 +300,22 @@ class MixedTensorLEDOptimizer:
         atb_flops = estimated_total_nnz * 2  # A^T @ b (once per frame)
         ata_dense_flops = led_count**2 * 3 * 2  # ATA @ x (dense, per iteration)
         step_size_flops = led_count * 3 * 4  # Step size computation
-        
+
         self._atb_flops_per_frame = atb_flops
         self._dense_flops_per_iteration = ata_dense_flops + step_size_flops
-        
+
         # Total per iteration (amortizing A^T @ b over iterations)
         self._flops_per_iteration = self._dense_flops_per_iteration + (
             atb_flops / self.max_iterations
         )
 
         logger.debug(f"Mixed tensor A^T @ b FLOPs per frame: {atb_flops:,}")
-        logger.debug(f"Dense optimization FLOPs per iteration: {self._dense_flops_per_iteration:,}")
-        logger.debug(f"Total FLOPs per iteration (amortized): {self._flops_per_iteration:,}")
+        logger.debug(
+            f"Dense optimization FLOPs per iteration: {self._dense_flops_per_iteration:,}"
+        )
+        logger.debug(
+            f"Total FLOPs per iteration (amortized): {self._flops_per_iteration:,}"
+        )
 
     def _initialize_workspace(self) -> None:
         """Initialize GPU workspace arrays for optimization."""
@@ -333,7 +349,9 @@ class MixedTensorLEDOptimizer:
             # Fallback: create identity matrices if precomputed ones aren't available
             led_count = self._actual_led_count
             channels = 3
-            self._ATA_gpu = cp.eye(led_count, dtype=cp.float32)[:, :, None].repeat(channels, axis=2)
+            self._ATA_gpu = cp.eye(led_count, dtype=cp.float32)[:, :, None].repeat(
+                channels, axis=2
+            )
             self._ATA_computed = True
 
     def optimize_frame(
@@ -426,7 +444,11 @@ class MixedTensorLEDOptimizer:
 
             # Calculate FLOPs for this optimization
             iterations_used = max_iterations or self.max_iterations
-            atb_flops = self._atb_flops_per_frame if hasattr(self, "_atb_flops_per_frame") else 0
+            atb_flops = (
+                self._atb_flops_per_frame
+                if hasattr(self, "_atb_flops_per_frame")
+                else 0
+            )
             dense_loop_flops = iterations_used * (
                 self._dense_flops_per_iteration
                 if hasattr(self, "_dense_flops_per_iteration")
@@ -520,7 +542,7 @@ class MixedTensorLEDOptimizer:
 
         # Store result for all channels (temporary implementation)
         self._ATb_gpu[:, 0] = result[:, 0]
-        self._ATb_gpu[:, 1] = result[:, 1] 
+        self._ATb_gpu[:, 1] = result[:, 1]
         self._ATb_gpu[:, 2] = result[:, 2]
 
         return self._ATb_gpu
@@ -559,8 +581,12 @@ class MixedTensorLEDOptimizer:
             # Step size (simplified for now)
             g_dot_g = cp.sum(w["gradient"] * w["gradient"])
             if self._ATA_computed:
-                g_dot_ATA_g = cp.einsum("ik,ijk,jk->", w["gradient"], self._ATA_gpu, w["gradient"])
-                step_size = float(self.step_size_scaling * g_dot_g / (g_dot_ATA_g + 1e-8))
+                g_dot_ATA_g = cp.einsum(
+                    "ik,ijk,jk->", w["gradient"], self._ATA_gpu, w["gradient"]
+                )
+                step_size = float(
+                    self.step_size_scaling * g_dot_g / (g_dot_ATA_g + 1e-8)
+                )
             else:
                 step_size = 0.01  # Fixed step size for identity approximation
 
@@ -570,7 +596,9 @@ class MixedTensorLEDOptimizer:
             # Check convergence
             delta = cp.linalg.norm(w["x_new"] - x)
             if delta < self.convergence_threshold:
-                logger.debug(f"Converged after {iteration+1} iterations, delta: {delta:.6f}")
+                logger.debug(
+                    f"Converged after {iteration+1} iterations, delta: {delta:.6f}"
+                )
                 break
 
             # Update
