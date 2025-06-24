@@ -775,7 +775,7 @@ class PrismatronImage:
         y_min, y_max = np.where(rows)[0][[0, -1]]
         x_min, x_max = np.where(cols)[0][[0, -1]]
         
-        return (x_min, y_min, x_max - x_min + 1, y_max - y_min + 1)
+        return (int(x_min), int(y_min), int(x_max - x_min + 1), int(y_max - y_min + 1))
     
     def crop_to_content(self) -> "PrismatronImage":
         """Return image cropped to its content bounding box."""
@@ -854,7 +854,7 @@ class PrismatronImage:
         diff = max_val - min_val
         
         # Saturation
-        saturation = np.where(max_val == 0, 0, diff / max_val)
+        saturation = np.where(max_val == 0, 0, np.divide(diff, max_val, out=np.zeros_like(diff), where=max_val!=0))
         avg_saturation = float(np.mean(saturation))
         
         # Value (brightness)
