@@ -52,7 +52,7 @@ from src.utils.optimization_utils import OptimizationPipeline
 
 
 class StandaloneOptimizer:
-    """Standalone LED optimization tool with support for dense, sparse, and mixed tensor optimizers."""
+    """Standalone LED optimization tool with dense, sparse, and mixed optimizers."""
 
     def __init__(self, diffusion_patterns_path: str, optimizer_type: str = "dense"):
         """Initialize optimizer with patterns file and optimizer type."""
@@ -207,7 +207,7 @@ class StandaloneOptimizer:
     ) -> np.ndarray:
         """Render optimization result for mixed tensor using CSC matrices."""
         logger.info("Rendering result using CSC matrices...")
-        
+
         # Use the CSC matrices that were loaded alongside the mixed tensor
         # These are available in the unified optimizer when use_mixed_tensor=True
         A_r = self.optimizer._A_r_csc_gpu.tocsr()
@@ -217,6 +217,7 @@ class StandaloneOptimizer:
         # Convert to CPU for rendering
         try:
             import cupy as cp
+
             A_r_cpu = A_r.get().tocsr()
             A_g_cpu = A_g.get().tocsr()
             A_b_cpu = A_b.get().tocsr()
@@ -227,7 +228,7 @@ class StandaloneOptimizer:
 
         # Convert LED values from uint8 [0,255] to float32 [0,1]
         led_values_normalized = result.led_values.astype(np.float32) / 255.0
-        
+
         logger.info(f"LED values shape: {result.led_values.shape}")
         logger.info(f"Dense reconstruction - RGB matrix shapes: {A_r_cpu.shape}")
 
@@ -236,9 +237,11 @@ class StandaloneOptimizer:
         rendered_g = A_g_cpu @ led_values_normalized[:, 1]
         rendered_b = A_b_cpu @ led_values_normalized[:, 2]
 
-        # Combine channels and reshape to image
-        rendered_flat = np.stack([rendered_r, rendered_g, rendered_b], axis=1)  # (pixels, 3)
-        rendered_image = rendered_flat.reshape(FRAME_HEIGHT, FRAME_WIDTH, 3)
+        # Reshape each channel separately then combine (matches CSC approach)
+        rendered_image = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.float32)
+        rendered_image[:, :, 0] = rendered_r.reshape(FRAME_HEIGHT, FRAME_WIDTH)
+        rendered_image[:, :, 1] = rendered_g.reshape(FRAME_HEIGHT, FRAME_WIDTH)
+        rendered_image[:, :, 2] = rendered_b.reshape(FRAME_HEIGHT, FRAME_WIDTH)
 
         # Convert back to uint8 [0, 255] and clip
         rendered_image = np.clip(rendered_image * 255.0, 0, 255).astype(np.uint8)
