@@ -277,8 +277,8 @@ class PrismatronImage:
     """
     Immutable wrapper for Prismatron RGB images with format conversion and analysis.
     
-    Canonical internal format: (3, height, width) uint8 numpy array ('planar')
-    Alternative format: (height, width, 3) uint8 numpy array ('interleaved')
+    Canonical internal format: (3, width, height) uint8 numpy array ('planar')
+    Alternative format: (width, height, 3) uint8 numpy array ('interleaved')
     """
     
     def __init__(self, data: np.ndarray, format_hint: str = "planar"):
@@ -293,33 +293,41 @@ class PrismatronImage:
         self._validate()
     
     def _normalize_to_planar(self, data: np.ndarray, format_hint: str) -> np.ndarray:
-        """Convert input data to canonical (3, height, width) planar format."""
+        """Convert input data to canonical (3, width, height) planar format."""
         data = np.asarray(data, dtype=np.uint8)
         total_size = data.size
         
         if data.ndim == 3:
             if data.shape[0] == 3:
-                # Already in planar format (3, height, width)
+                # Already in planar format (3, width, height)
                 return data.copy()
             elif data.shape[2] == 3:
-                # Interleaved format (height, width, 3) -> planar (3, height, width)
-                return np.transpose(data, (2, 0, 1))
+                # Format with 3 channels in last dimension
+                if format_hint == "interleaved":
+                    # User specified (width, height, 3) -> (3, width, height)
+                    return np.transpose(data, (2, 0, 1))
+                elif format_hint == "hwc_format":
+                    # PIL/OpenCV (height, width, 3) -> (3, width, height)
+                    return np.transpose(data, (2, 1, 0))
+                else:
+                    # Standard (height, width, 3) from PIL/OpenCV -> (3, width, height)
+                    return np.transpose(data, (2, 1, 0))
             else:
-                raise ValueError(f"Invalid 3D shape: {data.shape}. Expected (3, H, W) or (H, W, 3)")
+                raise ValueError(f"Invalid 3D shape: {data.shape}. Expected (3, W, H) or (..., ..., 3)")
         
         elif data.ndim == 2:
             # Flattened formats - need format hint or shape analysis
             if data.shape[1] == 3:
-                # flat_spatial format (height*width, 3)
+                # flat_spatial format (width*height, 3)
                 pixels = data.shape[0]
                 width, height = self._guess_dimensions(pixels)
-                return data.T.reshape(3, height, width)
+                return data.T.reshape(3, width, height)
             
             elif data.shape[0] == 3:
-                # flat_planar format (3, height*width)
+                # flat_planar format (3, width*height)
                 pixels_per_channel = data.shape[1]
                 width, height = self._guess_dimensions(pixels_per_channel)
-                return data.reshape(3, height, width)
+                return data.reshape(3, width, height)
             
             else:
                 raise ValueError(f"Ambiguous 2D shape: {data.shape}")
@@ -332,8 +340,8 @@ class PrismatronImage:
             pixels = total_size // 3
             width, height = self._guess_dimensions(pixels)
             
-            # Reshape to (height, width, 3) then convert to planar
-            interleaved = data.reshape(height, width, 3)
+            # Reshape to (width, height, 3) then convert to planar (3, width, height)
+            interleaved = data.reshape(width, height, 3)
             return np.transpose(interleaved, (2, 0, 1))
         
         else:
@@ -407,7 +415,12 @@ class PrismatronImage:
         for backend_impl in backends:
             try:
                 array = backend_impl.load(filepath)
-                return cls.from_array(array, "interleaved")
+                if isinstance(backend_impl, BasicBackend):
+                    # BasicBackend saves/loads planar format
+                    return cls.from_array(array, "planar")
+                else:
+                    # PIL/OpenCV backends return (height, width, 3)
+                    return cls.from_array(array, "hwc_format")
             except Exception as e:
                 last_error = e
                 continue
@@ -441,7 +454,7 @@ class PrismatronImage:
         for backend_impl in backends:
             try:
                 array = backend_impl.load_bytes(data)
-                return cls.from_array(array, "interleaved")
+                return cls.from_array(array, "hwc_format")
             except Exception as e:
                 last_error = e
                 continue
@@ -453,7 +466,7 @@ class PrismatronImage:
         """Capture image from camera."""
         with CameraBackend(camera_id) as camera:
             array = camera.capture()
-            img = cls.from_array(array, "interleaved")
+            img = cls.from_array(array, "hwc_format")
             
             if target_size is not None:
                 img = img.resize(target_size[0], target_size[1])
@@ -463,19 +476,19 @@ class PrismatronImage:
     @classmethod
     def zeros(cls, width: int, height: int) -> "PrismatronImage":
         """Create black image of specified size."""
-        data = np.zeros((3, height, width), dtype=np.uint8)
+        data = np.zeros((3, width, height), dtype=np.uint8)
         return cls(data, "planar")
     
     @classmethod
     def ones(cls, width: int, height: int) -> "PrismatronImage":
         """Create white image of specified size."""
-        data = np.full((3, height, width), 255, dtype=np.uint8)
+        data = np.full((3, width, height), 255, dtype=np.uint8)
         return cls(data, "planar")
     
     @classmethod
     def solid_color(cls, width: int, height: int, color: Tuple[int, int, int]) -> "PrismatronImage":
         """Create solid color image."""
-        data = np.full((3, height, width), 0, dtype=np.uint8)
+        data = np.full((3, width, height), 0, dtype=np.uint8)
         for i, c in enumerate(color):
             data[i, :, :] = c
         return cls(data, "planar")
@@ -483,18 +496,18 @@ class PrismatronImage:
     # ===== Properties =====
     
     @property
-    def height(self) -> int:
-        """Image height in pixels."""
+    def width(self) -> int:
+        """Image width in pixels."""
         return self._data.shape[1]
     
     @property
-    def width(self) -> int:
-        """Image width in pixels."""
+    def height(self) -> int:
+        """Image height in pixels."""
         return self._data.shape[2]
     
     @property
     def shape(self) -> Tuple[int, int, int]:
-        """Canonical shape (3, height, width)."""
+        """Canonical shape (3, width, height)."""
         return self._data.shape
     
     @property
@@ -510,31 +523,31 @@ class PrismatronImage:
     # ===== Format Conversion Methods =====
     
     def as_planar(self) -> np.ndarray:
-        """Return as (3, height, width) - canonical format."""
+        """Return as (3, width, height) - canonical format."""
         return self._data.copy()
     
     def as_interleaved(self) -> np.ndarray:
-        """Return as (height, width, 3) - standard format."""
+        """Return as (width, height, 3) - alternative format."""
         return np.transpose(self._data, (1, 2, 0))
     
     def as_flat_interleaved(self) -> np.ndarray:
-        """Return as (height*width*3,) - completely flattened RGBRGB..."""
+        """Return as (width*height*3,) - completely flattened RGBRGB..."""
         return self.as_interleaved().ravel()
     
     def as_flat_spatial(self) -> np.ndarray:
-        """Return as (height*width, 3) - flattened spatial, channel-last."""
+        """Return as (width*height, 3) - flattened spatial, channel-last."""
         return self.as_interleaved().reshape(-1, 3)
     
     def as_flat_planar(self) -> np.ndarray:
-        """Return as (3, height*width) - flattened per-channel planes."""
+        """Return as (3, width*height) - flattened per-channel planes."""
         return self._data.reshape(3, -1)
     
     def as_normalized_float(self) -> np.ndarray:
-        """Return as (height, width, 3) float32 in range [0, 1]."""
+        """Return as (width, height, 3) float32 in range [0, 1]."""
         return self.as_interleaved().astype(np.float32) / 255.0
     
     def as_normalized_planar_float(self) -> np.ndarray:
-        """Return as (3, height, width) float32 in range [0, 1]."""
+        """Return as (3, width, height) float32 in range [0, 1]."""
         return self._data.astype(np.float32) / 255.0
     
     # ===== File I/O Methods =====
@@ -560,9 +573,15 @@ class PrismatronImage:
         else:
             raise ValueError(f"Unknown backend: {backend}")
         
-        # Save as interleaved format
-        interleaved = self.as_interleaved()
-        backend_impl.save(interleaved, filepath, quality=quality)
+        # Convert to backend format
+        if isinstance(backend_impl, BasicBackend):
+            # Basic backend saves planar format directly
+            backend_impl.save(self._data, filepath, quality=quality)
+        else:
+            # PIL/OpenCV need (height, width, 3)
+            interleaved = self.as_interleaved()  # (width, height, 3)
+            hwc_format = np.transpose(interleaved, (1, 0, 2))  # (height, width, 3)
+            backend_impl.save(hwc_format, filepath, quality=quality)
     
     def to_bytes(self, format: str = "PNG", quality: int = 95, backend: str = "auto") -> bytes:
         """Convert to bytes in specified format."""
@@ -583,9 +602,15 @@ class PrismatronImage:
         else:
             raise ValueError(f"Unknown backend: {backend}")
         
-        # Convert as interleaved format
-        interleaved = self.as_interleaved()
-        return backend_impl.to_bytes(interleaved, format=format, quality=quality)
+        # Convert to backend format
+        if isinstance(backend_impl, BasicBackend):
+            # Basic backend uses planar format directly
+            return backend_impl.to_bytes(self._data, format=format, quality=quality)
+        else:
+            # PIL/OpenCV need (height, width, 3)
+            interleaved = self.as_interleaved()  # (width, height, 3)
+            hwc_format = np.transpose(interleaved, (1, 0, 2))  # (height, width, 3)
+            return backend_impl.to_bytes(hwc_format, format=format, quality=quality)
     
     def to_base64(self, format: str = "PNG", quality: int = 95, backend: str = "auto") -> str:
         """Convert to base64 string."""
@@ -664,24 +689,25 @@ class PrismatronImage:
             x_ratio = self.width / width
             y_ratio = self.height / height
             
-            new_data = np.zeros((3, height, width), dtype=np.uint8)  # (3, height, width)
+            new_data = np.zeros((3, width, height), dtype=np.uint8)  # (3, width, height)
             for i in range(width):
                 for j in range(height):
                     # Map new coordinates to source coordinates
                     src_x = min(int(i * x_ratio), self.width - 1)
                     src_y = min(int(j * y_ratio), self.height - 1)
-                    # Copy from source (3, height, width) to destination
-                    new_data[:, j, i] = self._data[:, src_y, src_x]
+                    # Copy from source (3, width, height) to destination
+                    new_data[:, i, j] = self._data[:, src_x, src_y]
             
             return PrismatronImage(new_data, "planar")
         
         else:
             # Use PIL or OpenCV for better interpolation
-            interleaved = self.as_interleaved()
+            interleaved = self.as_interleaved()  # Returns (width, height, 3)
             
             if PIL_AVAILABLE:
-                # interleaved is already (height, width, 3) - perfect for PIL
-                img = Image.fromarray(interleaved, 'RGB')
+                # PIL expects (height, width, 3), so transpose
+                hwc_format = np.transpose(interleaved, (1, 0, 2))  # (height, width, 3)
+                img = Image.fromarray(hwc_format, 'RGB')
                 
                 if method == "bilinear":
                     resampling = Image.BILINEAR
@@ -694,11 +720,12 @@ class PrismatronImage:
                 
                 resized_img = img.resize((width, height), resampling)
                 resized_hwc = np.array(resized_img, dtype=np.uint8)  # (height, width, 3)
-                
-                return PrismatronImage.from_array(resized_hwc, "interleaved")
+                # Convert back to our format: PIL gives (height, width, 3), we need to treat as such
+                return PrismatronImage.from_array(resized_hwc, "hwc_format")
             
             elif OPENCV_AVAILABLE:
-                # interleaved is already (height, width, 3) - perfect for OpenCV
+                # OpenCV expects (height, width, 3), so transpose our (width, height, 3)
+                hwc_format = np.transpose(interleaved, (1, 0, 2))  # (height, width, 3)
                 if method == "bilinear":
                     interpolation = cv2.INTER_LINEAR
                 elif method == "bicubic":
@@ -708,9 +735,9 @@ class PrismatronImage:
                 else:
                     interpolation = cv2.INTER_LINEAR
                 
-                resized_hwc = cv2.resize(interleaved, (width, height), interpolation=interpolation)
+                resized_hwc = cv2.resize(hwc_format, (width, height), interpolation=interpolation)
                 
-                return PrismatronImage.from_array(resized_hwc, "interleaved")
+                return PrismatronImage.from_array(resized_hwc, "hwc_format")
             
             else:
                 # Fallback to nearest neighbor
@@ -721,7 +748,7 @@ class PrismatronImage:
         if x < 0 or y < 0 or x + width > self.width or y + height > self.height:
             raise ValueError(f"Crop region ({x}, {y}, {width}, {height}) exceeds image bounds ({self.width}, {self.height})")
         
-        cropped_data = self._data[:, y:y+height, x:x+width].copy()  # (3, height, width) format
+        cropped_data = self._data[:, x:x+width, y:y+height].copy()  # (3, width, height) format
         return PrismatronImage(cropped_data, "planar")
     
     def thumbnail(self, max_size: int = 256) -> "PrismatronImage":
@@ -756,17 +783,17 @@ class PrismatronImage:
             (x, y, width, height) or None if image is all zeros
         """
         # Find non-zero pixels across all channels
-        non_zero = np.any(self._data > 0, axis=0)  # (height, width)
+        non_zero = np.any(self._data > 0, axis=0)  # (width, height)
         
         if not np.any(non_zero):
             return None  # All pixels are zero
         
-        # Find bounds - non_zero is (height, width)
-        rows = np.any(non_zero, axis=1)  # Any non-zero in each row (height)
-        cols = np.any(non_zero, axis=0)  # Any non-zero in each col (width)
+        # Find bounds - non_zero is (width, height)
+        cols = np.any(non_zero, axis=1)  # Any non-zero in each col (height)
+        rows = np.any(non_zero, axis=0)  # Any non-zero in each row (width)
         
-        y_min, y_max = np.where(rows)[0][[0, -1]]
         x_min, x_max = np.where(cols)[0][[0, -1]]
+        y_min, y_max = np.where(rows)[0][[0, -1]]
         
         return (int(x_min), int(y_min), int(x_max - x_min + 1), int(y_max - y_min + 1))
     
@@ -796,10 +823,10 @@ class PrismatronImage:
     def center_of_mass(self) -> Tuple[float, float]:
         """Calculate center of mass of brightness."""
         # Calculate brightness as average of RGB channels
-        brightness = np.mean(self._data, axis=0)  # (height, width)
+        brightness = np.mean(self._data, axis=0)  # (width, height)
         
-        # Create coordinate grids - brightness is (height, width)
-        y_coords, x_coords = np.meshgrid(range(self.height), range(self.width), indexing='ij')
+        # Create coordinate grids - brightness is (width, height)
+        x_coords, y_coords = np.meshgrid(range(self.width), range(self.height), indexing='ij')
         
         total_brightness = np.sum(brightness)
         if total_brightness == 0:

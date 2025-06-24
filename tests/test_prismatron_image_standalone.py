@@ -35,23 +35,23 @@ class TestPrismatronImageBasic:
     
     def test_initialization_planar(self):
         """Test initialization with planar format."""
-        data = np.random.randint(0, 256, (3, 80, 100), dtype=np.uint8)  # (3, height, width)
+        data = np.random.randint(0, 256, (3, 100, 80), dtype=np.uint8)  # (3, width, height)
         img = PrismatronImage(data, "planar")
         
         assert img.width == 100
         assert img.height == 80
-        assert img.shape == (3, 80, 100)
+        assert img.shape == (3, 100, 80)
         assert img.dtype == np.uint8
         assert img.size == 8000
     
     def test_initialization_interleaved(self):
         """Test initialization with interleaved format."""
-        data = np.random.randint(0, 256, (80, 100, 3), dtype=np.uint8)  # (height, width, 3)
+        data = np.random.randint(0, 256, (100, 80, 3), dtype=np.uint8)  # (width, height, 3)
         img = PrismatronImage(data, "interleaved")
         
         assert img.width == 100
         assert img.height == 80
-        assert img.shape == (3, 80, 100)
+        assert img.shape == (3, 100, 80)
     
     def test_initialization_flat_interleaved(self):
         """Test initialization with flat interleaved format."""
@@ -62,7 +62,7 @@ class TestPrismatronImageBasic:
         
         assert img.width == PRISMATRON_WIDTH
         assert img.height == PRISMATRON_HEIGHT
-        assert img.shape == (3, PRISMATRON_HEIGHT, PRISMATRON_WIDTH)
+        assert img.shape == (3, PRISMATRON_WIDTH, PRISMATRON_HEIGHT)
     
     def test_initialization_flat_spatial(self):
         """Test initialization with flat spatial format."""
@@ -104,13 +104,13 @@ class TestFormatConversions:
     
     def setup_method(self):
         """Setup test image."""
-        self.test_data = np.random.randint(0, 256, (3, 40, 50), dtype=np.uint8)  # (3, height, width)
+        self.test_data = np.random.randint(0, 256, (3, 50, 40), dtype=np.uint8)  # (3, width, height)
         self.img = PrismatronImage(self.test_data, "planar")
     
     def test_as_planar(self):
         """Test planar format output."""
         planar = self.img.as_planar()
-        assert planar.shape == (3, 40, 50)
+        assert planar.shape == (3, 50, 40)
         assert np.array_equal(planar, self.test_data)
         # Should be a copy
         assert planar is not self.img._data
@@ -118,7 +118,7 @@ class TestFormatConversions:
     def test_as_interleaved(self):
         """Test interleaved format output."""
         interleaved = self.img.as_interleaved()
-        assert interleaved.shape == (40, 50, 3)  # (height, width, 3)
+        assert interleaved.shape == (50, 40, 3)  # (width, height, 3)
         
         # Check conversion correctness
         for i in range(3):
@@ -127,32 +127,32 @@ class TestFormatConversions:
     def test_as_flat_interleaved(self):
         """Test flat interleaved format."""
         flat = self.img.as_flat_interleaved()
-        assert flat.shape == (40 * 50 * 3,)
+        assert flat.shape == (50 * 40 * 3,)
         assert flat.dtype == np.uint8
     
     def test_as_flat_spatial(self):
         """Test flat spatial format."""
         flat_spatial = self.img.as_flat_spatial()
-        assert flat_spatial.shape == (40 * 50, 3)
+        assert flat_spatial.shape == (50 * 40, 3)
         assert flat_spatial.dtype == np.uint8
     
     def test_as_flat_planar(self):
         """Test flat planar format."""
         flat_planar = self.img.as_flat_planar()
-        assert flat_planar.shape == (3, 40 * 50)
+        assert flat_planar.shape == (3, 50 * 40)
         assert flat_planar.dtype == np.uint8
     
     def test_as_normalized_float(self):
         """Test normalized float format."""
         norm = self.img.as_normalized_float()
-        assert norm.shape == (40, 50, 3)  # (height, width, 3)
+        assert norm.shape == (50, 40, 3)  # (width, height, 3)
         assert norm.dtype == np.float32
         assert np.all(norm >= 0.0) and np.all(norm <= 1.0)
     
     def test_as_normalized_planar_float(self):
         """Test normalized planar float format."""
         norm = self.img.as_normalized_planar_float()
-        assert norm.shape == (3, 40, 50)  # (3, height, width)
+        assert norm.shape == (3, 50, 40)  # (3, width, height)
         assert norm.dtype == np.float32
         assert np.all(norm >= 0.0) and np.all(norm <= 1.0)
     
@@ -174,12 +174,12 @@ class TestFactoryMethods:
     
     def test_from_array(self):
         """Test from_array factory method."""
-        data = np.random.randint(0, 256, (80, 100, 3), dtype=np.uint8)  # (height, width, 3)
+        data = np.random.randint(0, 256, (100, 80, 3), dtype=np.uint8)  # (width, height, 3)
         img = PrismatronImage.from_array(data, "interleaved")
         
         assert img.width == 100
         assert img.height == 80
-        assert img.shape == (3, 80, 100)
+        assert img.shape == (3, 100, 80)
     
     def test_zeros(self):
         """Test zeros factory method."""
@@ -215,10 +215,10 @@ class TestImageOperations:
     
     def setup_method(self):
         """Setup test image."""
-        # Create a simple test pattern (3, height, width) = (3, 80, 100)
-        data = np.zeros((3, 80, 100), dtype=np.uint8)
-        data[0, 20:60, 25:75] = 255  # Red rectangle
-        data[1, 10:70, 10:90] = 128  # Green background
+        # Create a simple test pattern (3, width, height) = (3, 100, 80)
+        data = np.zeros((3, 100, 80), dtype=np.uint8)
+        data[0, 25:75, 20:60] = 255  # Red rectangle
+        data[1, 10:90, 10:70] = 128  # Green background
         self.img = PrismatronImage(data, "planar")
     
     def test_resize_nearest(self):
@@ -309,8 +309,8 @@ class TestQualityMetrics:
         self.img1 = PrismatronImage.zeros(50, 40)
         self.img2 = PrismatronImage.zeros(50, 40)
         
-        # Create slightly different image - same dimensions as img1/img2 (3, 40, 50)
-        data = np.zeros((3, 40, 50), dtype=np.uint8)
+        # Create slightly different image - same dimensions as img1/img2 (3, 50, 40)
+        data = np.zeros((3, 50, 40), dtype=np.uint8)
         data[0, :, :] = 10  # Small difference
         self.img3 = PrismatronImage(data, "planar")
     
@@ -370,10 +370,10 @@ class TestAnalysisMethods:
     def setup_method(self):
         """Setup test image with known properties."""
         # Create image with specific pattern
-        data = np.zeros((3, 100, 80), dtype=np.uint8)
-        data[0, 25:75, 20:60] = 255  # Red rectangle
-        data[1, :50, :] = 100        # Green half
-        data[2, 75:, 40:] = 200      # Blue corner
+        data = np.zeros((3, 80, 100), dtype=np.uint8)
+        data[0, 20:60, 25:75] = 255  # Red rectangle
+        data[1, :40, :] = 100        # Green half
+        data[2, 60:, 50:] = 200      # Blue corner
         self.img = PrismatronImage(data, "planar")
     
     def test_histogram(self):
@@ -523,7 +523,7 @@ class TestCameraBackend:
         camera.open()
         
         frame = camera.capture()
-        assert frame.shape == (480, 640, 3)  # Standard (height, width, 3)
+        assert frame.shape == (480, 640, 3)  # OpenCV standard (height, width, 3)
         
         camera.close()
     
@@ -585,7 +585,7 @@ class TestUtilityMethods:
         repr_str = repr(img)
         
         assert "PrismatronImage" in repr_str
-        assert "shape=(3, 30, 50)" in repr_str
+        assert "shape=(3, 50, 30)" in repr_str
         assert "uint8" in repr_str
     
     def test_array_interface(self):
@@ -593,7 +593,7 @@ class TestUtilityMethods:
         img = PrismatronImage.solid_color(50, 30, (128, 64, 192))
         arr = np.array(img)
         
-        assert arr.shape == (3, 30, 50)
+        assert arr.shape == (3, 50, 30)
         assert arr.dtype == np.uint8
         assert np.array_equal(arr, img.as_planar())
 
