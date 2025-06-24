@@ -923,12 +923,22 @@ class DenseLEDOptimizer:
         operation_start_sync = time.time()
 
         # Use the mixed tensor's CUDA kernel for A^T @ b
-        # Following the original implementation: pass single channel (2D) and expect (led_count, 3) result
-        result = self._mixed_tensor.transpose_dot_product_cuda_high_performance(
-            target_gpu[
-                :, :, 0
-            ]  # Use first channel (red) as in original implementation - 2D array
+        # Process each RGB channel separately and combine results
+        result_r = self._mixed_tensor.transpose_dot_product_cuda_high_performance(
+            target_gpu[:, :, 0]  # Red channel
         )
+        result_g = self._mixed_tensor.transpose_dot_product_cuda_high_performance(
+            target_gpu[:, :, 1]  # Green channel
+        )
+        result_b = self._mixed_tensor.transpose_dot_product_cuda_high_performance(
+            target_gpu[:, :, 2]  # Blue channel
+        )
+
+        # Combine the results into proper RGB format
+        result = cp.zeros((self._actual_led_count, 3), dtype=cp.float32)
+        result[:, 0] = result_r[:, 0]  # Red LED values from red channel
+        result[:, 1] = result_g[:, 1]  # Green LED values from green channel
+        result[:, 2] = result_b[:, 2]  # Blue LED values from blue channel
 
         cp.cuda.runtime.deviceSynchronize()
         operation_time = time.time() - operation_start_sync
