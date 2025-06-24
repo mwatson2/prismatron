@@ -796,10 +796,10 @@ class PrismatronImage:
     def center_of_mass(self) -> Tuple[float, float]:
         """Calculate center of mass of brightness."""
         # Calculate brightness as average of RGB channels
-        brightness = np.mean(self._data, axis=0)  # (width, height)
+        brightness = np.mean(self._data, axis=0)  # (height, width)
         
-        # Create coordinate grids
-        x_coords, y_coords = np.meshgrid(range(self.width), range(self.height), indexing='ij')
+        # Create coordinate grids - brightness is (height, width)
+        y_coords, x_coords = np.meshgrid(range(self.height), range(self.width), indexing='ij')
         
         total_brightness = np.sum(brightness)
         if total_brightness == 0:

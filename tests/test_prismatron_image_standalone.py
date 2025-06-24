@@ -309,8 +309,8 @@ class TestQualityMetrics:
         self.img1 = PrismatronImage.zeros(50, 40)
         self.img2 = PrismatronImage.zeros(50, 40)
         
-        # Create slightly different image
-        data = np.zeros((3, 50, 40), dtype=np.uint8)
+        # Create slightly different image - same dimensions as img1/img2 (3, 40, 50)
+        data = np.zeros((3, 40, 50), dtype=np.uint8)
         data[0, :, :] = 10  # Small difference
         self.img3 = PrismatronImage(data, "planar")
     
@@ -585,7 +585,7 @@ class TestUtilityMethods:
         repr_str = repr(img)
         
         assert "PrismatronImage" in repr_str
-        assert "shape=(3, 50, 30)" in repr_str
+        assert "shape=(3, 30, 50)" in repr_str
         assert "uint8" in repr_str
     
     def test_array_interface(self):
@@ -593,7 +593,7 @@ class TestUtilityMethods:
         img = PrismatronImage.solid_color(50, 30, (128, 64, 192))
         arr = np.array(img)
         
-        assert arr.shape == (3, 50, 30)
+        assert arr.shape == (3, 30, 50)
         assert arr.dtype == np.uint8
         assert np.array_equal(arr, img.as_planar())
 
