@@ -21,6 +21,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from ..const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
+from ..utils.performance_timing import PerformanceTiming
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +32,10 @@ class DenseOptimizationResult:
 
     led_values: np.ndarray  # RGB values for each LED (led_count, 3) - range [0,255]
     error_metrics: Dict[str, float]  # Error metrics (mse, mae, etc.)
-    optimization_time: float  # Time taken for optimization in seconds
     iterations: int  # Number of optimization iterations
     converged: bool  # Whether optimization converged
     target_frame: Optional[np.ndarray] = None  # Original target frame (for debugging)
     precomputation_info: Optional[Dict[str, Any]] = None  # Dense matrix information
-    flop_info: Optional[Dict[str, Any]] = None  # FLOP analysis information
-    timing_breakdown: Optional[Dict[str, float]] = None  # Detailed timing breakdown
 
     def get_led_count(self) -> int:
         """Get number of LEDs in result."""
@@ -114,6 +112,9 @@ class DenseLEDOptimizer:
         # FLOP counting for performance analysis
         self._total_flops = 0
         self._flops_per_iteration = 0
+
+        # Performance timing framework
+        self._timing = PerformanceTiming("DenseLEDOptimizer", enable_gpu_timing=True)
 
         # Detect compute capability
         self.device_info = self._detect_compute_device()
@@ -370,131 +371,88 @@ class DenseLEDOptimizer:
         Returns:
             DenseOptimizationResult with LED values (no error metrics computed)
         """
-        start_time = time.time()
-        timing_breakdown = {}
+        with self._timing.section("optimize_frame_production") as frame_timing:
+            try:
+                if not self._matrix_loaded:
+                    raise RuntimeError("Dense matrices not loaded")
 
-        try:
-            if not self._matrix_loaded:
-                raise RuntimeError("Dense matrices not loaded")
+                # Validate input
+                with self._timing.section("validation"):
+                    if target_frame.shape != (FRAME_HEIGHT, FRAME_WIDTH, 3):
+                        raise ValueError(
+                            f"Target frame shape {target_frame.shape} != {(FRAME_HEIGHT, FRAME_WIDTH, 3)}"
+                        )
 
-            # Validate input
-            validation_start = time.time()
-            if target_frame.shape != (FRAME_HEIGHT, FRAME_WIDTH, 3):
-                raise ValueError(
-                    f"Target frame shape {target_frame.shape} != {(FRAME_HEIGHT, FRAME_WIDTH, 3)}"
+                # KEY STEP 2: Calculate A^T*b for current frame
+                with self._timing.section("atb_calculation", flops=getattr(self, "_atb_flops_per_frame", 0)):
+                    ATb = self._calculate_ATb(target_frame)
+
+                # Initialize LED values
+                with self._timing.section("initialization"):
+                    if initial_values is not None:
+                        initial_normalized = (
+                            initial_values / 255.0
+                            if initial_values.max() > 1.0
+                            else initial_values
+                        ).astype(np.float32)
+                        self._led_values_gpu[:] = cp.asarray(initial_normalized)
+                    else:
+                        # Use pre-initialized 0.5 values
+                        self._led_values_gpu.fill(0.5)
+
+                # Dense tensor optimization loop with detailed timing
+                iterations_used = max_iterations or self.max_iterations
+                dense_loop_flops = iterations_used * getattr(self, "_dense_flops_per_iteration", 0)
+                with self._timing.section("optimization_loop", flops=dense_loop_flops):
+                    led_values_solved, loop_timing = self._solve_dense_gradient_descent(
+                        ATb, max_iterations
+                    )
+
+                # Convert back to numpy
+                with self._timing.section("conversion"):
+                    led_values_normalized = cp.asnumpy(led_values_solved)
+                    led_values_output = (led_values_normalized * 255.0).astype(np.uint8)
+
+                # Get timing data from PerformanceTiming for statistics
+                timing_data = self._timing.get_timing_data()
+                optimization_time = timing_data["sections"]["optimize_frame_production"]["duration"]
+                
+                # Calculate FLOPs for statistics tracking
+                iterations_used = max_iterations or self.max_iterations
+                atb_flops = getattr(self, "_atb_flops_per_frame", 0)
+                dense_loop_flops = iterations_used * getattr(self, "_dense_flops_per_iteration", 0)
+                frame_flops = atb_flops + dense_loop_flops
+
+                # Create streamlined result (no error metrics for production)
+                result = DenseOptimizationResult(
+                    led_values=led_values_output,
+                    error_metrics={},  # Empty for production
+                    iterations=iterations_used,
+                    converged=True,
                 )
-            timing_breakdown["validation_time"] = time.time() - validation_start
 
-            # KEY STEP 2: Calculate A^T*b for current frame
-            atb_start = time.time()
-            ATb = self._calculate_ATb(target_frame)
-            timing_breakdown["atb_calculation_time"] = time.time() - atb_start
+                # Update statistics
+                self._total_flops += frame_flops
+                self._optimization_count += 1
+                self._total_optimization_time += optimization_time
 
-            # Initialize LED values
-            init_start = time.time()
-            if initial_values is not None:
-                initial_normalized = (
-                    initial_values / 255.0
-                    if initial_values.max() > 1.0
-                    else initial_values
-                ).astype(np.float32)
-                self._led_values_gpu[:] = cp.asarray(initial_normalized)
-            else:
-                # Use pre-initialized 0.5 values
-                self._led_values_gpu.fill(0.5)
-            timing_breakdown["initialization_time"] = time.time() - init_start
+                logger.debug(f"Dense optimization completed in {optimization_time:.3f}s")
+                return result
 
-            # Dense tensor optimization loop with detailed timing
-            led_values_solved, loop_timing = self._solve_dense_gradient_descent(
-                ATb, max_iterations
-            )
-            timing_breakdown["optimization_loop_time"] = loop_timing["total_time"]
-            timing_breakdown["loop_iterations"] = loop_timing["iterations"]
-
-            # Convert back to numpy
-            convert_start = time.time()
-            led_values_normalized = cp.asnumpy(led_values_solved)
-            led_values_output = (led_values_normalized * 255.0).astype(np.uint8)
-            timing_breakdown["conversion_time"] = time.time() - convert_start
-
-            optimization_time = time.time() - start_time
-            timing_breakdown["total_time"] = optimization_time
-
-            # Calculate core per-frame time (excluding validation and conversion overhead)
-            core_time = (
-                timing_breakdown["atb_calculation_time"]
-                + timing_breakdown["initialization_time"]
-                + timing_breakdown["optimization_loop_time"]
-            )
-            timing_breakdown["core_per_frame_time"] = core_time
-
-            # Calculate FLOPs for this optimization
-            iterations_used = max_iterations or self.max_iterations
-
-            # Calculate actual FLOPs: A^T*b (once per frame) + dense optimization (per iteration)
-            atb_flops = (
-                self._atb_flops_per_frame
-                if hasattr(self, "_atb_flops_per_frame")
-                else 0
-            )
-            dense_loop_flops = iterations_used * (
-                self._dense_flops_per_iteration
-                if hasattr(self, "_dense_flops_per_iteration")
-                else self._flops_per_iteration
-            )
-            frame_flops = atb_flops + dense_loop_flops
-
-            # Create streamlined result (no error metrics for production)
-            result = DenseOptimizationResult(
-                led_values=led_values_output,
-                error_metrics={},  # Empty for production
-                optimization_time=optimization_time,
-                iterations=iterations_used,
-                converged=True,
-                flop_info={
-                    "total_flops": int(frame_flops),
-                    "flops_per_iteration": int(
-                        self._dense_flops_per_iteration
-                        if hasattr(self, "_dense_flops_per_iteration")
-                        else self._flops_per_iteration
-                    ),
-                    "atb_flops_per_frame": int(atb_flops),
-                    "dense_loop_flops": int(dense_loop_flops),
-                    "gflops": frame_flops / 1e9,
-                    "gflops_per_second": frame_flops / (optimization_time * 1e9),
-                },
-                timing_breakdown=timing_breakdown,
-            )
-
-            # Update statistics
-            self._total_flops += frame_flops
-            self._optimization_count += 1
-            self._total_optimization_time += optimization_time
-
-            logger.debug(f"Dense optimization completed in {optimization_time:.3f}s")
-            return result
-
-        except Exception as e:
-            optimization_time = time.time() - start_time
-            logger.error(
-                f"Dense optimization failed after {optimization_time:.3f}s: {e}"
-            )
+            except Exception as e:
+                # Get timing data even on failure
+                timing_data = self._timing.get_timing_data()
+                optimization_time = timing_data.get("total_elapsed_time", 0.0)
+                logger.error(
+                    f"Dense optimization failed after {optimization_time:.3f}s: {e}"
+                )
 
             # Return error result
             return DenseOptimizationResult(
                 led_values=np.zeros((self._actual_led_count, 3), dtype=np.uint8),
                 error_metrics={},
-                optimization_time=optimization_time,
                 iterations=0,
                 converged=False,
-                flop_info={
-                    "total_flops": 0,
-                    "flops_per_iteration": int(self._flops_per_iteration)
-                    if self._flops_per_iteration > 0
-                    else 0,
-                    "gflops": 0.0,
-                    "gflops_per_second": 0.0,
-                },
             )
 
     def optimize_frame_with_debug(
@@ -517,139 +475,97 @@ class DenseLEDOptimizer:
         Returns:
             DenseOptimizationResult with LED values and comprehensive debug metrics
         """
-        start_time = time.time()
+        with self._timing.section("optimize_frame_debug") as frame_timing:
+            try:
+                if not self._matrix_loaded:
+                    raise RuntimeError("Dense matrices not loaded")
 
-        try:
-            if not self._matrix_loaded:
-                raise RuntimeError("Dense matrices not loaded")
+                # Validate input
+                with self._timing.section("validation"):
+                    if target_frame.shape != (FRAME_HEIGHT, FRAME_WIDTH, 3):
+                        raise ValueError(
+                            f"Target frame shape {target_frame.shape} != {(FRAME_HEIGHT, FRAME_WIDTH, 3)}"
+                        )
 
-            # Validate input
-            if target_frame.shape != (FRAME_HEIGHT, FRAME_WIDTH, 3):
-                raise ValueError(
-                    f"Target frame shape {target_frame.shape} != {(FRAME_HEIGHT, FRAME_WIDTH, 3)}"
+                # Calculate A^T*b for current frame
+                with self._timing.section("atb_calculation", flops=getattr(self, "_atb_flops_per_frame", 0)):
+                    ATb = self._calculate_ATb(target_frame)
+
+                # Initialize LED values
+                with self._timing.section("initialization"):
+                    if initial_values is not None:
+                        initial_normalized = (
+                            initial_values / 255.0
+                            if initial_values.max() > 1.0
+                            else initial_values
+                        ).astype(np.float32)
+                        self._led_values_gpu[:] = cp.asarray(initial_normalized)
+                    else:
+                        self._led_values_gpu.fill(0.5)
+
+                # Dense tensor optimization loop with detailed timing
+                iterations_used = max_iterations or self.max_iterations
+                dense_loop_flops = iterations_used * getattr(self, "_dense_flops_per_iteration", 0)
+                with self._timing.section("optimization_loop", flops=dense_loop_flops):
+                    led_values_solved, loop_timing = self._solve_dense_gradient_descent(
+                        ATb, max_iterations
+                    )
+
+                # Convert back to numpy
+                with self._timing.section("conversion"):
+                    led_values_normalized = cp.asnumpy(led_values_solved)
+                    led_values_output = (led_values_normalized * 255.0).astype(np.uint8)
+
+                # DEBUG: Compute error metrics using sparse matrices for accuracy
+                with self._timing.section("debug_error_metrics"):
+                    error_metrics = self._compute_error_metrics(led_values_solved, target_frame)
+
+                # Get timing data for statistics tracking
+                timing_data = self._timing.get_timing_data()
+                optimization_time = timing_data["sections"]["optimize_frame_debug"]["duration"]
+                
+                # Calculate FLOPs for statistics tracking
+                atb_flops = getattr(self, "_atb_flops_per_frame", 0)
+                dense_loop_flops = iterations_used * getattr(self, "_dense_flops_per_iteration", 0)
+                frame_flops = atb_flops + dense_loop_flops
+
+                # Create comprehensive debug result
+                result = DenseOptimizationResult(
+                    led_values=led_values_output,
+                    error_metrics=error_metrics,
+                    iterations=iterations_used,
+                    converged=True,
+                    target_frame=target_frame.copy(),
+                    precomputation_info={
+                        "ata_shape": self._ATA_gpu.shape,
+                        "ata_memory_mb": self._ATA_gpu.nbytes / (1024 * 1024),
+                        "approach": "dense_precomputed_ata",
+                    },
                 )
 
-            # Calculate A^T*b for current frame
-            ATb = self._calculate_ATb(target_frame)
+                # Update statistics
+                self._total_flops += frame_flops
+                self._optimization_count += 1
+                self._total_optimization_time += optimization_time
 
-            # Initialize LED values
-            if initial_values is not None:
-                initial_normalized = (
-                    initial_values / 255.0
-                    if initial_values.max() > 1.0
-                    else initial_values
-                ).astype(np.float32)
-                self._led_values_gpu[:] = cp.asarray(initial_normalized)
-            else:
-                self._led_values_gpu.fill(0.5)
+                logger.debug(f"Dense optimization completed in {optimization_time:.3f}s")
+                return result
 
-            # Dense tensor optimization loop with detailed timing
-            led_values_solved, loop_timing = self._solve_dense_gradient_descent(
-                ATb, max_iterations
-            )
+            except Exception as e:
+                # Get timing data even on failure
+                timing_data = self._timing.get_timing_data()
+                optimization_time = timing_data.get("total_elapsed_time", 0.0)
+                logger.error(
+                    f"Dense optimization failed after {optimization_time:.3f}s: {e}"
+                )
 
-            # Convert back to numpy
-            led_values_normalized = cp.asnumpy(led_values_solved)
-            led_values_output = (led_values_normalized * 255.0).astype(np.uint8)
-
-            # DEBUG: Compute error metrics using sparse matrices for accuracy
-            debug_start = time.time()
-            error_metrics = self._compute_error_metrics(led_values_solved, target_frame)
-            debug_time = time.time() - debug_start
-
-            optimization_time = time.time() - start_time
-            core_optimization_time = optimization_time - debug_time
-
-            # Calculate FLOPs for this optimization
-            iterations_used = max_iterations or self.max_iterations
-
-            # Calculate actual FLOPs: A^T*b (once per frame) + dense optimization (per iteration)
-            atb_flops = (
-                self._atb_flops_per_frame
-                if hasattr(self, "_atb_flops_per_frame")
-                else 0
-            )
-            dense_loop_flops = iterations_used * (
-                self._dense_flops_per_iteration
-                if hasattr(self, "_dense_flops_per_iteration")
-                else self._flops_per_iteration
-            )
-            frame_flops = atb_flops + dense_loop_flops
-
-            # Create comprehensive debug result
-            result = DenseOptimizationResult(
-                led_values=led_values_output,
-                error_metrics=error_metrics,
-                optimization_time=core_optimization_time,  # Exclude debug overhead
-                iterations=iterations_used,
-                converged=True,
-                target_frame=target_frame.copy(),
-                precomputation_info={
-                    "ata_shape": self._ATA_gpu.shape,
-                    "ata_memory_mb": self._ATA_gpu.nbytes / (1024 * 1024),
-                    "approach": "dense_precomputed_ata",
-                },
-                flop_info={
-                    "total_flops": int(frame_flops),
-                    "flops_per_iteration": int(
-                        self._dense_flops_per_iteration
-                        if hasattr(self, "_dense_flops_per_iteration")
-                        else self._flops_per_iteration
-                    ),
-                    "atb_flops_per_frame": int(atb_flops),
-                    "dense_loop_flops": int(dense_loop_flops),
-                    "gflops": frame_flops / 1e9,
-                    "gflops_per_second": frame_flops / (core_optimization_time * 1e9),
-                    "detailed_timing": {
-                        "core_optimization_time": core_optimization_time,
-                        "debug_overhead_time": debug_time,
-                        "total_time_with_debug": optimization_time,
-                        "loop_time": loop_timing.get("total_loop_time", 0.0),
-                        "einsum_time": loop_timing.get("einsum_time", 0.0),
-                        "step_size_time": loop_timing.get("step_size_time", 0.0),
-                        "step_einsum_time": loop_timing.get("step_einsum_time", 0.0),
-                        "iterations_completed": loop_timing.get(
-                            "iterations_completed", iterations_used
-                        ),
-                        "atb_time": core_optimization_time
-                        - loop_timing.get("total_loop_time", 0.0),
-                    },
-                },
-            )
-
-            # Update statistics with core optimization time only
-            self._total_flops += frame_flops
-            self._optimization_count += 1
-            self._total_optimization_time += core_optimization_time
-
-            logger.debug(
-                f"Dense optimization completed in {core_optimization_time:.3f}s "
-                f"(+{debug_time:.3f}s debug overhead)"
-            )
-            return result
-
-        except Exception as e:
-            optimization_time = time.time() - start_time
-            logger.error(
-                f"Dense optimization failed after {optimization_time:.3f}s: {e}"
-            )
-
-            # Return error result
-            return DenseOptimizationResult(
-                led_values=np.zeros((self._actual_led_count, 3), dtype=np.uint8),
-                error_metrics={"mse": float("inf"), "mae": float("inf")},
-                optimization_time=optimization_time,
-                iterations=0,
-                converged=False,
-                flop_info={
-                    "total_flops": 0,
-                    "flops_per_iteration": int(self._flops_per_iteration)
-                    if self._flops_per_iteration > 0
-                    else 0,
-                    "gflops": 0.0,
-                    "gflops_per_second": 0.0,
-                },
-            )
+                # Return error result
+                return DenseOptimizationResult(
+                    led_values=np.zeros((self._actual_led_count, 3), dtype=np.uint8),
+                    error_metrics={"mse": float("inf"), "mae": float("inf")},
+                    iterations=0,
+                    converged=False,
+                )
 
     def _calculate_ATb(self, target_frame: np.ndarray) -> cp.ndarray:
         """
@@ -718,9 +634,6 @@ class DenseLEDOptimizer:
             3,
         ), f"ATb shape {ATb.shape} != expected ({self._actual_led_count}, 3)"
 
-        # Start timing for the optimization loop
-        loop_start_time = time.time()
-
         # Get workspace arrays
         w = self._gpu_workspace
         x = self._led_values_gpu  # (led_count, 3)
@@ -731,55 +644,53 @@ class DenseLEDOptimizer:
             3,
         ), f"x shape {x.shape} != expected ({self._actual_led_count}, 3)"
 
-        einsum_time = 0.0
-        step_size_time = 0.0
-        step_einsum_time = 0.0
+        with self._timing.section("gradient_descent_loop") as loop_timing:
+            for iteration in range(max_iters):
+                # KEY OPTIMIZATION: Use einsum for parallel ATA @ x computation
+                # ATA: (led_count, led_count, 3), x: (led_count, 3) -> (led_count, 3)
+                # einsum 'ijk,jk->ik' computes all 3 channels in parallel
+                with self._timing.section("einsum_operation", use_gpu_events=True):
+                    w["ATA_x"][:] = cp.einsum("ijk,jk->ik", self._ATA_gpu, x)
+                    w["gradient"][:] = w["ATA_x"] - ATb
 
-        for iteration in range(max_iters):
-            # KEY OPTIMIZATION: Use einsum for parallel ATA @ x computation
-            # ATA: (led_count, led_count, 3), x: (led_count, 3) -> (led_count, 3)
-            # einsum 'ijk,jk->ik' computes all 3 channels in parallel
-            einsum_start = time.time()
-            w["ATA_x"][:] = cp.einsum("ijk,jk->ik", self._ATA_gpu, x)
-            w["gradient"][:] = w["ATA_x"] - ATb
-            einsum_time += time.time() - einsum_start
+                # KEY STEP 4: Compute step size using optimized dense operations
+                with self._timing.section("step_size_calculation", use_gpu_events=True):
+                    step_size, step_einsum_duration = self._compute_dense_step_size(
+                        w["gradient"]
+                    )
 
-            # KEY STEP 4: Compute step size using optimized dense operations
-            step_start = time.time()
-            step_size, step_einsum_duration = self._compute_dense_step_size(
-                w["gradient"]
-            )
-            step_size_time += time.time() - step_start
-            step_einsum_time += step_einsum_duration
+                # Gradient descent step with projection to [0, 1]
+                w["x_new"][:] = cp.clip(x - step_size * w["gradient"], 0, 1)
 
-            # Gradient descent step with projection to [0, 1]
-            w["x_new"][:] = cp.clip(x - step_size * w["gradient"], 0, 1)
+                # Check convergence
+                delta = cp.linalg.norm(w["x_new"] - x)
+                if delta < self.convergence_threshold:
+                    logger.debug(
+                        f"Converged after {iteration+1} iterations, delta: {delta:.6f}"
+                    )
+                    break
 
-            # Check convergence
-            delta = cp.linalg.norm(w["x_new"] - x)
-            if delta < self.convergence_threshold:
-                logger.debug(
-                    f"Converged after {iteration+1} iterations, delta: {delta:.6f}"
-                )
-                break
+                # Update (swap references for efficiency)
+                x, w["x_new"] = w["x_new"], x
 
-            # Update (swap references for efficiency)
-            x, w["x_new"] = w["x_new"], x
+            # Ensure we return the current x
+            self._led_values_gpu[:] = x
 
-        # Ensure we return the current x
-        self._led_values_gpu[:] = x
+            # Get timing data from PerformanceTiming framework
+            timing_data = self._timing.get_timing_data()
+            
+            # Create legacy timing info for compatibility
+            timing_info = {
+                "total_time": timing_data["sections"]["gradient_descent_loop"]["duration"],
+                "iterations": iteration + 1,
+                "total_loop_time": timing_data["sections"]["gradient_descent_loop"]["duration"],
+                "einsum_time": timing_data["sections"].get("einsum_operation", {}).get("duration", 0.0),
+                "step_size_time": timing_data["sections"].get("step_size_calculation", {}).get("duration", 0.0),
+                "step_einsum_time": 0.0,  # Will be calculated in _compute_dense_step_size
+                "iterations_completed": iteration + 1,
+            }
 
-        loop_total_time = time.time() - loop_start_time
-
-        timing_info = {
-            "total_loop_time": loop_total_time,
-            "einsum_time": einsum_time,
-            "step_size_time": step_size_time,
-            "step_einsum_time": step_einsum_time,
-            "iterations_completed": iteration + 1,
-        }
-
-        return x, timing_info
+            return x, timing_info
 
     def _compute_dense_step_size(self, gradient: cp.ndarray) -> Tuple[float, float]:
         """
@@ -798,16 +709,14 @@ class DenseLEDOptimizer:
         # ATA: (led_count, led_count, 3), gradient: (led_count, 3)
         # Computes sum over k of: g[:,k]^T @ ATA[:,:,k] @ g[:,k]
 
-        # Use GPU events for accurate timing
-        start_event = cp.cuda.Event()
-        end_event = cp.cuda.Event()
+        # Use PerformanceTiming framework for GPU timing
 
-        start_event.record()
-        g_dot_ATA_g = cp.einsum("ik,ijk,jk->", gradient, self._ATA_gpu, gradient)
-        end_event.record()
+        with self._timing.section("step_einsum_operation", use_gpu_events=True):
+            g_dot_ATA_g = cp.einsum("ik,ijk,jk->", gradient, self._ATA_gpu, gradient)
 
-        cp.cuda.runtime.deviceSynchronize()
-        einsum_duration = cp.cuda.get_elapsed_time(start_event, end_event) / 1000.0
+        # Get timing data for this operation
+        timing_data = self._timing.get_timing_data()
+        einsum_duration = timing_data["sections"].get("step_einsum_operation", {}).get("duration", 0.0)
 
         if g_dot_ATA_g > 0:
             return (
@@ -892,4 +801,23 @@ class DenseLEDOptimizer:
                 }
             )
 
+        # Add PerformanceTiming insights
+        timing_stats = self._timing.get_stats()
+        stats["performance_timing"] = {
+            "framework_active": True,
+            "section_count": timing_stats["section_count"],
+            "total_timing_overhead": timing_stats["total_duration"],
+            "error_count": timing_stats["error_count"],
+            "gpu_timing_enabled": timing_stats["gpu_timing_enabled"],
+        }
+
         return stats
+    
+
+    def log_performance_insights(self, logger: logging.Logger, include_percentages: bool = True):
+        """Log detailed performance insights using PerformanceTiming framework."""
+        self._timing and self._timing.log(
+            logger, 
+            include_percentages=include_percentages, 
+            sort_by="time"
+        )
