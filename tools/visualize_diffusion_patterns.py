@@ -278,22 +278,31 @@ class DiffusionPatternVisualizer:
                 start_idx = page * per_page
                 end_idx = min(start_idx + per_page, actual_led_count)
 
-                # Create LED order list based on requested ordering
+                # Create LED display information based on requested ordering
                 if order == "storage" and self.led_spatial_mapping:
-                    # Storage order: show LEDs in matrix column order
+                    # Storage order: show LEDs in matrix/file column order (spatial indices)
+                    # Dense patterns are indexed by spatial indices, so use directly
+                    display_info = [
+                        {"spatial_idx": i, "display_id": i}
+                        for i in range(actual_led_count)
+                    ]
+                else:
+                    # Numerical order: show LEDs in physical ID order (0, 1, 2, ...)
+                    # Need to map from physical IDs to spatial indices for array access
                     reverse_mapping = {
                         matrix_idx: physical_id
                         for physical_id, matrix_idx in self.led_spatial_mapping.items()
                     }
-                    led_order = [
-                        reverse_mapping.get(i, i) for i in range(actual_led_count)
+                    # Sort by physical ID for display, but keep track of spatial index for array access
+                    display_info = [
+                        {"spatial_idx": i, "display_id": reverse_mapping.get(i, i)}
+                        for i in range(actual_led_count)
                     ]
-                else:
-                    # Numerical order: show LEDs in physical ID order (0, 1, 2, ...)
-                    led_order = list(range(actual_led_count))
+                    # Sort by display_id (physical LED ID) for numerical order
+                    display_info.sort(key=lambda x: x["display_id"])
 
                 # Get the LEDs for this page
-                page_leds = led_order[start_idx:end_idx]
+                page_info = display_info[start_idx:end_idx]
 
                 # Select pattern data based on format parameter
                 if format_type == "mixed":
@@ -303,15 +312,19 @@ class DiffusionPatternVisualizer:
                     patterns_to_use = self.dense_patterns_csc
                     format_label = "CSC Matrix"
 
-                for led_idx in page_leds:
+                for info in page_info:
+                    spatial_idx = info["spatial_idx"]
+                    display_id = info["display_id"]
                     if channel == "all":
                         # Create composite RGB image - patterns are (height, width, 3)
-                        rgb_pattern = patterns_to_use[led_idx]  # Already in HWC format
+                        rgb_pattern = patterns_to_use[
+                            spatial_idx
+                        ]  # Use spatial index for array access
                     else:
                         # Single channel - extract the specific channel
                         channel_idx = {"red": 0, "green": 1, "blue": 2}.get(channel, 0)
                         single_channel = patterns_to_use[
-                            led_idx, :, :, channel_idx
+                            spatial_idx, :, :, channel_idx
                         ]  # (height, width)
                         rgb_pattern = np.stack([single_channel] * 3, axis=-1)
 
@@ -320,7 +333,7 @@ class DiffusionPatternVisualizer:
 
                     patterns.append(
                         {
-                            "led_id": led_idx,
+                            "led_id": display_id,  # Show the display ID (physical or spatial)
                             "thumbnail": thumbnail,
                             "max_intensity": float(np.max(rgb_pattern)),
                             "center_of_mass": self._calculate_center_of_mass(
@@ -356,12 +369,26 @@ class DiffusionPatternVisualizer:
             if self.dense_patterns_csc is None or self.dense_patterns_mixed is None:
                 return jsonify({"error": "No patterns loaded"}), 404
 
+            # Get ordering mode to interpret led_id correctly
+            order = request.args.get("order", "numerical")
+
             actual_led_count = self.diffusion_matrix.led_count
-            if led_id >= actual_led_count:
+
+            # Map display ID to spatial index for array access
+            if order == "storage" or not self.led_spatial_mapping:
+                # Storage order: led_id is already a spatial index
+                spatial_idx = led_id
+                display_id = led_id
+            else:
+                # Numerical order: led_id is a physical ID, need to find spatial index
+                spatial_idx = self.led_spatial_mapping.get(led_id, led_id)
+                display_id = led_id
+
+            if spatial_idx >= actual_led_count:
                 return jsonify({"error": "Invalid LED ID"}), 400
 
             try:
-                pattern_data = {"led_id": led_id, "channels": {}, "formats": {}}
+                pattern_data = {"led_id": display_id, "channels": {}, "formats": {}}
 
                 channel_names = ["red", "green", "blue"]
 
@@ -373,7 +400,7 @@ class DiffusionPatternVisualizer:
                     format_data = {"channels": {}}
 
                     for ch_idx, ch_name in enumerate(channel_names):
-                        pattern = patterns_array[led_id, :, :, ch_idx]
+                        pattern = patterns_array[spatial_idx, :, :, ch_idx]
 
                         # Full resolution image
                         full_image = self._pattern_to_base64(pattern)
@@ -396,7 +423,7 @@ class DiffusionPatternVisualizer:
 
                     # Create composite RGB view for this format
                     rgb_pattern = patterns_array[
-                        led_idx
+                        spatial_idx
                     ]  # Already in (height, width, 3) format
 
                     format_data["composite"] = {
@@ -1033,7 +1060,7 @@ HTML_TEMPLATE = """
             content.innerHTML = '<div class="loading">Loading pattern details...</div>';
             modal.style.display = 'block';
 
-            fetch(`/api/pattern/${ledId}`)
+            fetch(`/api/pattern/${ledId}?order=${currentOrder}`)
                 .then(response => response.json())
                 .then(data => {
                     if (data.error) {
