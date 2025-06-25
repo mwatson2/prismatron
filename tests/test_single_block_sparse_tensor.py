@@ -15,7 +15,7 @@ import cupy as cp
 import numpy as np
 
 # Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 
@@ -131,9 +131,9 @@ def test_batch_operations():
         batch_size, channels, height, width, block_size
     )
 
-    # Create batch data
-    positions = cp.random.randint(0, height - block_size, (batch_size, channels, 2))
-    values = cp.random.rand(batch_size, channels, block_size, block_size).astype(
+    # Create batch data (note: positions should be channels-first for new layout)
+    positions = cp.random.randint(0, height - block_size, (channels, batch_size, 2))
+    values = cp.random.rand(channels, batch_size, block_size, block_size).astype(
         cp.float32
     )
 
@@ -144,8 +144,7 @@ def test_batch_operations():
 
     logger.info(f"Batch block setting took {batch_set_time:.4f}s")
 
-    # Verify all blocks were set
-    assert cp.all(tensor.blocks_set), "Not all blocks were set in batch operation"
+    # All blocks are assumed to be set - no explicit verification needed
 
     # Test single target computation
     target = cp.random.rand(height, width).astype(cp.float32)
@@ -220,9 +219,9 @@ def test_performance_comparison():
         batch_size, channels, height, width, block_size
     )
 
-    # Set all blocks with random data
-    positions = cp.random.randint(0, height - block_size, (batch_size, channels, 2))
-    values = cp.random.rand(batch_size, channels, block_size, block_size).astype(
+    # Set all blocks with random data (note: positions should be channels-first for new layout)
+    positions = cp.random.randint(0, height - block_size, (channels, batch_size, 2))
+    values = cp.random.rand(channels, batch_size, block_size, block_size).astype(
         cp.float32
     )
     tensor.set_blocks_batch(positions, values)
@@ -248,7 +247,7 @@ def test_performance_comparison():
 
     # For comparison, time a single dense conversion (too expensive to do all)
     dense_conversion_start = time.time()
-    dense_sample = tensor.to_dense(0, 0)
+    dense_sample = tensor.to_array(0, 0)
     dense_conversion_time = time.time() - dense_conversion_start
 
     logger.info(
@@ -288,11 +287,10 @@ def test_save_load():
     data_dict = original.to_dict()
     logger.info(f"Exported {len(data_dict)} arrays to dictionary")
 
-    # Verify dictionary contains expected keys
+    # Verify dictionary contains expected keys (blocks_set removed)
     expected_keys = {
         "sparse_values",
         "block_positions",
-        "blocks_set",
         "batch_size",
         "channels",
         "height",
@@ -319,10 +317,9 @@ def test_save_load():
     assert loaded.width == original.width
     assert loaded.block_size == original.block_size
 
-    # Verify block data matches
+    # Verify block data matches (blocks_set no longer exists)
     assert cp.allclose(loaded.sparse_values, original.sparse_values)
     assert cp.array_equal(loaded.block_positions, original.block_positions)
-    assert cp.array_equal(loaded.blocks_set, original.blocks_set)
 
     # Verify same computational results
     target = cp.random.rand(40, 50).astype(cp.float32)
@@ -340,7 +337,7 @@ def test_save_load():
 
     assert empty_loaded.batch_size == 3
     assert empty_loaded.channels == 2
-    assert cp.sum(empty_loaded.blocks_set) == 0  # No blocks set
+    # All blocks are assumed to be set - no explicit check needed
 
     logger.info("✓ Save/load functionality test passed")
 
@@ -387,6 +384,255 @@ def test_error_handling():
     logger.info("✓ Error handling test passed")
 
 
+def test_to_dense_patterns():
+    """Test conversion to dense patterns array."""
+    logger.info("=== Testing to_dense_patterns ===")
+
+    # Create a small tensor with known patterns
+    batch_size, channels = 3, 2
+    height, width = 50, 60
+    block_size = 8
+
+    tensor = SingleBlockMixedSparseTensor(
+        batch_size, channels, height, width, block_size
+    )
+
+    # Set blocks with known values and positions
+    test_cases = [
+        (0, 0, 10, 15, cp.ones((8, 8)) * 2.0),  # LED 0, Red
+        (0, 1, 20, 25, cp.ones((8, 8)) * 3.0),  # LED 0, Green
+        (1, 0, 5, 30, cp.ones((8, 8)) * 4.0),  # LED 1, Red
+        (1, 1, 35, 10, cp.ones((8, 8)) * 5.0),  # LED 1, Green
+        (2, 0, 25, 45, cp.ones((8, 8)) * 6.0),  # LED 2, Red
+        (2, 1, 15, 5, cp.ones((8, 8)) * 7.0),  # LED 2, Green
+    ]
+
+    for batch_idx, channel_idx, row, col, values in test_cases:
+        tensor.set_block(batch_idx, channel_idx, row, col, values)
+
+    # Convert to dense patterns
+    dense_patterns = tensor.to_dense_patterns()
+
+    # Check shape
+    assert dense_patterns.shape == (batch_size, height, width, channels)
+    assert dense_patterns.dtype == np.float32
+
+    # Verify specific patterns
+    for batch_idx, channel_idx, row, col, expected_value in test_cases:
+        # Check that the block region has the expected value
+        block_region = dense_patterns[
+            batch_idx, row : row + block_size, col : col + block_size, channel_idx
+        ]
+        assert np.allclose(
+            block_region, expected_value
+        ), f"LED {batch_idx}, channel {channel_idx} block mismatch"
+
+        # Check that individual extraction matches
+        individual_pattern = tensor.extract_pattern(batch_idx, channel_idx)
+        batch_pattern = dense_patterns[batch_idx, :, :, channel_idx]
+        np.testing.assert_array_equal(
+            individual_pattern,
+            batch_pattern,
+            err_msg=f"Mismatch between extract_pattern and to_dense_patterns for LED {batch_idx}, channel {channel_idx}",
+        )
+
+    logger.info("✓ to_dense_patterns test passed")
+
+
+def test_get_block_summary():
+    """Test block summary statistics."""
+    logger.info("=== Testing get_block_summary ===")
+
+    # Create tensor with known patterns
+    batch_size, channels = 4, 3
+    height, width = 64, 64
+    block_size = 8
+
+    tensor = SingleBlockMixedSparseTensor(
+        batch_size, channels, height, width, block_size
+    )
+
+    # Set blocks with known values at different positions
+    test_data = [
+        (0, 0, 10, 20, 1.0),  # LED 0, Red
+        (0, 1, 15, 25, 2.0),  # LED 0, Green
+        (1, 2, 30, 40, 3.0),  # LED 1, Blue
+        (2, 0, 5, 5, 4.0),  # LED 2, Red
+        (3, 1, 50, 50, 5.0),  # LED 3, Green
+    ]
+
+    for batch_idx, channel_idx, row, col, value in test_data:
+        values = cp.ones((block_size, block_size), dtype=cp.float32) * value
+        tensor.set_block(batch_idx, channel_idx, row, col, values)
+
+    # Get summary statistics
+    summary = tensor.get_block_summary()
+
+    # Check required keys
+    required_keys = {
+        "batch_size",
+        "channels",
+        "block_size",
+        "total_blocks",
+        "block_positions_stats",
+        "intensity_stats",
+        "coverage_stats",
+        "memory_mb",
+    }
+    assert set(summary.keys()) == required_keys
+
+    # Check basic properties
+    assert summary["batch_size"] == batch_size
+    assert summary["channels"] == channels
+    assert summary["block_size"] == block_size
+    assert summary["total_blocks"] == batch_size * channels
+
+    # Check position statistics
+    pos_stats = summary["block_positions_stats"]
+    assert pos_stats["min_row"] >= 0
+    assert pos_stats["max_row"] < height
+    assert pos_stats["min_col"] >= 0
+    assert pos_stats["max_col"] < width
+    assert pos_stats["min_row"] <= pos_stats["max_row"]
+    assert pos_stats["min_col"] <= pos_stats["max_col"]
+
+    # Check intensity statistics
+    intensity_stats = summary["intensity_stats"]
+    assert intensity_stats["min_intensity"] >= 0
+    assert intensity_stats["max_intensity"] >= intensity_stats["min_intensity"]
+    assert 0 <= intensity_stats["sparsity_ratio"] <= 1
+    assert intensity_stats["nonzero_values"] > 0  # We set some blocks
+
+    # Check coverage statistics
+    coverage_stats = summary["coverage_stats"]
+    assert coverage_stats["blocks_per_led"] == channels
+    assert 0 <= coverage_stats["spatial_coverage_x"] <= 1
+    assert 0 <= coverage_stats["spatial_coverage_y"] <= 1
+    assert coverage_stats["led_max_intensities"].shape == (batch_size,)
+    assert coverage_stats["led_mean_intensities"].shape == (batch_size,)
+
+    # Check memory info
+    assert summary["memory_mb"] > 0
+
+    logger.info("✓ get_block_summary test passed")
+
+
+def test_extract_pattern():
+    """Test individual pattern extraction."""
+    logger.info("=== Testing extract_pattern ===")
+
+    # Create tensor with known patterns
+    batch_size, channels = 3, 2
+    height, width = 40, 50
+    block_size = 8
+
+    tensor = SingleBlockMixedSparseTensor(
+        batch_size, channels, height, width, block_size
+    )
+
+    # Set specific patterns
+    test_cases = [
+        (0, 0, 5, 10, 2.5),  # LED 0, Red
+        (1, 1, 20, 30, 7.8),  # LED 1, Green
+        (2, 0, 15, 5, 1.2),  # LED 2, Red
+    ]
+
+    for batch_idx, channel_idx, row, col, value in test_cases:
+        values = cp.ones((block_size, block_size), dtype=cp.float32) * value
+        tensor.set_block(batch_idx, channel_idx, row, col, values)
+
+    # Test pattern extraction
+    for batch_idx, channel_idx, row, col, expected_value in test_cases:
+        pattern = tensor.extract_pattern(batch_idx, channel_idx)
+
+        # Check shape and type
+        assert pattern.shape == (height, width)
+        assert pattern.dtype == np.float32
+
+        # Check that block region has expected value
+        block_region = pattern[row : row + block_size, col : col + block_size]
+        assert np.allclose(
+            block_region, expected_value
+        ), f"LED {batch_idx}, channel {channel_idx} value mismatch"
+
+        # Check that areas outside block are zero
+        outside_mask = np.ones((height, width), dtype=bool)
+        outside_mask[row : row + block_size, col : col + block_size] = False
+        assert np.allclose(
+            pattern[outside_mask], 0
+        ), f"LED {batch_idx}, channel {channel_idx} has non-zero values outside block"
+
+    # Test error handling
+    try:
+        tensor.extract_pattern(batch_size, 0)  # Invalid LED index
+        assert False, "Should have raised ValueError for invalid LED index"
+    except ValueError:
+        pass
+
+    try:
+        tensor.extract_pattern(0, channels)  # Invalid channel index
+        assert False, "Should have raised ValueError for invalid channel index"
+    except ValueError:
+        pass
+
+    logger.info("✓ extract_pattern test passed")
+
+
+def test_enhancement_methods_consistency():
+    """Test consistency between enhancement methods."""
+    logger.info("=== Testing Enhancement Methods Consistency ===")
+
+    # Create tensor with diverse patterns
+    batch_size, channels = 5, 3
+    height, width = 80, 100
+    block_size = 16
+
+    tensor = SingleBlockMixedSparseTensor(
+        batch_size, channels, height, width, block_size
+    )
+
+    # Set various blocks with different intensities
+    np.random.seed(42)  # For reproducible test
+    for batch_idx in range(batch_size):
+        for channel_idx in range(channels):
+            if np.random.random() > 0.3:  # Set ~70% of blocks
+                row = np.random.randint(0, height - block_size)
+                col = np.random.randint(0, width - block_size)
+                intensity = np.random.uniform(0.1, 1.0)
+                values = cp.ones((block_size, block_size), dtype=cp.float32) * intensity
+                tensor.set_block(batch_idx, channel_idx, row, col, values)
+
+    # Get data from all methods
+    dense_patterns = tensor.to_dense_patterns()
+    summary = tensor.get_block_summary()
+
+    # Check consistency between methods
+    # 1. Dense patterns shape matches summary info
+    assert dense_patterns.shape[0] == summary["batch_size"]
+    assert dense_patterns.shape[3] == summary["channels"]
+
+    # 2. Individual extraction matches dense patterns
+    for batch_idx in range(min(3, batch_size)):  # Test first 3 LEDs
+        for channel_idx in range(channels):
+            individual = tensor.extract_pattern(batch_idx, channel_idx)
+            from_dense = dense_patterns[batch_idx, :, :, channel_idx]
+            np.testing.assert_array_equal(
+                individual,
+                from_dense,
+                err_msg=f"Inconsistency for LED {batch_idx}, channel {channel_idx}",
+            )
+
+    # 3. Summary statistics are consistent with actual data
+    max_intensities = summary["coverage_stats"]["led_max_intensities"]
+    for batch_idx in range(batch_size):
+        led_max_actual = np.max(dense_patterns[batch_idx])
+        assert np.isclose(
+            max_intensities[batch_idx], led_max_actual
+        ), f"Max intensity mismatch for LED {batch_idx}"
+
+    logger.info("✓ Enhancement methods consistency test passed")
+
+
 def main():
     """Run all tests."""
     logger.info("Starting SingleBlockMixedSparseTensor tests...")
@@ -399,6 +645,12 @@ def main():
         test_performance_comparison()
         test_save_load()
         test_error_handling()
+
+        # New enhancement method tests
+        test_to_dense_patterns()
+        test_get_block_summary()
+        test_extract_pattern()
+        test_enhancement_methods_consistency()
 
         logger.info("🎉 All tests passed successfully!")
 

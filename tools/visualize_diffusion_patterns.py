@@ -2,19 +2,22 @@
 """
 Diffusion Pattern Visualization Tool.
 
-This tool creates a web interface to visualize diffusion patterns with:
+This tool creates a web interface to visualize LED diffusion patterns using
+the new nested storage format with LEDDiffusionCSCMatrix and SingleBlockMixedSparseTensor.
+
+Features:
 1. Grid view of all LED patterns
 2. Individual LED/channel navigation
-3. Support for both captured and synthetic patterns
-4. Interactive controls and filtering
+3. Support for both CSC matrix and mixed tensor formats
+4. Interactive controls and pattern comparison
+5. Comprehensive pattern statistics
 
-Supported formats:
-- Dense format: Standard NPZ with diffusion patterns array
-- New sparse format: Single NPZ with sparse matrix components (matrix_data, matrix_indices, matrix_indptr, matrix_shape, led_positions, led_spatial_mapping, metadata)
-- Legacy sparse format: Dual NPZ files (*_matrix.npz and *_mapping.npz)
+Supported format:
+- New nested format: NPZ with diffusion_matrix (LEDDiffusionCSCMatrix),
+  mixed_tensor (SingleBlockMixedSparseTensor), and metadata
 
 Usage:
-    python visualize_diffusion_patterns.py --patterns captured_patterns.npz \\
+    python visualize_diffusion_patterns.py --patterns patterns.npz \\
         --host 0.0.0.0 --port 8080
 """
 
@@ -42,34 +45,44 @@ except ImportError:
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
+# Import constants directly to avoid relative import issues
+FRAME_HEIGHT = 480
+FRAME_WIDTH = 800
+LED_COUNT = 2600
+
+# Import specific modules directly to avoid __init__.py issues
+sys.path.append(str(Path(__file__).parent.parent / "src" / "utils"))
+from led_diffusion_csc_matrix import LEDDiffusionCSCMatrix
+from single_block_sparse_tensor import SingleBlockMixedSparseTensor
 
 logger = logging.getLogger(__name__)
 
 
 class DiffusionPatternVisualizer:
-    """Web-based diffusion pattern visualization tool with sparse matrix support."""
+    """Web-based diffusion pattern visualization tool using new wrapper classes."""
 
-    def __init__(self, patterns_file: Optional[str] = None, use_synthetic: bool = True):
+    def __init__(self, patterns_file: Optional[str] = None):
         """
         Initialize visualizer.
 
         Args:
-            patterns_file: Path to captured patterns file (.npz)
-            use_synthetic: Generate synthetic patterns if no file provided
+            patterns_file: Path to patterns file (.npz) in new nested format
         """
         self.patterns_file = patterns_file
-        self.use_synthetic = use_synthetic
 
-        # Pattern data (dense format for visualization)
-        self.diffusion_patterns: Optional[np.ndarray] = None
+        # Wrapper objects for the new format
+        self.diffusion_matrix: Optional[LEDDiffusionCSCMatrix] = None
+        self.mixed_tensor: Optional[SingleBlockMixedSparseTensor] = None
+
+        # Cached dense patterns for visualization
+        self.dense_patterns_csc: Optional[np.ndarray] = None
+        self.dense_patterns_mixed: Optional[np.ndarray] = None
+
+        # Metadata and LED info
         self.metadata: Dict = {}
-
-        # Sparse matrix data
-        self.is_sparse_format = False
-        self.sparse_matrix: Optional[sp.csc_matrix] = None
         self.led_positions: Optional[np.ndarray] = None
         self.led_spatial_mapping: Optional[Dict] = None
+        self.dense_ata_data: Optional[Dict] = None
 
         # Flask app
         self.app = Flask(__name__)
@@ -79,309 +92,98 @@ class DiffusionPatternVisualizer:
         self._setup_routes()
 
     def load_patterns(self) -> bool:
-        """Load diffusion patterns from file (dense or sparse format) or generate synthetic ones."""
+        """Load diffusion patterns from new nested format file."""
         try:
-            if self.patterns_file and Path(self.patterns_file).exists():
-                logger.info(f"Loading patterns from {self.patterns_file}")
-
-                # Check if this is an old sparse format file
-                if self.patterns_file.endswith("_matrix.npz"):
-                    return self._load_sparse_patterns()
-                else:
-                    # Try to detect format by examining file contents
-                    data = np.load(self.patterns_file, allow_pickle=True)
-
-                    # Check if this is the new single NPZ sparse format
-                    if all(
-                        key in data
-                        for key in [
-                            "matrix_data",
-                            "matrix_indices",
-                            "matrix_indptr",
-                            "matrix_shape",
-                        ]
-                    ):
-                        logger.info(
-                            "Detected new single NPZ sparse format, loading sparse matrix..."
-                        )
-                        return self._load_single_npz_sparse_patterns()
-
-                    # Check if this is the old dual-file sparse format
-                    base_path = self.patterns_file.replace(".npz", "")
-                    matrix_path = f"{base_path}_matrix.npz"
-                    mapping_path = f"{base_path}_mapping.npz"
-
-                    if Path(matrix_path).exists() and Path(mapping_path).exists():
-                        logger.info(
-                            "Detected old dual-file sparse format, loading sparse matrix..."
-                        )
-                        return self._load_sparse_patterns_from_base(base_path)
-                    else:
-                        # Default to dense format
-                        return self._load_captured_patterns()
-
-            elif self.use_synthetic:
-                logger.error("Synthetic pattern generation moved to separate tool.")
+            if not self.patterns_file or not Path(self.patterns_file).exists():
+                logger.error("No patterns file provided or file does not exist")
                 logger.error(
-                    "Generate patterns first with: python tools/generate_synthetic_patterns.py"
+                    "Generate patterns first with: python tools/generate_synthetic_patterns.py --output patterns.npz"
                 )
                 return False
-            else:
+
+            logger.info(f"Loading patterns from {self.patterns_file}")
+
+            # Load the nested format data
+            data = np.load(self.patterns_file, allow_pickle=True)
+
+            # Check for new nested format
+            if not all(
+                key in data for key in ["diffusion_matrix", "mixed_tensor", "metadata"]
+            ):
+                logger.error("File does not contain the new nested format")
+                logger.error("Expected keys: diffusion_matrix, mixed_tensor, metadata")
+                logger.error(f"Found keys: {list(data.keys())}")
                 logger.error(
-                    "No patterns file provided and synthetic patterns disabled"
+                    "Please regenerate patterns with the updated generate_synthetic_patterns.py"
                 )
                 return False
+
+            logger.info("Detected new nested format, loading wrapper objects...")
+            return self._load_nested_format(data)
 
         except Exception as e:
             logger.error(f"Failed to load patterns: {e}")
-            return False
-
-    def _load_captured_patterns(self) -> bool:
-        """Load captured diffusion patterns from .npz file (dense format)."""
-        try:
-            data = np.load(self.patterns_file, allow_pickle=True)
-
-            # Try different possible key names for patterns
-            pattern_keys = ["diffusion_patterns", "patterns"]
-            patterns = None
-            for key in pattern_keys:
-                if key in data:
-                    patterns = data[key]
-                    logger.info(f"Found patterns with key: {key}")
-                    break
-
-            if patterns is None:
-                logger.error(
-                    f"No pattern data found. Available keys: {list(data.keys())}"
-                )
-                return False
-
-            # Handle different pattern formats
-            if patterns.ndim == 4:
-                if patterns.shape[1] == 3:  # (led_count, 3, height, width) - CHW format
-                    logger.info("Converting from CHW to HWC format")
-                    self.diffusion_patterns = np.transpose(
-                        patterns, (0, 2, 3, 1)
-                    )  # -> (led_count, height, width, 3)
-                elif (
-                    patterns.shape[3] == 3
-                ):  # (led_count, height, width, 3) - HWC format
-                    self.diffusion_patterns = patterns
-                else:
-                    logger.error(f"Unsupported pattern shape: {patterns.shape}")
-                    return False
-            else:
-                logger.error(f"Unsupported pattern dimensions: {patterns.ndim}")
-                return False
-
-            self.metadata = data["metadata"].item() if "metadata" in data else {}
-            self.is_sparse_format = False
-
-            logger.info(f"Loaded dense patterns: {self.diffusion_patterns.shape}")
-            logger.info(f"Metadata: {self.metadata}")
-
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to load captured patterns: {e}")
-            return False
-
-    def _load_sparse_patterns(self) -> bool:
-        """Load sparse diffusion patterns from _matrix.npz file."""
-        try:
-            # Extract base path from matrix file
-            base_path = self.patterns_file.replace("_matrix.npz", "")
-            return self._load_sparse_patterns_from_base(base_path)
-
-        except Exception as e:
-            logger.error(f"Failed to load sparse patterns: {e}")
-            return False
-
-    def _load_single_npz_sparse_patterns(self) -> bool:
-        """Load sparse diffusion patterns from single NPZ file (new format)."""
-        try:
-            logger.info(f"Loading single NPZ sparse format from {self.patterns_file}")
-            data = np.load(self.patterns_file, allow_pickle=True)
-
-            # Reconstruct sparse matrix from components
-            logger.info("Reconstructing sparse matrix from components...")
-            self.sparse_matrix = sp.csc_matrix(
-                (data["matrix_data"], data["matrix_indices"], data["matrix_indptr"]),
-                shape=tuple(data["matrix_shape"]),
-            )
-
-            # Load LED positions and spatial mapping
-            self.led_positions = data["led_positions"]
-            self.led_spatial_mapping = data["led_spatial_mapping"].item()
-            self.metadata = data["metadata"].item() if "metadata" in data else {}
-
-            # Convert sparse matrix to dense patterns for visualization
-            logger.info("Converting sparse matrix to dense format for visualization...")
-            self.diffusion_patterns = self._sparse_to_dense_patterns()
-            self.is_sparse_format = True
-
-            logger.info(f"Loaded sparse patterns: {self.diffusion_patterns.shape}")
-            logger.info(f"Matrix shape: {self.sparse_matrix.shape}")
-            logger.info(
-                f"Matrix sparsity: {self.sparse_matrix.nnz / (self.sparse_matrix.shape[0] * self.sparse_matrix.shape[1]) * 100:.3f}%"
-            )
-            logger.info(f"Metadata: {self.metadata}")
-
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to load single NPZ sparse patterns: {e}")
-            return False
-
-    def _load_sparse_patterns_from_base(self, base_path: str) -> bool:
-        """Load sparse diffusion patterns from base path (old dual-file format)."""
-        try:
-            matrix_path = f"{base_path}_matrix.npz"
-            mapping_path = f"{base_path}_mapping.npz"
-
-            if not Path(matrix_path).exists():
-                logger.error(f"Sparse matrix file not found: {matrix_path}")
-                return False
-
-            if not Path(mapping_path).exists():
-                logger.error(f"Sparse mapping file not found: {mapping_path}")
-                return False
-
-            # Load sparse matrix
-            logger.info(f"Loading sparse matrix from {matrix_path}")
-            self.sparse_matrix = sp.load_npz(matrix_path)
-
-            # Load spatial mapping and metadata
-            logger.info(f"Loading spatial mapping from {mapping_path}")
-            mapping_data = np.load(mapping_path, allow_pickle=True)
-            self.led_spatial_mapping = mapping_data["led_spatial_mapping"].item()
-            self.led_positions = mapping_data["led_positions"]
-            self.metadata = (
-                mapping_data["metadata"].item() if "metadata" in mapping_data else {}
-            )
-
-            # Convert sparse matrix to dense patterns for visualization
-            logger.info("Converting sparse matrix to dense format for visualization...")
-            self.diffusion_patterns = self._sparse_to_dense_patterns()
-            self.is_sparse_format = True
-
-            logger.info(f"Loaded sparse patterns: {self.diffusion_patterns.shape}")
-            logger.info(f"Matrix shape: {self.sparse_matrix.shape}")
-            logger.info(
-                f"Matrix sparsity: {self.sparse_matrix.nnz / (self.sparse_matrix.shape[0] * self.sparse_matrix.shape[1]) * 100:.3f}%"
-            )
-            logger.info(f"Metadata: {self.metadata}")
-
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to load sparse patterns from {base_path}: {e}")
-            return False
-
-    def _sparse_to_dense_patterns(self) -> np.ndarray:
-        """
-        Convert sparse CSC matrix back to dense diffusion patterns for visualization.
-
-        The sparse matrix is stored as (384000, led_count*3) where:
-        - 384000 = 800 * 480 pixels (single channel)
-        - led_count*3 = independent LED color parameters (R, G, B)
-
-        Returns:
-            Dense patterns array (led_count, height, width, 3)
-        """
-        try:
-            # Calculate actual LED count: matrix columns / 3 channels
-            led_count = self.sparse_matrix.shape[1] // 3
-            pixels_per_channel = FRAME_HEIGHT * FRAME_WIDTH
-
-            # Initialize dense patterns array
-            patterns = np.zeros(
-                (led_count, FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8
-            )
-
-            # Create reverse spatial mapping: matrix_index -> physical_led_id
-            reverse_mapping = {
-                matrix_idx: physical_id
-                for physical_id, matrix_idx in self.led_spatial_mapping.items()
-            }
-
-            # Convert sparse matrix back to dense patterns
-            logger.info(
-                f"Converting sparse matrix to dense patterns for {led_count} LEDs..."
-            )
-            for physical_led_id in range(led_count):
-                # Get the matrix column index for this physical LED
-                matrix_led_idx = self.led_spatial_mapping.get(
-                    physical_led_id, physical_led_id
-                )
-
-                if matrix_led_idx >= led_count:
-                    logger.warning(
-                        f"Matrix index {matrix_led_idx} out of range for physical LED {physical_led_id}, using LED ID"
-                    )
-                    matrix_led_idx = physical_led_id
-
-                # Extract R, G, B columns for this LED
-                # Matrix column layout: [R0, G0, B0, R1, G1, B1, ...]
-                r_col_idx = matrix_led_idx * 3 + 0  # Red channel
-                g_col_idx = matrix_led_idx * 3 + 1  # Green channel
-                b_col_idx = matrix_led_idx * 3 + 2  # Blue channel
-
-                try:
-                    # Get sparse columns and convert to dense
-                    r_column = self.sparse_matrix[:, r_col_idx].toarray().flatten()
-                    g_column = self.sparse_matrix[:, g_col_idx].toarray().flatten()
-                    b_column = self.sparse_matrix[:, b_col_idx].toarray().flatten()
-
-                    # Reshape each channel from flattened pixels to (height, width)
-                    r_channel = r_column.reshape(FRAME_HEIGHT, FRAME_WIDTH)
-                    g_channel = g_column.reshape(FRAME_HEIGHT, FRAME_WIDTH)
-                    b_channel = b_column.reshape(FRAME_HEIGHT, FRAME_WIDTH)
-
-                    # Stack channels to create (height, width, 3)
-                    pattern_hwc = np.stack([r_channel, g_channel, b_channel], axis=2)
-
-                    # Convert to uint8 and store
-                    patterns[physical_led_id] = (pattern_hwc * 255).astype(np.uint8)
-
-                except (ValueError, IndexError) as e:
-                    logger.warning(
-                        f"Failed to extract pattern for LED {physical_led_id}: {e}"
-                    )
-                    # Fallback to zeros
-                    patterns[physical_led_id] = np.zeros(
-                        (FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8
-                    )
-
-                # Progress reporting
-                if (physical_led_id + 1) % max(1, led_count // 10) == 0:
-                    logger.info(
-                        f"Converted {physical_led_id + 1}/{led_count} patterns to dense format..."
-                    )
-
-            logger.info(
-                f"Successfully converted sparse matrix to dense patterns: {patterns.shape}"
-            )
-            return patterns
-
-        except Exception as e:
-            logger.error(f"Failed to convert sparse to dense patterns: {e}")
             import traceback
 
             logger.error(traceback.format_exc())
-            # Return empty patterns array on error
-            return np.zeros(
-                (
-                    led_count if "led_count" in locals() else LED_COUNT,
-                    FRAME_HEIGHT,
-                    FRAME_WIDTH,
-                    3,
-                ),
-                dtype=np.uint8,
+            return False
+
+    def _load_nested_format(self, data: np.lib.npyio.NpzFile) -> bool:
+        """Load patterns from new nested format."""
+        try:
+            # Load LEDDiffusionCSCMatrix
+            logger.info("Loading LEDDiffusionCSCMatrix...")
+            diffusion_matrix_dict = data["diffusion_matrix"].item()
+            self.diffusion_matrix = LEDDiffusionCSCMatrix.from_dict(
+                diffusion_matrix_dict
+            )
+            logger.info(f"Loaded diffusion matrix: {self.diffusion_matrix}")
+
+            # Load SingleBlockMixedSparseTensor
+            logger.info("Loading SingleBlockMixedSparseTensor...")
+            mixed_tensor_dict = data["mixed_tensor"].item()
+            self.mixed_tensor = SingleBlockMixedSparseTensor.from_dict(
+                mixed_tensor_dict
+            )
+            logger.info(f"Loaded mixed tensor: {self.mixed_tensor}")
+
+            # Load metadata
+            self.metadata = data["metadata"].item() if "metadata" in data else {}
+
+            # Load LED positions and spatial mapping
+            self.led_positions = data.get("led_positions", None)
+            self.led_spatial_mapping = data.get("led_spatial_mapping", None)
+            if self.led_spatial_mapping is not None and hasattr(
+                self.led_spatial_mapping, "item"
+            ):
+                self.led_spatial_mapping = self.led_spatial_mapping.item()
+
+            # Load dense A^T@A data if available
+            self.dense_ata_data = data.get("dense_ata", None)
+            if self.dense_ata_data is not None and hasattr(self.dense_ata_data, "item"):
+                self.dense_ata_data = self.dense_ata_data.item()
+
+            # Convert to dense patterns for visualization using new methods
+            logger.info("Converting to dense patterns for visualization...")
+            self.dense_patterns_csc = self.diffusion_matrix.to_dense_patterns()
+            self.dense_patterns_mixed = self.mixed_tensor.to_dense_patterns()
+
+            logger.info(f"CSC dense patterns shape: {self.dense_patterns_csc.shape}")
+            logger.info(
+                f"Mixed tensor dense patterns shape: {self.dense_patterns_mixed.shape}"
             )
 
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to load nested format: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            return False
+
     def _setup_routes(self):
-        """Setup Flask routes."""
+        """Setup Flask routes for the new wrapper-based visualization."""
 
         @self.app.route("/")
         def index():
@@ -390,35 +192,74 @@ class DiffusionPatternVisualizer:
 
         @self.app.route("/api/metadata")
         def get_metadata():
-            """Get pattern metadata."""
+            """Get pattern metadata using wrapper classes."""
+            if not self.diffusion_matrix or not self.mixed_tensor:
+                return jsonify({"error": "No patterns loaded"}), 404
+
+            # Get actual LED count from wrapper objects
+            led_count_csc = self.diffusion_matrix.led_count
+            led_count_mixed = self.mixed_tensor.batch_size
+
+            # Use CSC matrix as authoritative source
+            actual_led_count = led_count_csc
+
             metadata_response = {
                 "metadata": self.metadata,
-                "led_count": LED_COUNT,
-                "frame_width": FRAME_WIDTH,
-                "frame_height": FRAME_HEIGHT,
-                "patterns_loaded": self.diffusion_patterns is not None,
-                "is_sparse_format": self.is_sparse_format,
-                "supports_storage_order": self.is_sparse_format
-                and self.led_spatial_mapping is not None,
+                "led_count": actual_led_count,
+                "frame_width": self.diffusion_matrix.width,
+                "frame_height": self.diffusion_matrix.height,
+                "channels": self.diffusion_matrix.channels,
+                "patterns_loaded": True,
+                "has_both_formats": True,  # Always true for new format
+                "supports_storage_order": self.led_spatial_mapping is not None,
             }
 
-            # Add sparse matrix info if available
-            if self.is_sparse_format and self.sparse_matrix is not None:
-                metadata_response["sparse_info"] = {
-                    "matrix_shape": list(self.sparse_matrix.shape),
-                    "nnz": self.sparse_matrix.nnz,
-                    "sparsity_percent": self.sparse_matrix.nnz
-                    / (self.sparse_matrix.shape[0] * self.sparse_matrix.shape[1])
-                    * 100,
-                    "memory_mb": self.sparse_matrix.data.nbytes / (1024 * 1024),
+            # Add CSC matrix info using wrapper methods
+            if self.diffusion_matrix:
+                summary = self.diffusion_matrix.get_pattern_summary()
+                memory_info = self.diffusion_matrix.memory_info()
+
+                metadata_response["csc_info"] = {
+                    "matrix_shape": summary["matrix_shape"],
+                    "nnz": summary["nnz_total"],
+                    "sparsity_percent": summary["sparsity_ratio"] * 100,
+                    "memory_mb": memory_info["total_mb"],
+                    "led_count": summary["led_count"],
+                    "channels": summary["channels"],
+                }
+
+            # Add mixed tensor info using wrapper methods
+            if self.mixed_tensor:
+                block_summary = self.mixed_tensor.get_block_summary()
+                memory_info = self.mixed_tensor.memory_info()
+
+                metadata_response["mixed_tensor_info"] = {
+                    "batch_size": block_summary["batch_size"],
+                    "channels": block_summary["channels"],
+                    "height": self.mixed_tensor.height,
+                    "width": self.mixed_tensor.width,
+                    "block_size": block_summary["block_size"],
+                    "total_blocks": block_summary["total_blocks"],
+                    "memory_mb": memory_info["total_mb"],
+                }
+
+            # Add dense A^T@A info if available
+            if self.dense_ata_data:
+                metadata_response["dense_ata_info"] = {
+                    "shape": list(self.dense_ata_data["dense_ata_matrices"].shape),
+                    "memory_mb": self.dense_ata_data["dense_ata_matrices"].nbytes
+                    / (1024 * 1024),
+                    "computation_time": self.dense_ata_data[
+                        "dense_ata_computation_time"
+                    ],
                 }
 
             return jsonify(metadata_response)
 
         @self.app.route("/api/patterns")
         def get_patterns():
-            """Get pattern list with thumbnails."""
-            if self.diffusion_patterns is None:
+            """Get pattern list with thumbnails using cached dense patterns."""
+            if self.dense_patterns_csc is None or self.dense_patterns_mixed is None:
                 return jsonify({"error": "No patterns loaded"}), 404
 
             try:
@@ -428,41 +269,48 @@ class DiffusionPatternVisualizer:
                 order = request.args.get(
                     "order", "numerical"
                 )  # "numerical" or "storage"
+                format_type = request.args.get("format", "csc")  # "csc" or "mixed"
+
+                # Use CSC matrix as authoritative for LED count
+                actual_led_count = self.diffusion_matrix.led_count
 
                 patterns = []
                 start_idx = page * per_page
-                end_idx = min(start_idx + per_page, LED_COUNT)
+                end_idx = min(start_idx + per_page, actual_led_count)
 
-                # Create the LED order list based on the requested ordering
-                if (
-                    order == "storage"
-                    and self.is_sparse_format
-                    and self.led_spatial_mapping
-                ):
-                    # Storage order: show LEDs in the order they appear in the sparse matrix columns
-                    # Create reverse mapping: matrix_column -> physical_led_id
+                # Create LED order list based on requested ordering
+                if order == "storage" and self.led_spatial_mapping:
+                    # Storage order: show LEDs in matrix column order
                     reverse_mapping = {
                         matrix_idx: physical_id
                         for physical_id, matrix_idx in self.led_spatial_mapping.items()
                     }
-                    led_order = [reverse_mapping.get(i, i) for i in range(LED_COUNT)]
+                    led_order = [
+                        reverse_mapping.get(i, i) for i in range(actual_led_count)
+                    ]
                 else:
                     # Numerical order: show LEDs in physical ID order (0, 1, 2, ...)
-                    led_order = list(range(LED_COUNT))
+                    led_order = list(range(actual_led_count))
 
                 # Get the LEDs for this page
                 page_leds = led_order[start_idx:end_idx]
 
+                # Select pattern data based on format parameter
+                if format_type == "mixed":
+                    patterns_to_use = self.dense_patterns_mixed
+                    format_label = "Mixed Tensor"
+                else:
+                    patterns_to_use = self.dense_patterns_csc
+                    format_label = "CSC Matrix"
+
                 for led_idx in page_leds:
                     if channel == "all":
                         # Create composite RGB image - patterns are (height, width, 3)
-                        rgb_pattern = self.diffusion_patterns[
-                            led_idx
-                        ]  # Already in HWC format
+                        rgb_pattern = patterns_to_use[led_idx]  # Already in HWC format
                     else:
                         # Single channel - extract the specific channel
                         channel_idx = {"red": 0, "green": 1, "blue": 2}.get(channel, 0)
-                        single_channel = self.diffusion_patterns[
+                        single_channel = patterns_to_use[
                             led_idx, :, :, channel_idx
                         ]  # (height, width)
                         rgb_pattern = np.stack([single_channel] * 3, axis=-1)
@@ -486,86 +334,111 @@ class DiffusionPatternVisualizer:
                         "patterns": patterns,
                         "page": page,
                         "per_page": per_page,
-                        "total_leds": LED_COUNT,
-                        "total_pages": (LED_COUNT + per_page - 1) // per_page,
+                        "total_leds": actual_led_count,
+                        "total_pages": (actual_led_count + per_page - 1) // per_page,
                         "order": order,
-                        "supports_storage_order": self.is_sparse_format
-                        and self.led_spatial_mapping is not None,
+                        "format": format_type,
+                        "format_label": format_label,
+                        "supports_storage_order": self.led_spatial_mapping is not None,
                     }
                 )
 
             except Exception as e:
                 logger.error(f"Failed to generate patterns: {e}")
+                import traceback
+
+                logger.error(traceback.format_exc())
                 return jsonify({"error": str(e)}), 500
 
         @self.app.route("/api/pattern/<int:led_id>")
         def get_pattern_detail(led_id):
             """Get detailed view of specific LED pattern."""
-            if self.diffusion_patterns is None:
+            if self.dense_patterns_csc is None or self.dense_patterns_mixed is None:
                 return jsonify({"error": "No patterns loaded"}), 404
 
-            if led_id >= LED_COUNT:
+            actual_led_count = self.diffusion_matrix.led_count
+            if led_id >= actual_led_count:
                 return jsonify({"error": "Invalid LED ID"}), 400
 
             try:
-                pattern_data = {"led_id": led_id, "channels": {}}
+                pattern_data = {"led_id": led_id, "channels": {}, "formats": {}}
 
                 channel_names = ["red", "green", "blue"]
 
-                for ch_idx, ch_name in enumerate(channel_names):
-                    pattern = self.diffusion_patterns[led_id, :, :, ch_idx]
+                # Process both CSC and mixed tensor formats
+                for format_name, patterns_array in [
+                    ("csc", self.dense_patterns_csc),
+                    ("mixed", self.dense_patterns_mixed),
+                ]:
+                    format_data = {"channels": {}}
 
-                    # Full resolution image
-                    full_image = self._pattern_to_base64(pattern)
+                    for ch_idx, ch_name in enumerate(channel_names):
+                        pattern = patterns_array[led_id, :, :, ch_idx]
 
-                    # Statistics
-                    stats = {
-                        "max_intensity": float(np.max(pattern)),
-                        "min_intensity": float(np.min(pattern)),
-                        "mean_intensity": float(np.mean(pattern)),
-                        "std_intensity": float(np.std(pattern)),
-                        "center_of_mass": self._calculate_center_of_mass(
-                            pattern
-                        ).tolist(),
+                        # Full resolution image
+                        full_image = self._pattern_to_base64(pattern)
+
+                        # Statistics
+                        stats = {
+                            "max_intensity": float(np.max(pattern)),
+                            "min_intensity": float(np.min(pattern)),
+                            "mean_intensity": float(np.mean(pattern)),
+                            "std_intensity": float(np.std(pattern)),
+                            "center_of_mass": self._calculate_center_of_mass(
+                                pattern
+                            ).tolist(),
+                        }
+
+                        format_data["channels"][ch_name] = {
+                            "image": full_image,
+                            "statistics": stats,
+                        }
+
+                    # Create composite RGB view for this format
+                    rgb_pattern = patterns_array[
+                        led_idx
+                    ]  # Already in (height, width, 3) format
+
+                    format_data["composite"] = {
+                        "image": self._create_full_image(rgb_pattern),
+                        "statistics": {
+                            "max_intensity": float(np.max(rgb_pattern)),
+                            "center_of_mass": self._calculate_center_of_mass(
+                                rgb_pattern
+                            ).tolist(),
+                        },
                     }
 
-                    pattern_data["channels"][ch_name] = {
-                        "image": full_image,
-                        "statistics": stats,
-                    }
-
-                # Create composite RGB view
-                rgb_pattern = self.diffusion_patterns[
-                    led_id
-                ]  # Already in (height, width, 3) format
-
-                pattern_data["composite"] = {
-                    "image": self._create_full_image(rgb_pattern),
-                    "statistics": {
-                        "max_intensity": float(np.max(rgb_pattern)),
-                        "center_of_mass": self._calculate_center_of_mass(
-                            rgb_pattern
-                        ).tolist(),
-                    },
-                }
+                    pattern_data["formats"][format_name] = format_data
 
                 return jsonify(pattern_data)
 
             except Exception as e:
                 logger.error(f"Failed to get pattern detail: {e}")
+                import traceback
+
+                logger.error(traceback.format_exc())
                 return jsonify({"error": str(e)}), 500
 
     def _create_thumbnail(self, pattern: np.ndarray, size: Tuple[int, int]) -> str:
-        """Create base64 encoded thumbnail."""
+        """Create base64 thumbnail from pattern."""
         try:
             if not PIL_AVAILABLE:
                 return ""
 
-            # Pattern is already uint8 (0-255), no normalization needed
-            normalized = pattern.astype(np.uint8)
+            # Normalize pattern to 0-255
+            if len(pattern.shape) == 3:
+                # RGB pattern
+                normalized = np.clip(pattern * 255, 0, 255).astype(np.uint8)
+            else:
+                # Single channel - convert to RGB
+                normalized = np.clip(pattern * 255, 0, 255).astype(np.uint8)
+                normalized = np.stack([normalized] * 3, axis=-1)
 
             # Create PIL image
-            img = Image.fromarray(normalized)
+            img = Image.fromarray(normalized, mode="RGB")
+
+            # Resize to thumbnail size
             img = img.resize(size, Image.Resampling.LANCZOS)
 
             # Convert to base64
@@ -580,21 +453,16 @@ class DiffusionPatternVisualizer:
             return ""
 
     def _create_full_image(self, pattern: np.ndarray) -> str:
-        """Create base64 encoded full resolution image."""
+        """Create full resolution base64 image from RGB pattern."""
         try:
             if not PIL_AVAILABLE:
                 return ""
 
-            # Handle different input shapes
-            if len(pattern.shape) == 2:
-                # Single channel - convert to RGB (pattern is already uint8)
-                rgb_array = np.stack([pattern] * 3, axis=-1)
-            else:
-                # Multi-channel (pattern is already uint8)
-                rgb_array = pattern
+            # Normalize to 0-255
+            normalized = np.clip(pattern * 255, 0, 255).astype(np.uint8)
 
             # Create PIL image
-            img = Image.fromarray(rgb_array)
+            img = Image.fromarray(normalized, mode="RGB")
 
             # Convert to base64
             buffer = io.BytesIO()
@@ -613,9 +481,11 @@ class DiffusionPatternVisualizer:
             if not PIL_AVAILABLE:
                 return ""
 
-            # Pattern is already uint8 (0-255)
+            # Normalize to 0-255
+            normalized = np.clip(pattern * 255, 0, 255).astype(np.uint8)
+
             # Create PIL image
-            img = Image.fromarray(pattern, mode="L")
+            img = Image.fromarray(normalized, mode="L")
 
             # Convert to base64
             buffer = io.BytesIO()
@@ -640,7 +510,12 @@ class DiffusionPatternVisualizer:
             # Calculate center of mass
             total_mass = np.sum(intensity)
             if total_mass == 0:
-                return np.array([FRAME_WIDTH // 2, FRAME_HEIGHT // 2])
+                return np.array(
+                    [
+                        self.diffusion_matrix.width // 2,
+                        self.diffusion_matrix.height // 2,
+                    ]
+                )
 
             y_indices, x_indices = np.indices(intensity.shape)
             x_cm = np.sum(x_indices * intensity) / total_mass
@@ -649,7 +524,9 @@ class DiffusionPatternVisualizer:
             return np.array([x_cm, y_cm])
 
         except Exception:
-            return np.array([FRAME_WIDTH // 2, FRAME_HEIGHT // 2])
+            return np.array(
+                [self.diffusion_matrix.width // 2, self.diffusion_matrix.height // 2]
+            )
 
     def run(self, host: str = "127.0.0.1", port: int = 8080, debug: bool = False):
         """Run the web server."""
@@ -704,30 +581,46 @@ HTML_TEMPLATE = """
             gap: 10px;
         }
 
-        select, button, input {
-            padding: 8px 15px;
-            border: 1px solid #555;
+        select, input, button {
+            padding: 8px 12px;
+            border: 1px solid #444;
             border-radius: 4px;
             background-color: #333;
             color: #fff;
         }
 
-        button:hover {
-            background-color: #444;
+        button {
+            background-color: #0066cc;
             cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #0052a3;
+        }
+
+        .metadata {
+            background-color: #2a2a2a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .metadata h3 {
+            margin-top: 0;
+            color: #4CAF50;
         }
 
         .grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
             gap: 15px;
-            margin-bottom: 30px;
+            margin-bottom: 20px;
         }
 
         .pattern-card {
             background-color: #2a2a2a;
-            border-radius: 8px;
             padding: 10px;
+            border-radius: 8px;
             text-align: center;
             cursor: pointer;
             transition: background-color 0.2s;
@@ -739,11 +632,13 @@ HTML_TEMPLATE = """
 
         .pattern-card img {
             width: 100%;
+            height: auto;
             border-radius: 4px;
-            margin-bottom: 8px;
+            border: 1px solid #444;
         }
 
         .pattern-info {
+            margin-top: 8px;
             font-size: 12px;
             color: #ccc;
         }
@@ -756,41 +651,13 @@ HTML_TEMPLATE = """
             margin: 20px 0;
         }
 
-        .loading {
-            text-align: center;
-            padding: 50px;
-            font-size: 18px;
-            color: #888;
+        .pagination button {
+            padding: 8px 16px;
         }
 
-        .error {
-            text-align: center;
-            padding: 50px;
-            font-size: 18px;
-            color: #ff6b6b;
-        }
-
-        .metadata {
-            background-color: #2a2a2a;
-            padding: 15px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-        }
-
-        .metadata h3 {
-            margin-top: 0;
-            color: #4a9eff;
-        }
-
-        .metadata-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 10px;
-        }
-
-        .metadata-item {
-            display: flex;
-            justify-content: space-between;
+        .pagination button:disabled {
+            background-color: #555;
+            cursor: not-allowed;
         }
 
         .modal {
@@ -801,7 +668,8 @@ HTML_TEMPLATE = """
             top: 0;
             width: 100%;
             height: 100%;
-            background-color: rgba(0,0,0,0.8);
+            overflow: auto;
+            background-color: rgba(0, 0, 0, 0.8);
         }
 
         .modal-content {
@@ -811,7 +679,7 @@ HTML_TEMPLATE = """
             border-radius: 8px;
             width: 90%;
             max-width: 1200px;
-            max-height: 90%;
+            max-height: 90vh;
             overflow-y: auto;
         }
 
@@ -829,376 +697,443 @@ HTML_TEMPLATE = """
 
         .pattern-detail {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            grid-template-columns: 1fr 1fr;
             gap: 20px;
-            margin-top: 20px;
         }
 
-        .channel-view {
+        .channel-images {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .channel-image {
             text-align: center;
         }
 
-        .channel-view h4 {
-            color: #4a9eff;
-            margin-bottom: 10px;
-        }
-
-        .channel-view img {
+        .channel-image img {
             width: 100%;
-            max-width: 400px;
+            max-width: 300px;
+            border: 1px solid #444;
             border-radius: 4px;
-            margin-bottom: 10px;
         }
 
-        .stats-table {
-            font-size: 12px;
-            color: #ccc;
-            text-align: left;
+        .statistics {
+            background-color: #333;
+            padding: 15px;
+            border-radius: 8px;
         }
 
-        .stats-table tr {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 5px;
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #888;
+        }
+
+        .error {
+            color: #ff6b6b;
+            text-align: center;
+            padding: 20px;
+            background-color: #2a1a1a;
+            border-radius: 8px;
+            border: 1px solid #ff6b6b;
+        }
+
+        .format-toggle {
+            background-color: #333;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .format-button {
+            background-color: #444;
+            color: #fff;
+            border: none;
+            padding: 8px 16px;
+            margin-right: 10px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+
+        .format-button.active {
+            background-color: #0066cc;
+        }
+
+        @media (max-width: 768px) {
+            .controls {
+                flex-direction: column;
+                gap: 15px;
+            }
+
+            .grid {
+                grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            }
+
+            .pattern-detail {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>Diffusion Pattern Visualizer</h1>
-            <p>Interactive visualization of LED diffusion patterns</p>
+            <h1>🌈 Diffusion Pattern Visualizer</h1>
+            <p>Interactive viewer for LED diffusion patterns (CSC Matrix & Mixed Tensor formats)</p>
         </div>
 
-        <div id="metadata" class="metadata" style="display: none;">
-            <h3>Pattern Metadata</h3>
-            <div id="metadata-content" class="metadata-grid"></div>
+        <div id="metadata" class="metadata"></div>
+
+        <div class="format-toggle">
+            <button id="csc-btn" class="format-button active" onclick="switchFormat('csc')">CSC Matrix</button>
+            <button id="mixed-btn" class="format-button" onclick="switchFormat('mixed')">Mixed Tensor</button>
         </div>
 
         <div class="controls">
             <div class="control-group">
-                <label>Channel:</label>
-                <select id="channelSelect">
-                    <option value="all">RGB Composite</option>
-                    <option value="red">Red Channel</option>
-                    <option value="green">Green Channel</option>
-                    <option value="blue">Blue Channel</option>
-                </select>
-            </div>
-
-            <div class="control-group" id="orderGroup" style="display: none;">
-                <label>Order:</label>
-                <select id="orderSelect">
-                    <option value="numerical">Numerical (0, 1, 2...)</option>
-                    <option value="storage">Storage (Spatial)</option>
+                <label for="channel">Channel:</label>
+                <select id="channel">
+                    <option value="all">All (RGB)</option>
+                    <option value="red">Red</option>
+                    <option value="green">Green</option>
+                    <option value="blue">Blue</option>
                 </select>
             </div>
 
             <div class="control-group">
-                <label>Per Page:</label>
-                <select id="perPageSelect">
+                <label for="order">Order:</label>
+                <select id="order">
+                    <option value="numerical">Numerical (LED ID)</option>
+                    <option value="storage">Storage (Matrix Column)</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label for="per-page">Per page:</label>
+                <select id="per-page">
                     <option value="25">25</option>
                     <option value="50" selected>50</option>
                     <option value="100">100</option>
                 </select>
-
-                <button onclick="refreshPatterns()">Refresh</button>
             </div>
+
+            <button onclick="refresh()">Refresh</button>
         </div>
 
         <div class="pagination" id="pagination-top"></div>
-
-        <div id="content">
-            <div class="loading">Loading patterns...</div>
-        </div>
-
+        <div id="patterns" class="grid"></div>
         <div class="pagination" id="pagination-bottom"></div>
     </div>
 
-    <!-- Pattern Detail Modal -->
-    <div id="patternModal" class="modal">
+    <!-- Modal for pattern details -->
+    <div id="pattern-modal" class="modal">
         <div class="modal-content">
-            <span class="close" onclick="closeModal()">&times;</span>
-            <h2 id="modalTitle">Pattern Detail</h2>
-            <div id="modalContent"></div>
+            <span class="close">&times;</span>
+            <div id="pattern-detail-content"></div>
         </div>
     </div>
 
     <script>
         let currentPage = 0;
         let currentChannel = 'all';
-        let currentPerPage = 50;
         let currentOrder = 'numerical';
+        let currentFormat = 'csc';
         let totalPages = 0;
-        let supportsStorageOrder = false;
+        let perPage = 50;
+        let metadata = null;
 
-        // Load metadata and initial patterns
-        document.addEventListener('DOMContentLoaded', function() {
+        // Initialize
+        window.onload = function() {
             loadMetadata();
             loadPatterns();
 
-            // Setup event listeners
-            document.getElementById('channelSelect').addEventListener('change', function() {
+            // Setup modal
+            const modal = document.getElementById('pattern-modal');
+            const closeBtn = document.getElementsByClassName('close')[0];
+
+            closeBtn.onclick = function() {
+                modal.style.display = 'none';
+            }
+
+            window.onclick = function(event) {
+                if (event.target == modal) {
+                    modal.style.display = 'none';
+                }
+            }
+
+            // Setup controls
+            document.getElementById('channel').addEventListener('change', function() {
                 currentChannel = this.value;
                 currentPage = 0;
                 loadPatterns();
             });
 
-            document.getElementById('orderSelect').addEventListener('change', function() {
+            document.getElementById('order').addEventListener('change', function() {
                 currentOrder = this.value;
                 currentPage = 0;
                 loadPatterns();
             });
 
-            document.getElementById('perPageSelect').addEventListener('change', function() {
-                currentPerPage = parseInt(this.value);
+            document.getElementById('per-page').addEventListener('change', function() {
+                perPage = parseInt(this.value);
                 currentPage = 0;
                 loadPatterns();
             });
-        });
+        };
 
-        async function loadMetadata() {
-            try {
-                const response = await fetch('/api/metadata');
-                const data = await response.json();
+        function switchFormat(format) {
+            currentFormat = format;
+            currentPage = 0;
 
-                if (data.metadata) {
+            // Update button styles
+            document.getElementById('csc-btn').classList.toggle('active', format === 'csc');
+            document.getElementById('mixed-btn').classList.toggle('active', format === 'mixed');
+
+            loadPatterns();
+        }
+
+        function loadMetadata() {
+            fetch('/api/metadata')
+                .then(response => response.json())
+                .then(data => {
+                    metadata = data;
                     displayMetadata(data);
-                }
 
-                // Show/hide storage order toggle based on support
-                supportsStorageOrder = data.supports_storage_order || false;
-                const orderGroup = document.getElementById('orderGroup');
-                if (supportsStorageOrder) {
-                    orderGroup.style.display = 'flex';
-                } else {
-                    orderGroup.style.display = 'none';
-                }
-            } catch (error) {
-                console.error('Failed to load metadata:', error);
-            }
+                    // Update order control visibility
+                    const orderSelect = document.getElementById('order');
+                    orderSelect.style.display = data.supports_storage_order ? 'block' : 'none';
+                    if (!data.supports_storage_order) {
+                        orderSelect.parentElement.style.display = 'none';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading metadata:', error);
+                    document.getElementById('metadata').innerHTML =
+                        '<div class="error">Failed to load metadata: ' + error + '</div>';
+                });
         }
 
         function displayMetadata(data) {
             const metadataDiv = document.getElementById('metadata');
-            const contentDiv = document.getElementById('metadata-content');
 
-            const metadata = data.metadata;
-            let html = '';
+            let html = '<h3>Pattern Information</h3>';
+            html += '<div class="stats-grid">';
+            html += `<div><strong>LED Count:</strong> ${data.led_count}</div>`;
+            html += `<div><strong>Dimensions:</strong> ${data.frame_width} × ${data.frame_height}</div>`;
+            html += `<div><strong>Channels:</strong> ${data.channels}</div>`;
+            html += `<div><strong>Formats:</strong> ${data.has_both_formats ? 'CSC Matrix + Mixed Tensor' : 'Single Format'}</div>`;
 
-            // Display key metadata items
-            const items = [
-                ['LED Count', data.led_count],
-                ['Frame Size', `${data.frame_width} × ${data.frame_height}`],
-                ['Data Type', metadata.data_type || 'captured'],
-                ['Patterns Loaded', data.patterns_loaded ? 'Yes' : 'No'],
-                ['Format', data.is_sparse_format ? 'Sparse Matrix' : 'Dense Array']
-            ];
-
-            // Add sparse matrix info if available
-            if (data.sparse_info) {
-                items.push(['Matrix Shape', `${data.sparse_info.matrix_shape[0]} × ${data.sparse_info.matrix_shape[1]}`]);
-                items.push(['Non-zero Entries', data.sparse_info.nnz.toLocaleString()]);
-                items.push(['Sparsity', `${data.sparse_info.sparsity_percent.toFixed(3)}%`]);
-                items.push(['Matrix Memory', `${data.sparse_info.memory_mb.toFixed(1)} MB`]);
-                items.push(['Spatial Ordering', data.supports_storage_order ? 'Available' : 'Not Available']);
+            if (data.csc_info) {
+                html += `<div><strong>CSC Matrix:</strong> ${data.csc_info.matrix_shape[0]} × ${data.csc_info.matrix_shape[1]}</div>`;
+                html += `<div><strong>CSC Memory:</strong> ${data.csc_info.memory_mb.toFixed(1)} MB</div>`;
+                html += `<div><strong>CSC Sparsity:</strong> ${data.csc_info.sparsity_percent.toFixed(2)}%</div>`;
+                html += `<div><strong>CSC NNZ:</strong> ${data.csc_info.nnz.toLocaleString()}</div>`;
             }
 
-            if (metadata.capture_timestamp) {
-                items.push(['Capture Time', new Date(metadata.capture_timestamp * 1000).toLocaleString()]);
+            if (data.mixed_tensor_info) {
+                html += `<div><strong>Mixed Tensor:</strong> ${data.mixed_tensor_info.batch_size} × ${data.mixed_tensor_info.channels} × ${data.mixed_tensor_info.height} × ${data.mixed_tensor_info.width}</div>`;
+                html += `<div><strong>Block Size:</strong> ${data.mixed_tensor_info.block_size} × ${data.mixed_tensor_info.block_size}</div>`;
+                html += `<div><strong>Mixed Memory:</strong> ${data.mixed_tensor_info.memory_mb.toFixed(1)} MB</div>`;
+                html += `<div><strong>Total Blocks:</strong> ${data.mixed_tensor_info.total_blocks.toLocaleString()}</div>`;
             }
 
-            items.forEach(([key, value]) => {
-                html += `<div class="metadata-item"><span>${key}:</span><span>${value}</span></div>`;
+            html += '</div>';
+
+            metadataDiv.innerHTML = html;
+        }
+
+        function loadPatterns() {
+            const patternsDiv = document.getElementById('patterns');
+            patternsDiv.innerHTML = '<div class="loading">Loading patterns...</div>';
+
+            const params = new URLSearchParams({
+                page: currentPage,
+                per_page: perPage,
+                channel: currentChannel,
+                order: currentOrder,
+                format: currentFormat
             });
 
-            contentDiv.innerHTML = html;
-            metadataDiv.style.display = 'block';
+            fetch(`/api/patterns?${params}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+                    displayPatterns(data);
+                    setupPagination(data);
+                })
+                .catch(error => {
+                    console.error('Error loading patterns:', error);
+                    patternsDiv.innerHTML =
+                        '<div class="error">Failed to load patterns: ' + error + '</div>';
+                });
         }
 
-        async function loadPatterns() {
-            const contentDiv = document.getElementById('content');
-            contentDiv.innerHTML = '<div class="loading">Loading patterns...</div>';
+        function displayPatterns(data) {
+            const patternsDiv = document.getElementById('patterns');
 
-            try {
-                const url = `/api/patterns?page=${currentPage}&per_page=${currentPerPage}&channel=${currentChannel}&order=${currentOrder}`;
-                const response = await fetch(url);
-                const data = await response.json();
-
-                if (data.error) {
-                    contentDiv.innerHTML = `<div class="error">Error: ${data.error}</div>`;
-                    return;
-                }
-
-                totalPages = data.total_pages;
-                displayPatterns(data.patterns);
-                updatePagination();
-
-            } catch (error) {
-                console.error('Failed to load patterns:', error);
-                contentDiv.innerHTML = '<div class="error">Failed to load patterns</div>';
+            if (data.patterns.length === 0) {
+                patternsDiv.innerHTML = '<div class="loading">No patterns to display</div>';
+                return;
             }
-        }
 
-        function displayPatterns(patterns) {
-            const contentDiv = document.getElementById('content');
-            let html = '<div class="grid">';
-
-            patterns.forEach(pattern => {
-                const intensity = pattern.max_intensity.toFixed(3);
-                const centerX = pattern.center_of_mass[0].toFixed(1);
-                const centerY = pattern.center_of_mass[1].toFixed(1);
-
+            let html = '';
+            data.patterns.forEach(pattern => {
                 html += `
                     <div class="pattern-card" onclick="showPatternDetail(${pattern.led_id})">
-                        <img src="${pattern.thumbnail}" alt="LED ${pattern.led_id}" />
+                        <img src="${pattern.thumbnail}" alt="LED ${pattern.led_id}">
                         <div class="pattern-info">
-                            <div>LED ${pattern.led_id}</div>
-                            <div>Max: ${intensity}</div>
-                            <div>Center: (${centerX}, ${centerY})</div>
+                            <div><strong>LED ${pattern.led_id}</strong></div>
+                            <div>Max: ${pattern.max_intensity.toFixed(3)}</div>
+                            <div>CM: (${pattern.center_of_mass[0].toFixed(1)}, ${pattern.center_of_mass[1].toFixed(1)})</div>
                         </div>
                     </div>
                 `;
             });
 
-            html += '</div>';
-            contentDiv.innerHTML = html;
+            patternsDiv.innerHTML = html;
         }
 
-        function updatePagination() {
-            const paginationHTML = createPaginationHTML();
+        function setupPagination(data) {
+            totalPages = data.total_pages;
+            currentPage = data.page;
+
+            const paginationHTML = `
+                <button onclick="goToPage(0)" ${currentPage === 0 ? 'disabled' : ''}>First</button>
+                <button onclick="goToPage(${currentPage - 1})" ${currentPage === 0 ? 'disabled' : ''}>Previous</button>
+                <span>Page ${currentPage + 1} of ${totalPages} (${data.total_leds} LEDs, ${data.format_label})</span>
+                <button onclick="goToPage(${currentPage + 1})" ${currentPage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+                <button onclick="goToPage(${totalPages - 1})" ${currentPage >= totalPages - 1 ? 'disabled' : ''}>Last</button>
+            `;
+
             document.getElementById('pagination-top').innerHTML = paginationHTML;
             document.getElementById('pagination-bottom').innerHTML = paginationHTML;
         }
 
-        function createPaginationHTML() {
-            if (totalPages <= 1) return '';
-
-            let html = '';
-
-            // Previous button
-            if (currentPage > 0) {
-                html += `<button onclick="changePage(${currentPage - 1})">Previous</button>`;
+        function goToPage(page) {
+            if (page >= 0 && page < totalPages) {
+                currentPage = page;
+                loadPatterns();
             }
-
-            // Page numbers
-            const startPage = Math.max(0, currentPage - 2);
-            const endPage = Math.min(totalPages - 1, currentPage + 2);
-
-            if (startPage > 0) {
-                html += `<button onclick="changePage(0)">1</button>`;
-                if (startPage > 1) html += '<span>...</span>';
-            }
-
-            for (let i = startPage; i <= endPage; i++) {
-                const isActive = i === currentPage ? 'style="background-color: #4a9eff;"' : '';
-                html += `<button ${isActive} onclick="changePage(${i})">${i + 1}</button>`;
-            }
-
-            if (endPage < totalPages - 1) {
-                if (endPage < totalPages - 2) html += '<span>...</span>';
-                html += `<button onclick="changePage(${totalPages - 1})">${totalPages}</button>`;
-            }
-
-            // Next button
-            if (currentPage < totalPages - 1) {
-                html += `<button onclick="changePage(${currentPage + 1})">Next</button>`;
-            }
-
-            return html;
         }
 
-        function changePage(page) {
-            currentPage = page;
-            loadPatterns();
-        }
+        function showPatternDetail(ledId) {
+            const modal = document.getElementById('pattern-modal');
+            const content = document.getElementById('pattern-detail-content');
 
-        function refreshPatterns() {
-            loadPatterns();
-        }
-
-        async function showPatternDetail(ledId) {
-            const modal = document.getElementById('patternModal');
-            const title = document.getElementById('modalTitle');
-            const content = document.getElementById('modalContent');
-
-            title.textContent = `LED ${ledId} - Diffusion Pattern Detail`;
-            content.innerHTML = '<div class="loading">Loading pattern detail...</div>';
+            content.innerHTML = '<div class="loading">Loading pattern details...</div>';
             modal.style.display = 'block';
 
-            try {
-                const response = await fetch(`/api/pattern/${ledId}`);
-                const data = await response.json();
-
-                if (data.error) {
-                    content.innerHTML = `<div class="error">Error: ${data.error}</div>`;
-                    return;
-                }
-
-                displayPatternDetail(data);
-
-            } catch (error) {
-                console.error('Failed to load pattern detail:', error);
-                content.innerHTML = '<div class="error">Failed to load pattern detail</div>';
-            }
+            fetch(`/api/pattern/${ledId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+                    displayPatternDetail(data);
+                })
+                .catch(error => {
+                    console.error('Error loading pattern detail:', error);
+                    content.innerHTML =
+                        '<div class="error">Failed to load pattern details: ' + error + '</div>';
+                });
         }
 
         function displayPatternDetail(data) {
-            const content = document.getElementById('modalContent');
-            let html = '<div class="pattern-detail">';
+            const content = document.getElementById('pattern-detail-content');
 
-            // Composite view
-            if (data.composite) {
-                html += `
-                    <div class="channel-view">
-                        <h4>RGB Composite</h4>
-                        <img src="${data.composite.image}" alt="RGB Composite" />
-                        <table class="stats-table">
-                            <tr><td>Max Intensity:</td><td>${data.composite.statistics.max_intensity.toFixed(3)}</td></tr>
-                            <tr><td>Center of Mass:</td><td>(${data.composite.statistics.center_of_mass[0].toFixed(1)}, ${data.composite.statistics.center_of_mass[1].toFixed(1)})</td></tr>
-                        </table>
-                    </div>
-                `;
-            }
+            let html = `<h2>LED ${data.led_id} - Pattern Details</h2>`;
 
-            // Individual channels
-            const channels = ['red', 'green', 'blue'];
-            const channelColors = ['#ff6b6b', '#51cf66', '#4dabf7'];
+            // Format tabs
+            html += '<div class="format-toggle">';
+            Object.keys(data.formats).forEach(format => {
+                const isActive = format === 'csc' ? 'active' : '';
+                html += `<button class="format-button ${isActive}" onclick="showFormatTab('${format}')">${format.toUpperCase()}</button>`;
+            });
+            html += '</div>';
 
-            channels.forEach((channel, index) => {
-                if (data.channels[channel]) {
-                    const channelData = data.channels[channel];
-                    const stats = channelData.statistics;
+            // Format content
+            Object.entries(data.formats).forEach(([format, formatData]) => {
+                const displayStyle = format === 'csc' ? 'block' : 'none';
+                html += `<div id="format-${format}" style="display: ${displayStyle}">`;
+                html += '<div class="pattern-detail">';
 
+                // Left side - images
+                html += '<div>';
+                html += '<h3>Composite RGB</h3>';
+                html += `<img src="${formatData.composite.image}" style="width: 100%; max-width: 400px; border: 1px solid #444;">`;
+
+                html += '<h3>Individual Channels</h3>';
+                html += '<div class="channel-images">';
+                Object.entries(formatData.channels).forEach(([channel, channelData]) => {
                     html += `
-                        <div class="channel-view">
-                            <h4 style="color: ${channelColors[index]}">${channel.charAt(0).toUpperCase() + channel.slice(1)} Channel</h4>
-                            <img src="${channelData.image}" alt="${channel} channel" />
-                            <table class="stats-table">
-                                <tr><td>Max Intensity:</td><td>${stats.max_intensity.toFixed(3)}</td></tr>
-                                <tr><td>Mean Intensity:</td><td>${stats.mean_intensity.toFixed(3)}</td></tr>
-                                <tr><td>Std Deviation:</td><td>${stats.std_intensity.toFixed(3)}</td></tr>
-                                <tr><td>Center of Mass:</td><td>(${stats.center_of_mass[0].toFixed(1)}, ${stats.center_of_mass[1].toFixed(1)})</td></tr>
-                            </table>
+                        <div class="channel-image">
+                            <h4>${channel.charAt(0).toUpperCase() + channel.slice(1)}</h4>
+                            <img src="${channelData.image}" alt="${channel}">
                         </div>
                     `;
-                }
+                });
+                html += '</div></div>';
+
+                // Right side - statistics
+                html += '<div><h3>Statistics</h3>';
+                html += '<div class="statistics">';
+                html += '<h4>Composite</h4>';
+                html += '<div class="stats-grid">';
+                Object.entries(formatData.composite.statistics).forEach(([key, value]) => {
+                    const displayValue = Array.isArray(value) ?
+                        `(${value.map(v => v.toFixed(1)).join(', ')})` :
+                        (typeof value === 'number' ? value.toFixed(4) : value);
+                    html += `<div><strong>${key.replace('_', ' ')}:</strong> ${displayValue}</div>`;
+                });
+                html += '</div>';
+
+                Object.entries(formatData.channels).forEach(([channel, channelData]) => {
+                    html += `<h4>${channel.charAt(0).toUpperCase() + channel.slice(1)} Channel</h4>`;
+                    html += '<div class="stats-grid">';
+                    Object.entries(channelData.statistics).forEach(([key, value]) => {
+                        const displayValue = Array.isArray(value) ?
+                            `(${value.map(v => v.toFixed(1)).join(', ')})` :
+                            (typeof value === 'number' ? value.toFixed(4) : value);
+                        html += `<div><strong>${key.replace('_', ' ')}:</strong> ${displayValue}</div>`;
+                    });
+                    html += '</div>';
+                });
+
+                html += '</div></div></div></div>';
             });
 
-            html += '</div>';
             content.innerHTML = html;
         }
 
-        function closeModal() {
-            document.getElementById('patternModal').style.display = 'none';
+        function showFormatTab(format) {
+            // Hide all format tabs
+            document.querySelectorAll('[id^="format-"]').forEach(tab => {
+                tab.style.display = 'none';
+            });
+
+            // Show selected tab
+            document.getElementById(`format-${format}`).style.display = 'block';
+
+            // Update button states
+            document.querySelectorAll('.format-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
         }
 
-        // Close modal when clicking outside
-        window.onclick = function(event) {
-            const modal = document.getElementById('patternModal');
-            if (event.target === modal) {
-                modal.style.display = 'none';
-            }
+        function refresh() {
+            loadMetadata();
+            loadPatterns();
         }
     </script>
 </body>
@@ -1208,70 +1143,30 @@ HTML_TEMPLATE = """
 
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Visualize diffusion patterns in web interface"
-    )
+    parser = argparse.ArgumentParser(description="Visualize LED diffusion patterns")
     parser.add_argument(
         "--patterns",
-        help="Path to diffusion patterns file (.npz). Supports dense format, single NPZ sparse format, and legacy dual-file sparse format (auto-detects format)",
+        type=str,
+        help="Path to patterns file (.npz) in new nested format",
     )
-    parser.add_argument("--host", default="127.0.0.1", help="Host to bind server")
-    parser.add_argument("--port", type=int, default=8080, help="Port to bind server")
-    parser.add_argument(
-        "--no-synthetic",
-        action="store_true",
-        help="[DEPRECATED] Use pre-generated patterns from generate_synthetic_patterns.py instead",
-    )
-    parser.add_argument("--debug", action="store_true", help="Enable Flask debug mode")
-    parser.add_argument(
-        "--log-level",
-        default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Logging level",
-    )
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind to")
+    parser.add_argument("--port", type=int, default=8080, help="Port to bind to")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
 
     args = parser.parse_args()
 
-    # Setup logging
+    # Set up logging
     logging.basicConfig(
-        level=getattr(logging, args.log_level),
+        level=logging.DEBUG if args.debug else logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    # Check PIL availability
-    if not PIL_AVAILABLE:
-        logger.warning("PIL/Pillow not available - image generation will be disabled")
-        logger.warning("Install with: pip install Pillow")
+    # Create visualizer
+    visualizer = DiffusionPatternVisualizer(patterns_file=args.patterns)
 
-    # Create visualizer - synthetic generation now deprecated
-    if not args.patterns:
-        logger.error("No patterns file provided.")
-        logger.error(
-            "Generate patterns first with: python tools/generate_synthetic_patterns.py [--sparse]"
-        )
-        logger.error(
-            "For sparse format: python tools/generate_synthetic_patterns.py --sparse --output test_patterns.npz"
-        )
-        logger.error("The new sparse format stores everything in a single NPZ file.")
-        return 1
-
-    visualizer = DiffusionPatternVisualizer(
-        patterns_file=args.patterns, use_synthetic=False
-    )
-
-    try:
-        # Run web server
-        visualizer.run(host=args.host, port=args.port, debug=args.debug)
-
-    except KeyboardInterrupt:
-        logger.info("Server stopped by user")
-
-    except Exception as e:
-        logger.error(f"Server failed: {e}")
-        return 1
-
-    return 0
+    # Run the server
+    visualizer.run(host=args.host, port=args.port, debug=args.debug)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

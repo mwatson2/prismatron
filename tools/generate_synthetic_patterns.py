@@ -21,6 +21,17 @@ from typing import Optional, Tuple
 import numpy as np
 import scipy.sparse as sp
 
+try:
+    import cupy as cp
+except ImportError:
+    # Fallback for systems without CUDA
+    import numpy as cp
+
+# Add path for local imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from src.utils.led_diffusion_csc_matrix import LEDDiffusionCSCMatrix
+from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
+
 # Constants (can be overridden by command line)
 DEFAULT_FRAME_WIDTH = 800
 DEFAULT_FRAME_HEIGHT = 480
@@ -59,6 +70,7 @@ class SyntheticPatternGenerator:
         # Generate LED positions (random for synthetic patterns)
         self.led_positions = None
         self.led_spatial_mapping = None
+        self.reverse_spatial_mapping = None
 
     def generate_led_positions(self, led_count: int) -> np.ndarray:
         """
@@ -78,6 +90,12 @@ class SyntheticPatternGenerator:
 
         # Create spatial ordering for cache optimization
         self.led_spatial_mapping = self.create_led_spatial_ordering(positions)
+
+        # Create reverse spatial mapping: spatial_matrix_index -> physical_led_id
+        self.reverse_spatial_mapping = {
+            spatial_idx: physical_id
+            for physical_id, spatial_idx in self.led_spatial_mapping.items()
+        }
 
         logger.info(f"Generated {led_count} LED positions with spatial ordering")
         return positions
@@ -240,7 +258,7 @@ class SyntheticPatternGenerator:
         intensity_variation: bool = True,
         chunk_size: int = 50,
         progress_callback: Optional[callable] = None,
-    ) -> Tuple[sp.csc_matrix, dict]:
+    ) -> Tuple[LEDDiffusionCSCMatrix, dict]:
         """
         Generate sparse patterns in chunks to avoid memory issues.
 
@@ -252,7 +270,7 @@ class SyntheticPatternGenerator:
             progress_callback: Optional callback for progress updates
 
         Returns:
-            Tuple of (sparse_csc_matrix, led_spatial_mapping)
+            Tuple of (LEDDiffusionCSCMatrix, led_spatial_mapping)
         """
         logger.info(
             f"Generating sparse patterns for {led_count} LEDs in chunks of {chunk_size}..."
@@ -266,6 +284,8 @@ class SyntheticPatternGenerator:
         if self.led_positions is None or len(self.led_positions) != led_count:
             self.generate_led_positions(led_count)
 
+        # Use the stored reverse spatial mapping
+
         # Calculate chunk parameters
         num_chunks = (led_count + chunk_size - 1) // chunk_size
         pixels_per_channel = self.frame_height * self.frame_width
@@ -273,7 +293,7 @@ class SyntheticPatternGenerator:
         # List to store sparse matrix chunks
         sparse_chunks = []
 
-        logger.info(f"Processing {num_chunks} chunks...")
+        logger.info(f"Processing {num_chunks} chunks in spatial order...")
 
         for chunk_idx in range(num_chunks):
             chunk_start = chunk_idx * chunk_size
@@ -281,7 +301,7 @@ class SyntheticPatternGenerator:
             chunk_led_count = chunk_end - chunk_start
 
             logger.info(
-                f"Processing chunk {chunk_idx + 1}/{num_chunks}: LEDs {chunk_start}-{chunk_end-1}"
+                f"Processing chunk {chunk_idx + 1}/{num_chunks}: spatial indices {chunk_start}-{chunk_end-1}"
             )
 
             # Generate dense matrix for this chunk (384000, chunk_led_count * 3)
@@ -290,8 +310,10 @@ class SyntheticPatternGenerator:
             )
 
             for local_led_idx in range(chunk_led_count):
-                physical_led_id = chunk_start + local_led_idx
-                matrix_led_idx = self.led_spatial_mapping[physical_led_id]
+                spatial_idx = chunk_start + local_led_idx  # Spatial matrix index
+                physical_led_id = self.reverse_spatial_mapping[
+                    spatial_idx
+                ]  # Get actual LED ID
 
                 # Vary intensity if requested
                 if intensity_variation:
@@ -299,7 +321,7 @@ class SyntheticPatternGenerator:
                 else:
                     base_intensity = 1.0
 
-                # Generate pattern for this LED
+                # Generate pattern for this PHYSICAL LED at this SPATIAL position
                 led_pos = tuple(self.led_positions[physical_led_id])
                 pattern = self.generate_single_pattern(
                     led_pos, pattern_type=pattern_type, base_intensity=base_intensity
@@ -314,7 +336,8 @@ class SyntheticPatternGenerator:
                     pattern_flat = channel_pattern.reshape(-1)
                     significant_mask = pattern_flat > self.sparsity_threshold
 
-                    # Store in dense chunk matrix
+                    # Store in dense chunk matrix at spatial position
+                    # local_led_idx corresponds to spatial matrix column position
                     chunk_col_idx = local_led_idx * 3 + channel
                     chunk_matrix[significant_mask, chunk_col_idx] = pattern_flat[
                         significant_mask
@@ -361,17 +384,32 @@ class SyntheticPatternGenerator:
         logger.info(f"Actual sparsity: {actual_sparsity:.3f}%")
         logger.info(f"Memory usage: {memory_mb:.1f} MB")
 
-        return final_sparse_matrix, self.led_spatial_mapping
+        # Wrap the sparse matrix in our LEDDiffusionCSCMatrix wrapper
+        diffusion_matrix = LEDDiffusionCSCMatrix(
+            csc_matrix=final_sparse_matrix,
+            height=self.frame_height,
+            width=self.frame_width,
+            channels=3,
+        )
 
-    def _generate_mixed_tensor_format(self, sparse_matrix: sp.csc_matrix) -> dict:
+        logger.info(f"Created LEDDiffusionCSCMatrix wrapper: {diffusion_matrix}")
+
+        return diffusion_matrix, self.led_spatial_mapping
+
+    def _generate_mixed_tensor_format(
+        self, sparse_matrix: sp.csc_matrix
+    ) -> SingleBlockMixedSparseTensor:
         """
-        Generate SingleBlockMixedSparseTensor format from sparse matrix.
+        Generate SingleBlockMixedSparseTensor from sparse matrix using the proper API.
 
         Args:
             sparse_matrix: Sparse CSC matrix to convert
+            ( pixels, leds * channels ),
+            pixels = flattened( height, width ),
+            leds * channels = flattened(leds, channels)
 
         Returns:
-            Dictionary with mixed tensor data for saving
+            SingleBlockMixedSparseTensor object populated with block data
         """
         logger.info("Converting sparse matrix to mixed tensor format...")
 
@@ -380,31 +418,36 @@ class SyntheticPatternGenerator:
         height, width = self.frame_height, self.frame_width
         block_size = 96  # Standard block size
 
-        # Initialize mixed tensor data structures
-        mixed_tensor_values = np.zeros(
-            (led_count, channels, block_size, block_size), dtype=np.float32
+        # Create the SingleBlockMixedSparseTensor
+        mixed_tensor = SingleBlockMixedSparseTensor(
+            batch_size=led_count,
+            channels=channels,
+            height=height,
+            width=width,
+            block_size=block_size,
+            device="cpu",  # Use CPU for pattern generation
         )
-        mixed_tensor_positions = np.zeros((led_count, channels, 2), dtype=np.int32)
-        mixed_tensor_blocks_set = np.zeros((led_count, channels), dtype=bool)
 
         blocks_stored = 0
 
-        # Process each LED and channel
+        # Process each LED and channel to extract blocks from sparse matrix
         for led_id in range(led_count):
             for channel in range(channels):
                 # Get the column for this LED/channel
                 col_idx = led_id * channels + channel
 
                 # Extract the sparse column
-                col_start = sparse_matrix.indptr[col_idx]
-                col_end = sparse_matrix.indptr[col_idx + 1]
+                column = sparse_matrix[:, col_idx]
 
-                if col_start == col_end:  # No non-zeros
+                if column.nnz == 0:  # No non-zeros
+                    # Set a zero block at position (0,0) - all blocks assumed to be set
+                    block = np.zeros((block_size, block_size), dtype=np.float32)
+                    block_cupy = cp.asarray(block)
+                    mixed_tensor.set_block(led_id, channel, 0, 0, block_cupy)
                     continue
 
                 # Get non-zero indices and values
-                row_indices = sparse_matrix.indices[col_start:col_end]
-                values = sparse_matrix.data[col_start:col_end]
+                row_indices, values = column.nonzero()[0], column.data
 
                 # Convert linear indices to 2D coordinates
                 pixel_rows = row_indices // width
@@ -428,13 +471,27 @@ class SyntheticPatternGenerator:
                     if self.led_positions is not None and led_id < len(
                         self.led_positions
                     ):
-                        led_x, led_y = self.led_positions[led_id]
-                        top_row = max(
-                            0, min(height - block_size, led_y - block_size // 2)
-                        )
-                        top_col = max(
-                            0, min(width - block_size, led_x - block_size // 2)
-                        )
+                        # Use stored reverse mapping to get physical LED ID from spatial index
+                        if led_id in self.reverse_spatial_mapping:
+                            physical_led_id = self.reverse_spatial_mapping[led_id]
+                            led_x, led_y = self.led_positions[physical_led_id]
+                            top_row = max(
+                                0, min(height - block_size, led_y - block_size // 2)
+                            )
+                            top_col = max(
+                                0, min(width - block_size, led_x - block_size // 2)
+                            )
+                        else:
+                            # Fallback: use pattern center
+                            center_row = (min_row + max_row) // 2
+                            center_col = (min_col + max_col) // 2
+                            top_row = max(
+                                0,
+                                min(height - block_size, center_row - block_size // 2),
+                            )
+                            top_col = max(
+                                0, min(width - block_size, center_col - block_size // 2)
+                            )
                     else:
                         # Fallback: use pattern center
                         center_row = (min_row + max_row) // 2
@@ -458,26 +515,16 @@ class SyntheticPatternGenerator:
                     if 0 <= block_r < block_size and 0 <= block_c < block_size:
                         block[block_r, block_c] = val
 
-                # Store the block data
-                mixed_tensor_values[led_id, channel] = block
-                mixed_tensor_positions[led_id, channel, 0] = top_row
-                mixed_tensor_positions[led_id, channel, 1] = top_col
-                mixed_tensor_blocks_set[led_id, channel] = True
+                # Set the block in the mixed tensor using the proper API
+                # Convert numpy array to cupy if needed
+                block_cupy = cp.asarray(block)
+                mixed_tensor.set_block(led_id, channel, top_row, top_col, block_cupy)
                 blocks_stored += 1
 
         logger.info(f"Converted {blocks_stored} blocks to mixed tensor format")
 
-        return {
-            "mixed_tensor_values": mixed_tensor_values,
-            "mixed_tensor_positions": mixed_tensor_positions,
-            "mixed_tensor_blocks_set": mixed_tensor_blocks_set,
-            "mixed_tensor_block_size": block_size,
-            "mixed_tensor_led_count": led_count,
-            "mixed_tensor_channels": channels,
-            "mixed_tensor_height": height,
-            "mixed_tensor_width": width,
-            "mixed_tensor_blocks_stored": blocks_stored,
-        }
+        # Return the mixed tensor object
+        return mixed_tensor
 
     def _precompute_dense_ata_matrices(self, sparse_matrix: sp.csc_matrix) -> dict:
         """
@@ -532,16 +579,16 @@ class SyntheticPatternGenerator:
 
     def save_sparse_matrix(
         self,
-        sparse_matrix: sp.csc_matrix,
+        diffusion_matrix: LEDDiffusionCSCMatrix,
         led_spatial_mapping: dict,
         output_path: str,
         metadata: Optional[dict] = None,
     ) -> bool:
         """
-        Save sparse CSC matrix, spatial mapping and mixed tensor format for optimization.
+        Save LEDDiffusionCSCMatrix, spatial mapping and mixed tensor format for optimization.
 
         Args:
-            sparse_matrix: Sparse CSC matrix to save
+            diffusion_matrix: LEDDiffusionCSCMatrix to save
             led_spatial_mapping: LED spatial ordering mapping
             output_path: Output file path
             metadata: Optional metadata dictionary
@@ -554,17 +601,24 @@ class SyntheticPatternGenerator:
             output_dir = Path(output_path).parent
             output_dir.mkdir(parents=True, exist_ok=True)
 
+            # Generate mixed tensor format using SingleBlockMixedSparseTensor
+            logger.info("Generating mixed tensor format...")
+            mixed_tensor = self._generate_mixed_tensor_format(
+                diffusion_matrix.to_csc_matrix()
+            )
+
             # Prepare metadata
             save_metadata = {
                 "generator": "SyntheticPatternGenerator",
-                "format": "sparse_csc_with_mixed_tensor",
-                "led_count": sparse_matrix.shape[1] // 3,
-                "frame_width": self.frame_width,
-                "frame_height": self.frame_height,
-                "matrix_shape": list(sparse_matrix.shape),
-                "nnz": sparse_matrix.nnz,
-                "sparsity_percent": sparse_matrix.nnz
-                / (sparse_matrix.shape[0] * sparse_matrix.shape[1])
+                "format": "led_diffusion_csc_with_mixed_tensor",
+                "led_count": diffusion_matrix.led_count,
+                "frame_width": diffusion_matrix.width,
+                "frame_height": diffusion_matrix.height,
+                "channels": diffusion_matrix.channels,
+                "matrix_shape": list(diffusion_matrix.shape),
+                "nnz": diffusion_matrix.matrix.nnz,
+                "sparsity_percent": diffusion_matrix.matrix.nnz
+                / (diffusion_matrix.shape[0] * diffusion_matrix.shape[1])
                 * 100,
                 "sparsity_threshold": self.sparsity_threshold,
                 "generation_timestamp": time.time(),
@@ -573,47 +627,40 @@ class SyntheticPatternGenerator:
             if metadata:
                 save_metadata.update(metadata)
 
-            # Generate mixed tensor format
-            logger.info("Generating mixed tensor format...")
-            mixed_tensor_data = self._generate_mixed_tensor_format(sparse_matrix)
-
-            # Precompute dense A^T @ A matrices
-            logger.info("Precomputing dense A^T @ A matrices...")
-            dense_ata_data = self._precompute_dense_ata_matrices(sparse_matrix)
+            # Precompute dense A^T @ A matrices from sparse matrix
+            logger.info("Precomputing dense A^T @ A matrices from sparse CSC...")
+            dense_ata_data = self._precompute_dense_ata_matrices(
+                diffusion_matrix.to_csc_matrix()
+            )
 
             # Save everything in a single NPZ file
-            # Convert sparse matrix to component arrays for storage
+            # Use LEDDiffusionCSCMatrix's to_dict() method for storage
             save_dict = {
-                # Sparse matrix components (CSC format)
-                "matrix_data": sparse_matrix.data,
-                "matrix_indices": sparse_matrix.indices,
-                "matrix_indptr": sparse_matrix.indptr,
-                "matrix_shape": sparse_matrix.shape,
                 # LED information
                 "led_positions": self.led_positions,
                 "led_spatial_mapping": led_spatial_mapping,
                 # Metadata
                 "metadata": save_metadata,
+                # CSC format diffusion matrix
+                "diffusion_matrix": diffusion_matrix.to_dict(),
+                # Mixed tensor stored as nested element using to_dict()
+                "mixed_tensor": mixed_tensor.to_dict(),
+                # Dense A^T @ A matrices
+                "dense_ata": dense_ata_data,
             }
-
-            # Add mixed tensor data
-            save_dict.update(mixed_tensor_data)
-
-            # Add dense A^T @ A data
-            save_dict.update(dense_ata_data)
 
             np.savez_compressed(output_path, **save_dict)
 
             # Log file info
             file_size = Path(output_path).stat().st_size / (1024 * 1024)  # MB
 
-            logger.info(f"Saved sparse matrix and mixed tensor to {output_path}")
-            logger.info(f"File size: {file_size:.1f} MB")
-            logger.info(f"Matrix shape: {sparse_matrix.shape}")
-            logger.info(f"Non-zero entries: {sparse_matrix.nnz:,}")
             logger.info(
-                f"Mixed tensor blocks: {mixed_tensor_data['mixed_tensor_blocks_stored']}"
+                f"Saved LEDDiffusionCSCMatrix and mixed tensor to {output_path}"
             )
+            logger.info(f"File size: {file_size:.1f} MB")
+            logger.info(f"Matrix shape: {diffusion_matrix.shape}")
+            logger.info(f"Non-zero entries: {diffusion_matrix.matrix.nnz:,}")
+            logger.info(f"Mixed tensor format: SingleBlockMixedSparseTensor")
             logger.info(
                 f"Dense A^T @ A tensor shape: {dense_ata_data['dense_ata_matrices'].shape}"
             )
@@ -624,7 +671,7 @@ class SyntheticPatternGenerator:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to save sparse matrix: {e}")
+            logger.error(f"Failed to save LEDDiffusionCSCMatrix: {e}")
             return False
 
 
@@ -710,7 +757,7 @@ def main():
 
         # Generate sparse patterns directly using chunked approach
         logger.info("Generating sparse patterns using chunked approach...")
-        sparse_matrix, led_mapping = generator.generate_sparse_patterns_chunked(
+        diffusion_matrix, led_mapping = generator.generate_sparse_patterns_chunked(
             led_count=args.led_count,
             pattern_type=args.pattern_type,
             intensity_variation=not args.no_intensity_variation,
@@ -726,14 +773,14 @@ def main():
             }
         )
 
-        # Save sparse matrix
+        # Save LEDDiffusionCSCMatrix
         if not generator.save_sparse_matrix(
-            sparse_matrix, led_mapping, args.output, metadata
+            diffusion_matrix, led_mapping, args.output, metadata
         ):
-            logger.error("Failed to save sparse matrix")
+            logger.error("Failed to save LEDDiffusionCSCMatrix")
             return 1
 
-        logger.info("Sparse matrix generation completed successfully")
+        logger.info("LEDDiffusionCSCMatrix generation completed successfully")
 
         return 0
 

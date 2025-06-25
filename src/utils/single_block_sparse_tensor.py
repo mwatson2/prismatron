@@ -73,15 +73,16 @@ class SingleBlockMixedSparseTensor:
         self.device = device
 
         # Storage for dense blocks - only non-zero regions
+        # Shape: (channels, batch_size, block_size, block_size) for planar layout
         self.sparse_values = cp.zeros(
-            (batch_size, channels, block_size, block_size), dtype=cp.float32
+            (channels, batch_size, block_size, block_size), dtype=cp.float32
         )
 
         # Storage for block positions (top-left coordinates)
-        self.block_positions = cp.zeros((batch_size, channels, 2), dtype=cp.int32)
+        # Shape: (channels, batch_size, 2) for planar layout
+        self.block_positions = cp.zeros((channels, batch_size, 2), dtype=cp.int32)
 
-        # Track which blocks have been set
-        self.blocks_set = cp.zeros((batch_size, channels), dtype=cp.bool_)
+        # Note: All blocks are assumed to be set - no tracking needed
 
         logger.debug(
             f"SingleBlockMixedSparseTensor created: "
@@ -132,35 +133,34 @@ class SingleBlockMixedSparseTensor:
                 f"({self.block_size}, {self.block_size})"
             )
 
-        # Store the block data and position
-        self.sparse_values[batch_idx, channel_idx] = values
-        self.block_positions[batch_idx, channel_idx, 0] = top_left_row
-        self.block_positions[batch_idx, channel_idx, 1] = top_left_col
-        self.blocks_set[batch_idx, channel_idx] = True
+        # Store the block data and position (channels-first indexing)
+        self.sparse_values[channel_idx, batch_idx] = values
+        self.block_positions[channel_idx, batch_idx, 0] = top_left_row
+        self.block_positions[channel_idx, batch_idx, 1] = top_left_col
 
     def set_blocks_batch(self, positions: cp.ndarray, values: cp.ndarray) -> None:
         """
         Set multiple blocks efficiently in batch.
 
         Args:
-            positions: Block positions, shape (batch_size, channels, 2)
-                      positions[i, c, :] = [top_left_row, top_left_col]
-            values: Block values, shape (batch_size, channels, block_size, block_size)
+            positions: Block positions, shape (channels, batch_size, 2)
+                      positions[c, i, :] = [top_left_row, top_left_col]
+            values: Block values, shape (channels, batch_size, block_size, block_size)
         """
-        if positions.shape != (self.batch_size, self.channels, 2):
+        if positions.shape != (self.channels, self.batch_size, 2):
             raise ValueError(
                 f"positions shape {positions.shape} != expected "
-                f"({self.batch_size}, {self.channels}, 2)"
+                f"({self.channels}, {self.batch_size}, 2)"
             )
         if values.shape != (
-            self.batch_size,
             self.channels,
+            self.batch_size,
             self.block_size,
             self.block_size,
         ):
             raise ValueError(
                 f"values shape {values.shape} != expected "
-                f"({self.batch_size}, {self.channels}, {self.block_size}, {self.block_size})"
+                f"({self.channels}, {self.batch_size}, {self.block_size}, {self.block_size})"
             )
 
         # Validate positions are within bounds
@@ -174,7 +174,6 @@ class SingleBlockMixedSparseTensor:
         # Set all blocks at once
         self.sparse_values[:] = values
         self.block_positions[:] = positions
-        self.blocks_set[:] = True
 
     def transpose_dot_product(
         self, dense_matrix: cp.ndarray, chunk_size: int = 512
@@ -198,8 +197,8 @@ class SingleBlockMixedSparseTensor:
                 f"({self.height}, {self.width})"
             )
 
-        # Result tensor
-        results = cp.zeros((self.batch_size, self.channels), dtype=cp.float32)
+        # Result tensor - channels first for planar layout
+        results = cp.zeros((self.channels, self.batch_size), dtype=cp.float32)
 
         # Process in chunks to manage memory usage
         total_elements = self.batch_size * self.channels
@@ -207,27 +206,28 @@ class SingleBlockMixedSparseTensor:
         for chunk_start in range(0, total_elements, chunk_size):
             chunk_end = min(chunk_start + chunk_size, total_elements)
 
-            # Convert flat indices to (batch, channel) indices
+            # Convert flat indices to (channel, batch) indices for new layout
             flat_indices = cp.arange(chunk_start, chunk_end)
-            batch_indices = flat_indices // self.channels
-            channel_indices = flat_indices % self.channels
+            channel_indices = flat_indices // self.batch_size
+            batch_indices = flat_indices % self.batch_size
 
             # Extract dense blocks from target image for this chunk
             dense_blocks = self._extract_dense_blocks_vectorized(
                 dense_matrix, batch_indices, channel_indices
             )
 
-            # Get corresponding sparse blocks
-            sparse_blocks = self.sparse_values[batch_indices, channel_indices]
+            # Get corresponding sparse blocks (channels-first indexing)
+            sparse_blocks = self.sparse_values[channel_indices, batch_indices]
 
             # Compute element-wise multiplication and sum
             # Shape: (chunk_size, block_size, block_size) -> (chunk_size,)
             chunk_results = cp.sum(sparse_blocks * dense_blocks, axis=(1, 2))
 
-            # Store results back to proper positions
-            results[batch_indices, channel_indices] = chunk_results
+            # Store results back to proper positions (channels-first)
+            results[channel_indices, batch_indices] = chunk_results
 
-        return results
+        # Transpose to maintain backward compatibility: (channels, batch_size) -> (batch_size, channels)
+        return results.T
 
     def transpose_dot_product_cuda(self, dense_matrix: cp.ndarray) -> cp.ndarray:
         """
@@ -251,11 +251,15 @@ class SingleBlockMixedSparseTensor:
         try:
             from .cuda_kernels import cuda_transpose_dot_product
 
-            # Use CUDA kernel implementation
+            # Use CUDA kernel implementation - transpose to old layout for kernel compatibility
+            # Note: blocks_set parameter removed - all blocks assumed to be set
             result = cuda_transpose_dot_product(
-                self.sparse_values,
-                self.block_positions,
-                self.blocks_set,
+                self.sparse_values.transpose(
+                    1, 0, 2, 3
+                ),  # (channels, batch, H, W) -> (batch, channels, H, W)
+                self.block_positions.transpose(
+                    1, 0, 2
+                ),  # (channels, batch, 2) -> (batch, channels, 2)
                 dense_matrix,
                 self.batch_size,
                 self.channels,
@@ -295,11 +299,15 @@ class SingleBlockMixedSparseTensor:
         try:
             from .cuda_kernels import cuda_transpose_dot_product_corrected
 
-            # Use corrected CUDA kernel implementation
+            # Use corrected CUDA kernel implementation - transpose to old layout for kernel compatibility
+            # Note: blocks_set parameter removed - all blocks assumed to be set
             result = cuda_transpose_dot_product_corrected(
-                self.sparse_values,
-                self.block_positions,
-                self.blocks_set,
+                self.sparse_values.transpose(
+                    1, 0, 2, 3
+                ),  # (channels, batch, H, W) -> (batch, channels, H, W)
+                self.block_positions.transpose(
+                    1, 0, 2
+                ),  # (channels, batch, 2) -> (batch, channels, 2)
                 dense_matrix,
                 self.batch_size,
                 self.channels,
@@ -339,11 +347,15 @@ class SingleBlockMixedSparseTensor:
         try:
             from .cuda_kernels import cuda_transpose_dot_product_high_performance
 
-            # Use high-performance CUDA kernel implementation
+            # Use high-performance CUDA kernel implementation - transpose to old layout for kernel compatibility
+            # Note: blocks_set parameter removed - all blocks assumed to be set
             result = cuda_transpose_dot_product_high_performance(
-                self.sparse_values,
-                self.block_positions,
-                self.blocks_set,
+                self.sparse_values.transpose(
+                    1, 0, 2, 3
+                ),  # (channels, batch, H, W) -> (batch, channels, H, W)
+                self.block_positions.transpose(
+                    1, 0, 2
+                ),  # (channels, batch, 2) -> (batch, channels, 2)
                 dense_matrix,
                 self.batch_size,
                 self.channels,
@@ -384,11 +396,15 @@ class SingleBlockMixedSparseTensor:
         try:
             from .cuda_kernels import cuda_transpose_dot_product_high_parallelism
 
-            # Use high-parallelism CUDA kernel implementation
+            # Use high-parallelism CUDA kernel implementation - transpose to old layout for kernel compatibility
+            # Note: blocks_set parameter removed - all blocks assumed to be set
             result = cuda_transpose_dot_product_high_parallelism(
-                self.sparse_values,
-                self.block_positions,
-                self.blocks_set,
+                self.sparse_values.transpose(
+                    1, 0, 2, 3
+                ),  # (channels, batch, H, W) -> (batch, channels, H, W)
+                self.block_positions.transpose(
+                    1, 0, 2
+                ),  # (channels, batch, 2) -> (batch, channels, 2)
                 dense_matrix,
                 self.batch_size,
                 self.channels,
@@ -429,11 +445,15 @@ class SingleBlockMixedSparseTensor:
         try:
             from .cuda_kernels import cuda_transpose_dot_product_compute_optimized
 
-            # Use compute-optimized CUDA kernel implementation
+            # Use compute-optimized CUDA kernel implementation - transpose to old layout for kernel compatibility
+            # Note: blocks_set parameter removed - all blocks assumed to be set
             result = cuda_transpose_dot_product_compute_optimized(
-                self.sparse_values,
-                self.block_positions,
-                self.blocks_set,
+                self.sparse_values.transpose(
+                    1, 0, 2, 3
+                ),  # (channels, batch, H, W) -> (batch, channels, H, W)
+                self.block_positions.transpose(
+                    1, 0, 2
+                ),  # (channels, batch, 2) -> (batch, channels, 2)
                 dense_matrix,
                 self.batch_size,
                 self.channels,
@@ -467,9 +487,9 @@ class SingleBlockMixedSparseTensor:
         Returns:
             Extracted blocks, shape (len(batch_indices), block_size, block_size)
         """
-        # Get positions for this chunk
-        top_left_rows = self.block_positions[batch_indices, channel_indices, 0]
-        top_left_cols = self.block_positions[batch_indices, channel_indices, 1]
+        # Get positions for this chunk (channels-first indexing)
+        top_left_rows = self.block_positions[channel_indices, batch_indices, 0]
+        top_left_cols = self.block_positions[channel_indices, batch_indices, 1]
 
         # Create offset grids for block extraction
         row_offsets = cp.arange(self.block_size, dtype=cp.int32)
@@ -483,30 +503,32 @@ class SingleBlockMixedSparseTensor:
         # Extract blocks using advanced indexing
         return dense_matrix[row_indices, col_indices]
 
-    def to_dense(self, batch_idx: int, channel_idx: int) -> cp.ndarray:
+    def to_array(self, batch_idx: int, channel_idx: int) -> cp.ndarray:
         """
-        Convert a specific sub-tensor to dense format for debugging/visualization.
+        Convert a specific sub-tensor to dense array format for debugging/visualization.
 
         Args:
             batch_idx: LED index
             channel_idx: Channel index
 
         Returns:
-            Dense tensor, shape (height, width)
+            Dense array, shape (height, width)
         """
-        if not self.blocks_set[batch_idx, channel_idx]:
-            # Return zeros if block not set
-            return cp.zeros((self.height, self.width), dtype=cp.float32)
-
-        # Create dense tensor and place block
+        # Create dense array and place block (all blocks assumed to be set)
         dense = cp.zeros((self.height, self.width), dtype=cp.float32)
 
-        top_row = int(self.block_positions[batch_idx, channel_idx, 0])
-        top_col = int(self.block_positions[batch_idx, channel_idx, 1])
+        top_row = int(
+            self.block_positions[channel_idx, batch_idx, 0]
+        )  # Use channels-first indexing
+        top_col = int(
+            self.block_positions[channel_idx, batch_idx, 1]
+        )  # Use channels-first indexing
 
         dense[
             top_row : top_row + self.block_size, top_col : top_col + self.block_size
-        ] = self.sparse_values[batch_idx, channel_idx]
+        ] = self.sparse_values[
+            channel_idx, batch_idx
+        ]  # Use channels-first indexing
 
         return dense
 
@@ -523,20 +545,22 @@ class SingleBlockMixedSparseTensor:
         Returns:
             Dictionary with block information
         """
-        is_set = bool(self.blocks_set[batch_idx, channel_idx])
-
-        if not is_set:
-            return {"is_set": False, "position": None, "values": None}
-
+        # All blocks are assumed to be set
         position = (
-            int(self.block_positions[batch_idx, channel_idx, 0]),
-            int(self.block_positions[batch_idx, channel_idx, 1]),
+            int(
+                self.block_positions[channel_idx, batch_idx, 0]
+            ),  # Use channels-first indexing
+            int(
+                self.block_positions[channel_idx, batch_idx, 1]
+            ),  # Use channels-first indexing
         )
 
         return {
             "is_set": True,
             "position": position,
-            "values": self.sparse_values[batch_idx, channel_idx].copy(),
+            "values": self.sparse_values[
+                channel_idx, batch_idx
+            ].copy(),  # Use channels-first indexing
         }
 
     def memory_info(self) -> Dict[str, Union[float, int]]:
@@ -549,8 +573,7 @@ class SingleBlockMixedSparseTensor:
         # Calculate actual memory usage
         sparse_values_mb = self.sparse_values.nbytes / (1024 * 1024)
         positions_mb = self.block_positions.nbytes / (1024 * 1024)
-        blocks_set_mb = self.blocks_set.nbytes / (1024 * 1024)
-        total_mb = sparse_values_mb + positions_mb + blocks_set_mb
+        total_mb = sparse_values_mb + positions_mb
 
         # Calculate what equivalent dense storage would be
         dense_mb = (self.batch_size * self.channels * self.height * self.width * 4) / (
@@ -558,12 +581,11 @@ class SingleBlockMixedSparseTensor:
         )
 
         compression_ratio = total_mb / dense_mb
-        blocks_stored = int(cp.sum(self.blocks_set))
+        blocks_stored = self.batch_size * self.channels  # All blocks assumed to be set
 
         return {
             "sparse_values_mb": sparse_values_mb,
             "positions_mb": positions_mb,
-            "blocks_set_mb": blocks_set_mb,
             "total_mb": total_mb,
             "equivalent_dense_mb": dense_mb,
             "compression_ratio": compression_ratio,
@@ -578,24 +600,20 @@ class SingleBlockMixedSparseTensor:
         Returns:
             True if consistent, False otherwise
         """
-        # Check that all set blocks have valid positions
-        set_mask = self.blocks_set
-        if cp.any(set_mask):
-            set_positions = self.block_positions[set_mask]
+        # Check that all block positions are valid (all blocks assumed to be set)
+        # Check row bounds for all positions
+        if cp.any(self.block_positions[:, :, 0] < 0) or cp.any(
+            self.block_positions[:, :, 0] > self.height - self.block_size
+        ):
+            logger.error("Some block positions have invalid row coordinates")
+            return False
 
-            # Check row bounds
-            if cp.any(set_positions[:, 0] < 0) or cp.any(
-                set_positions[:, 0] > self.height - self.block_size
-            ):
-                logger.error("Some block positions have invalid row coordinates")
-                return False
-
-            # Check column bounds
-            if cp.any(set_positions[:, 1] < 0) or cp.any(
-                set_positions[:, 1] > self.width - self.block_size
-            ):
-                logger.error("Some block positions have invalid column coordinates")
-                return False
+        # Check column bounds for all positions
+        if cp.any(self.block_positions[:, :, 1] < 0) or cp.any(
+            self.block_positions[:, :, 1] > self.width - self.block_size
+        ):
+            logger.error("Some block positions have invalid column coordinates")
+            return False
 
         logger.debug("Tensor consistency validation passed")
         return True
@@ -611,7 +629,6 @@ class SingleBlockMixedSparseTensor:
         data_dict = {
             "sparse_values": cp.asnumpy(self.sparse_values),
             "block_positions": cp.asnumpy(self.block_positions),
-            "blocks_set": cp.asnumpy(self.blocks_set),
             # Metadata
             "batch_size": np.array(self.batch_size, dtype=np.int32),
             "channels": np.array(self.channels, dtype=np.int32),
@@ -651,20 +668,194 @@ class SingleBlockMixedSparseTensor:
         # Load data arrays, converting to CuPy if needed
         tensor.sparse_values = cp.asarray(data_dict["sparse_values"])
         tensor.block_positions = cp.asarray(data_dict["block_positions"])
-        tensor.blocks_set = cp.asarray(data_dict["blocks_set"])
+
+        # Handle backward compatibility: if blocks_set exists in data, ignore it
+        # All blocks are now assumed to be set
 
         # Validate consistency
         if not tensor.validate_consistency():
             raise ValueError("Loaded tensor data is inconsistent")
 
-        blocks_loaded = int(cp.sum(tensor.blocks_set))
+        blocks_loaded = (
+            tensor.batch_size * tensor.channels
+        )  # All blocks assumed to be set
         logger.debug(f"Loaded tensor from dict with {blocks_loaded} blocks")
 
         return tensor
 
+    def to_dense_patterns(self) -> np.ndarray:
+        """
+        Convert mixed tensor to dense patterns array for visualization.
+
+        This method converts the sparse block representation back to dense
+        4D arrays suitable for visualization and analysis. Each LED/channel
+        pattern is materialized as a (height, width) array.
+
+        Returns:
+            Dense patterns array of shape (batch_size, height, width, channels)
+            with dtype float32 and values in range [0, 1]
+        """
+        # Initialize dense patterns array (HWC format for compatibility)
+        patterns = np.zeros(
+            (self.batch_size, self.height, self.width, self.channels), dtype=np.float32
+        )
+
+        logger.debug(
+            f"Converting {self.batch_size} LED patterns from mixed tensor to dense format..."
+        )
+
+        # Convert each block to dense format
+        for batch_idx in range(self.batch_size):
+            for channel_idx in range(self.channels):
+                # Get block position and values (channels-first indexing)
+                top_row = int(self.block_positions[channel_idx, batch_idx, 0])
+                top_col = int(self.block_positions[channel_idx, batch_idx, 1])
+                block_values = cp.asnumpy(self.sparse_values[channel_idx, batch_idx])
+
+                # Place block in dense pattern
+                patterns[
+                    batch_idx,
+                    top_row : top_row + self.block_size,
+                    top_col : top_col + self.block_size,
+                    channel_idx,
+                ] = block_values
+
+        logger.debug(f"Converted to dense patterns: {patterns.shape}")
+        return patterns
+
+    def get_block_summary(self) -> Dict[str, Union[float, int, np.ndarray]]:
+        """
+        Get comprehensive summary statistics for all blocks.
+
+        Computes various statistics across all LEDs and channels including
+        block positions, intensity distributions, and coverage statistics.
+
+        Returns:
+            Dictionary containing:
+            - batch_size: Number of LEDs
+            - channels: Number of color channels
+            - block_size: Size of each block (square)
+            - total_blocks: Total number of blocks
+            - block_positions_stats: Statistics about block placement
+            - intensity_stats: Statistics about block values
+            - coverage_stats: Statistics about spatial coverage
+            - memory_mb: Memory usage in megabytes
+        """
+        logger.debug("Computing block summary statistics...")
+
+        # Convert to numpy for statistics computation
+        positions = cp.asnumpy(self.block_positions)  # (channels, batch_size, 2)
+        values = cp.asnumpy(
+            self.sparse_values
+        )  # (channels, batch_size, block_size, block_size)
+
+        # Basic info
+        summary = {
+            "batch_size": self.batch_size,
+            "channels": self.channels,
+            "block_size": self.block_size,
+            "total_blocks": self.batch_size * self.channels,
+        }
+
+        # Block position statistics
+        all_positions = positions.reshape(-1, 2)  # Flatten to (total_blocks, 2)
+        position_stats = {
+            "min_row": int(np.min(all_positions[:, 0])),
+            "max_row": int(np.max(all_positions[:, 0])),
+            "min_col": int(np.min(all_positions[:, 1])),
+            "max_col": int(np.max(all_positions[:, 1])),
+            "mean_row": float(np.mean(all_positions[:, 0])),
+            "mean_col": float(np.mean(all_positions[:, 1])),
+            "std_row": float(np.std(all_positions[:, 0])),
+            "std_col": float(np.std(all_positions[:, 1])),
+        }
+
+        # Block intensity statistics
+        all_values = values.reshape(-1)  # Flatten all block values
+        nonzero_values = all_values[all_values > 0]
+        intensity_stats = {
+            "total_values": len(all_values),
+            "nonzero_values": len(nonzero_values),
+            "sparsity_ratio": len(nonzero_values) / len(all_values),
+            "min_intensity": float(np.min(all_values)),
+            "max_intensity": float(np.max(all_values)),
+            "mean_intensity": float(np.mean(all_values)),
+            "std_intensity": float(np.std(all_values)),
+        }
+
+        # Per-LED statistics
+        led_max_intensities = np.zeros(self.batch_size, dtype=np.float32)
+        led_mean_intensities = np.zeros(self.batch_size, dtype=np.float32)
+
+        for batch_idx in range(self.batch_size):
+            led_values = values[:, batch_idx].flatten()  # All channels for this LED
+            led_max_intensities[batch_idx] = np.max(led_values)
+            led_mean_intensities[batch_idx] = (
+                np.mean(led_values[led_values > 0]) if np.any(led_values > 0) else 0.0
+            )
+
+        # Coverage statistics (spatial distribution)
+        coverage_stats = {
+            "blocks_per_led": self.channels,
+            "spatial_coverage_x": (
+                position_stats["max_col"] - position_stats["min_col"] + self.block_size
+            )
+            / self.width,
+            "spatial_coverage_y": (
+                position_stats["max_row"] - position_stats["min_row"] + self.block_size
+            )
+            / self.height,
+            "led_max_intensities": led_max_intensities,
+            "led_mean_intensities": led_mean_intensities,
+        }
+
+        # Add computed statistics
+        summary.update(
+            {
+                "block_positions_stats": position_stats,
+                "intensity_stats": intensity_stats,
+                "coverage_stats": coverage_stats,
+                "memory_mb": self.memory_info()["total_mb"],
+            }
+        )
+
+        logger.debug("Block summary computed")
+        return summary
+
+    def extract_pattern(self, led_idx: int, channel_idx: int) -> np.ndarray:
+        """
+        Extract dense pattern for specific LED and channel.
+
+        This method extracts and returns a single LED/channel pattern
+        as a dense array, suitable for visualization or analysis.
+
+        Args:
+            led_idx: LED index (0 to batch_size-1)
+            channel_idx: Channel index (0 to channels-1)
+
+        Returns:
+            Dense pattern array of shape (height, width) with dtype float32
+            containing the LED pattern for the specified channel
+        """
+        # Validate inputs
+        if not (0 <= led_idx < self.batch_size):
+            raise ValueError(f"led_idx {led_idx} out of range [0, {self.batch_size})")
+        if not (0 <= channel_idx < self.channels):
+            raise ValueError(
+                f"channel_idx {channel_idx} out of range [0, {self.channels})"
+            )
+
+        # Use existing to_array method but convert to numpy
+        dense_pattern = cp.asnumpy(self.to_array(led_idx, channel_idx))
+
+        logger.debug(
+            f"Extracted pattern for LED {led_idx}, channel {channel_idx}: shape {dense_pattern.shape}"
+        )
+        return dense_pattern
+
     def __repr__(self) -> str:
         """String representation of the tensor."""
-        blocks_stored = int(cp.sum(self.blocks_set))
+        blocks_stored = self.batch_size * self.channels  # All blocks assumed to be set
         memory_mb = self.memory_info()["total_mb"]
 
         return (
