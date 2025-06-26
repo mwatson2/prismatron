@@ -14,12 +14,12 @@ Usage:
 
 import argparse
 import colorsys
+import logging
 import math
 import os
 import signal
 import sys
 import time
-import logging
 from typing import List, Optional, Tuple
 
 # Add parent directory to path for imports

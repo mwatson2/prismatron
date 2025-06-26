@@ -195,7 +195,8 @@ class TestLEDOptimizer(unittest.TestCase):
         self.assertEqual(result.led_values.shape[1], 3)  # RGB channels
         self.assertGreater(result.led_values.shape[0], 0)  # Some LEDs
         self.assertGreater(result.iterations, 0)
-        self.assertLess(result.optimization_time, 10.0)  # Should be fast
+        # Timing removed - verify field exists but is 0
+        self.assertEqual(result.optimization_time, 0.0)
         self.assertIn("mse", result.error_metrics)
 
     def test_optimization_with_invalid_frame(self):
@@ -262,8 +263,9 @@ class TestLEDOptimizer(unittest.TestCase):
         self.assertIn(stats["device"], ["gpu", "cpu"])  # Device type from stats
         self.assertTrue(stats["matrix_loaded"])
         self.assertEqual(stats["optimization_count"], 2)
-        self.assertGreater(stats["total_optimization_time"], 0)
-        self.assertGreater(stats["estimated_fps"], 0)
+        # Timing removed - verify fields exist but are 0
+        self.assertEqual(stats["total_optimization_time"], 0.0)
+        self.assertEqual(stats["estimated_fps"], 0.0)
         # LED count in stats should match our test patterns (50), not full LED_COUNT (3200)
         self.assertEqual(stats["led_count"], 50)  # Should match test pattern size
 
@@ -350,8 +352,8 @@ class TestLEDOptimizer(unittest.TestCase):
 
         result = self.optimizer.optimize_frame(test_frame, max_iterations=3)
 
-        self.assertGreater(result.optimization_time, 0)
-        self.assertLess(result.optimization_time, 5.0)  # Should be reasonably fast
+        # Timing removed - verify field exists but is 0
+        self.assertEqual(result.optimization_time, 0.0)
 
     @unittest.skipIf(not CUPY_AVAILABLE, "CuPy not available")
     def test_different_iteration_counts(self):
@@ -470,7 +472,8 @@ class TestOptimizerIntegration(unittest.TestCase):
         self.assertEqual(result.led_values.shape[1], 3)  # RGB channels
         self.assertGreater(result.led_values.shape[0], 0)  # Some LEDs
         self.assertGreater(result.iterations, 0)
-        self.assertTrue(result.optimization_time > 0)
+        # Timing removed - verify field exists but is 0
+        self.assertEqual(result.optimization_time, 0.0)
         self.assertIsNotNone(result.error_metrics)
 
         # LED values should be reasonable

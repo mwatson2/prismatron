@@ -11,6 +11,7 @@ optimization into dense tensor operations with clean channel separation.
 """
 
 import logging
+
 # import time  # Removed for clean utility class implementation
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +38,7 @@ class DenseOptimizationResult:
     converged: bool  # Whether optimization converged
     target_frame: Optional[np.ndarray] = None  # Original target frame (for debugging)
     precomputation_info: Optional[Dict[str, Any]] = None  # Dense matrix information
+    optimization_time: float = 0.0  # Timing removed, kept for API compatibility
 
     def get_led_count(self) -> int:
         """Get number of LEDs in result."""
@@ -117,6 +119,12 @@ class DenseLEDOptimizer:
 
         # Statistics
         self._optimization_count = 0
+
+        # Timing and FLOP fields removed but kept for API compatibility
+        self._total_optimization_time = 0.0
+        self._total_flops = 0
+        self._flops_per_iteration = 0
+        self._dense_flops_per_iteration = 0
 
         # Detect compute capability
         self.device_info = self._detect_compute_device()
@@ -448,75 +456,13 @@ class DenseLEDOptimizer:
         self._ATA_cpu = np.stack([ATA_r, ATA_g, ATA_b], axis=2).astype(np.float32)
 
     def _calculate_flops_per_iteration(self) -> None:
-        """Calculate floating point operations per iteration for dense operations."""
-        if self._ATA_gpu is None:
-            return
+        """FLOP calculation removed - kept as stub for API compatibility."""
+        # All FLOP calculations removed for clean implementation
+        # These fields are maintained as zeros for API compatibility
+        self._dense_flops_per_iteration = 0
+        self._flops_per_iteration = 0
 
-        led_count = self._actual_led_count
-
-        # Calculate FLOPs for dense optimization loop (per iteration):
-        # 1. ATA @ x: 3 channels × (led_count × led_count) matrix-vector = led_count^2 * 3 * 2
-        # 2. gradient = ATA @ x - ATb: led_count * 3 * 2 ops
-        # 3. g^T @ g: led_count * 3 * 2 ops
-        # 4. g^T @ ATA @ g: 3 channels × (led_count × led_count) = led_count^2 * 3 * 2
-        # 5. Vector updates: led_count * 3 * 2 ops
-
-        dense_flops_per_iteration = (
-            led_count**2 * 3 * 2  # ATA @ x (dense matrix-vector per channel)
-            + led_count * 3 * 2  # Gradient computation
-            + led_count * 3 * 2  # g^T @ g
-            + led_count**2 * 3 * 2  # g^T @ ATA @ g (dense matrix-vector per channel)
-            + led_count * 3 * 2  # Vector update
-        )
-
-        # Calculate FLOPs for A^T*b computation (once per frame, not per iteration):
-        if self.use_mixed_tensor:
-            # Mixed tensor A^T@b: estimate based on blocks stored
-            if hasattr(self, "_mixed_tensor") and self._mixed_tensor is not None:
-                blocks_stored = int(cp.sum(self._mixed_tensor.blocks_set))
-                block_size = self._mixed_tensor.block_size
-                estimated_nnz_per_block = (
-                    block_size * block_size * 0.4
-                )  # Assume 40% density
-                estimated_total_nnz = blocks_stored * estimated_nnz_per_block
-                atb_flops_per_frame = estimated_total_nnz * 2
-            else:
-                atb_flops_per_frame = 0
-        else:
-            # CSC format A^T@b: use actual non-zero count
-            total_nnz = 0
-            if (
-                hasattr(self, "_A_combined_csc_gpu")
-                and self._A_combined_csc_gpu is not None
-            ):
-                total_nnz = self._A_combined_csc_gpu.nnz
-            atb_flops_per_frame = total_nnz * 2
-
-        # Store both values for accurate reporting
-        self._dense_flops_per_iteration = dense_flops_per_iteration
-        self._atb_flops_per_frame = atb_flops_per_frame
-
-        # For compatibility, store total FLOPs per iteration (including amortized A^T*b)
-        # Note: A^T*b is computed once per frame, so amortize over iterations
-        self._flops_per_iteration = dense_flops_per_iteration + (
-            atb_flops_per_frame / self.max_iterations
-        )
-
-        logger.debug(
-            f"Dense optimization FLOPs per iteration: {dense_flops_per_iteration:,}"
-        )
-        logger.debug(f"A^T*b FLOPs per frame: {atb_flops_per_frame:,}")
-        logger.debug(
-            f"Total FLOPs per iteration (amortized): {self._flops_per_iteration:,}"
-        )
-        if not self.use_mixed_tensor:
-            logger.debug(f"Sparse matrix non-zeros (total): {total_nnz:,}")
-        else:
-            blocks_stored = (
-                int(cp.sum(self._mixed_tensor.blocks_set))
-                if self._mixed_tensor else 0
-            )
-            logger.debug(f"Mixed tensor blocks stored: {blocks_stored}")
+        logger.debug("FLOP calculations removed for clean implementation")
 
     def _initialize_workspace(self) -> None:
         """Initialize GPU workspace arrays for dense optimization."""
@@ -647,9 +593,10 @@ class DenseLEDOptimizer:
             self._reset_workspace_references()
 
             # Dense tensor optimization loop
-            led_values_solved, iterations_completed = self._solve_dense_gradient_descent(
-                ATb, max_iterations
-            )
+            (
+                led_values_solved,
+                iterations_completed,
+            ) = self._solve_dense_gradient_descent(ATb, max_iterations)
 
             # Convert back to numpy
             led_values_normalized = cp.asnumpy(led_values_solved)
@@ -912,7 +859,6 @@ class DenseLEDOptimizer:
             "close_1e2": cp.allclose(atb_csc, atb_mixed, atol=1e-2),
         }
 
-
     def _solve_dense_gradient_descent(
         self, ATb: cp.ndarray, max_iterations: Optional[int]
     ) -> Tuple[cp.ndarray, int]:
@@ -1044,40 +990,29 @@ class DenseLEDOptimizer:
 
     def get_optimizer_stats(self) -> Dict[str, Any]:
         """Get optimizer statistics."""
-        avg_time = self._total_optimization_time / max(1, self._optimization_count)
-
         stats = {
             "optimizer_type": "dense_precomputed_ata",
             "device": str(self.device_info["device"]),
             "matrix_loaded": self._matrix_loaded,
             "optimization_count": self._optimization_count,
-            "total_optimization_time": self._total_optimization_time,
-            "average_optimization_time": avg_time,
-            "estimated_fps": 1.0 / avg_time if avg_time > 0 else 0.0,
+            "total_optimization_time": 0.0,  # Timing removed
+            "average_optimization_time": 0.0,  # Timing removed
+            "estimated_fps": 0.0,  # Timing removed
             "led_count": self._actual_led_count,
             "frame_dimensions": (FRAME_WIDTH, FRAME_HEIGHT),
         }
 
         if self._matrix_loaded:
-            avg_gflops_per_second = 0.0
-            if avg_time > 0 and self._flops_per_iteration > 0:
-                avg_gflops_per_second = (
-                    self.max_iterations * self._flops_per_iteration
-                ) / (avg_time * 1e9)
-
             stats.update(
                 {
                     "ata_tensor_shape": self._ATA_gpu.shape,
                     "ata_memory_mb": self._ATA_gpu.nbytes / (1024 * 1024),
                     "approach_description": "Precomputed A^T*A dense tensors with einsum",
                     "flop_analysis": {
-                        "flops_per_iteration": int(self._flops_per_iteration),
-                        "total_flops_computed": int(self._total_flops),
-                        "average_gflops_per_frame": (
-                            self.max_iterations * self._flops_per_iteration
-                        )
-                        / 1e9,
-                        "average_gflops_per_second": avg_gflops_per_second,
+                        "flops_per_iteration": 0,  # FLOP counting removed
+                        "total_flops_computed": 0,  # FLOP counting removed
+                        "average_gflops_per_frame": 0.0,  # FLOP counting removed
+                        "average_gflops_per_second": 0.0,  # FLOP counting removed
                     },
                 }
             )

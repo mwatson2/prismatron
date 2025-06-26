@@ -29,7 +29,7 @@ archive_path = str(Path(__file__).parent.parent.parent / "archive")
 sys.path.insert(0, archive_path)
 from led_optimizer_sparse import LEDOptimizer, OptimizationResult
 
-from ..consumer.led_optimizer_dense import DenseLEDOptimizer, DenseOptimizationResult
+# Import moved to functions to avoid circular dependency
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +134,8 @@ class OptimizationPipeline:
 
         # Initialize the appropriate optimizer
         if use_dense:
+            from ..consumer.led_optimizer_dense import DenseLEDOptimizer
+
             self.optimizer = DenseLEDOptimizer(
                 diffusion_patterns_path=self.diffusion_patterns_path
             )

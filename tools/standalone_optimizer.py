@@ -172,14 +172,20 @@ class StandaloneOptimizer:
             "save_time": save_time,
             "total_time": total_time,
         }
-        
+
         # DEBUG: Save LED values for comparison
         if self.optimizer_type == "mixed":
             np.savez("debug_mixed_led_values.npz", led_values=result.led_values)
-            logger.info(f"Mixed LED values stats: min={result.led_values.min()}, max={result.led_values.max()}, mean={result.led_values.mean():.3f}")
+            logger.info(
+                f"Mixed LED values stats: min={result.led_values.min()}, "
+                f"max={result.led_values.max()}, mean={result.led_values.mean():.3f}"
+            )
         else:
             np.savez("debug_csc_led_values.npz", led_values=result.led_values)
-            logger.info(f"CSC LED values stats: min={result.led_values.min()}, max={result.led_values.max()}, mean={result.led_values.mean():.3f}")
+            logger.info(
+                f"CSC LED values stats: min={result.led_values.min()}, "
+                f"max={result.led_values.max()}, mean={result.led_values.mean():.3f}"
+            )
 
         # Show preview if requested
         if show_preview:
