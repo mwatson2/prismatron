@@ -308,8 +308,6 @@ prismatron/
 │   └── visualize_diffusion_patterns.py # Pattern visualization
 ├── diffusion_patterns/      # LED diffusion pattern storage
 │   ├── *.npz                # Dense format pattern files
-│   ├── *_matrix.npz         # Sparse CSC matrix files
-│   └── *_mapping.npz        # LED spatial mapping files
 └── config/                   # Configuration files
     ├── led_positions.json
     └── system_config.yaml
@@ -321,8 +319,6 @@ The `diffusion_patterns/` directory stores LED diffusion pattern data for sparse
 
 ### Current Pattern Files
 - **`synthetic_1000.npz`**: Sparse CSC matrix for 1000 LEDs (primary development pattern)
-- **`patterns_1000_chunked.npz`**: Alternative sparse format with chunked data
-- **`config/diffusion_patterns.npz`**: Default pattern file for system operation
 
 ### Sparse Format Structure
 Each pattern file contains:
@@ -360,7 +356,6 @@ python tools/standalone_optimizer.py --input test_image.jpg --patterns diffusion
 
 ### Current Active Components
 - **Dense LED Optimizer**: `src/consumer/led_optimizer_dense.py` (primary optimizer)
-- **Sparse LED Optimizer**: Uses archived sparse code via import in `src/utils/optimization_utils.py`
 - **Main Consumer**: `src/consumer/consumer.py`
 - **Standalone Tools**: `tools/standalone_optimizer.py` (production testing tool)
 
@@ -449,6 +444,10 @@ This ensures that LED patterns remain stable and don't flicker back to WLED's de
 
 ## Recent Architectural Changes
 
+
+### Mixed Tensor experiments
+- **Approach**: custom mixed sparse/dense tensor for diffusion patterns with custom CUDA kernel for (A^T)b calculation
+
 ### Sparse Matrix Migration (2024-12)
 - **From**: PyTorch dense matrix optimization with 50GB+ memory requirements
 - **To**: CuPy/SciPy sparse CSC matrices with <1GB memory usage (50x reduction)
@@ -481,3 +480,7 @@ This architecture provides a robust foundation for the final hardware integratio
 - **Use existing standard tools and utilities** (e.g., `standalone_optimizer.py`, comprehensive test suite)
 - **Prefer editing existing files over creating new ones**
 - **Only create new files when absolutely necessary for the specific goal**
+
+### Additional instructions
+- You are a very senior software designer. You love clean code with great encapsulation. You abhor code duplication. Always ensure complex operations are encapsulated in a simple well-defined class or function with comprehesive unit tests. Don't shy away from creating components, even for quick tests or experiments.
+- Comment all numpy or cupy operations with the shapes of the arguments and result

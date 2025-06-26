@@ -640,6 +640,85 @@ class LEDDiffusionCSCMatrix:
         logger.debug(f"Computed bounding boxes for {self.led_count} LEDs")
         return bboxes
 
+    def extract_rgb_channels(
+        self,
+    ) -> Tuple[sp.csc_matrix, sp.csc_matrix, sp.csc_matrix]:
+        """
+        Extract separate RGB channel matrices from the combined matrix.
+
+        Returns:
+            Tuple of (R_matrix, G_matrix, B_matrix) where each matrix has shape
+            (pixels, led_count) containing only that channel's data.
+        """
+        logger.debug("Extracting RGB channel matrices...")
+
+        # Extract each channel using column slicing
+        R_matrix = self.matrix[:, 0 :: self.channels]  # Red channels
+        G_matrix = self.matrix[:, 1 :: self.channels]  # Green channels
+        B_matrix = self.matrix[:, 2 :: self.channels]  # Blue channels
+
+        logger.debug(f"Extracted RGB matrices with shape: {R_matrix.shape}")
+        return R_matrix, G_matrix, B_matrix
+
+    def create_block_diagonal_matrix(self) -> sp.csc_matrix:
+        """
+        Create a block diagonal matrix for efficient combined RGB operations.
+
+        The resulting matrix has shape (pixels * 3, led_count * 3) with structure:
+        [R_matrix    0         0      ]
+        [0         G_matrix    0      ]
+        [0           0       B_matrix ]
+
+        This enables vectorized A^T@b calculations across all RGB channels.
+
+        Returns:
+            Block diagonal CSC matrix combining all RGB channels
+        """
+        logger.debug("Creating block diagonal matrix for RGB channels...")
+
+        # Extract RGB channel matrices
+        R_matrix, G_matrix, B_matrix = self.extract_rgb_channels()
+
+        # Create block diagonal matrix
+        from scipy.sparse import block_diag
+
+        block_diagonal = block_diag([R_matrix, G_matrix, B_matrix], format="csc")
+
+        logger.debug(
+            f"Created block diagonal matrix with shape: {block_diagonal.shape}"
+        )
+        return block_diagonal
+
+    def to_gpu_matrices(self):
+        """
+        Transfer RGB channel matrices to GPU using CuPy.
+
+        Returns:
+            Tuple of (R_gpu, G_gpu, B_gpu, combined_gpu) CuPy sparse matrices
+        """
+        try:
+            import cupy as cp
+            from cupyx.scipy.sparse import csc_matrix as cupy_csc_matrix
+        except ImportError:
+            raise ImportError("CuPy is required for GPU matrix operations")
+
+        logger.debug("Transferring matrices to GPU...")
+
+        # Extract RGB channels
+        R_matrix, G_matrix, B_matrix = self.extract_rgb_channels()
+
+        # Create block diagonal matrix
+        combined_matrix = self.create_block_diagonal_matrix()
+
+        # Transfer to GPU
+        R_gpu = cupy_csc_matrix(R_matrix)
+        G_gpu = cupy_csc_matrix(G_matrix)
+        B_gpu = cupy_csc_matrix(B_matrix)
+        combined_gpu = cupy_csc_matrix(combined_matrix)
+
+        logger.debug("Successfully transferred matrices to GPU")
+        return R_gpu, G_gpu, B_gpu, combined_gpu
+
     def __repr__(self) -> str:
         """String representation of the matrix."""
         memory_mb = self.memory_info()["total_mb"]

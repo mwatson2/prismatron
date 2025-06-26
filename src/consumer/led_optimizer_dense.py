@@ -11,7 +11,7 @@ optimization into dense tensor operations with clean channel separation.
 """
 
 import logging
-import time
+# import time  # Removed for clean utility class implementation
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -21,6 +21,8 @@ import numpy as np
 import scipy.sparse as sp
 
 from ..const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
+from ..utils.led_diffusion_csc_matrix import LEDDiffusionCSCMatrix
+from ..utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +33,10 @@ class DenseOptimizationResult:
 
     led_values: np.ndarray  # RGB values for each LED (led_count, 3) - range [0,255]
     error_metrics: Dict[str, float]  # Error metrics (mse, mae, etc.)
-    optimization_time: float  # Time taken for optimization in seconds
     iterations: int  # Number of optimization iterations
     converged: bool  # Whether optimization converged
     target_frame: Optional[np.ndarray] = None  # Original target frame (for debugging)
     precomputation_info: Optional[Dict[str, Any]] = None  # Dense matrix information
-    flop_info: Optional[Dict[str, Any]] = None  # FLOP analysis information
-    timing_breakdown: Optional[Dict[str, float]] = None  # Detailed timing breakdown
 
     def get_led_count(self) -> int:
         """Get number of LEDs in result."""
@@ -107,8 +106,9 @@ class DenseLEDOptimizer:
         # GPU workspace for optimization loop (all dense)
         self._gpu_workspace = None
 
-        # Mixed tensor storage (used when use_mixed_tensor=True)
-        self._mixed_tensor = None  # SingleBlockMixedSparseTensor instance
+        # Utility class instances for encapsulated matrix operations
+        self._diffusion_matrix: Optional[LEDDiffusionCSCMatrix] = None
+        self._mixed_tensor: Optional[SingleBlockMixedSparseTensor] = None
 
         self._led_spatial_mapping: Optional[Dict[int, int]] = None
         self._led_positions: Optional[np.ndarray] = None
@@ -117,11 +117,6 @@ class DenseLEDOptimizer:
 
         # Statistics
         self._optimization_count = 0
-        self._total_optimization_time = 0.0
-
-        # FLOP counting for performance analysis
-        self._total_flops = 0
-        self._flops_per_iteration = 0
 
         # Detect compute capability
         self.device_info = self._detect_compute_device()
@@ -212,7 +207,8 @@ class DenseLEDOptimizer:
             if dense_ata_led_count != self._actual_led_count or dense_ata_channels != 3:
                 logger.warning(
                     f"Precomputed A^T@A dimensions mismatch: "
-                    f"({dense_ata_led_count}, {dense_ata_channels}) != ({self._actual_led_count}, 3)"
+                    f"({dense_ata_led_count}, {dense_ata_channels}) != "
+                    f"({self._actual_led_count}, 3)"
                 )
                 return False
 
@@ -264,7 +260,8 @@ class DenseLEDOptimizer:
 
         if not all(key in data for key in required_keys):
             raise ValueError(
-                "Mixed tensor data not found in patterns file. Regenerate patterns with mixed tensor support."
+                "Mixed tensor data not found in patterns file. "
+                "Regenerate patterns with mixed tensor support."
             )
 
         # Extract mixed tensor parameters
@@ -279,10 +276,22 @@ class DenseLEDOptimizer:
             led_count, channels, height, width, block_size
         )
 
-        # Load the tensor data
-        self._mixed_tensor.sparse_values = cp.asarray(data["mixed_tensor_values"])
-        self._mixed_tensor.block_positions = cp.asarray(data["mixed_tensor_positions"])
-        self._mixed_tensor.blocks_set = cp.asarray(data["mixed_tensor_blocks_set"])
+        # Load the tensor data and transpose to channels-first layout
+        # Old format: (LEDs, Channels, H, W) -> New format: (Channels, LEDs, H, W)
+        old_values = data["mixed_tensor_values"]  # (1000, 3, 96, 96)
+        old_positions = data["mixed_tensor_positions"]  # (1000, 3, 2)
+        old_blocks_set = data["mixed_tensor_blocks_set"]  # (1000, 3)
+
+        # Transpose to channels-first layout
+        self._mixed_tensor.sparse_values = cp.asarray(
+            old_values.transpose(1, 0, 2, 3)
+        )  # (3, 1000, 96, 96)
+        self._mixed_tensor.block_positions = cp.asarray(
+            old_positions.transpose(1, 0, 2)
+        )  # (3, 1000, 2)
+        self._mixed_tensor.blocks_set = cp.asarray(
+            old_blocks_set.transpose(1, 0)
+        )  # (3, 1000)
 
         blocks_stored = int(data["mixed_tensor_blocks_stored"])
         logger.info(f"Mixed tensor loaded: {led_count} LEDs, {channels} channels")
@@ -291,13 +300,10 @@ class DenseLEDOptimizer:
 
     def _load_and_precompute_dense_matrices(self) -> bool:
         """
-        Load sparse diffusion matrices and precompute dense A^T*A tensors.
-
-        This is the key innovation: convert A^T*A from sparse to dense for
-        much better GPU utilization in the optimization loop.
+        Load diffusion matrices using utility classes and precomputed A^T*A tensors.
 
         Returns:
-            True if loaded and precomputed successfully, False otherwise
+            True if loaded successfully, False otherwise
         """
         try:
             patterns_path = (
@@ -309,90 +315,137 @@ class DenseLEDOptimizer:
                 logger.warning(f"Patterns file not found at {patterns_path}")
                 return False
 
-            logger.info(f"Loading sparse matrix from {patterns_path}")
+            logger.info(f"Loading patterns from {patterns_path}")
             data = np.load(patterns_path, allow_pickle=True)
 
-            # Reconstruct sparse matrix from components (temporary for loading)
-            sparse_matrix_csc = sp.csc_matrix(
-                (data["matrix_data"], data["matrix_indices"], data["matrix_indptr"]),
-                shape=tuple(data["matrix_shape"]),
-            )
-
-            # Load metadata
-            self._led_spatial_mapping = data["led_spatial_mapping"].item()
-            self._led_positions = data["led_positions"]
-            self._actual_led_count = sparse_matrix_csc.shape[1] // 3
-
-            # Validate matrix dimensions
-            expected_pixels = FRAME_HEIGHT * FRAME_WIDTH
-            if sparse_matrix_csc.shape[0] != expected_pixels:
-                logger.error(
-                    f"Matrix pixel dimension mismatch: "
-                    f"{sparse_matrix_csc.shape[0]} != {expected_pixels}"
-                )
-                return False
-
-            logger.info("Extracting RGB channel matrices...")
-            A_r_csc = sparse_matrix_csc[:, 0::3]  # Red channels
-            A_g_csc = sparse_matrix_csc[:, 1::3]  # Green channels
-            A_b_csc = sparse_matrix_csc[:, 2::3]  # Blue channels
-
-            logger.info(f"RGB matrix shapes: {A_r_csc.shape}")
-
-            # KEY STEP 1: Check for precomputed A^T*A matrices first
-            if self._load_precomputed_ata_matrices(data):
-                logger.info("Using precomputed A^T*A matrices from pattern file")
+            # Check for new nested format first
+            if "diffusion_matrix" in data and "mixed_tensor" in data:
+                return self._load_new_format(data)
             else:
-                # Fallback: Compute A^T*A for each channel (dense matrices)
-                logger.info("Precomputing dense A^T*A matrices from sparse matrices...")
-
-                # Compute A^T*A on CPU first (sparse @ sparse -> dense)
-                ATA_r = (
-                    A_r_csc.T @ A_r_csc
-                ).toarray()  # (leds, leds) - should be dense
-                ATA_g = (A_g_csc.T @ A_g_csc).toarray()
-                ATA_b = (A_b_csc.T @ A_b_csc).toarray()
-
-                logger.info(f"Dense ATA matrix shapes: {ATA_r.shape}")
-                logger.info(
-                    f"ATA_r density: {np.count_nonzero(ATA_r) / ATA_r.size * 100:.1f}%"
-                )
-
-                # Stack into 3D tensor: (led_count, led_count, 3)
-                self._ATA_cpu = np.stack([ATA_r, ATA_g, ATA_b], axis=2).astype(
-                    np.float32
-                )
-
-            # Transfer to GPU
-            logger.info("Transferring dense ATA tensor to GPU...")
-            self._ATA_gpu = cp.asarray(self._ATA_cpu)
-
-            # Load A matrix format based on use_mixed_tensor flag
-            if self.use_mixed_tensor:
-                logger.info("Loading both mixed tensor and CSC formats...")
-                logger.info(
-                    "Mixed tensor for A^T@b calculation, CSC for error metrics..."
-                )
-                self._load_mixed_tensor_format(data)
-                self._load_csc_format(A_r_csc, A_g_csc, A_b_csc)
-            else:
-                logger.info("Loading CSC sparse format for A^T@b calculation...")
-                self._load_csc_format(A_r_csc, A_g_csc, A_b_csc)
-
-            # Calculate memory usage
-            ata_memory_mb = self._ATA_gpu.nbytes / (1024 * 1024)
-            logger.info(f"Dense ATA tensor memory: {ata_memory_mb:.1f}MB")
-
-            # Calculate FLOPs per iteration
-            self._calculate_flops_per_iteration()
-
-            self._matrix_loaded = True
-            logger.info("Dense matrix precomputation completed successfully")
-            return True
+                return self._load_legacy_format(data)
 
         except Exception as e:
-            logger.error(f"Failed to load and precompute dense matrices: {e}")
+            logger.error(f"Failed to load matrices: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
             return False
+
+    def _load_new_format(self, data: np.lib.npyio.NpzFile) -> bool:
+        """Load matrices from new nested format using utility classes."""
+        logger.info("Detected new nested format with utility classes")
+
+        # Load LEDDiffusionCSCMatrix
+        logger.info("Loading LEDDiffusionCSCMatrix...")
+        diffusion_dict = data["diffusion_matrix"].item()
+        self._diffusion_matrix = LEDDiffusionCSCMatrix.from_dict(diffusion_dict)
+
+        # Load metadata from diffusion matrix
+        self._led_spatial_mapping = data.get("led_spatial_mapping", {})
+        if hasattr(self._led_spatial_mapping, "item"):
+            self._led_spatial_mapping = self._led_spatial_mapping.item()
+        self._led_positions = data.get("led_positions", None)
+        self._actual_led_count = self._diffusion_matrix.led_count
+
+        # Validate matrix dimensions
+        expected_pixels = FRAME_HEIGHT * FRAME_WIDTH
+        if self._diffusion_matrix.pixels != expected_pixels:
+            logger.error(
+                f"Matrix pixel dimension mismatch: "
+                f"{self._diffusion_matrix.pixels} != {expected_pixels}"
+            )
+            return False
+
+        # Load precomputed A^T*A matrices
+        if not self._load_precomputed_ata_matrices(data):
+            logger.error("Precomputed A^T*A matrices required but not found")
+            return False
+
+        # Transfer to GPU
+        logger.info("Transferring dense ATA tensor to GPU...")
+        self._ATA_gpu = cp.asarray(self._ATA_cpu)
+
+        # Load mixed tensor if needed
+        if self.use_mixed_tensor:
+            logger.info("Loading SingleBlockMixedSparseTensor...")
+            mixed_dict = data["mixed_tensor"].item()
+            self._mixed_tensor = SingleBlockMixedSparseTensor.from_dict(mixed_dict)
+            logger.info("Loaded mixed tensor format for A^T@b calculation")
+
+        # Load CSC format for A^T@b calculation (always needed)
+        logger.info("Setting up CSC matrices for A^T@b calculation...")
+        self._setup_csc_matrices()
+
+        # Calculate memory usage
+        ata_memory_mb = self._ATA_gpu.nbytes / (1024 * 1024)
+        logger.info(f"Dense ATA tensor memory: {ata_memory_mb:.1f}MB")
+
+        self._matrix_loaded = True
+        logger.info("Matrix loading completed successfully")
+        return True
+
+    def _setup_csc_matrices(self) -> None:
+        """Setup CSC matrices for GPU operations using utility class methods."""
+        logger.info("Setting up CSC matrices for GPU operations...")
+
+        # Use utility class methods to get GPU matrices
+        (
+            self._A_r_csc_gpu,
+            self._A_g_csc_gpu,
+            self._A_b_csc_gpu,
+            self._A_combined_csc_gpu,
+        ) = self._diffusion_matrix.to_gpu_matrices()
+
+        logger.info(f"CSC matrices transferred to GPU successfully")
+
+    def _load_legacy_format(self, data: np.lib.npyio.NpzFile) -> bool:
+        """Load matrices from legacy format (fallback for old files)."""
+        logger.warning("Using legacy format loading - consider regenerating patterns")
+
+        # Reconstruct sparse matrix from components
+        sparse_matrix_csc = sp.csc_matrix(
+            (data["matrix_data"], data["matrix_indices"], data["matrix_indptr"]),
+            shape=tuple(data["matrix_shape"]),
+        )
+
+        # Create LEDDiffusionCSCMatrix from legacy data
+        self._diffusion_matrix = LEDDiffusionCSCMatrix.from_csc_matrix(
+            sparse_matrix_csc, FRAME_HEIGHT, FRAME_WIDTH, channels=3
+        )
+
+        # Load metadata
+        self._led_spatial_mapping = data["led_spatial_mapping"].item()
+        self._led_positions = data["led_positions"]
+        self._actual_led_count = self._diffusion_matrix.led_count
+
+        # Load precomputed A^T*A matrices or compute fallback
+        if not self._load_precomputed_ata_matrices(data):
+            logger.warning("Computing A^T*A matrices from scratch (slow)")
+            self._compute_ata_fallback()
+
+        # Transfer to GPU
+        self._ATA_gpu = cp.asarray(self._ATA_cpu)
+
+        # Setup CSC matrices
+        self._setup_csc_matrices()
+
+        self._matrix_loaded = True
+        return True
+
+    def _compute_ata_fallback(self) -> None:
+        """Compute A^T*A matrices as fallback for legacy files."""
+        logger.info("Computing A^T*A matrices from sparse matrices...")
+
+        # Extract RGB channels using utility class
+        A_r_csc, A_g_csc, A_b_csc = self._diffusion_matrix.extract_rgb_channels()
+
+        # Compute A^T*A on CPU
+        ATA_r = (A_r_csc.T @ A_r_csc).toarray()
+        ATA_g = (A_g_csc.T @ A_g_csc).toarray()
+        ATA_b = (A_b_csc.T @ A_b_csc).toarray()
+
+        # Stack into 3D tensor: (led_count, led_count, 3)
+        self._ATA_cpu = np.stack([ATA_r, ATA_g, ATA_b], axis=2).astype(np.float32)
 
     def _calculate_flops_per_iteration(self) -> None:
         """Calculate floating point operations per iteration for dense operations."""
@@ -459,9 +512,11 @@ class DenseLEDOptimizer:
         if not self.use_mixed_tensor:
             logger.debug(f"Sparse matrix non-zeros (total): {total_nnz:,}")
         else:
-            logger.debug(
-                f"Mixed tensor blocks stored: {int(cp.sum(self._mixed_tensor.blocks_set)) if self._mixed_tensor else 0}"
+            blocks_stored = (
+                int(cp.sum(self._mixed_tensor.blocks_set))
+                if self._mixed_tensor else 0
             )
+            logger.debug(f"Mixed tensor blocks stored: {blocks_stored}")
 
     def _initialize_workspace(self) -> None:
         """Initialize GPU workspace arrays for dense optimization."""
@@ -515,7 +570,6 @@ class DenseLEDOptimizer:
         logger.info("Warming up GPU cache for sparse and dense operations...")
 
         # Part 1: Warm sparse/mixed tensor operations
-        sparse_start = time.time()
         if self.use_mixed_tensor:
             # Warm mixed tensor CUDA kernels (single channel)
             dummy_channel = cp.ones((FRAME_HEIGHT, FRAME_WIDTH), dtype=cp.float32)
@@ -530,26 +584,19 @@ class DenseLEDOptimizer:
             for i in range(3):
                 _ = self._A_combined_csc_gpu.T @ dummy_target
         cp.cuda.runtime.deviceSynchronize()
-        sparse_warm_time = time.time() - sparse_start
 
         # Part 2: Warm dense operations (einsum and step size calculation)
         dummy_x = cp.ones((self._actual_led_count, 3), dtype=cp.float32)
         dummy_gradient = cp.ones((self._actual_led_count, 3), dtype=cp.float32)
 
-        dense_start = time.time()
         for i in range(3):
             # Warm the main einsum operation
             _ = cp.einsum("ijk,jk->ik", self._ATA_gpu, dummy_x)
             # Warm the step size calculation (full path including GPU events)
             _ = self._compute_dense_step_size(dummy_gradient)
         cp.cuda.runtime.deviceSynchronize()
-        dense_warm_time = time.time() - dense_start
 
-        total_warm_time = sparse_warm_time + dense_warm_time
-        logger.info(
-            f"GPU cache warmed up in {total_warm_time:.3f}s "
-            f"(sparse: {sparse_warm_time:.3f}s, dense: {dense_warm_time:.3f}s)"
-        )
+        logger.info("GPU cache warmed up")
 
     def optimize_frame(
         self,
@@ -570,28 +617,21 @@ class DenseLEDOptimizer:
         Returns:
             DenseOptimizationResult with LED values and optional debug metrics
         """
-        start_time = time.time()
-        timing_breakdown = {}
 
         try:
             if not self._matrix_loaded:
                 raise RuntimeError("Dense matrices not loaded")
 
             # Validate input
-            validation_start = time.time()
             if target_frame.shape != (FRAME_HEIGHT, FRAME_WIDTH, 3):
                 raise ValueError(
                     f"Target frame shape {target_frame.shape} != {(FRAME_HEIGHT, FRAME_WIDTH, 3)}"
                 )
-            timing_breakdown["validation_time"] = time.time() - validation_start
 
             # KEY STEP 2: Calculate A^T*b for current frame
-            atb_start = time.time()
             ATb = self._calculate_ATb(target_frame)
-            timing_breakdown["atb_calculation_time"] = time.time() - atb_start
 
             # Initialize LED values
-            init_start = time.time()
             if initial_values is not None:
                 initial_normalized = (
                     initial_values / 255.0
@@ -602,127 +642,31 @@ class DenseLEDOptimizer:
             else:
                 # Use pre-initialized 0.5 values
                 self._led_values_gpu.fill(0.5)
-            timing_breakdown["initialization_time"] = time.time() - init_start
 
             # Reset workspace references to ensure deterministic behavior
             self._reset_workspace_references()
 
-            # Dense tensor optimization loop with detailed timing
-            led_values_solved, loop_timing = self._solve_dense_gradient_descent(
+            # Dense tensor optimization loop
+            led_values_solved, iterations_completed = self._solve_dense_gradient_descent(
                 ATb, max_iterations
-            )
-            timing_breakdown["optimization_loop_time"] = loop_timing.get(
-                "total_loop_time", 0.0
-            )
-            timing_breakdown["loop_iterations"] = loop_timing.get(
-                "iterations_completed", max_iterations or self.max_iterations
             )
 
             # Convert back to numpy
-            convert_start = time.time()
             led_values_normalized = cp.asnumpy(led_values_solved)
             led_values_output = (led_values_normalized * 255.0).astype(np.uint8)
-            timing_breakdown["conversion_time"] = time.time() - convert_start
 
             # Calculate error metrics if debug mode is enabled
             error_metrics = {}
-            debug_time = 0.0
             if debug:
-                debug_start = time.time()
                 error_metrics = self._compute_error_metrics(
                     led_values_solved, target_frame
                 )
-                debug_time = time.time() - debug_start
-                timing_breakdown["debug_time"] = debug_time
-
-            optimization_time = time.time() - start_time
-            timing_breakdown["total_time"] = optimization_time
-
-            # Calculate core optimization time (excluding debug overhead)
-            core_optimization_time = optimization_time - debug_time
-
-            # Calculate core per-frame time (excluding validation and conversion overhead)
-            core_time = (
-                timing_breakdown["atb_calculation_time"]
-                + timing_breakdown["initialization_time"]
-                + timing_breakdown["optimization_loop_time"]
-            )
-            timing_breakdown["core_per_frame_time"] = core_time
-
-            # Calculate FLOPs for this optimization
-            iterations_used = max_iterations or self.max_iterations
-
-            # Calculate actual FLOPs: A^T*b (once per frame) + dense optimization (per iteration)
-            atb_flops = (
-                self._atb_flops_per_frame
-                if hasattr(self, "_atb_flops_per_frame")
-                else 0
-            )
-            dense_loop_flops = iterations_used * (
-                self._dense_flops_per_iteration
-                if hasattr(self, "_dense_flops_per_iteration")
-                else self._flops_per_iteration
-            )
-            frame_flops = atb_flops + dense_loop_flops
-
-            # Create detailed flop_info with debug timing if enabled
-            flop_info = {
-                "total_flops": int(frame_flops),
-                "flops_per_iteration": int(
-                    self._dense_flops_per_iteration
-                    if hasattr(self, "_dense_flops_per_iteration")
-                    else self._flops_per_iteration
-                ),
-                "atb_flops_per_frame": int(atb_flops),
-                "dense_loop_flops": int(dense_loop_flops),
-                "gflops": frame_flops / 1e9,
-                "gflops_per_second": frame_flops / (core_optimization_time * 1e9),
-            }
-
-            # Add detailed timing info if debug mode is enabled
-            if debug:
-                detailed_timing = {
-                    "core_optimization_time": core_optimization_time,
-                    "debug_overhead_time": debug_time,
-                    "total_time_with_debug": optimization_time,
-                    "loop_time": loop_timing.get("total_loop_time", 0.0),
-                    "einsum_time": loop_timing.get("einsum_time", 0.0),
-                    "step_size_time": loop_timing.get("step_size_time", 0.0),
-                    "step_einsum_time": loop_timing.get("step_einsum_time", 0.0),
-                    "iterations_completed": loop_timing.get(
-                        "iterations_completed", iterations_used
-                    ),
-                    "atb_time": core_optimization_time
-                    - loop_timing.get("total_loop_time", 0.0),
-                }
-
-                # Include detailed A^T*b timing breakdown if available
-                if hasattr(self, "_atb_timing_breakdown"):
-                    detailed_timing.update(
-                        {
-                            "atb_cpu_to_gpu_time": self._atb_timing_breakdown.get(
-                                "cpu_to_gpu_conversion_time", 0.0
-                            ),
-                            "atb_sparse_operation_time": self._atb_timing_breakdown.get(
-                                "sparse_operation_time", 0.0
-                            ),
-                            "atb_tensor_conversion_time": self._atb_timing_breakdown.get(
-                                "tensor_conversion_time", 0.0
-                            ),
-                            "atb_total_time": self._atb_timing_breakdown.get(
-                                "total_atb_time", 0.0
-                            ),
-                        }
-                    )
-
-                flop_info["detailed_timing"] = detailed_timing
 
             # Create result with optional debug information
             result = DenseOptimizationResult(
                 led_values=led_values_output,
                 error_metrics=error_metrics,
-                optimization_time=core_optimization_time,  # Exclude debug overhead
-                iterations=iterations_used,
+                iterations=iterations_completed,
                 converged=True,
                 target_frame=target_frame.copy() if debug else None,
                 precomputation_info={
@@ -732,31 +676,16 @@ class DenseLEDOptimizer:
                 }
                 if debug
                 else None,
-                flop_info=flop_info,
-                timing_breakdown=timing_breakdown,
             )
 
-            # Update statistics with core optimization time only
-            self._total_flops += frame_flops
+            # Update statistics
             self._optimization_count += 1
-            self._total_optimization_time += core_optimization_time
 
-            if debug:
-                logger.debug(
-                    f"Dense optimization completed in {core_optimization_time:.3f}s "
-                    f"(+{debug_time:.3f}s debug overhead)"
-                )
-            else:
-                logger.debug(
-                    f"Dense optimization completed in {core_optimization_time:.3f}s"
-                )
+            logger.debug("Dense optimization completed")
             return result
 
         except Exception as e:
-            optimization_time = time.time() - start_time
-            logger.error(
-                f"Dense optimization failed after {optimization_time:.3f}s: {e}"
-            )
+            logger.error(f"Dense optimization failed: {e}")
 
             # Return error result
             return DenseOptimizationResult(
@@ -764,17 +693,8 @@ class DenseLEDOptimizer:
                 error_metrics={"mse": float("inf"), "mae": float("inf")}
                 if debug
                 else {},
-                optimization_time=optimization_time,
                 iterations=0,
                 converged=False,
-                flop_info={
-                    "total_flops": 0,
-                    "flops_per_iteration": int(self._flops_per_iteration)
-                    if self._flops_per_iteration > 0
-                    else 0,
-                    "gflops": 0.0,
-                    "gflops_per_second": 0.0,
-                },
             )
 
     def _calculate_ATb(self, target_frame: np.ndarray) -> cp.ndarray:
@@ -822,293 +742,180 @@ class DenseLEDOptimizer:
 
     def _calculate_ATb_csc_format(self, target_frame: np.ndarray) -> cp.ndarray:
         """Calculate A^T@b using CSC sparse format."""
-        atb_start_time = time.time()
-
         # Convert frame to flat format
-        cpu_conversion_start = time.time()
         target_combined_gpu = self._convert_frame_to_flat_format(target_frame)
-        cpu_to_gpu_time = time.time() - cpu_conversion_start
-
-        # Phase 2: Actual sparse matrix operation on GPU
-        operation_start = time.time()
-
-        # Get matrix properties for debugging
-        matrix_shape = self._A_combined_csc_gpu.shape
-        matrix_nnz = self._A_combined_csc_gpu.nnz
-        matrix_density = matrix_nnz / (matrix_shape[0] * matrix_shape[1]) * 100
-        target_size_mb = target_combined_gpu.nbytes / (1024 * 1024)
-
-        # Ensure GPU synchronization before timing
-        cp.cuda.runtime.deviceSynchronize()
-        operation_start_sync = time.time()
 
         # Actual sparse matrix operation
         ATb_combined = self._A_combined_csc_gpu.T @ target_combined_gpu
 
-        # Force GPU synchronization to get accurate timing
-        cp.cuda.runtime.deviceSynchronize()
-        operation_time = time.time() - operation_start_sync
-        operation_time_total = time.time() - operation_start
-
-        # Calculate theoretical performance metrics
-        flops_estimate = matrix_nnz * 2  # multiply-add for each non-zero
-        gflops_per_sec = (
-            flops_estimate / (operation_time * 1e9) if operation_time > 0 else 0
-        )
-
-        logger.debug(f"Sparse A^T@b operation analysis:")
-        logger.debug(f"  Matrix shape: {matrix_shape}, NNZ: {matrix_nnz:,}")
-        logger.debug(f"  Matrix density: {matrix_density:.3f}%")
-        logger.debug(
-            f"  Target vector size: {target_combined_gpu.shape}, {target_size_mb:.1f}MB"
-        )
-        logger.debug(f"  Operation time (sync): {operation_time:.4f}s")
-        logger.debug(f"  Operation time (total): {operation_time_total:.4f}s")
-        logger.debug(
-            f"  Estimated FLOPs: {flops_estimate:,}, GFLOPS/s: {gflops_per_sec:.2f}"
-        )
-        memory_data_mb = matrix_nnz * 4 + target_size_mb * 1024 * 1024
-        bandwidth_gb_s = memory_data_mb / (operation_time * 1024**3)
-        logger.debug(f"  Memory bandwidth estimate: {bandwidth_gb_s:.2f} GB/s")
-
-        # Phase 3: Convert result back to tensor form
-        tensor_conversion_start = time.time()
+        # Convert result back to tensor form
         led_count = self._actual_led_count
         self._ATb_gpu[:, 0] = ATb_combined[:led_count]  # R LEDs
         self._ATb_gpu[:, 1] = ATb_combined[led_count : 2 * led_count]  # G LEDs
         self._ATb_gpu[:, 2] = ATb_combined[2 * led_count :]  # B LEDs
-        tensor_conversion_time = time.time() - tensor_conversion_start
-
-        total_atb_time = time.time() - atb_start_time
-
-        # Store timing breakdown for debugging
-        if not hasattr(self, "_atb_timing_breakdown"):
-            self._atb_timing_breakdown = {}
-
-        self._atb_timing_breakdown.update(
-            {
-                "cpu_to_gpu_conversion_time": cpu_to_gpu_time,
-                "sparse_operation_time": operation_time,
-                "tensor_conversion_time": tensor_conversion_time,
-                "total_atb_time": total_atb_time,
-            }
-        )
-
-        logger.debug(
-            f"A^T*b timing - CPU→GPU: {cpu_to_gpu_time:.4f}s, "
-            f"Operation: {operation_time:.4f}s, "
-            f"Tensor conv: {tensor_conversion_time:.4f}s, "
-            f"Total: {total_atb_time:.4f}s"
-        )
 
         return self._ATb_gpu
 
     def _calculate_ATb_mixed_tensor(self, target_frame: np.ndarray) -> cp.ndarray:
-        """Calculate A^T@b using mixed tensor format with CUDA kernels."""
-        atb_start_time = time.time()
+        """
+        Calculate A^T@b using mixed tensor format with SINGLE TENSOR OPERATION.
 
-        # Normalize target frame and transfer to GPU (same format as archived implementation)
-        cpu_conversion_start = time.time()
-        target_normalized = target_frame.astype(np.float32) / 255.0
-        target_gpu = cp.asarray(target_normalized)
-        cpu_to_gpu_time = time.time() - cpu_conversion_start
+        Target: Implement einsum 'ijkm,jkm->ij' where:
+        - Mixed tensor diffusion patterns: (1000, 3, 480, 800) - shape 'ijkm'
+        - Target frame: (480, 800, 3) -> transpose to (3, 480, 800) - shape 'jkm'
+        - Result: (1000, 3) - shape 'ij'
 
-        logger.debug(
-            f"Mixed tensor A^T@b - target_frame shape: {target_frame.shape}, target_gpu shape: {target_gpu.shape}"
-        )
+        However, since CUDA kernel only accepts (height, width) input, we need to
+        construct the full tensor operation differently or use the existing kernel properly.
+        """
+        # Step 1: Normalize and transfer target to GPU
+        # Target shape: (480, 800, 3) -> (height, width, channels)
+        target_normalized = (
+            target_frame.astype(np.float32) / 255.0
+        )  # Shape: (480, 800, 3)
+        target_gpu = cp.asarray(target_normalized)  # Shape: (480, 800, 3)
 
-        # Mixed tensor operation using CUDA kernel
-        operation_start = time.time()
-        cp.cuda.runtime.deviceSynchronize()
-        operation_start_sync = time.time()
+        logger.debug(f"Target shape after GPU transfer: {target_gpu.shape}")
 
-        # Use the mixed tensor's CUDA kernel for A^T @ b
-        # Process each RGB channel separately and combine results
-        result_r = self._mixed_tensor.transpose_dot_product_cuda_high_performance(
-            target_gpu[:, :, 0]  # Red channel
-        )
-        result_g = self._mixed_tensor.transpose_dot_product_cuda_high_performance(
-            target_gpu[:, :, 1]  # Green channel
-        )
-        result_b = self._mixed_tensor.transpose_dot_product_cuda_high_performance(
-            target_gpu[:, :, 2]  # Blue channel
-        )
+        # Step 2: Prepare target for einsum operation
+        # Need to convert target from (height, width, channels) to (channels, height, width)
+        target_chw = target_gpu.transpose(2, 0, 1)  # Shape: (3, 480, 800)
+        logger.debug(f"Target shape after transpose (CHW): {target_chw.shape}")
 
-        # Combine the results into proper RGB format
-        result = cp.zeros((self._actual_led_count, 3), dtype=cp.float32)
-        result[:, 0] = result_r[:, 0]  # Red LED values from red channel
-        result[:, 1] = result_g[:, 1]  # Green LED values from green channel
-        result[:, 2] = result_b[:, 2]  # Blue LED values from blue channel
+        # Step 3: TRUE SINGLE TENSOR OPERATION using einsum
+        # Convert sparse mixed tensor to dense format for proper einsum
+        # Mixed tensor storage: (3, 1000, 96, 96) -> logical (1000, 3, 480, 800)
 
-        cp.cuda.runtime.deviceSynchronize()
-        operation_time = time.time() - operation_start_sync
+        # Build dense diffusion tensor: (1000, 3, 480, 800)
+        logger.debug("Converting mixed tensor to dense format for einsum...")
+        diffusion_dense = cp.zeros(
+            (
+                self._actual_led_count,
+                3,
+                self._mixed_tensor.height,
+                self._mixed_tensor.width,
+            ),
+            dtype=cp.float32,
+        )  # Shape: (1000, 3, 480, 800)
 
-        # Store result in the same format as CSC (following archived implementation)
-        tensor_conversion_start = time.time()
-        logger.debug(
-            f"Mixed tensor result shape: {result.shape}, ATb_gpu shape: {self._ATb_gpu.shape}"
-        )
+        # Fill dense tensor from mixed tensor sparse blocks
+        for led_idx in range(self._actual_led_count):
+            for channel_idx in range(3):
+                if self._mixed_tensor.blocks_set[
+                    channel_idx, led_idx
+                ]:  # Storage: (channels, batch)
+                    # Get block position and data
+                    top_row = int(
+                        self._mixed_tensor.block_positions[channel_idx, led_idx, 0]
+                    )
+                    top_col = int(
+                        self._mixed_tensor.block_positions[channel_idx, led_idx, 1]
+                    )
+                    block_data = self._mixed_tensor.sparse_values[
+                        channel_idx, led_idx
+                    ]  # Shape: (96, 96)
 
-        # Following the original implementation exactly
-        if result.shape == (self._actual_led_count, 3):
-            # Direct copy if shapes match
-            self._ATb_gpu[:, 0] = result[:, 0]
-            self._ATb_gpu[:, 1] = result[:, 1]
-            self._ATb_gpu[:, 2] = result[:, 2]
-        else:
-            raise ValueError(
-                f"Mixed tensor result shape {result.shape} does not match expected ({self._actual_led_count}, 3)"
-            )
+                    # Place block in dense tensor
+                    diffusion_dense[
+                        led_idx,
+                        channel_idx,
+                        top_row : top_row + self._mixed_tensor.block_size,
+                        top_col : top_col + self._mixed_tensor.block_size,
+                    ] = block_data
 
-        tensor_conversion_time = time.time() - tensor_conversion_start
+        logger.debug(f"Dense diffusion tensor shape: {diffusion_dense.shape}")
+        logger.debug(f"Target CHW shape: {target_chw.shape}")
 
-        total_atb_time = time.time() - atb_start_time
+        # Step 4: SINGLE EINSUM OPERATION
+        # einsum('ijkm,jkm->ij', diffusion_dense, target_chw)
+        # Where: i=LEDs (1000), j=channels (3), k=height (480), m=width (800)
+        result = cp.einsum(
+            "ijkm,jkm->ij", diffusion_dense, target_chw
+        )  # Shape: (1000, 3)
 
-        logger.debug(
-            f"A^T*b timing (Mixed) - CPU→GPU: {cpu_to_gpu_time:.4f}s, Operation: {operation_time:.4f}s, Tensor conv: {tensor_conversion_time:.4f}s, Total: {total_atb_time:.4f}s"
-        )
+        logger.debug(f"Einsum result shape: {result.shape}, sample: {result[:3].get()}")
+
+        # Step 4: Convert to output format
+        self._ATb_gpu[:] = result  # Shape: (1000, 3)
 
         return self._ATb_gpu
 
-    def debug_sparse_performance(self, target_frame: np.ndarray) -> Dict[str, float]:
+    def compare_atb_methods(self, target_frame: np.ndarray) -> Dict[str, any]:
         """
-        Debug sparse matrix performance with different approaches.
+        Compare A^T@b calculation between CSC and mixed tensor methods element by element.
 
-        Args:
-            target_frame: Target image for testing
-
-        Returns:
-            Dictionary with timing results for different approaches
+        Returns detailed comparison for debugging divergences.
         """
-        if not self._matrix_loaded:
-            raise RuntimeError("Matrices not loaded")
+        logger.info("=== Comparing A^T@b methods ===")
 
-        logger.info("=== Sparse Matrix Performance Debug ===")
+        # Calculate using CSC method
+        logger.info("Computing A^T@b with CSC method...")
+        atb_csc = self._calculate_ATb_csc_format(target_frame)
 
-        # Prepare target vector (same as _calculate_ATb)
-        target_rgb_normalized = target_frame.astype(np.float32) / 255.0
-        target_flattened = target_rgb_normalized.reshape(-1, 3)
-        pixels = target_flattened.shape[0]
-        target_combined = np.empty(pixels * 3, dtype=np.float32)
-        target_combined[:pixels] = target_flattened[:, 0]
-        target_combined[pixels : 2 * pixels] = target_flattened[:, 1]
-        target_combined[2 * pixels :] = target_flattened[:, 2]
-        target_combined_gpu = cp.asarray(target_combined)
+        # Calculate using mixed tensor method
+        logger.info("Computing A^T@b with mixed tensor method...")
+        atb_mixed = self._calculate_ATb_mixed_tensor(target_frame)
 
-        # Debug dimensions
-        logger.info(f"Target frame shape: {target_frame.shape}")
-        logger.info(f"Target combined shape: {target_combined_gpu.shape}")
-        logger.info(f"Combined matrix shape: {self._A_combined_csc_gpu.shape}")
-        logger.info(f"Combined matrix .T shape: {self._A_combined_csc_gpu.T.shape}")
-        logger.info(
-            f"Individual matrix shapes: R={self._A_r_csc_gpu.shape}, "
-            f"G={self._A_g_csc_gpu.shape}, B={self._A_b_csc_gpu.shape}"
-        )
+        # Element-wise comparison
+        diff = cp.abs(atb_csc - atb_mixed)
+        max_diff = float(diff.max())
+        mean_diff = float(diff.mean())
 
-        results = {}
+        # Find elements with largest differences
+        diff_cpu = diff.get()
+        atb_csc_cpu = atb_csc.get()
+        atb_mixed_cpu = atb_mixed.get()
 
-        # Test 1: Current approach (combined block diagonal)
-        logger.info("Testing current combined block diagonal approach...")
-        cp.cuda.runtime.deviceSynchronize()
-        start = time.time()
-        result1 = self._A_combined_csc_gpu.T @ target_combined_gpu
-        cp.cuda.runtime.deviceSynchronize()
-        results["combined_block_diagonal"] = time.time() - start
+        # Get top 10 differences
+        flat_diff = diff_cpu.flatten()
+        flat_indices = np.argsort(flat_diff)[-10:][::-1]
 
-        # Test 2: Individual channel operations
-        logger.info("Testing individual channel operations...")
-        target_r = cp.asarray(target_flattened[:, 0].ravel())
-        target_g = cp.asarray(target_flattened[:, 1].ravel())
-        target_b = cp.asarray(target_flattened[:, 2].ravel())
+        top_differences = []
+        for flat_idx in flat_indices:
+            led_idx = flat_idx // 3
+            channel_idx = flat_idx % 3
+            csc_val = atb_csc_cpu[led_idx, channel_idx]
+            mixed_val = atb_mixed_cpu[led_idx, channel_idx]
+            diff_val = diff_cpu[led_idx, channel_idx]
 
-        cp.cuda.runtime.deviceSynchronize()
-        start = time.time()
-        atb_r = self._A_r_csc_gpu.T @ target_r
-        atb_g = self._A_g_csc_gpu.T @ target_g
-        atb_b = self._A_b_csc_gpu.T @ target_b
-        cp.cuda.runtime.deviceSynchronize()
-        results["individual_channels"] = time.time() - start
-
-        # Test 3: Check if it's the transpose that's slow
-        logger.info("Testing non-transposed operation...")
-        if target_combined_gpu.shape[0] == self._A_combined_csc_gpu.shape[1]:
-            cp.cuda.runtime.deviceSynchronize()
-            start = time.time()
-            result3 = self._A_combined_csc_gpu @ target_combined_gpu
-            cp.cuda.runtime.deviceSynchronize()
-            results["non_transposed"] = time.time() - start
-        else:
-            logger.warning(
-                f"Skipping non-transposed test: dimension mismatch "
-                f"{target_combined_gpu.shape[0]} != {self._A_combined_csc_gpu.shape[1]}"
+            top_differences.append(
+                {
+                    "led": led_idx,
+                    "channel": channel_idx,
+                    "csc": csc_val,
+                    "mixed": mixed_val,
+                    "diff": diff_val,
+                    "rel_diff": diff_val / max(abs(csc_val), abs(mixed_val), 1e-8),
+                }
             )
-            results["non_transposed"] = -1
 
-        # Test 4: Convert to CSR format and test
-        logger.info("Testing CSR format...")
-        try:
-            A_combined_csr = self._A_combined_csc_gpu.tocsr()
-            cp.cuda.runtime.deviceSynchronize()
-            start = time.time()
-            result4 = A_combined_csr.T @ target_combined_gpu
-            cp.cuda.runtime.deviceSynchronize()
-            results["csr_format"] = time.time() - start
-        except Exception as e:
-            logger.warning(f"CSR test failed: {e}")
-            results["csr_format"] = -1
+        logger.info(f"Max absolute difference: {max_diff:.6f}")
+        logger.info(f"Mean absolute difference: {mean_diff:.6f}")
+        logger.info(f"Close (atol=1e-3): {cp.allclose(atb_csc, atb_mixed, atol=1e-3)}")
+        logger.info(f"Close (atol=1e-2): {cp.allclose(atb_csc, atb_mixed, atol=1e-2)}")
 
-        # Test 5: Check if multiple operations are faster (cache effects)
-        logger.info("Testing repeated operations (cache effects)...")
-        cp.cuda.runtime.deviceSynchronize()
-        start = time.time()
-        for _ in range(5):
-            result5 = self._A_combined_csc_gpu.T @ target_combined_gpu
-        cp.cuda.runtime.deviceSynchronize()
-        results["repeated_operations"] = (time.time() - start) / 5
+        logger.info("Top 5 differences:")
+        for i, diff_info in enumerate(top_differences[:5]):
+            logger.info(
+                f"  {i+1}. LED {diff_info['led']}, channel {diff_info['channel']}: "
+                f"CSC={diff_info['csc']:.6f}, Mixed={diff_info['mixed']:.6f}, "
+                f"diff={diff_info['diff']:.6f} ({diff_info['rel_diff']*100:.1f}%)"
+            )
 
-        # Test 6: Check GPU memory info during operation
-        logger.info("GPU memory analysis...")
-        meminfo_before = cp.cuda.runtime.memGetInfo()
-        cp.cuda.runtime.deviceSynchronize()
-        start = time.time()
-        result6 = self._A_combined_csc_gpu.T @ target_combined_gpu
-        meminfo_after = cp.cuda.runtime.memGetInfo()
-        cp.cuda.runtime.deviceSynchronize()
-        results["memory_test"] = time.time() - start
-
-        logger.info(f"Memory before: {meminfo_before[0]/(1024**2):.1f}MB free")
-        logger.info(f"Memory after: {meminfo_after[0]/(1024**2):.1f}MB free")
-        logger.info(
-            f"Memory used: {(meminfo_before[0] - meminfo_after[0])/(1024**2):.1f}MB"
-        )
-
-        # Report results
-        logger.info("=== Performance Results ===")
-        for method, timing in results.items():
-            if timing > 0:
-                logger.info(f"{method}: {timing:.4f}s")
-            else:
-                logger.info(f"{method}: FAILED")
-
-        # Calculate matrix properties
-        matrix_info = {
-            "csc_shape": self._A_combined_csc_gpu.shape,
-            "csc_nnz": self._A_combined_csc_gpu.nnz,
-            "csc_density_percent": self._A_combined_csc_gpu.nnz
-            / (self._A_combined_csc_gpu.shape[0] * self._A_combined_csc_gpu.shape[1])
-            * 100,
-            "csc_size_mb": self._A_combined_csc_gpu.data.nbytes / (1024**2),
+        return {
+            "atb_csc": atb_csc,
+            "atb_mixed": atb_mixed,
+            "max_diff": max_diff,
+            "mean_diff": mean_diff,
+            "top_differences": top_differences,
+            "close_1e3": cp.allclose(atb_csc, atb_mixed, atol=1e-3),
+            "close_1e2": cp.allclose(atb_csc, atb_mixed, atol=1e-2),
         }
 
-        logger.info("=== Matrix Properties ===")
-        for key, value in matrix_info.items():
-            logger.info(f"{key}: {value}")
-
-        return results
 
     def _solve_dense_gradient_descent(
         self, ATb: cp.ndarray, max_iterations: Optional[int]
-    ) -> Tuple[cp.ndarray, Dict[str, float]]:
+    ) -> Tuple[cp.ndarray, int]:
         """
         Solve using dense gradient descent with precomputed A^T*A using optimized einsum.
 
@@ -1120,7 +927,7 @@ class DenseLEDOptimizer:
             max_iterations: Maximum iterations
 
         Returns:
-            Tuple of (LED values (led_count, 3) on GPU, timing_info dict)
+            Tuple of (LED values (led_count, 3) on GPU, iterations_completed)
         """
         max_iters = max_iterations or self.max_iterations
 
@@ -1138,9 +945,6 @@ class DenseLEDOptimizer:
             3,
         ), f"ATb shape {ATb.shape} != expected ({self._actual_led_count}, 3)"
 
-        # Start timing for the optimization loop
-        loop_start_time = time.time()
-
         # Get workspace arrays
         w = self._gpu_workspace
         x = self._led_values_gpu  # (led_count, 3)
@@ -1151,41 +955,15 @@ class DenseLEDOptimizer:
             3,
         ), f"x shape {x.shape} != expected ({self._actual_led_count}, 3)"
 
-        einsum_time = 0.0
-        step_size_time = 0.0
-        step_einsum_time = 0.0
-
-        # Track per-iteration timing for cache warming analysis
-        per_iteration_times = []
-        einsum_per_iteration = []
-        step_per_iteration = []
-
         for iteration in range(max_iters):
-            iteration_start = time.time()
-
             # KEY OPTIMIZATION: Use einsum for parallel ATA @ x computation
             # ATA: (led_count, led_count, 3), x: (led_count, 3) -> (led_count, 3)
             # einsum 'ijk,jk->ik' computes all 3 channels in parallel
-            cp.cuda.runtime.deviceSynchronize()  # Ensure accurate timing
-            einsum_start = time.time()
-
             w["ATA_x"][:] = cp.einsum("ijk,jk->ik", self._ATA_gpu, x)
             w["gradient"][:] = w["ATA_x"] - ATb
 
-            cp.cuda.runtime.deviceSynchronize()
-            einsum_duration = time.time() - einsum_start
-            einsum_time += einsum_duration
-            einsum_per_iteration.append(einsum_duration)
-
             # KEY STEP 4: Compute step size using optimized dense operations
-            step_start = time.time()
-            step_size, step_einsum_duration = self._compute_dense_step_size(
-                w["gradient"]
-            )
-            step_duration = time.time() - step_start
-            step_size_time += step_duration
-            step_einsum_time += step_einsum_duration
-            step_per_iteration.append(step_duration)
+            step_size = self._compute_dense_step_size(w["gradient"])
 
             # Gradient descent step with projection to [0, 1]
             w["x_new"][:] = cp.clip(x - step_size * w["gradient"], 0, 1)
@@ -1201,82 +979,12 @@ class DenseLEDOptimizer:
             # Update (copy values to avoid reference swapping issues)
             x[:] = w["x_new"]
 
-            iteration_time = time.time() - iteration_start
-            per_iteration_times.append(iteration_time)
-
-            # Log first few iterations to detect cache warming
-            if iteration < 3:
-                logger.debug(
-                    f"Iteration {iteration}: {iteration_time:.4f}s "
-                    f"(einsum: {einsum_duration:.4f}s, step: {step_duration:.4f}s)"
-                )
-
         # Ensure we return the current x
         self._led_values_gpu[:] = x
 
-        loop_total_time = time.time() - loop_start_time
+        return x, iteration + 1
 
-        # Analyze per-iteration timing for cache warming effects
-        cache_analysis = {}
-        if len(per_iteration_times) > 1:
-            first_iter = per_iteration_times[0]
-            avg_later_iters = (
-                sum(per_iteration_times[1:]) / len(per_iteration_times[1:])
-                if len(per_iteration_times) > 1
-                else first_iter
-            )
-
-            first_einsum = einsum_per_iteration[0] if einsum_per_iteration else 0
-            avg_later_einsum = (
-                sum(einsum_per_iteration[1:]) / len(einsum_per_iteration[1:])
-                if len(einsum_per_iteration) > 1
-                else first_einsum
-            )
-
-            first_step = step_per_iteration[0] if step_per_iteration else 0
-            avg_later_step = (
-                sum(step_per_iteration[1:]) / len(step_per_iteration[1:])
-                if len(step_per_iteration) > 1
-                else first_step
-            )
-
-            cache_analysis = {
-                "first_iteration_time": first_iter,
-                "avg_later_iterations_time": avg_later_iters,
-                "cache_warmup_speedup": first_iter / avg_later_iters
-                if avg_later_iters > 0
-                else 1.0,
-                "first_einsum_time": first_einsum,
-                "avg_later_einsum_time": avg_later_einsum,
-                "einsum_warmup_speedup": first_einsum / avg_later_einsum
-                if avg_later_einsum > 0
-                else 1.0,
-                "first_step_time": first_step,
-                "avg_later_step_time": avg_later_step,
-                "step_warmup_speedup": first_step / avg_later_step
-                if avg_later_step > 0
-                else 1.0,
-                "per_iteration_times": per_iteration_times[:5],  # First 5 for debugging
-            }
-
-            logger.debug(
-                f"Dense loop cache analysis: "
-                f"1st iter: {first_iter:.4f}s, avg later: {avg_later_iters:.4f}s, "
-                f"speedup: {cache_analysis['cache_warmup_speedup']:.2f}x"
-            )
-
-        timing_info = {
-            "total_loop_time": loop_total_time,
-            "einsum_time": einsum_time,
-            "step_size_time": step_size_time,
-            "step_einsum_time": step_einsum_time,
-            "iterations_completed": iteration + 1,
-            "cache_analysis": cache_analysis,
-        }
-
-        return x, timing_info
-
-    def _compute_dense_step_size(self, gradient: cp.ndarray) -> Tuple[float, float]:
+    def _compute_dense_step_size(self, gradient: cp.ndarray) -> float:
         """
         Compute step size using single einsum for g^T @ ATA @ g: (g^T @ g) / (g^T @ A^T*A @ g).
 
@@ -1284,7 +992,7 @@ class DenseLEDOptimizer:
             gradient: Gradient vector (led_count, 3)
 
         Returns:
-            Tuple of (step_size, einsum_time)
+            Step size (float)
         """
         # g^T @ g (sum over all elements)
         g_dot_g = cp.sum(gradient * gradient)
@@ -1292,25 +1000,12 @@ class DenseLEDOptimizer:
         # ULTRA-OPTIMIZED: Compute g^T @ ATA @ g for all channels in single einsum
         # ATA: (led_count, led_count, 3), gradient: (led_count, 3)
         # Computes sum over k of: g[:,k]^T @ ATA[:,:,k] @ g[:,k]
-
-        # Use GPU events for accurate timing
-        start_event = cp.cuda.Event()
-        end_event = cp.cuda.Event()
-
-        start_event.record()
         g_dot_ATA_g = cp.einsum("ik,ijk,jk->", gradient, self._ATA_gpu, gradient)
-        end_event.record()
-
-        cp.cuda.runtime.deviceSynchronize()
-        einsum_duration = cp.cuda.get_elapsed_time(start_event, end_event) / 1000.0
 
         if g_dot_ATA_g > 0:
-            return (
-                float(self.step_size_scaling * g_dot_g / g_dot_ATA_g),
-                einsum_duration,
-            )
+            return float(self.step_size_scaling * g_dot_g / g_dot_ATA_g)
         else:
-            return 0.01, einsum_duration  # Fallback step size
+            return 0.01  # Fallback step size
 
     def _compute_error_metrics(
         self, led_values: cp.ndarray, target_frame: np.ndarray
