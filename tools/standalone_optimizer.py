@@ -112,76 +112,110 @@ class StandaloneOptimizer:
         output_path: Optional[str] = None,
         show_preview: bool = False,
     ):
-        """Run optimization on input image with detailed timing."""
+        """Run optimization on input image three times to analyze cache warming effects."""
 
         # Track timing for each phase
         total_start = time.time()
 
+        # Phase 1: Load image once and create three distinct copies
+        load_start = time.time()
         if self.optimizer_type == "mixed":
-            # Use mixed tensor optimizer directly
-            # Phase 1: Load image
-            load_start = time.time()
-            target_image = self._load_image_mixed(input_path)
-            load_time = time.time() - load_start
-
-            # Phase 2: Optimize
-            optimize_start = time.time()
-            result = self.optimizer.optimize_frame(target_image, debug=True)
-            optimize_time = time.time() - optimize_start
-
-            # Log performance timing details from the PerformanceTiming class
-            logger.info("=== PerformanceTiming Details ===")
-            self.optimizer.log_performance_timing(logger)
-
-            # Phase 3: Render result (placeholder for now)
-            render_start = time.time()
-            rendered_result = self._render_result_mixed(result, target_image)
-            render_time = time.time() - render_start
-
-            # Phase 4: Save (if requested)
-            save_time = 0.0
-            if output_path:
-                save_start = time.time()
-                self._save_image_mixed(rendered_result, output_path)
-                save_time = time.time() - save_start
+            original_image = self._load_image_mixed(input_path)
         else:
-            # Use pipeline for dense/sparse
-            # Phase 1: Load image
-            load_start = time.time()
-            target_image = self.pipeline.load_image(input_path)
-            load_time = time.time() - load_start
+            original_image = self.pipeline.load_image(input_path)
 
-            # Phase 2: Optimize
+        # Create three distinct copies in memory to avoid image caching effects
+        target_images = [
+            original_image.copy(),  # Run 1 copy
+            original_image.copy(),  # Run 2 copy
+            original_image.copy(),  # Run 3 copy
+        ]
+        load_time = time.time() - load_start
+
+        # Phase 2: Run optimization three times with the same optimizer instance
+        optimize_times = []
+        results = []
+
+        for run_num in range(1, 4):
+            logger.info(f"=== Optimization Run {run_num}/3 ===")
+
             optimize_start = time.time()
-            result = self.pipeline.optimize_image(target_image, max_iterations=None)
+            if self.optimizer_type == "mixed":
+                result = self.optimizer.optimize_frame(
+                    target_images[run_num - 1], debug=True
+                )
+            else:
+                result = self.pipeline.optimize_image(
+                    target_images[run_num - 1], max_iterations=None
+                )
             optimize_time = time.time() - optimize_start
 
-            # Log performance timing details from the PerformanceTiming class (for dense optimizer)
-            if self.optimizer_type == "dense":
-                logger.info("=== PerformanceTiming Details ===")
+            optimize_times.append(optimize_time)
+            results.append(result)
+
+            logger.info(f"Run {run_num} optimization time: {optimize_time:.3f}s")
+
+            # Log performance timing details for each run
+            if self.optimizer_type == "mixed":
+                logger.info(f"=== PerformanceTiming Details - Run {run_num} ===")
+                self.optimizer.log_performance_timing(logger)
+                # Reset timing for next run to get clean per-run metrics
+                self.optimizer.reset_timing()
+            elif self.optimizer_type == "dense":
+                logger.info(f"=== PerformanceTiming Details - Run {run_num} ===")
                 self.pipeline.optimizer.log_performance_timing(logger)
+                # Reset timing for next run to get clean per-run metrics
+                self.pipeline.optimizer.reset_timing()
 
-            # Phase 3: Render result
-            render_start = time.time()
+        # Use the last result for rendering and saving
+        result = results[-1]
+        target_image = target_images[-1]
+
+        # Phase 3: Render result from final run
+        render_start = time.time()
+        if self.optimizer_type == "mixed":
+            rendered_result = self._render_result_mixed(result, target_image)
+        else:
             rendered_result = self.pipeline.render_result(result)
-            render_time = time.time() - render_start
+        render_time = time.time() - render_start
 
-            # Phase 4: Save (if requested)
-            save_time = 0.0
-            if output_path:
-                save_start = time.time()
+        # Phase 4: Save (if requested)
+        save_time = 0.0
+        if output_path:
+            save_start = time.time()
+            if self.optimizer_type == "mixed":
+                self._save_image_mixed(rendered_result, output_path)
+            else:
                 self.pipeline.save_image(rendered_result, output_path)
-                save_time = time.time() - save_start
+            save_time = time.time() - save_start
 
         total_time = time.time() - total_start
 
-        # Store timing breakdown in result for reporting
+        # Calculate cache warming statistics
+        first_run_time = optimize_times[0]
+        warm_run_times = optimize_times[1:]
+        avg_warm_time = sum(warm_run_times) / len(warm_run_times)
+        cache_speedup = (first_run_time - avg_warm_time) / first_run_time * 100
+
+        logger.info("=== Cache Warming Analysis ===")
+        logger.info(f"First run (cold cache): {first_run_time:.3f}s")
+        logger.info(f"Average warm runs: {avg_warm_time:.3f}s")
+        logger.info(f"Cache warming speedup: {cache_speedup:.1f}%")
+        for i, opt_time in enumerate(optimize_times, 1):
+            logger.info(f"Run {i}: {opt_time:.3f}s")
+
+        # Store timing breakdown in result for reporting (including multi-run analysis)
         result.timing_breakdown = {
             "load_time": load_time,
-            "optimize_time": optimize_time,
+            "optimize_time": avg_warm_time,  # Use average warm time as primary metric
             "render_time": render_time,
             "save_time": save_time,
             "total_time": total_time,
+            # Multi-run timing analysis
+            "optimize_times_all_runs": optimize_times,
+            "first_run_time": first_run_time,
+            "avg_warm_time": avg_warm_time,
+            "cache_speedup_percent": cache_speedup,
         }
 
         # DEBUG: Save LED values for comparison
@@ -412,6 +446,17 @@ def main():
                     f"Image saving:      {timing['save_time']:.3f}s ({save_pct:.1f}%)"
                 )
             logger.info(f"Total time:        {timing['total_time']:.3f}s")
+
+            # Print cache warming analysis
+            if "optimize_times_all_runs" in timing:
+                logger.info("=== Cache Warming Analysis ===")
+                logger.info(f"First run (cold):   {timing['first_run_time']:.3f}s")
+                logger.info(f"Average warm runs:  {timing['avg_warm_time']:.3f}s")
+                logger.info(
+                    f"Cache speedup:      {timing['cache_speedup_percent']:.1f}%"
+                )
+                for i, run_time in enumerate(timing["optimize_times_all_runs"], 1):
+                    logger.info(f"  Run {i}:          {run_time:.3f}s")
 
             # Print core per-frame timing
             if "core_per_frame_time" in timing:
