@@ -23,6 +23,7 @@ import scipy.sparse as sp
 
 from ..const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
 from ..utils.led_diffusion_csc_matrix import LEDDiffusionCSCMatrix
+from ..utils.performance_timing import PerformanceTiming
 from ..utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,7 @@ class DenseLEDOptimizer:
         self,
         diffusion_patterns_path: Optional[str] = None,
         use_mixed_tensor: bool = False,
+        enable_performance_timing: bool = False,
     ):
         """
         Initialize dense tensor LED optimizer.
@@ -77,11 +79,19 @@ class DenseLEDOptimizer:
             use_mixed_tensor: If True, use mixed tensor format for A^T@b calculation.
                              If False, use CSC sparse format for A^T@b calculation.
                              Both modes use the same dense A^T@A matrices for optimization.
+            enable_performance_timing: If True, enable detailed performance timing
         """
         self.diffusion_patterns_path = (
             diffusion_patterns_path or "diffusion_patterns/synthetic_1000"
         )
         self.use_mixed_tensor = use_mixed_tensor
+
+        # Performance timing
+        self.timing = (
+            PerformanceTiming("DenseLEDOptimizer", enable_gpu_timing=True)
+            if enable_performance_timing
+            else None
+        )
 
         # Optimization parameters for gradient descent
         self.max_iterations = 10
@@ -514,7 +524,9 @@ class DenseLEDOptimizer:
                 )
 
             # KEY STEP 2: Calculate A^T*b for current frame
+            self.timing and self.timing.start("ATb_calculation_total")
             ATb = self._calculate_ATb(target_frame)
+            self.timing and self.timing.stop("ATb_calculation_total")
 
             # Initialize LED values
             if initial_values is not None:
@@ -532,10 +544,12 @@ class DenseLEDOptimizer:
             self._reset_workspace_references()
 
             # Dense tensor optimization loop
+            self.timing and self.timing.start("gradient_descent_total")
             (
                 led_values_solved,
                 iterations_completed,
             ) = self._solve_dense_gradient_descent(ATb, max_iterations)
+            self.timing and self.timing.stop("gradient_descent_total")
 
             # Convert back to numpy
             led_values_normalized = cp.asnumpy(led_values_solved)
@@ -617,11 +631,19 @@ class DenseLEDOptimizer:
 
     def _calculate_ATb_csc_format(self, target_frame: np.ndarray) -> cp.ndarray:
         """Calculate A^T@b using CSC sparse format."""
+        self.timing and self.timing.start("ATb_data_preparation")
+
         # Convert frame to flat format
         target_combined_gpu = self._convert_frame_to_flat_format(target_frame)
 
+        self.timing and self.timing.stop("ATb_data_preparation")
+
         # Actual sparse matrix operation
+        self.timing and self.timing.start("ATb_csc_sparse_matmul", use_gpu_events=True)
+
         ATb_combined = self._A_combined_csc_gpu.T @ target_combined_gpu
+
+        self.timing and self.timing.stop("ATb_csc_sparse_matmul")
 
         # Convert result back to tensor form
         led_count = self._actual_led_count
@@ -647,6 +669,8 @@ class DenseLEDOptimizer:
         Returns:
             ATb vector (led_count, 3) on GPU
         """
+        self.timing and self.timing.start("ATb_data_preparation")
+
         # Step 1: Normalize target frame and convert to planar form
         target_normalized = (
             target_frame.astype(np.float32) / 255.0
@@ -660,11 +684,19 @@ class DenseLEDOptimizer:
 
         logger.debug(f"Target planar shape: {target_gpu.shape}")
 
+        self.timing and self.timing.stop("ATb_data_preparation")
+
         # Step 2: Use the new 3D transpose_dot_product method
         # This processes all channels in one CUDA kernel operation
+        self.timing and self.timing.start(
+            "ATb_mixed_tensor_3d_kernel", use_gpu_events=True
+        )
+
         result = self._mixed_tensor.transpose_dot_product_3d(
             target_gpu
         )  # Shape: (batch_size, channels)
+
+        self.timing and self.timing.stop("ATb_mixed_tensor_3d_kernel")
 
         # Store in the ATb buffer
         self._ATb_gpu[:] = result
@@ -721,14 +753,30 @@ class DenseLEDOptimizer:
             # KEY OPTIMIZATION: Use einsum for parallel ATA @ x computation
             # ATA: (led_count, led_count, 3), x: (led_count, 3) -> (led_count, 3)
             # einsum 'ijk,jk->ik' computes all 3 channels in parallel
+            self.timing and self.timing.start(
+                "gradient_calculation", use_gpu_events=True
+            )
+
             w["ATA_x"][:] = cp.einsum("ijk,jk->ik", self._ATA_gpu, x)
             w["gradient"][:] = w["ATA_x"] - ATb
 
+            self.timing and self.timing.stop("gradient_calculation")
+
             # KEY STEP 4: Compute step size using optimized dense operations
+            self.timing and self.timing.start(
+                "step_size_calculation", use_gpu_events=True
+            )
+
             step_size = self._compute_dense_step_size(w["gradient"])
 
+            self.timing and self.timing.stop("step_size_calculation")
+
             # Gradient descent step with projection to [0, 1]
+            self.timing and self.timing.start("gradient_step", use_gpu_events=True)
+
             w["x_new"][:] = cp.clip(x - step_size * w["gradient"], 0, 1)
+
+            self.timing and self.timing.stop("gradient_step")
 
             # Check convergence
             delta = cp.linalg.norm(w["x_new"] - x)
@@ -816,6 +864,7 @@ class DenseLEDOptimizer:
             "estimated_fps": 0.0,  # Timing removed
             "led_count": self._actual_led_count,
             "frame_dimensions": (FRAME_WIDTH, FRAME_HEIGHT),
+            "performance_timing_enabled": self.timing is not None,
         }
 
         if self._matrix_loaded:
@@ -833,4 +882,38 @@ class DenseLEDOptimizer:
                 }
             )
 
+        # Add performance timing stats if available
+        if self.timing:
+            timing_stats = self.timing.get_stats()
+            stats["performance_timing"] = timing_stats
+
         return stats
+
+    def log_performance_timing(self, logger_instance: logging.Logger = None) -> None:
+        """
+        Log performance timing results.
+
+        Args:
+            logger_instance: Logger to use, defaults to module logger
+        """
+        if self.timing:
+            log_target = logger_instance or logger
+            self.timing.log(log_target, include_percentages=True, sort_by="time")
+        else:
+            logger.info("Performance timing not enabled")
+
+    def get_timing_data(self) -> Dict[str, Any]:
+        """
+        Get structured timing data for analysis.
+
+        Returns:
+            Dictionary containing timing data, empty if timing disabled
+        """
+        if self.timing:
+            return self.timing.get_timing_data()
+        return {}
+
+    def reset_timing(self) -> None:
+        """Reset performance timing data."""
+        if self.timing:
+            self.timing.reset()
