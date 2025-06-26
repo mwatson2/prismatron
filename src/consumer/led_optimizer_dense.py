@@ -162,7 +162,7 @@ class DenseLEDOptimizer:
         """
         try:
             # Load sparse matrices and precompute dense A^T*A
-            if not self._load_matrices():
+            if not self._load():
                 logger.error("Failed to load and precompute dense matrices")
                 return False
 
@@ -331,7 +331,7 @@ class DenseLEDOptimizer:
         logger.info(f"Block size: {block_size}x{block_size}")
         logger.info(f"Blocks stored: {blocks_stored}")
 
-    def _load_matrices(self) -> bool:
+    def _load(self) -> bool:
         """
         Load diffusion matrices using utility classes and precomputed A^T*A tensors.
 
@@ -353,7 +353,7 @@ class DenseLEDOptimizer:
 
             # Check for new nested format first
             if "diffusion_matrix" in data and "mixed_tensor" in data:
-                return self._load_new_format(data)
+                return self._load_matricies_from_file(data)
             else:
                 logger.error(f"{patterns_path} is in unsupported legacy format")
                 return False
@@ -365,7 +365,7 @@ class DenseLEDOptimizer:
             logger.error(traceback.format_exc())
             return False
 
-    def _load_new_format(self, data: np.lib.npyio.NpzFile) -> bool:
+    def _load_matricies_from_file(self, data: np.lib.npyio.NpzFile) -> bool:
         """Load matrices from new nested format using utility classes."""
         logger.info("Detected new nested format with utility classes")
 
@@ -633,85 +633,45 @@ class DenseLEDOptimizer:
 
     def _calculate_ATb_mixed_tensor(self, target_frame: np.ndarray) -> cp.ndarray:
         """
-        Calculate A^T@b using mixed tensor format with SINGLE TENSOR OPERATION.
+        Calculate A^T@b using mixed tensor format with 3D CUDA kernel.
 
-        Target: Implement einsum 'ijkm,jkm->ij' where:
-        - Mixed tensor diffusion patterns: (1000, 3, 480, 800) - shape 'ijkm'
-        - Target frame: (480, 800, 3) -> transpose to (3, 480, 800) - shape 'jkm'
-        - Result: (1000, 3) - shape 'ij'
+        Uses the new transpose_dot_product_3d method to process all channels in one
+        optimized CUDA operation. Implements einsum 'ijkl,jkl->ij' efficiently:
+        - Mixed tensor: (leds, channels, height, width) - shape 'ijkl'
+        - Target frame: (channels, height, width) - shape 'jkl' (planar form)
+        - Result: (leds, channels) - shape 'ij'
 
-        However, since CUDA kernel only accepts (height, width) input, we need to
-        construct the full tensor operation differently or use the existing kernel properly.
+        Args:
+            target_frame: Target image (height, width, 3) in range [0, 255]
+
+        Returns:
+            ATb vector (led_count, 3) on GPU
         """
-        # Step 1: Normalize and transfer target to GPU
-        # Target shape: (480, 800, 3) -> (height, width, channels)
+        # Step 1: Normalize target frame and convert to planar form
         target_normalized = (
             target_frame.astype(np.float32) / 255.0
-        )  # Shape: (480, 800, 3)
-        target_gpu = cp.asarray(target_normalized)  # Shape: (480, 800, 3)
+        )  # Shape: (height, width, 3)
 
-        logger.debug(f"Target shape after GPU transfer: {target_gpu.shape}")
+        # Convert from HWC to CHW (planar form): (height, width, 3) -> (3, height, width)
+        target_planar = target_normalized.transpose(
+            2, 0, 1
+        )  # Shape: (3, height, width)
+        target_gpu = cp.asarray(target_planar)  # Shape: (3, height, width)
 
-        # Step 2: Prepare target for einsum operation
-        # Need to convert target from (height, width, channels) to (channels, height, width)
-        target_chw = target_gpu.transpose(2, 0, 1)  # Shape: (3, 480, 800)
-        logger.debug(f"Target shape after transpose (CHW): {target_chw.shape}")
+        logger.debug(f"Target planar shape: {target_gpu.shape}")
 
-        # Step 3: TRUE SINGLE TENSOR OPERATION using einsum
-        # Convert sparse mixed tensor to dense format for proper einsum
-        # Mixed tensor storage: (3, 1000, 96, 96) -> logical (1000, 3, 480, 800)
+        # Step 2: Use the new 3D transpose_dot_product method
+        # This processes all channels in one CUDA kernel operation
+        result = self._mixed_tensor.transpose_dot_product_3d(
+            target_gpu
+        )  # Shape: (batch_size, channels)
 
-        # Build dense diffusion tensor: (1000, 3, 480, 800)
-        logger.debug("Converting mixed tensor to dense format for einsum...")
-        diffusion_dense = cp.zeros(
-            (
-                self._actual_led_count,
-                3,
-                self._mixed_tensor.height,
-                self._mixed_tensor.width,
-            ),
-            dtype=cp.float32,
-        )  # Shape: (1000, 3, 480, 800)
+        # Store in the ATb buffer
+        self._ATb_gpu[:] = result
 
-        # Fill dense tensor from mixed tensor sparse blocks
-        for led_idx in range(self._actual_led_count):
-            for channel_idx in range(3):
-                if self._mixed_tensor.blocks_set[
-                    channel_idx, led_idx
-                ]:  # Storage: (channels, batch)
-                    # Get block position and data
-                    top_row = int(
-                        self._mixed_tensor.block_positions[channel_idx, led_idx, 0]
-                    )
-                    top_col = int(
-                        self._mixed_tensor.block_positions[channel_idx, led_idx, 1]
-                    )
-                    block_data = self._mixed_tensor.sparse_values[
-                        channel_idx, led_idx
-                    ]  # Shape: (96, 96)
-
-                    # Place block in dense tensor
-                    diffusion_dense[
-                        led_idx,
-                        channel_idx,
-                        top_row : top_row + self._mixed_tensor.block_size,
-                        top_col : top_col + self._mixed_tensor.block_size,
-                    ] = block_data
-
-        logger.debug(f"Dense diffusion tensor shape: {diffusion_dense.shape}")
-        logger.debug(f"Target CHW shape: {target_chw.shape}")
-
-        # Step 4: SINGLE EINSUM OPERATION
-        # einsum('ijkm,jkm->ij', diffusion_dense, target_chw)
-        # Where: i=LEDs (1000), j=channels (3), k=height (480), m=width (800)
-        result = cp.einsum(
-            "ijkm,jkm->ij", diffusion_dense, target_chw
-        )  # Shape: (1000, 3)
-
-        logger.debug(f"Einsum result shape: {result.shape}, sample: {result[:3].get()}")
-
-        # Step 4: Convert to output format
-        self._ATb_gpu[:] = result  # Shape: (1000, 3)
+        logger.debug(
+            f"ATb result shape: {self._ATb_gpu.shape}, sample: {self._ATb_gpu[:3].get()}"
+        )
 
         return self._ATb_gpu
 

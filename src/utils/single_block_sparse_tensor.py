@@ -421,14 +421,65 @@ class SingleBlockMixedSparseTensor:
             # Fall back to standard CUDA kernel
             return self.transpose_dot_product_cuda(dense_matrix)
 
+    def transpose_dot_product_3d(self, target_3d: cp.ndarray) -> cp.ndarray:
+        """
+        Compute A^T @ b operation with 3D planar input (channels, height, width).
+
+        This method processes all channels in one operation using the optimized 3D CUDA kernel.
+        Implements einsum 'ijkl,jkl->ij' efficiently where:
+        - Mixed tensor: (leds, channels, height, width) - shape 'ijkl'
+        - Target: (channels, height, width) - shape 'jkl' (planar form)
+        - Result: (leds, channels) - shape 'ij'
+
+        Args:
+            target_3d: Target image in planar form, shape (channels, height, width)
+
+        Returns:
+            Result of A^T @ b, shape (batch_size, channels)
+        """
+        if target_3d.shape != (self.channels, self.height, self.width):
+            raise ValueError(
+                f"target_3d shape {target_3d.shape} != expected "
+                f"({self.channels}, {self.height}, {self.width})"
+            )
+
+        try:
+            from .cuda_kernels import cuda_transpose_dot_product_3d_compute_optimized
+
+            # Use 3D compute-optimized CUDA kernel - no blocks_set parameter needed
+            # Storage format matches kernel expectations: (channels, batch, ...)
+            result = cuda_transpose_dot_product_3d_compute_optimized(
+                self.sparse_values,  # (channels, batch, H, W) - matches kernel expectation
+                self.block_positions,  # (channels, batch, 2) - matches kernel expectation
+                target_3d,  # (channels, height, width) - planar input
+                self.batch_size,
+                self.channels,
+                self.block_size,
+            )
+
+            return result
+
+        except ImportError as e:
+            logger.warning(
+                f"3D CUDA kernel not available: {e}. Falling back to chunked implementation."
+            )
+            # Fall back to per-channel processing with chunked implementation
+            results = cp.zeros((self.batch_size, self.channels), dtype=cp.float32)
+            for channel_idx in range(self.channels):
+                channel_result = self.transpose_dot_product(target_3d[channel_idx])
+                results[:, channel_idx] = channel_result[:, channel_idx]
+            return results
+
     def transpose_dot_product_cuda_compute_optimized(
         self, dense_matrix: cp.ndarray
     ) -> cp.ndarray:
         """
-        Compute A^T @ b operation using compute-optimized CUDA kernel (targeting ~14 GFLOPS).
+        DEPRECATED: Compute A^T @ b operation using compute-optimized CUDA kernel (2D only).
 
         This method uses an architecture-matched CUDA kernel with 8-way parallelism
         targeting the SM architecture for maximum compute throughput and memory efficiency.
+
+        DEPRECATED: Use transpose_dot_product_3d for new implementations.
 
         Args:
             dense_matrix: Target image, shape (height, width)
@@ -436,6 +487,10 @@ class SingleBlockMixedSparseTensor:
         Returns:
             Result of A^T @ b, shape (batch_size, channels)
         """
+        logger.warning(
+            "transpose_dot_product_cuda_compute_optimized is DEPRECATED - use transpose_dot_product_3d"
+        )
+
         if dense_matrix.shape != (self.height, self.width):
             raise ValueError(
                 f"dense_matrix shape {dense_matrix.shape} != expected "

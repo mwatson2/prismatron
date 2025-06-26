@@ -13,7 +13,121 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# Compute-optimized CUDA kernel - 8-way parallelism matching SM architecture
+# 3D Multi-channel CUDA kernel - based on compute-optimized kernel for planar input
+COMPUTE_OPTIMIZED_3D_KERNEL = r"""
+extern "C" __global__
+void compute_optimized_3d_transpose_dot_product_kernel(
+    const float* sparse_values,     // Shape: (channels, batch_size, block_size, block_size)
+    const int* block_positions,     // Shape: (channels, batch_size, 2)
+    const float* target_3d,         // Shape: (channels, height, width) - planar form
+    float* result,                  // Shape: (batch_size, channels)
+    const int batch_size,
+    const int channels,
+    const int height,
+    const int width,
+    const int block_size,
+    const int iteration_offset      // Which set of 8 blocks this iteration processes
+) {
+    // Architecture-matched design: 8 SMs, 32 cores per SM
+    // Grid: (8 blocks, 1, 1) - one block per SM
+    // Block: (32 threads, 1, 1) - one thread per core
+
+    // Which (LED, channel) combination this SM is processing
+    int led_channel_id = iteration_offset * 8 + blockIdx.x;
+
+    if (led_channel_id >= batch_size * channels) return;
+
+    int led_id = led_channel_id / channels;
+    int channel_id = led_channel_id % channels;
+    int idx = led_id * channels + channel_id;
+
+    // Get block position for this LED/channel from (channels, batch_size, 2) layout
+    int pos_idx = channel_id * (batch_size * 2) + led_id * 2;
+    int top_row = block_positions[pos_idx + 0];
+    int top_col = block_positions[pos_idx + 1];
+
+    // Shared memory optimized for GPU limits (max 48KB per block)
+    // Load only sparse block into shared memory, access target directly
+    extern __shared__ float shared_mem[];
+    float* sparse_block = shared_mem;                    // block_size * block_size floats (36KB for 96x96)
+    float* reduction_workspace = &shared_mem[block_size * block_size]; // 32 floats (128 bytes)
+    // Total: 36KB + 128 bytes = ~36.1KB (well under 48KB limit)
+
+    int block_elements = block_size * block_size;  // 9216 for 96x96
+    int elements_per_thread = (block_elements + 31) / 32;  // 288 elements per thread
+
+    // Cooperative loading: 32 threads load sparse block into shared memory
+    // Calculate offset for (channels, batch_size, block_size, block_size) layout
+    int sparse_offset = channel_id * (batch_size * block_elements) + led_id * block_elements;
+    for (int i = 0; i < elements_per_thread; i++) {
+        int element_idx = threadIdx.x * elements_per_thread + i;
+        if (element_idx < block_elements) {
+            sparse_block[element_idx] = sparse_values[sparse_offset + element_idx];
+        }
+    }
+
+    __syncthreads();  // Ensure sparse block is loaded
+
+    // Compute phase: each thread processes 288 multiply-adds
+    // Access 3D target directly (channel_id, spatial) for planar layout
+    float thread_sum = 0.0f;
+
+    // Calculate target channel offset for planar access
+    int channel_offset = channel_id * height * width;
+
+    for (int i = 0; i < elements_per_thread; i++) {
+        int element_idx = threadIdx.x * elements_per_thread + i;
+        if (element_idx < block_elements) {
+            // Calculate target image coordinates on-the-fly
+            int block_row = element_idx / block_size;
+            int block_col = element_idx % block_size;
+            int global_row = top_row + block_row;
+            int global_col = top_col + block_col;
+
+            // Bounds check and compute with 3D planar access
+            if (global_row < height && global_col < width) {
+                float sparse_val = sparse_block[element_idx];
+                // Planar access: target_3d[channel_id, global_row, global_col]
+                float target_val = target_3d[channel_offset + global_row * width + global_col];
+                thread_sum += sparse_val * target_val;
+            }
+        }
+    }
+
+    // Store in shared memory for reduction
+    reduction_workspace[threadIdx.x] = thread_sum;
+    __syncthreads();
+
+    // Parallel reduction: 32 → 1 using tree reduction
+    // Optimized for 32 threads (single warp, no sync needed within warp)
+    if (threadIdx.x < 16) {
+        reduction_workspace[threadIdx.x] += reduction_workspace[threadIdx.x + 16];
+    }
+    __syncthreads();
+
+    if (threadIdx.x < 8) {
+        reduction_workspace[threadIdx.x] += reduction_workspace[threadIdx.x + 8];
+    }
+    __syncthreads();
+
+    if (threadIdx.x < 4) {
+        reduction_workspace[threadIdx.x] += reduction_workspace[threadIdx.x + 4];
+    }
+    __syncthreads();
+
+    if (threadIdx.x < 2) {
+        reduction_workspace[threadIdx.x] += reduction_workspace[threadIdx.x + 2];
+    }
+    __syncthreads();
+
+    if (threadIdx.x == 0) {
+        result[idx] = reduction_workspace[0] + reduction_workspace[1];
+    }
+}
+"""
+
+# DEPRECATED: Compute-optimized CUDA kernel - 8-way parallelism matching SM architecture
+# Use compute_optimized_3d_transpose_dot_product_kernel for new implementations
 COMPUTE_OPTIMIZED_KERNEL = r"""
 extern "C" __global__
 void compute_optimized_transpose_dot_product_kernel(
@@ -431,8 +545,28 @@ def get_high_parallelism_kernel():
     return _kernel_cache["high_parallelism"]
 
 
+def get_compute_optimized_3d_kernel():
+    """Get the compiled compute-optimized 3D CUDA kernel for planar input."""
+    if "compute_optimized_3d" not in _kernel_cache:
+        logger.info("Compiling compute-optimized 3D CUDA kernel...")
+
+        # Compile the kernel
+        kernel = cp.RawKernel(
+            COMPUTE_OPTIMIZED_3D_KERNEL,
+            "compute_optimized_3d_transpose_dot_product_kernel",
+        )
+        _kernel_cache["compute_optimized_3d"] = kernel
+
+        logger.info("Compute-optimized 3D CUDA kernel compiled successfully")
+
+    return _kernel_cache["compute_optimized_3d"]
+
+
 def get_compute_optimized_kernel():
-    """Get the compiled compute-optimized CUDA kernel."""
+    """DEPRECATED: Get the compiled compute-optimized CUDA kernel (2D only)."""
+    logger.warning(
+        "get_compute_optimized_kernel is DEPRECATED - use get_compute_optimized_3d_kernel for new implementations"
+    )
     if "compute_optimized" not in _kernel_cache:
         logger.info("Compiling compute-optimized CUDA kernel...")
 
@@ -720,6 +854,7 @@ def cuda_transpose_dot_product_high_performance(
     return result
 
 
+# DEPRECATED: Remove these old 2D CUDA functions - use 3D versions
 def cuda_transpose_dot_product(
     sparse_values: cp.ndarray,
     block_positions: cp.ndarray,
@@ -730,12 +865,12 @@ def cuda_transpose_dot_product(
     block_size: int,
 ) -> cp.ndarray:
     """
-    DEPRECATED: Use corrected or high_performance version instead.
+    DEPRECATED: Use cuda_transpose_dot_product_3d_compute_optimized instead.
 
-    This function previously used a flawed kernel with race conditions.
+    This function uses a flawed kernel with race conditions and requires blocks_set parameter.
     """
     logger.warning(
-        "cuda_transpose_dot_product is DEPRECATED - use corrected or high_performance version"
+        "cuda_transpose_dot_product is DEPRECATED - use cuda_transpose_dot_product_3d_compute_optimized"
     )
     # Fall back to corrected version
     return cuda_transpose_dot_product_corrected(
@@ -818,6 +953,101 @@ def cuda_transpose_dot_product_high_parallelism(
     return result
 
 
+def cuda_transpose_dot_product_3d_compute_optimized(
+    sparse_values: cp.ndarray,
+    block_positions: cp.ndarray,
+    target_3d: cp.ndarray,
+    batch_size: int,
+    channels: int,
+    block_size: int,
+) -> cp.ndarray:
+    """
+    3D Compute-optimized CUDA kernel wrapper for A^T @ b operation with planar input.
+
+    Uses 8-way parallelism matching SM architecture with optimized memory access patterns.
+    Processes 3D planar input (channels, height, width) in one operation.
+
+    Args:
+        sparse_values: Dense blocks, shape (channels, batch_size, block_size, block_size)
+        block_positions: Block positions, shape (channels, batch_size, 2)
+        target_3d: Target image in planar form, shape (channels, height, width)
+        batch_size: Number of LEDs
+        channels: Number of channels
+        block_size: Size of square blocks
+
+    Returns:
+        Result of A^T @ b, shape (batch_size, channels)
+    """
+    channels_input, height, width = target_3d.shape
+
+    if channels_input != channels:
+        raise ValueError(f"Input channels {channels_input} != expected {channels}")
+
+    # Prepare output array
+    result = cp.zeros((batch_size, channels), dtype=cp.float32)
+
+    # Get compiled kernel
+    kernel = get_compute_optimized_3d_kernel()
+
+    # Architecture-matched configuration: 8 SMs, 32 cores per SM
+    total_led_channels = batch_size * channels
+    sms_count = 8
+    cores_per_sm = 32
+
+    # Calculate number of iterations needed to process all blocks
+    blocks_per_iteration = sms_count  # 8 blocks processed in parallel
+    num_iterations = (
+        total_led_channels + blocks_per_iteration - 1
+    ) // blocks_per_iteration
+
+    grid_size = (sms_count,)  # 8 blocks, one per SM
+    block_size_1d = (cores_per_sm,)  # 32 threads, one per core
+
+    logger.debug(f"3D Compute-optimized CUDA kernel launch:")
+    logger.debug(f"  Grid: {grid_size}, Block: {block_size_1d}")
+    logger.debug(f"  Iterations: {num_iterations}")
+    logger.debug(f"  Target shape: {target_3d.shape} (planar)")
+    logger.debug(f"  Total threads per iteration: {sms_count * cores_per_sm}")
+    logger.debug(
+        f"  Total compute threads: {num_iterations * sms_count * cores_per_sm:,}"
+    )
+
+    # Calculate shared memory size needed
+    # 1 sparse block + 32 reduction values (target accessed directly for better L2 cache usage)
+    shared_mem_size = (block_size * block_size + 32) * 4  # 4 bytes per float
+
+    logger.debug(
+        f"  Shared memory per block: {shared_mem_size} bytes ({shared_mem_size/1024:.1f}KB)"
+    )
+
+    # Launch kernel for each iteration
+    for iteration in range(num_iterations):
+        iteration_offset = iteration
+
+        kernel(
+            grid_size,
+            block_size_1d,
+            (
+                sparse_values.ravel(),  # Flatten to 1D
+                block_positions.ravel(),  # Flatten to 1D
+                target_3d.ravel(),  # Flatten 3D planar input to 1D
+                result.ravel(),  # Flatten result to 1D
+                batch_size,
+                channels,
+                height,
+                width,
+                block_size,
+                iteration_offset,
+            ),
+            shared_mem=shared_mem_size,
+        )
+
+        # Synchronize between iterations to ensure correct ordering
+        cp.cuda.Device().synchronize()
+
+    return result
+
+
 def cuda_transpose_dot_product_compute_optimized(
     sparse_values: cp.ndarray,
     block_positions: cp.ndarray,
@@ -828,10 +1058,12 @@ def cuda_transpose_dot_product_compute_optimized(
     block_size: int,
 ) -> cp.ndarray:
     """
-    Compute-optimized CUDA kernel wrapper for A^T @ b operation.
+    DEPRECATED: Compute-optimized CUDA kernel wrapper for A^T @ b operation (2D only).
 
     Uses 8-way parallelism matching SM architecture with optimized memory access patterns.
     Targets ~14 GFLOPS performance by maximizing compute throughput.
+
+    DEPRECATED: Use cuda_transpose_dot_product_3d_compute_optimized for new implementations.
 
     Args:
         sparse_values: Dense blocks, shape (batch_size, channels, block_size, block_size)
@@ -845,6 +1077,10 @@ def cuda_transpose_dot_product_compute_optimized(
     Returns:
         Result of A^T @ b, shape (batch_size, channels)
     """
+    logger.warning(
+        "cuda_transpose_dot_product_compute_optimized is DEPRECATED - use cuda_transpose_dot_product_3d_compute_optimized"
+    )
+
     height, width = target_image.shape
 
     # Prepare output array
