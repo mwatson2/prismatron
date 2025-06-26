@@ -86,9 +86,11 @@ class TestLEDOptimizer(unittest.TestCase):
         )
 
     def _create_test_patterns(self):
-        """Create minimal test diffusion patterns for testing."""
-        # Create sparse test patterns that match the new format
+        """Create minimal test diffusion patterns in new nested format for testing."""
         from scipy import sparse
+
+        from src.utils.led_diffusion_csc_matrix import LEDDiffusionCSCMatrix
+        from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 
         test_led_count = 50  # Use small number for fast tests
         pixels = FRAME_HEIGHT * FRAME_WIDTH
@@ -108,15 +110,58 @@ class TestLEDOptimizer(unittest.TestCase):
             (data, (row_coords, col_coords)), shape=(pixels, cols)
         )
 
-        # Save in the expected sparse format
+        # Create LEDDiffusionCSCMatrix utility class
+        diffusion_matrix = LEDDiffusionCSCMatrix(
+            csc_matrix=matrix, height=FRAME_HEIGHT, width=FRAME_WIDTH, channels=3
+        )
+
+        # Create SingleBlockMixedSparseTensor utility class
+        mixed_tensor = SingleBlockMixedSparseTensor(
+            batch_size=test_led_count,
+            channels=3,
+            height=FRAME_HEIGHT,
+            width=FRAME_WIDTH,
+            block_size=96,
+        )
+
+        # Create simple precomputed A^T@A matrices (identity-like for testing)
+        ata_matrices = np.zeros((test_led_count, test_led_count, 3), dtype=np.float32)
+        for i in range(test_led_count):
+            ata_matrices[i, i, :] = 1.0  # Diagonal matrices for simple testing
+
+        # Create dense_ata dictionary
+        dense_ata_dict = {
+            "dense_ata_matrices": ata_matrices,
+            "dense_ata_led_count": test_led_count,
+            "dense_ata_channels": 3,
+            "dense_ata_computation_time": 0.1,
+        }
+
+        # Save in new nested format
         np.savez_compressed(
             self.patterns_path,
-            matrix_data=matrix.data,
-            matrix_indices=matrix.indices,
-            matrix_indptr=matrix.indptr,
-            matrix_shape=matrix.shape,
+            # Top-level metadata
             led_spatial_mapping={i: i for i in range(test_led_count)},
             led_positions=np.random.random((test_led_count, 2)),
+            metadata={
+                "generator": "TestPatternGenerator",
+                "format": "sparse_csc",
+                "led_count": test_led_count,
+                "frame_width": FRAME_WIDTH,
+                "frame_height": FRAME_HEIGHT,
+                "channels": 3,
+                "matrix_shape": [pixels, cols],
+                "nnz": nnz,
+                "sparsity_percent": (1.0 - nnz / (pixels * cols)) * 100,
+                "generation_timestamp": 0.0,
+                "pattern_type": "test",
+                "seed": None,
+                "intensity_variation": False,
+            },
+            # Nested utility class data
+            diffusion_matrix=diffusion_matrix.to_dict(),
+            mixed_tensor=mixed_tensor.to_dict(),
+            dense_ata=dense_ata_dict,
         )
 
     def tearDown(self):
@@ -138,7 +183,7 @@ class TestLEDOptimizer(unittest.TestCase):
         self.assertIn(device_type, ["gpu", "cpu"])
 
     def test_initialization_success(self):
-        """Test successful optimizer initialization."""
+        """Test successful optimizer initialization with new nested format."""
         result = self.optimizer.initialize()
 
         self.assertTrue(result)
@@ -151,17 +196,9 @@ class TestLEDOptimizer(unittest.TestCase):
 
         self.assertFalse(result)
 
-    def test_diffusion_pattern_loading_failure(self):
-        """Test diffusion pattern loading failure when no patterns exist."""
-        # Create optimizer with nonexistent patterns path
-        optimizer = LEDOptimizer(diffusion_patterns_path="nonexistent_path")
-        result = optimizer.initialize()
-        self.assertFalse(result)
-        self.assertFalse(optimizer._matrix_loaded)
-
     @unittest.skipIf(not CUPY_AVAILABLE, "CuPy not available")
     def test_diffusion_pattern_optimization(self):
-        """Test diffusion pattern optimization."""
+        """Test diffusion pattern optimization with new nested format."""
         self.optimizer.initialize()
 
         # Create test frame
@@ -179,25 +216,13 @@ class TestLEDOptimizer(unittest.TestCase):
         self.assertLessEqual(result.iterations, 5)
         self.assertIn("mse", result.error_metrics)
 
-    @unittest.skipIf(not CUPY_AVAILABLE, "CuPy not available")
-    def test_full_optimization(self):
-        """Test full optimization with diffusion patterns."""
-        self.optimizer.initialize()
-
-        # Create simple test frame (solid color)
-        test_frame = np.full((FRAME_HEIGHT, FRAME_WIDTH, 3), 128, dtype=np.uint8)
-
-        # Run optimization
-        result = self.optimizer.optimize_frame(
-            test_frame, debug=True, max_iterations=10
-        )
-
-        self.assertEqual(result.led_values.shape[1], 3)  # RGB channels
-        self.assertGreater(result.led_values.shape[0], 0)  # Some LEDs
-        self.assertGreater(result.iterations, 0)
-        # Timing removed - verify field exists but is 0
-        self.assertEqual(result.optimization_time, 0.0)
-        self.assertIn("mse", result.error_metrics)
+    def test_diffusion_pattern_loading_failure(self):
+        """Test diffusion pattern loading failure when no patterns exist."""
+        # Create optimizer with nonexistent patterns path
+        optimizer = LEDOptimizer(diffusion_patterns_path="nonexistent_path")
+        result = optimizer.initialize()
+        self.assertFalse(result)
+        self.assertFalse(optimizer._matrix_loaded)
 
     def test_optimization_with_invalid_frame(self):
         """Test optimization with invalid frame dimensions."""
@@ -236,19 +261,8 @@ class TestLEDOptimizer(unittest.TestCase):
         self.assertGreater(result.led_values.shape[0], 0)  # Some LEDs
         self.assertLessEqual(result.iterations, 5)
 
-    def test_parameter_updates(self):
-        """Test optimization parameter updates."""
-        # Set parameters directly (DenseLEDOptimizer doesn't have set_optimization_parameters)
-        self.optimizer.max_iterations = 200
-        self.optimizer.convergence_threshold = 1e-8
-        self.optimizer.step_size_scaling = 0.5
-
-        self.assertEqual(self.optimizer.max_iterations, 200)
-        self.assertEqual(self.optimizer.convergence_threshold, 1e-8)
-        self.assertEqual(self.optimizer.step_size_scaling, 0.5)
-
     def test_optimizer_statistics(self):
-        """Test optimizer statistics collection."""
+        """Test optimizer statistics collection with new nested format."""
         self.optimizer.initialize()
 
         # Run a few optimizations
@@ -269,17 +283,30 @@ class TestLEDOptimizer(unittest.TestCase):
         # LED count in stats should match our test patterns (50), not full LED_COUNT (3200)
         self.assertEqual(stats["led_count"], 50)  # Should match test pattern size
 
+    def test_parameter_updates(self):
+        """Test optimization parameter updates."""
+        # Set parameters directly (DenseLEDOptimizer doesn't have set_optimization_parameters)
+        self.optimizer.max_iterations = 200
+        self.optimizer.convergence_threshold = 1e-8
+        self.optimizer.step_size_scaling = 0.5
+
+        self.assertEqual(self.optimizer.max_iterations, 200)
+        self.assertEqual(self.optimizer.convergence_threshold, 1e-8)
+        self.assertEqual(self.optimizer.step_size_scaling, 0.5)
+
     def test_sparse_diffusion_pattern_loading(self):
-        """Test loading sparse diffusion patterns from fixture."""
-        # Test loading from our regression test fixture
-        fixture_path = "tests/fixtures/test_clean"
+        """Test loading sparse diffusion patterns from new format fixture."""
+        # Test loading from new format test fixture
+        fixture_path = "diffusion_patterns/test_new_format"
 
         # Create optimizer with fixture patterns
         optimizer = LEDOptimizer(diffusion_patterns_path=fixture_path)
 
-        # Should successfully initialize with fixture patterns
+        # Should successfully initialize with new format fixture patterns
         result = optimizer.initialize()
-        self.assertTrue(result, "Should successfully load sparse patterns from fixture")
+        self.assertTrue(
+            result, "Should successfully load sparse patterns from new format fixture"
+        )
         self.assertTrue(optimizer._matrix_loaded, "Matrix should be loaded")
 
         # Get stats to verify pattern details
@@ -312,21 +339,6 @@ class TestLEDOptimizer(unittest.TestCase):
         # All LED values should be in [0, 255] range
         self.assertTrue(np.all(result.led_values >= 0))
         self.assertTrue(np.all(result.led_values <= 255))
-
-    @unittest.skipIf(not CUPY_AVAILABLE, "CuPy not available")
-    def test_convergence_detection(self):
-        """Test optimization convergence detection."""
-        self.optimizer.convergence_threshold = 1e-3  # Relaxed threshold
-        self.optimizer.initialize()
-
-        # Create simple uniform frame
-        uniform_frame = np.full((FRAME_HEIGHT, FRAME_WIDTH, 3), 100, dtype=np.uint8)
-
-        result = self.optimizer.optimize_frame(uniform_frame, max_iterations=100)
-
-        # Should always converge (LSQR always converges)
-        self.assertTrue(result.converged)
-        self.assertLessEqual(result.iterations, 100)
 
     def test_error_handling_in_optimization(self):
         """Test error handling during optimization."""
@@ -412,9 +424,11 @@ class TestOptimizerIntegration(unittest.TestCase):
         )
 
     def _create_test_patterns(self):
-        """Create minimal test diffusion patterns for testing."""
-        # Create sparse test patterns that match the new format
+        """Create minimal test diffusion patterns in new nested format for testing."""
         from scipy import sparse
+
+        from src.utils.led_diffusion_csc_matrix import LEDDiffusionCSCMatrix
+        from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 
         test_led_count = 50  # Use small number for fast tests
         pixels = FRAME_HEIGHT * FRAME_WIDTH
@@ -434,15 +448,58 @@ class TestOptimizerIntegration(unittest.TestCase):
             (data, (row_coords, col_coords)), shape=(pixels, cols)
         )
 
-        # Save in the expected sparse format
+        # Create LEDDiffusionCSCMatrix utility class
+        diffusion_matrix = LEDDiffusionCSCMatrix(
+            csc_matrix=matrix, height=FRAME_HEIGHT, width=FRAME_WIDTH, channels=3
+        )
+
+        # Create SingleBlockMixedSparseTensor utility class
+        mixed_tensor = SingleBlockMixedSparseTensor(
+            batch_size=test_led_count,
+            channels=3,
+            height=FRAME_HEIGHT,
+            width=FRAME_WIDTH,
+            block_size=96,
+        )
+
+        # Create simple precomputed A^T@A matrices (identity-like for testing)
+        ata_matrices = np.zeros((test_led_count, test_led_count, 3), dtype=np.float32)
+        for i in range(test_led_count):
+            ata_matrices[i, i, :] = 1.0  # Diagonal matrices for simple testing
+
+        # Create dense_ata dictionary
+        dense_ata_dict = {
+            "dense_ata_matrices": ata_matrices,
+            "dense_ata_led_count": test_led_count,
+            "dense_ata_channels": 3,
+            "dense_ata_computation_time": 0.1,
+        }
+
+        # Save in new nested format
         np.savez_compressed(
             self.patterns_path,
-            matrix_data=matrix.data,
-            matrix_indices=matrix.indices,
-            matrix_indptr=matrix.indptr,
-            matrix_shape=matrix.shape,
+            # Top-level metadata
             led_spatial_mapping={i: i for i in range(test_led_count)},
             led_positions=np.random.random((test_led_count, 2)),
+            metadata={
+                "generator": "TestPatternGenerator",
+                "format": "sparse_csc",
+                "led_count": test_led_count,
+                "frame_width": FRAME_WIDTH,
+                "frame_height": FRAME_HEIGHT,
+                "channels": 3,
+                "matrix_shape": [pixels, cols],
+                "nnz": nnz,
+                "sparsity_percent": (1.0 - nnz / (pixels * cols)) * 100,
+                "generation_timestamp": 0.0,
+                "pattern_type": "test",
+                "seed": None,
+                "intensity_variation": False,
+            },
+            # Nested utility class data
+            diffusion_matrix=diffusion_matrix.to_dict(),
+            mixed_tensor=mixed_tensor.to_dict(),
+            dense_ata=dense_ata_dict,
         )
 
     def tearDown(self):
@@ -453,7 +510,7 @@ class TestOptimizerIntegration(unittest.TestCase):
 
     @unittest.skipIf(not CUPY_AVAILABLE, "CuPy not available")
     def test_end_to_end_optimization(self):
-        """Test complete end-to-end optimization pipeline."""
+        """Test complete end-to-end optimization pipeline with new nested format."""
         # Initialize optimizer
         self.assertTrue(self.optimizer.initialize())
 

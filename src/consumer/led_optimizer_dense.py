@@ -162,15 +162,12 @@ class DenseLEDOptimizer:
         """
         try:
             # Load sparse matrices and precompute dense A^T*A
-            if not self._load_and_precompute_dense_matrices():
+            if not self._load_matrices():
                 logger.error("Failed to load and precompute dense matrices")
                 return False
 
             # Initialize workspace arrays
             self._initialize_workspace()
-
-            # Warm up GPU cache with dummy operations
-            self._warm_gpu_cache()
 
             logger.info("Dense LED optimizer initialized successfully")
             logger.info(f"LED count: {self._actual_led_count}")
@@ -193,23 +190,52 @@ class DenseLEDOptimizer:
             True if precomputed matrices were loaded successfully, False otherwise
         """
         try:
-            # Check for required dense A^T@A keys
-            required_keys = [
-                "dense_ata_matrices",
-                "dense_ata_led_count",
-                "dense_ata_channels",
-            ]
+            # Check for new nested format first (dense_ata dictionary)
+            if "dense_ata" in data:
+                logger.debug("Loading A^T@A matrices from new nested format")
+                dense_ata_dict = data["dense_ata"].item()
 
-            if not all(key in data for key in required_keys):
-                logger.debug("Precomputed A^T@A matrices not found in pattern file")
-                return False
+                # Check for required keys in nested format
+                required_keys = [
+                    "dense_ata_matrices",
+                    "dense_ata_led_count",
+                    "dense_ata_channels",
+                ]
 
-            # Load A^T@A data
-            dense_ata_matrices = data[
-                "dense_ata_matrices"
-            ]  # Shape: (led_count, led_count, channels)
-            dense_ata_led_count = int(data["dense_ata_led_count"])
-            dense_ata_channels = int(data["dense_ata_channels"])
+                if not all(key in dense_ata_dict for key in required_keys):
+                    logger.debug(
+                        "Required A^T@A keys not found in dense_ata dictionary"
+                    )
+                    return False
+
+                # Load A^T@A data from nested dictionary
+                dense_ata_matrices = dense_ata_dict[
+                    "dense_ata_matrices"
+                ]  # Shape: (led_count, led_count, channels)
+                dense_ata_led_count = int(dense_ata_dict["dense_ata_led_count"])
+                dense_ata_channels = int(dense_ata_dict["dense_ata_channels"])
+                computation_time = dense_ata_dict.get("dense_ata_computation_time", 0.0)
+
+            else:
+                # Fall back to old top-level format for backwards compatibility
+                logger.debug("Loading A^T@A matrices from old top-level format")
+                required_keys = [
+                    "dense_ata_matrices",
+                    "dense_ata_led_count",
+                    "dense_ata_channels",
+                ]
+
+                if not all(key in data for key in required_keys):
+                    logger.debug("Precomputed A^T@A matrices not found in pattern file")
+                    return False
+
+                # Load A^T@A data from top-level keys
+                dense_ata_matrices = data[
+                    "dense_ata_matrices"
+                ]  # Shape: (led_count, led_count, channels)
+                dense_ata_led_count = int(data["dense_ata_led_count"])
+                dense_ata_channels = int(data["dense_ata_channels"])
+                computation_time = data.get("dense_ata_computation_time", 0.0)
 
             # Validate dimensions
             if dense_ata_led_count != self._actual_led_count or dense_ata_channels != 3:
@@ -224,7 +250,6 @@ class DenseLEDOptimizer:
             self._ATA_cpu = dense_ata_matrices.astype(np.float32)
 
             ata_memory_mb = self._ATA_cpu.nbytes / (1024 * 1024)
-            computation_time = data.get("dense_ata_computation_time", 0.0)
 
             logger.info(f"Loaded precomputed A^T@A matrices: {self._ATA_cpu.shape}")
             logger.info(f"A^T@A memory: {ata_memory_mb:.1f}MB")
@@ -306,7 +331,7 @@ class DenseLEDOptimizer:
         logger.info(f"Block size: {block_size}x{block_size}")
         logger.info(f"Blocks stored: {blocks_stored}")
 
-    def _load_and_precompute_dense_matrices(self) -> bool:
+    def _load_matrices(self) -> bool:
         """
         Load diffusion matrices using utility classes and precomputed A^T*A tensors.
 
@@ -330,7 +355,8 @@ class DenseLEDOptimizer:
             if "diffusion_matrix" in data and "mixed_tensor" in data:
                 return self._load_new_format(data)
             else:
-                return self._load_legacy_format(data)
+                logger.error(f"{patterns_path} is in unsupported legacy format")
+                return False
 
         except Exception as e:
             logger.error(f"Failed to load matrices: {e}")
@@ -373,12 +399,11 @@ class DenseLEDOptimizer:
         logger.info("Transferring dense ATA tensor to GPU...")
         self._ATA_gpu = cp.asarray(self._ATA_cpu)
 
-        # Load mixed tensor if needed
-        if self.use_mixed_tensor:
-            logger.info("Loading SingleBlockMixedSparseTensor...")
-            mixed_dict = data["mixed_tensor"].item()
-            self._mixed_tensor = SingleBlockMixedSparseTensor.from_dict(mixed_dict)
-            logger.info("Loaded mixed tensor format for A^T@b calculation")
+        # Load mixed tensor
+        logger.info("Loading SingleBlockMixedSparseTensor...")
+        mixed_dict = data["mixed_tensor"].item()
+        self._mixed_tensor = SingleBlockMixedSparseTensor.from_dict(mixed_dict)
+        logger.info("Loaded mixed tensor format for A^T@b calculation")
 
         # Load CSC format for A^T@b calculation (always needed)
         logger.info("Setting up CSC matrices for A^T@b calculation...")
@@ -405,55 +430,6 @@ class DenseLEDOptimizer:
         ) = self._diffusion_matrix.to_gpu_matrices()
 
         logger.info(f"CSC matrices transferred to GPU successfully")
-
-    def _load_legacy_format(self, data: np.lib.npyio.NpzFile) -> bool:
-        """Load matrices from legacy format (fallback for old files)."""
-        logger.warning("Using legacy format loading - consider regenerating patterns")
-
-        # Reconstruct sparse matrix from components
-        sparse_matrix_csc = sp.csc_matrix(
-            (data["matrix_data"], data["matrix_indices"], data["matrix_indptr"]),
-            shape=tuple(data["matrix_shape"]),
-        )
-
-        # Create LEDDiffusionCSCMatrix from legacy data
-        self._diffusion_matrix = LEDDiffusionCSCMatrix.from_csc_matrix(
-            sparse_matrix_csc, FRAME_HEIGHT, FRAME_WIDTH, channels=3
-        )
-
-        # Load metadata
-        self._led_spatial_mapping = data["led_spatial_mapping"].item()
-        self._led_positions = data["led_positions"]
-        self._actual_led_count = self._diffusion_matrix.led_count
-
-        # Load precomputed A^T*A matrices or compute fallback
-        if not self._load_precomputed_ata_matrices(data):
-            logger.warning("Computing A^T*A matrices from scratch (slow)")
-            self._compute_ata_fallback()
-
-        # Transfer to GPU
-        self._ATA_gpu = cp.asarray(self._ATA_cpu)
-
-        # Setup CSC matrices
-        self._setup_csc_matrices()
-
-        self._matrix_loaded = True
-        return True
-
-    def _compute_ata_fallback(self) -> None:
-        """Compute A^T*A matrices as fallback for legacy files."""
-        logger.info("Computing A^T*A matrices from sparse matrices...")
-
-        # Extract RGB channels using utility class
-        A_r_csc, A_g_csc, A_b_csc = self._diffusion_matrix.extract_rgb_channels()
-
-        # Compute A^T*A on CPU
-        ATA_r = (A_r_csc.T @ A_r_csc).toarray()
-        ATA_g = (A_g_csc.T @ A_g_csc).toarray()
-        ATA_b = (A_b_csc.T @ A_b_csc).toarray()
-
-        # Stack into 3D tensor: (led_count, led_count, 3)
-        self._ATA_cpu = np.stack([ATA_r, ATA_g, ATA_b], axis=2).astype(np.float32)
 
     def _calculate_flops_per_iteration(self) -> None:
         """FLOP calculation removed - kept as stub for API compatibility."""
@@ -506,43 +482,6 @@ class DenseLEDOptimizer:
         # Ensure LED values are properly initialized
         if hasattr(self, "_led_values_gpu") and self._led_values_gpu is not None:
             self._led_values_gpu.fill(0.5)
-
-    def _warm_gpu_cache(self) -> None:
-        """
-        Warm up GPU cache by running dummy sparse and dense operations.
-
-        This eliminates cold-start penalties observed in both A^T*b and dense operations.
-        """
-        logger.info("Warming up GPU cache for sparse and dense operations...")
-
-        # Part 1: Warm sparse/mixed tensor operations
-        if self.use_mixed_tensor:
-            # Warm mixed tensor CUDA kernels (single channel)
-            dummy_channel = cp.ones((FRAME_HEIGHT, FRAME_WIDTH), dtype=cp.float32)
-            for i in range(3):
-                _ = self._mixed_tensor.transpose_dot_product_cuda_high_performance(
-                    dummy_channel
-                )
-        else:
-            # Warm CSC sparse operations
-            dummy_size = self._A_combined_csc_gpu.shape[0]
-            dummy_target = cp.ones(dummy_size, dtype=cp.float32)
-            for i in range(3):
-                _ = self._A_combined_csc_gpu.T @ dummy_target
-        cp.cuda.runtime.deviceSynchronize()
-
-        # Part 2: Warm dense operations (einsum and step size calculation)
-        dummy_x = cp.ones((self._actual_led_count, 3), dtype=cp.float32)
-        dummy_gradient = cp.ones((self._actual_led_count, 3), dtype=cp.float32)
-
-        for i in range(3):
-            # Warm the main einsum operation
-            _ = cp.einsum("ijk,jk->ik", self._ATA_gpu, dummy_x)
-            # Warm the step size calculation (full path including GPU events)
-            _ = self._compute_dense_step_size(dummy_gradient)
-        cp.cuda.runtime.deviceSynchronize()
-
-        logger.info("GPU cache warmed up")
 
     def optimize_frame(
         self,
@@ -676,17 +615,6 @@ class DenseLEDOptimizer:
         # Transfer to GPU
         return cp.asarray(target_combined)
 
-    def _convert_frame_to_planar_format(self, target_frame: np.ndarray) -> cp.ndarray:
-        """Convert frame to planar format for mixed tensor operations."""
-        # Normalize and convert to float32
-        target_normalized = target_frame.astype(np.float32) / 255.0
-
-        # Convert from HWC to CHW format for mixed tensor
-        target_planar = np.transpose(target_normalized, (2, 0, 1))  # (3, height, width)
-
-        # Transfer to GPU
-        return cp.asarray(target_planar)
-
     def _calculate_ATb_csc_format(self, target_frame: np.ndarray) -> cp.ndarray:
         """Calculate A^T@b using CSC sparse format."""
         # Convert frame to flat format
@@ -786,78 +714,6 @@ class DenseLEDOptimizer:
         self._ATb_gpu[:] = result  # Shape: (1000, 3)
 
         return self._ATb_gpu
-
-    def compare_atb_methods(self, target_frame: np.ndarray) -> Dict[str, any]:
-        """
-        Compare A^T@b calculation between CSC and mixed tensor methods element by element.
-
-        Returns detailed comparison for debugging divergences.
-        """
-        logger.info("=== Comparing A^T@b methods ===")
-
-        # Calculate using CSC method
-        logger.info("Computing A^T@b with CSC method...")
-        atb_csc = self._calculate_ATb_csc_format(target_frame)
-
-        # Calculate using mixed tensor method
-        logger.info("Computing A^T@b with mixed tensor method...")
-        atb_mixed = self._calculate_ATb_mixed_tensor(target_frame)
-
-        # Element-wise comparison
-        diff = cp.abs(atb_csc - atb_mixed)
-        max_diff = float(diff.max())
-        mean_diff = float(diff.mean())
-
-        # Find elements with largest differences
-        diff_cpu = diff.get()
-        atb_csc_cpu = atb_csc.get()
-        atb_mixed_cpu = atb_mixed.get()
-
-        # Get top 10 differences
-        flat_diff = diff_cpu.flatten()
-        flat_indices = np.argsort(flat_diff)[-10:][::-1]
-
-        top_differences = []
-        for flat_idx in flat_indices:
-            led_idx = flat_idx // 3
-            channel_idx = flat_idx % 3
-            csc_val = atb_csc_cpu[led_idx, channel_idx]
-            mixed_val = atb_mixed_cpu[led_idx, channel_idx]
-            diff_val = diff_cpu[led_idx, channel_idx]
-
-            top_differences.append(
-                {
-                    "led": led_idx,
-                    "channel": channel_idx,
-                    "csc": csc_val,
-                    "mixed": mixed_val,
-                    "diff": diff_val,
-                    "rel_diff": diff_val / max(abs(csc_val), abs(mixed_val), 1e-8),
-                }
-            )
-
-        logger.info(f"Max absolute difference: {max_diff:.6f}")
-        logger.info(f"Mean absolute difference: {mean_diff:.6f}")
-        logger.info(f"Close (atol=1e-3): {cp.allclose(atb_csc, atb_mixed, atol=1e-3)}")
-        logger.info(f"Close (atol=1e-2): {cp.allclose(atb_csc, atb_mixed, atol=1e-2)}")
-
-        logger.info("Top 5 differences:")
-        for i, diff_info in enumerate(top_differences[:5]):
-            logger.info(
-                f"  {i+1}. LED {diff_info['led']}, channel {diff_info['channel']}: "
-                f"CSC={diff_info['csc']:.6f}, Mixed={diff_info['mixed']:.6f}, "
-                f"diff={diff_info['diff']:.6f} ({diff_info['rel_diff']*100:.1f}%)"
-            )
-
-        return {
-            "atb_csc": atb_csc,
-            "atb_mixed": atb_mixed,
-            "max_diff": max_diff,
-            "mean_diff": mean_diff,
-            "top_differences": top_differences,
-            "close_1e3": cp.allclose(atb_csc, atb_mixed, atol=1e-3),
-            "close_1e2": cp.allclose(atb_csc, atb_mixed, atol=1e-2),
-        }
 
     def _solve_dense_gradient_descent(
         self, ATb: cp.ndarray, max_iterations: Optional[int]
