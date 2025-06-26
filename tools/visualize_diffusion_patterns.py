@@ -331,9 +331,21 @@ class DiffusionPatternVisualizer:
                     # Create thumbnail
                     thumbnail = self._create_thumbnail(rgb_pattern, size=(150, 90))
 
+                    # Get physical LED ID for this spatial index
+                    if self.led_spatial_mapping:
+                        reverse_mapping = {
+                            matrix_idx: physical_id
+                            for physical_id, matrix_idx in self.led_spatial_mapping.items()
+                        }
+                        physical_led_id = reverse_mapping.get(spatial_idx, spatial_idx)
+                    else:
+                        physical_led_id = spatial_idx
+
                     patterns.append(
                         {
-                            "led_id": display_id,  # Show the display ID (physical or spatial)
+                            "led_id": display_id,  # For compatibility with existing click handlers
+                            "spatial_idx": spatial_idx,  # Column index in matrix
+                            "physical_led_id": physical_led_id,  # Original LED numbering
                             "thumbnail": thumbnail,
                             "max_intensity": float(np.max(rgb_pattern)),
                             "center_of_mass": self._calculate_center_of_mass(
@@ -388,7 +400,23 @@ class DiffusionPatternVisualizer:
                 return jsonify({"error": "Invalid LED ID"}), 400
 
             try:
-                pattern_data = {"led_id": display_id, "channels": {}, "formats": {}}
+                # Get physical LED ID for this spatial index
+                if self.led_spatial_mapping:
+                    reverse_mapping = {
+                        matrix_idx: physical_id
+                        for physical_id, matrix_idx in self.led_spatial_mapping.items()
+                    }
+                    physical_led_id = reverse_mapping.get(spatial_idx, spatial_idx)
+                else:
+                    physical_led_id = spatial_idx
+
+                pattern_data = {
+                    "led_id": display_id,
+                    "spatial_idx": spatial_idx,
+                    "physical_led_id": physical_led_id,
+                    "channels": {},
+                    "formats": {},
+                }
 
                 channel_names = ["red", "green", "blue"]
 
@@ -1017,9 +1045,9 @@ HTML_TEMPLATE = """
             data.patterns.forEach(pattern => {
                 html += `
                     <div class="pattern-card" onclick="showPatternDetail(${pattern.led_id})">
-                        <img src="${pattern.thumbnail}" alt="LED ${pattern.led_id}">
+                        <img src="${pattern.thumbnail}" alt="COL ${pattern.spatial_idx} LED ${pattern.physical_led_id}">
                         <div class="pattern-info">
-                            <div><strong>LED ${pattern.led_id}</strong></div>
+                            <div><strong>COL ${pattern.spatial_idx} LED ${pattern.physical_led_id}</strong></div>
                             <div>Max: ${pattern.max_intensity.toFixed(3)}</div>
                             <div>CM: (${pattern.center_of_mass[0].toFixed(1)}, ${pattern.center_of_mass[1].toFixed(1)})</div>
                         </div>
@@ -1078,7 +1106,7 @@ HTML_TEMPLATE = """
         function displayPatternDetail(data) {
             const content = document.getElementById('pattern-detail-content');
 
-            let html = `<h2>LED ${data.led_id} - Pattern Details</h2>`;
+            let html = `<h2>COL ${data.spatial_idx} LED ${data.physical_led_id} - Pattern Details</h2>`;
 
             // Format tabs
             html += '<div class="format-toggle">';
