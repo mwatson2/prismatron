@@ -137,7 +137,8 @@ class OptimizationPipeline:
             from ..consumer.led_optimizer_dense import DenseLEDOptimizer
 
             self.optimizer = DenseLEDOptimizer(
-                diffusion_patterns_path=self.diffusion_patterns_path
+                diffusion_patterns_path=self.diffusion_patterns_path,
+                enable_performance_timing=True,
             )
         else:
             self.optimizer = LEDOptimizer(

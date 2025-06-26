@@ -69,7 +69,7 @@ class DenseLEDOptimizer:
         self,
         diffusion_patterns_path: Optional[str] = None,
         use_mixed_tensor: bool = False,
-        enable_performance_timing: bool = False,
+        enable_performance_timing: bool = True,
     ):
         """
         Initialize dense tensor LED optimizer.

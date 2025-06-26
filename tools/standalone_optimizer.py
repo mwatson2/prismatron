@@ -65,7 +65,9 @@ class StandaloneOptimizer:
         if self.optimizer_type == "mixed":
             # Use unified optimizer with mixed tensor mode
             self.optimizer = DenseLEDOptimizer(
-                diffusion_patterns_path=diffusion_patterns_path, use_mixed_tensor=True
+                diffusion_patterns_path=diffusion_patterns_path,
+                use_mixed_tensor=True,
+                enable_performance_timing=True,
             )
             if not self.optimizer.initialize():
                 raise RuntimeError("Failed to initialize mixed tensor optimizer")
@@ -127,6 +129,10 @@ class StandaloneOptimizer:
             result = self.optimizer.optimize_frame(target_image, debug=True)
             optimize_time = time.time() - optimize_start
 
+            # Log performance timing details from the PerformanceTiming class
+            logger.info("=== PerformanceTiming Details ===")
+            self.optimizer.log_performance_timing(logger)
+
             # Phase 3: Render result (placeholder for now)
             render_start = time.time()
             rendered_result = self._render_result_mixed(result, target_image)
@@ -149,6 +155,11 @@ class StandaloneOptimizer:
             optimize_start = time.time()
             result = self.pipeline.optimize_image(target_image, max_iterations=None)
             optimize_time = time.time() - optimize_start
+
+            # Log performance timing details from the PerformanceTiming class (for dense optimizer)
+            if self.optimizer_type == "dense":
+                logger.info("=== PerformanceTiming Details ===")
+                self.pipeline.optimizer.log_performance_timing(logger)
 
             # Phase 3: Render result
             render_start = time.time()
@@ -451,6 +462,7 @@ def main():
         logger.info(
             f"LED values range: [{result.led_values.min()}, {result.led_values.max()}]"
         )
+
         if args.output:
             logger.info(f"Output saved: {args.output}")
 
