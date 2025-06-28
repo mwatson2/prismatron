@@ -60,27 +60,27 @@ void compute_optimized_3d_transpose_dot_product_kernel(
     int sparse_offset = channel_id * (batch_size * block_elements) + led_id * block_elements;
 
     // Calculate target channel offset for planar access
-    int initial_global_col_idx = top_col + channel_id * height * width;
+    int target_offset = top_col + channel_id * height * width;
 
     // Initialize row variables outside loop for efficiency
-    int block_row = threadIdx.x * rows_per_thread;  // Thread's starting row
-    int global_row_idx = ( top_row + block_row ) * width;  // Global row index in planar form
-    int sparse_idx = sparse_offset + block_row * block_size; // Starting index for first row
+    int thread_row = threadIdx.x * rows_per_thread;  // Thread's starting row
+    int thread_row_offset = ( top_row + thread_row ) * width;  // Global row index in planar form
+    int sparse_idx = sparse_offset + thread_row * block_size; // Starting index for first row
 
     // Each thread processes rows_per_thread complete rows
     for (int row_offset = 0; row_offset < rows_per_thread;
-            row_offset++, block_row++, global_row_idx += width) {
+            row_offset++, thread_row++, thread_row_offset += width) {
         // Initialize column variables outside loop for efficiency
-        int global_col_idx = initial_global_col_idx;
+        int target_idx = target_offset;
 
         // Process all columns in this row
         for (int block_col = 0; block_col < block_size;
-                block_col++, global_col_idx++, sparse_idx++) {
+                block_col++, target_idx++, sparse_idx++) {
             // Direct read from sparse values (no bounds checks needed - block_size % 32 == 0)
             float sparse_val = sparse_values[sparse_idx];
 
             // Direct read from target image (planar access)
-            float target_val = target_3d[global_col_idx + global_row_idx];
+            float target_val = target_3d[target_idx + thread_row_offset];
 
             thread_sum += sparse_val * target_val;
         }
@@ -261,31 +261,31 @@ void experimental_compute_optimized_3d_transpose_dot_product_kernel(
     // Direct computation with row-based iteration (eliminates bounds checks)
     float thread_sum = 0.0f;
 
-    // Calculate base offset for sparse values: (channels, batch, block, block) layout
+    // Calculate base offset for sparse image: (top left)
     int sparse_offset = channel_id * (batch_size * block_elements) + led_id * block_elements;
 
-    // Calculate target channel offset for planar access
-    int initial_global_col_idx = top_col + channel_id * height * width;
+    // Calculate base offset for target image (top left)
+    int target_offset = channel_id * height * width + top_row * width + top_col;
 
     // Initialize row variables outside loop for efficiency
-    int block_row = threadIdx.x * rows_per_thread;  // Thread's starting row
-    int global_row_idx = ( top_row + block_row ) * width;  // Global row index in planar form
-    int sparse_idx = sparse_offset + block_row * block_size; // Starting index for first row
+    int thread_row = threadIdx.x * rows_per_thread;  // Thread's starting row
+    int thread_row_offset = thread_row * width;  // Offset into target image for thread's row
+    int sparse_idx = sparse_offset + thread_row * block_size; // Starting index for first row
+    int target_idx = target_offset + thread_row_offset;
 
     // Each thread processes rows_per_thread complete rows
-    for (int row_offset = 0; row_offset < rows_per_thread;
-            row_offset++, block_row++, global_row_idx += width) {
-        // Initialize column variables outside loop for efficiency
-        int global_col_idx = initial_global_col_idx;
-
+    for (   int row = 0;
+            row < rows_per_thread;
+            row++, thread_row++, target_idx += width - block_size) {
         // Process all columns in this row
-        for (int block_col = 0; block_col < block_size;
-                block_col++, global_col_idx++, sparse_idx++) {
+        for (int col = 0;
+             col < block_size;
+             col++, target_idx++, sparse_idx++) {
             // Direct read from sparse values (no bounds checks needed - block_size % 32 == 0)
             float sparse_val = sparse_values[sparse_idx];
 
             // Direct read from target image (planar access)
-            float target_val = target_3d[global_col_idx + global_row_idx];
+            float target_val = target_3d[target_idx];
 
             thread_sum += sparse_val * target_val;
         }

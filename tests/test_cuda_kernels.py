@@ -328,7 +328,7 @@ class TestCudaKernels:
 
         # Test parameters
         warmup_runs = 5
-        benchmark_runs = 20
+        benchmark_runs = 50
 
         original_times = []
         experimental_times = []
@@ -364,7 +364,7 @@ class TestCudaKernels:
 
         for img_idx, test_image in enumerate(test_images):
             # Cache warming phase - run both kernels multiple times
-            logger.info(
+            logger.debug(
                 f"\nCache warming for image {img_idx + 1}/{len(test_images)}..."
             )
 
@@ -398,7 +398,7 @@ class TestCudaKernels:
                     )
 
             # Benchmark phase
-            logger.info(f"Benchmarking image {img_idx + 1}...")
+            logger.debug(f"Benchmarking image {img_idx + 1}...")
 
             img_original_times = []
             img_experimental_times = []
@@ -469,7 +469,7 @@ class TestCudaKernels:
         logger.info(f"  Min time: {min(original_times)*1000:.3f} ms")
         logger.info(f"  Max time: {max(original_times)*1000:.3f} ms")
 
-        logger.info(f"\nExperimental Kernel:")
+        logger.info(f"Experimental Kernel:")
         logger.info(f"  Mean time: {experimental_mean*1000:.3f} ms")
         logger.info(f"  Std dev: {experimental_std*1000:.3f} ms")
         logger.info(f"  Min time: {min(experimental_times)*1000:.3f} ms")
@@ -477,10 +477,10 @@ class TestCudaKernels:
 
         if experimental_mean > 0:
             speedup = original_mean / experimental_mean
-            logger.info(f"\nSpeedup factor: {speedup:.3f}x")
-            if speedup > 1:
+            logger.info(f"Speedup factor: {speedup:.3f}x")
+            if speedup > 1.01:
                 logger.info("✓ Experimental kernel is faster")
-            elif speedup < 1:
+            elif speedup < 0.99:
                 logger.info("⚠ Original kernel is faster")
             else:
                 logger.info("≈ Performance is equivalent")
@@ -488,7 +488,7 @@ class TestCudaKernels:
         logger.info("=" * 60)
 
         # Log full performance report
-        perf_timer.log(logger, include_percentages=True, sort_by="time")
+        # perf_timer.log(logger, include_percentages=True, sort_by="time")
 
         # Assertions to ensure kernels are functional
         assert len(original_times) > 0, "No original kernel timing data collected"
