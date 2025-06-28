@@ -13,7 +13,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# 3D Multi-channel CUDA kernel - based on compute-optimized kernel for planar input
+# 3D Multi-channel CUDA kernel - direct memory access without sparse block caching
 COMPUTE_OPTIMIZED_3D_KERNEL = r"""
 extern "C" __global__
 void compute_optimized_3d_transpose_dot_product_kernel(
@@ -46,35 +46,26 @@ void compute_optimized_3d_transpose_dot_product_kernel(
     int top_row = block_positions[pos_idx + 0];
     int top_col = block_positions[pos_idx + 1];
 
-    // Shared memory optimized for GPU limits (max 48KB per block)
-    // Load only sparse block into shared memory, access target directly
+    // Shared memory optimization: only reduction workspace (no sparse block cache)
+    // Since we read each sparse/target value exactly once, caching provides no benefit
     extern __shared__ float shared_mem[];
-    float* sparse_block = shared_mem;  // block_size * block_size floats (36KB for 96x96)
-    float* reduction_workspace = &shared_mem[block_size * block_size]; // 32 floats (128 bytes)
-    // Total: 36KB + 128 bytes = ~36.1KB (well under 48KB limit)
+    float* reduction_workspace = shared_mem; // 32 floats (128 bytes) - much smaller footprint
+    // Total shared memory: 128 bytes (vs 36KB+ in original)
 
-    int block_elements = block_size * block_size;  // 9216 for 96x96
-    int elements_per_thread = (block_elements + 31) / 32;  // 288 elements per thread
+    int block_elements = block_size * block_size;  // 4096 for 64x64
+    int elements_per_thread = (block_elements + 31) / 32;  // 128 elements per thread for 64x64
 
-    // Cooperative loading: 32 threads load sparse block into shared memory
-    // Calculate offset for (channels, batch_size, block_size, block_size) layout
-    int sparse_offset = channel_id * (batch_size * block_elements) + led_id * block_elements;
-    for (int i = 0; i < elements_per_thread; i++) {
-        int element_idx = threadIdx.x * elements_per_thread + i;
-        if (element_idx < block_elements) {
-            sparse_block[element_idx] = sparse_values[sparse_offset + element_idx];
-        }
-    }
-
-    __syncthreads();  // Ensure sparse block is loaded
-
-    // Compute phase: each thread processes 288 multiply-adds
-    // Access 3D target directly (channel_id, spatial) for planar layout
+    // Direct computation: read sparse and target values on-demand
+    // This optimizes for memory bandwidth rather than reuse
     float thread_sum = 0.0f;
+
+    // Calculate base offset for sparse values: (channels, batch, block, block) layout
+    int sparse_offset = channel_id * (batch_size * block_elements) + led_id * block_elements;
 
     // Calculate target channel offset for planar access
     int channel_offset = channel_id * height * width;
 
+    // Each thread processes elements_per_thread multiply-adds directly from global memory
     for (int i = 0; i < elements_per_thread; i++) {
         int element_idx = threadIdx.x * elements_per_thread + i;
         if (element_idx < block_elements) {
@@ -84,10 +75,11 @@ void compute_optimized_3d_transpose_dot_product_kernel(
             int global_row = top_row + block_row;
             int global_col = top_col + block_col;
 
-            // Bounds check and compute with 3D planar access
+            // Bounds check and compute with direct global memory access
             if (global_row < height && global_col < width) {
-                float sparse_val = sparse_block[element_idx];
-                // Planar access: target_3d[channel_id, global_row, global_col]
+                // Direct read from sparse values (no caching)
+                float sparse_val = sparse_values[sparse_offset + element_idx];
+                // Direct read from target image (planar access)
                 float target_val = target_3d[channel_offset + global_row * width + global_col];
                 thread_sum += sparse_val * target_val;
             }
@@ -207,11 +199,11 @@ def cuda_transpose_dot_product_3d_compute_optimized(
     )
 
     # Calculate shared memory size needed
-    # 1 sparse block + 32 reduction values (target accessed directly for better L2 cache usage)
-    shared_mem_size = (block_size * block_size + 32) * 4  # 4 bytes per float
+    # Only reduction workspace (32 floats) - no sparse block caching
+    shared_mem_size = 32 * 4  # 4 bytes per float = 128 bytes
 
     logger.debug(
-        f"  Shared memory per block: {shared_mem_size} bytes ({shared_mem_size/1024:.1f}KB)"
+        f"  Shared memory per block: {shared_mem_size} bytes ({shared_mem_size/1024:.3f}KB)"
     )
 
     # Launch kernel for each iteration
@@ -242,7 +234,7 @@ def cuda_transpose_dot_product_3d_compute_optimized(
     return result
 
 
-# Experimental kernel - direct memory access without sparse block caching
+# Experimental kernel - coalesced memory access optimization
 EXPERIMENTAL_COMPUTE_OPTIMIZED_3D_KERNEL = r"""
 extern "C" __global__
 void experimental_compute_optimized_3d_transpose_dot_product_kernel(
@@ -296,7 +288,7 @@ void experimental_compute_optimized_3d_transpose_dot_product_kernel(
 
     // Each thread processes elements_per_thread multiply-adds directly from global memory
     for (int i = 0; i < elements_per_thread; i++) {
-        int element_idx = threadIdx.x * elements_per_thread + i;
+        int element_idx = i * 32 + threadIdx.x;
         if (element_idx < block_elements) {
             // Calculate target image coordinates on-the-fly
             int block_row = element_idx / block_size;
@@ -378,10 +370,11 @@ def cuda_transpose_dot_product_3d_compute_optimized_experimental(
     """
     Experimental 3D Compute-optimized CUDA kernel wrapper for A^T @ b operation with planar input.
 
-    Experimental optimization: Eliminates shared memory caching of sparse blocks.
-    Reads sparse and target values directly from global memory since each value is
-    accessed exactly once.
-    Uses only 128 bytes of shared memory for reduction workspace (vs 36KB+ original).
+    Experimental optimization: Coalesced memory access pattern for better cache utilization.
+    All 32 threads in a warp access contiguous memory locations simultaneously using:
+    element_idx = i * 32 + threadIdx.x (coalesced) vs
+    threadIdx.x * elements_per_thread + i (strided).
+    This should improve memory bandwidth utilization through better cache line usage.
 
     Args:
         sparse_values: Dense blocks, shape (channels, batch_size, block_size, block_size)
