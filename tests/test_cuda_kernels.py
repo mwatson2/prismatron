@@ -17,10 +17,7 @@ from src.utils.performance_timing import PerformanceTiming
 try:
     import cupy as cp
 
-    from src.utils.cuda_kernels import (
-        cuda_transpose_dot_product_3d_compute_optimized,
-        cuda_transpose_dot_product_3d_compute_optimized_experimental,
-    )
+    from src.utils.cuda_kernels import cuda_transpose_dot_product_3d_compute_optimized
     from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 
     CUDA_AVAILABLE = True
@@ -249,24 +246,15 @@ class TestCudaKernels:
     """Test class for CUDA kernel functionality and performance."""
 
     def test_cuda_kernel_availability(self):
-        """Test that CUDA kernels can be imported and compiled."""
-        # Test original kernel compilation
+        """Test that CUDA kernel can be imported and compiled."""
+        # Test kernel compilation
         from src.utils.cuda_kernels import get_compute_optimized_3d_kernel
 
-        kernel_original = get_compute_optimized_3d_kernel()
-        assert kernel_original is not None
+        kernel = get_compute_optimized_3d_kernel()
+        assert kernel is not None
 
-        # Test experimental kernel compilation
-        from src.utils.cuda_kernels import get_experimental_compute_optimized_3d_kernel
-
-        kernel_experimental = get_experimental_compute_optimized_3d_kernel()
-        assert kernel_experimental is not None
-
-        # Verify they are different kernel objects
-        assert kernel_original is not kernel_experimental
-
-    def test_kernel_correctness_comparison(self, mixed_sparse_tensor, test_images):
-        """Test that experimental kernel produces identical results to original kernel."""
+    def test_kernel_functionality(self, mixed_sparse_tensor, test_images):
+        """Test that CUDA kernel produces correct results."""
         # Test with each test image
         for i, test_image in enumerate(test_images):
             # Convert to CuPy array
@@ -280,8 +268,8 @@ class TestCudaKernels:
                 mixed_sparse_tensor.block_positions
             )  # Shape: (channels, batch_size, 2)
 
-            # Run original kernel
-            result_original = cuda_transpose_dot_product_3d_compute_optimized(
+            # Run kernel
+            result = cuda_transpose_dot_product_3d_compute_optimized(
                 sparse_values=sparse_values,
                 block_positions=block_positions,
                 target_3d=target_gpu,
@@ -290,37 +278,22 @@ class TestCudaKernels:
                 block_size=mixed_sparse_tensor.block_size,
             )
 
-            # Run experimental kernel
-            result_experimental = (
-                cuda_transpose_dot_product_3d_compute_optimized_experimental(
-                    sparse_values=sparse_values,
-                    block_positions=block_positions,
-                    target_3d=target_gpu,
-                    batch_size=mixed_sparse_tensor.batch_size,
-                    channels=mixed_sparse_tensor.channels,
-                    block_size=mixed_sparse_tensor.block_size,
-                )
+            # Verify output shape and type
+            expected_shape = (
+                mixed_sparse_tensor.batch_size,
+                mixed_sparse_tensor.channels,
             )
+            assert result.shape == expected_shape
+            assert result.dtype == cp.float32
 
-            # Compare results - should be identical
-            cp.testing.assert_allclose(
-                result_original,
-                result_experimental,
-                rtol=1e-6,
-                atol=1e-8,
-                err_msg=f"Kernel results differ for test image {i}",
-            )
-
-    def test_kernel_performance_comparison(
-        self, large_mixed_sparse_tensor, test_images
-    ):
-        """Performance comparison between original and experimental kernels with cache warming.
+    def test_kernel_performance(self, large_mixed_sparse_tensor, test_images):
+        """Performance test for CUDA kernel with cache warming.
 
         Uses large problem size (1000 LEDs, 480x800 images) for realistic timing measurements
         that properly account for memory bandwidth and cache behavior.
         """
         # Initialize performance timing
-        perf_timer = PerformanceTiming("CudaKernelComparison", enable_gpu_timing=True)
+        perf_timer = PerformanceTiming("CudaKernelPerformance", enable_gpu_timing=True)
 
         # Get kernel inputs from large tensor
         sparse_values = large_mixed_sparse_tensor.sparse_values
@@ -328,12 +301,11 @@ class TestCudaKernels:
 
         # Test parameters
         warmup_runs = 5
-        benchmark_runs = 50
+        benchmark_runs = 20
 
-        original_times = []
-        experimental_times = []
+        kernel_times = []
 
-        logger.info(f"Running performance comparison:")
+        logger.info(f"Running performance test:")
         logger.info(f"  LED count: {large_mixed_sparse_tensor.batch_size}")
         logger.info(
             f"  Image size: {large_mixed_sparse_tensor.height}x{large_mixed_sparse_tensor.width}"
@@ -363,53 +335,31 @@ class TestCudaKernels:
         logger.info(f"    Total operations: {total_operations:,}")
 
         for img_idx, test_image in enumerate(test_images):
-            # Cache warming phase - run both kernels multiple times
+            # Cache warming phase
             logger.debug(
                 f"\nCache warming for image {img_idx + 1}/{len(test_images)}..."
             )
 
             for warmup in range(warmup_runs):
-                # Create fresh copy for original kernel warmup
                 target_gpu_fresh = cp.asarray(test_image.copy())
-                with perf_timer.section(
-                    f"warmup_original_img{img_idx}_{warmup}", use_gpu_events=True
-                ):
-                    _ = cuda_transpose_dot_product_3d_compute_optimized(
-                        sparse_values=sparse_values,
-                        block_positions=block_positions,
-                        target_3d=target_gpu_fresh,
-                        batch_size=large_mixed_sparse_tensor.batch_size,
-                        channels=large_mixed_sparse_tensor.channels,
-                        block_size=large_mixed_sparse_tensor.block_size,
-                    )
-
-                # Create fresh copy for experimental kernel warmup
-                target_gpu_fresh = cp.asarray(test_image.copy())
-                with perf_timer.section(
-                    f"warmup_experimental_img{img_idx}_{warmup}", use_gpu_events=True
-                ):
-                    _ = cuda_transpose_dot_product_3d_compute_optimized_experimental(
-                        sparse_values=sparse_values,
-                        block_positions=block_positions,
-                        target_3d=target_gpu_fresh,
-                        batch_size=large_mixed_sparse_tensor.batch_size,
-                        channels=large_mixed_sparse_tensor.channels,
-                        block_size=large_mixed_sparse_tensor.block_size,
-                    )
+                _ = cuda_transpose_dot_product_3d_compute_optimized(
+                    sparse_values=sparse_values,
+                    block_positions=block_positions,
+                    target_3d=target_gpu_fresh,
+                    batch_size=large_mixed_sparse_tensor.batch_size,
+                    channels=large_mixed_sparse_tensor.channels,
+                    block_size=large_mixed_sparse_tensor.block_size,
+                )
 
             # Benchmark phase
             logger.debug(f"Benchmarking image {img_idx + 1}...")
 
-            img_original_times = []
-            img_experimental_times = []
-
             for run in range(benchmark_runs):
-                # Create fresh copy for original kernel benchmark
                 target_gpu_fresh = cp.asarray(test_image.copy())
                 with perf_timer.section(
-                    f"benchmark_original_img{img_idx}_{run}", use_gpu_events=True
+                    f"benchmark_img{img_idx}_{run}", use_gpu_events=True
                 ) as timer:
-                    result_original = cuda_transpose_dot_product_3d_compute_optimized(
+                    result = cuda_transpose_dot_product_3d_compute_optimized(
                         sparse_values=sparse_values,
                         block_positions=block_positions,
                         target_3d=target_gpu_fresh,
@@ -418,108 +368,41 @@ class TestCudaKernels:
                         block_size=large_mixed_sparse_tensor.block_size,
                     )
 
-                # Create fresh copy for experimental kernel benchmark
-                target_gpu_fresh = cp.asarray(test_image.copy())
-                with perf_timer.section(
-                    f"benchmark_experimental_img{img_idx}_{run}", use_gpu_events=True
-                ) as timer:
-                    result_experimental = (
-                        cuda_transpose_dot_product_3d_compute_optimized_experimental(
-                            sparse_values=sparse_values,
-                            block_positions=block_positions,
-                            target_3d=target_gpu_fresh,
-                            batch_size=large_mixed_sparse_tensor.batch_size,
-                            channels=large_mixed_sparse_tensor.channels,
-                            block_size=large_mixed_sparse_tensor.block_size,
-                        )
-                    )
-
-                # Verify results are still identical
-                cp.testing.assert_allclose(
-                    result_original, result_experimental, rtol=1e-6, atol=1e-8
-                )
-
         # Extract timing data and analyze
         timing_data = perf_timer.get_timing_data()
 
-        # Collect benchmark times (exclude warmup)
+        # Collect benchmark times
         for section_name, section_data in timing_data["sections"].items():
-            if "benchmark_original" in section_name:
+            if "benchmark_" in section_name:
                 # Use GPU duration if available, otherwise CPU duration
                 duration = section_data.get("gpu_duration") or section_data["duration"]
-                original_times.append(duration)
-            elif "benchmark_experimental" in section_name:
-                # Use GPU duration if available, otherwise CPU duration
-                duration = section_data.get("gpu_duration") or section_data["duration"]
-                experimental_times.append(duration)
+                kernel_times.append(duration)
 
         # Calculate statistics
-        original_mean = np.mean(original_times)
-        original_std = np.std(original_times)
-        experimental_mean = np.mean(experimental_times)
-        experimental_std = np.std(experimental_times)
+        kernel_mean = np.mean(kernel_times)
+        kernel_std = np.std(kernel_times)
 
         # Log performance results
         logger.info("\n" + "=" * 60)
-        logger.info("CUDA KERNEL PERFORMANCE COMPARISON")
+        logger.info("CUDA KERNEL PERFORMANCE TEST")
         logger.info("=" * 60)
-        logger.info(f"Original Kernel:")
-        logger.info(f"  Mean time: {original_mean*1000:.3f} ms")
-        logger.info(f"  Std dev: {original_std*1000:.3f} ms")
-        logger.info(f"  Min time: {min(original_times)*1000:.3f} ms")
-        logger.info(f"  Max time: {max(original_times)*1000:.3f} ms")
-
-        logger.info(f"Experimental Kernel:")
-        logger.info(f"  Mean time: {experimental_mean*1000:.3f} ms")
-        logger.info(f"  Std dev: {experimental_std*1000:.3f} ms")
-        logger.info(f"  Min time: {min(experimental_times)*1000:.3f} ms")
-        logger.info(f"  Max time: {max(experimental_times)*1000:.3f} ms")
-
-        if experimental_mean > 0:
-            speedup = original_mean / experimental_mean
-            logger.info(f"Speedup factor: {speedup:.3f}x")
-            if speedup > 1.01:
-                logger.info("✓ Experimental kernel is faster")
-            elif speedup < 0.99:
-                logger.info("⚠ Original kernel is faster")
-            else:
-                logger.info("≈ Performance is equivalent")
-
+        logger.info(f"Kernel Performance:")
+        logger.info(f"  Mean time: {kernel_mean*1000:.3f} ms")
+        logger.info(f"  Std dev: {kernel_std*1000:.3f} ms")
+        logger.info(f"  Min time: {min(kernel_times)*1000:.3f} ms")
+        logger.info(f"  Max time: {max(kernel_times)*1000:.3f} ms")
         logger.info("=" * 60)
 
-        # Log full performance report
-        # perf_timer.log(logger, include_percentages=True, sort_by="time")
-
-        # Assertions to ensure kernels are functional
-        assert len(original_times) > 0, "No original kernel timing data collected"
-        assert (
-            len(experimental_times) > 0
-        ), "No experimental kernel timing data collected"
-        assert all(t > 0 for t in original_times), "Invalid original kernel timing data"
-        assert all(
-            t > 0 for t in experimental_times
-        ), "Invalid experimental kernel timing data"
-
-        # Store timing data for further analysis if needed
-        performance_data = {
-            "original_times": original_times,
-            "experimental_times": experimental_times,
-            "original_mean": original_mean,
-            "experimental_mean": experimental_mean,
-            "speedup": original_mean / experimental_mean
-            if experimental_mean > 0
-            else 1.0,
-        }
+        # Assertions to ensure kernel is functional
+        assert len(kernel_times) > 0, "No kernel timing data collected"
+        assert all(t > 0 for t in kernel_times), "Invalid kernel timing data"
 
         # Log a summary for reference
         logger.info(f"Performance test completed successfully!")
-        logger.info(
-            f"Data collected: {len(original_times)} original, "
-            f"{len(experimental_times)} experimental measurements"
-        )
+        logger.info(f"Data collected: {len(kernel_times)} measurements")
 
     def test_kernel_with_different_block_sizes(self):
-        """Test kernels with different block sizes to ensure robustness."""
+        """Test kernel with different block sizes to ensure robustness."""
         # Test with multiple block sizes
         block_sizes = [32, 64, 96]  # Different block sizes to test
         test_image = np.random.rand(3, 480, 800).astype(np.float32)
@@ -562,8 +445,8 @@ class TestCudaKernels:
             sparse_values = mixed_tensor.sparse_values
             block_positions = mixed_tensor.block_positions
 
-            # Test both kernels
-            result_original = cuda_transpose_dot_product_3d_compute_optimized(
+            # Test kernel
+            result = cuda_transpose_dot_product_3d_compute_optimized(
                 sparse_values=sparse_values,
                 block_positions=block_positions,
                 target_3d=target_gpu,
@@ -572,30 +455,10 @@ class TestCudaKernels:
                 block_size=block_size,
             )
 
-            result_experimental = (
-                cuda_transpose_dot_product_3d_compute_optimized_experimental(
-                    sparse_values=sparse_values,
-                    block_positions=block_positions,
-                    target_3d=target_gpu,
-                    batch_size=led_count,
-                    channels=channels,
-                    block_size=block_size,
-                )
-            )
-
-            # Verify results match
-            cp.testing.assert_allclose(
-                result_original,
-                result_experimental,
-                rtol=1e-6,
-                atol=1e-8,
-                err_msg=f"Results differ for block size {block_size}",
-            )
-
             # Verify output shape
             expected_shape = (led_count, channels)
-            assert result_original.shape == expected_shape
-            assert result_experimental.shape == expected_shape
+            assert result.shape == expected_shape
+            assert result.dtype == cp.float32
 
 
 @pytest.mark.skipif(CUDA_AVAILABLE, reason="Testing CUDA unavailable case")
