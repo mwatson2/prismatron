@@ -27,9 +27,10 @@ void compute_optimized_3d_transpose_dot_product_kernel(
     const int width,
     const int block_size
 ) {
-    // 2D Grid approach: blockIdx.x = led_id, blockIdx.y = channel_id
+    // Row-based processing optimization: each thread processes whole rows
+    // Requires: block_size % 32 == 0 (e.g., 64x64 blocks with 32 threads = 2 rows per thread)
     // Grid: (batch_size, channels) - one block per (LED, channel) combination
-    // Block: (32 threads, 1, 1) - optimal for warp-level parallelism
+    // Block: (32 threads, 1, 1) - each thread processes block_size/32 complete rows
 
     int led_id = blockIdx.x;
     int channel_id = blockIdx.y;
@@ -44,43 +45,44 @@ void compute_optimized_3d_transpose_dot_product_kernel(
     int top_row = block_positions[pos_idx + 0];
     int top_col = block_positions[pos_idx + 1];
 
-    // Shared memory optimization: only reduction workspace (no sparse block cache)
-    // Since we read each sparse/target value exactly once, caching provides no benefit
+    // Shared memory optimization: only reduction workspace
     extern __shared__ float shared_mem[];
-    float* reduction_workspace = shared_mem; // 32 floats (128 bytes) - much smaller footprint
-    // Total shared memory: 128 bytes (vs 36KB+ in original)
+    float* reduction_workspace = shared_mem; // 32 floats (128 bytes)
 
+    // Row-based processing: each thread handles exactly rows_per_thread rows
+    int rows_per_thread = block_size / 32;  // e.g., 64/32 = 2 rows per thread
     int block_elements = block_size * block_size;  // 4096 for 64x64
-    int elements_per_thread = (block_elements + 31) / 32;  // 128 elements per thread for 64x64
 
-    // Direct computation: read sparse and target values on-demand
-    // This optimizes for memory bandwidth rather than reuse
+    // Direct computation with row-based iteration (eliminates bounds checks)
     float thread_sum = 0.0f;
 
     // Calculate base offset for sparse values: (channels, batch, block, block) layout
     int sparse_offset = channel_id * (batch_size * block_elements) + led_id * block_elements;
 
     // Calculate target channel offset for planar access
-    int channel_offset = channel_id * height * width;
+    int initial_global_col_idx = top_col + channel_id * height * width;
 
-    // Each thread processes elements_per_thread multiply-adds directly from global memory
-    for (int i = 0; i < elements_per_thread; i++) {
-        int element_idx = threadIdx.x * elements_per_thread + i;
-        if (element_idx < block_elements) {
-            // Calculate target image coordinates on-the-fly
-            int block_row = element_idx / block_size;
-            int block_col = element_idx % block_size;
-            int global_row = top_row + block_row;
-            int global_col = top_col + block_col;
+    // Initialize row variables outside loop for efficiency
+    int block_row = threadIdx.x * rows_per_thread;  // Thread's starting row
+    int global_row_idx = ( top_row + block_row ) * width;  // Global row index in planar form
+    int sparse_idx = sparse_offset + block_row * block_size; // Starting index for first row
 
-            // Bounds check and compute with direct global memory access
-            if (global_row < height && global_col < width) {
-                // Direct read from sparse values (no caching)
-                float sparse_val = sparse_values[sparse_offset + element_idx];
-                // Direct read from target image (planar access)
-                float target_val = target_3d[channel_offset + global_row * width + global_col];
-                thread_sum += sparse_val * target_val;
-            }
+    // Each thread processes rows_per_thread complete rows
+    for (int row_offset = 0; row_offset < rows_per_thread;
+            row_offset++, block_row++, global_row_idx += width) {
+        // Initialize column variables outside loop for efficiency
+        int global_col_idx = initial_global_col_idx;
+
+        // Process all columns in this row
+        for (int block_col = 0; block_col < block_size;
+                block_col++, global_col_idx++, sparse_idx++) {
+            // Direct read from sparse values (no bounds checks needed - block_size % 32 == 0)
+            float sparse_val = sparse_values[sparse_idx];
+
+            // Direct read from target image (planar access)
+            float target_val = target_3d[global_col_idx + global_row_idx];
+
+            thread_sum += sparse_val * target_val;
         }
     }
 
@@ -148,8 +150,9 @@ def cuda_transpose_dot_product_3d_compute_optimized(
     """
     3D Compute-optimized CUDA kernel wrapper for A^T @ b operation with planar input.
 
-    Uses 8-way parallelism matching SM architecture with optimized memory access patterns.
-    Processes 3D planar input (channels, height, width) in one operation.
+    Uses row-based processing optimization with 2D grid launch for optimal performance.
+    Each thread processes complete rows (block_size/32 rows per thread) with direct memory
+    addressing. Eliminates conditional branches and reduces mathematical operations per element.
 
     Args:
         sparse_values: Dense blocks, shape (channels, batch_size, block_size, block_size)
@@ -157,7 +160,7 @@ def cuda_transpose_dot_product_3d_compute_optimized(
         target_3d: Target image in planar form, shape (channels, height, width)
         batch_size: Number of LEDs
         channels: Number of channels
-        block_size: Size of square blocks
+        block_size: Size of square blocks (must be multiple of 32)
 
     Returns:
         Result of A^T @ b, shape (batch_size, channels)
