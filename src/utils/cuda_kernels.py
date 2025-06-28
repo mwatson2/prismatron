@@ -234,7 +234,7 @@ def cuda_transpose_dot_product_3d_compute_optimized(
     return result
 
 
-# Experimental kernel - coalesced memory access optimization
+# Experimental kernel - 2D grid single launch optimization
 EXPERIMENTAL_COMPUTE_OPTIMIZED_3D_KERNEL = r"""
 extern "C" __global__
 void experimental_compute_optimized_3d_transpose_dot_product_kernel(
@@ -246,20 +246,18 @@ void experimental_compute_optimized_3d_transpose_dot_product_kernel(
     const int channels,
     const int height,
     const int width,
-    const int block_size,
-    const int iteration_offset      // Which set of 8 blocks this iteration processes
+    const int block_size
 ) {
-    // Architecture-matched design: 8 SMs, 128 cores per SM
-    // Grid: (8 blocks, 1, 1) - one block per SM
-    // Block: (32 threads, 1, 1) - four threads per core
+    // 2D Grid approach: blockIdx.x = led_id, blockIdx.y = channel_id
+    // Grid: (batch_size, channels) - one block per (LED, channel) combination
+    // Block: (32 threads, 1, 1) - optimal for warp-level parallelism
 
-    // Which (LED, channel) combination this SM is processing
-    int led_channel_id = iteration_offset * 8 + blockIdx.x;
+    int led_id = blockIdx.x;
+    int channel_id = blockIdx.y;
 
-    if (led_channel_id >= batch_size * channels) return;
+    // Bounds check
+    if (led_id >= batch_size || channel_id >= channels) return;
 
-    int led_id = led_channel_id / channels;
-    int channel_id = led_channel_id % channels;
     int idx = led_id * channels + channel_id;
 
     // Get block position for this LED/channel from (channels, batch_size, 2) layout
@@ -288,7 +286,7 @@ void experimental_compute_optimized_3d_transpose_dot_product_kernel(
 
     // Each thread processes elements_per_thread multiply-adds directly from global memory
     for (int i = 0; i < elements_per_thread; i++) {
-        int element_idx = i * 32 + threadIdx.x;
+        int element_idx = threadIdx.x * elements_per_thread + i;
         if (element_idx < block_elements) {
             // Calculate target image coordinates on-the-fly
             int block_row = element_idx / block_size;
@@ -370,11 +368,10 @@ def cuda_transpose_dot_product_3d_compute_optimized_experimental(
     """
     Experimental 3D Compute-optimized CUDA kernel wrapper for A^T @ b operation with planar input.
 
-    Experimental optimization: Coalesced memory access pattern for better cache utilization.
-    All 32 threads in a warp access contiguous memory locations simultaneously using:
-    element_idx = i * 32 + threadIdx.x (coalesced) vs
-    threadIdx.x * elements_per_thread + i (strided).
-    This should improve memory bandwidth utilization through better cache line usage.
+    Experimental optimization: 2D grid single launch approach for better GPU scheduling.
+    Uses a 2D grid (batch_size, channels) to eliminate multiple kernel launches and let
+    the GPU scheduler handle work distribution directly. Each block processes one
+    (LED, channel) combination with 32 threads collaborating on the dot product.
 
     Args:
         sparse_values: Dense blocks, shape (channels, batch_size, block_size, block_size)
@@ -398,28 +395,16 @@ def cuda_transpose_dot_product_3d_compute_optimized_experimental(
     # Get compiled experimental kernel
     kernel = get_experimental_compute_optimized_3d_kernel()
 
-    # Architecture-matched configuration: 8 SMs, 128 cores per SM
-    total_led_channels = batch_size * channels
-    sms_count = 8
-    cores_per_sm = 128  # 8 SMs with 128 cores each
+    # 2D Grid configuration: one block per (LED, channel) combination
+    grid_size = (batch_size, channels)  # 2D grid: (batch_size, channels)
+    block_size_1d = (32,)  # 32 threads per block for optimal warp utilization
 
-    # Calculate number of iterations needed to process all blocks
-    blocks_per_iteration = sms_count  # 8 blocks processed in parallel
-    num_iterations = (
-        total_led_channels + blocks_per_iteration - 1
-    ) // blocks_per_iteration
-
-    grid_size = (sms_count,)  # 8 blocks, one per SM
-    block_size_1d = (cores_per_sm,)  # 32 threads, one per core
-
-    logger.debug(f"Experimental 3D Compute-optimized CUDA kernel launch:")
-    logger.debug(f"  Grid: {grid_size}, Block: {block_size_1d}")
-    logger.debug(f"  Iterations: {num_iterations}")
+    logger.debug(f"Experimental 3D Compute-optimized CUDA kernel launch (2D Grid):")
+    logger.debug(f"  Grid: {grid_size} (batch_size={batch_size}, channels={channels})")
+    logger.debug(f"  Block: {block_size_1d} (32 threads per block)")
     logger.debug(f"  Target shape: {target_3d.shape} (planar)")
-    logger.debug(f"  Total threads per iteration: {sms_count * cores_per_sm}")
-    logger.debug(
-        f"  Total compute threads: {num_iterations * sms_count * cores_per_sm:,}"
-    )
+    logger.debug(f"  Total blocks: {batch_size * channels:,}")
+    logger.debug(f"  Total threads: {batch_size * channels * 32:,}")
 
     # Calculate shared memory size needed
     # Only reduction workspace (32 floats) - no sparse block caching in experimental kernel
@@ -429,29 +414,22 @@ def cuda_transpose_dot_product_3d_compute_optimized_experimental(
         f"  Shared memory per block: {shared_mem_size} bytes ({shared_mem_size/1024:.3f}KB)"
     )
 
-    # Launch kernel for each iteration
-    for iteration in range(num_iterations):
-        iteration_offset = iteration
-
-        kernel(
-            grid_size,
-            block_size_1d,
-            (
-                sparse_values.ravel(),  # Flatten to 1D
-                block_positions.ravel(),  # Flatten to 1D
-                target_3d.ravel(),  # Flatten 3D planar input to 1D
-                result.ravel(),  # Flatten result to 1D
-                batch_size,
-                channels,
-                height,
-                width,
-                block_size,
-                iteration_offset,
-            ),
-            shared_mem=shared_mem_size,
-        )
-
-        # Synchronize between iterations to ensure correct ordering
-        cp.cuda.Device().synchronize()
+    # Single kernel launch with 2D grid - let GPU scheduler handle work distribution
+    kernel(
+        grid_size,
+        block_size_1d,
+        (
+            sparse_values.ravel(),  # Flatten to 1D
+            block_positions.ravel(),  # Flatten to 1D
+            target_3d.ravel(),  # Flatten 3D planar input to 1D
+            result.ravel(),  # Flatten result to 1D
+            batch_size,
+            channels,
+            height,
+            width,
+            block_size,
+        ),
+        shared_mem=shared_mem_size,
+    )
 
     return result
