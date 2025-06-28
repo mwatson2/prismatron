@@ -30,6 +30,51 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def morton_encode(x, y):
+    """Encode 2D coordinates into Morton (Z-order) code for spatial locality."""
+
+    def part1by1(n):
+        """Separate bits by 1 position for Morton encoding."""
+        n &= 0x0000FFFF  # Only keep lower 16 bits
+        n = (n ^ (n << 8)) & 0x00FF00FF
+        n = (n ^ (n << 4)) & 0x0F0F0F0F
+        n = (n ^ (n << 2)) & 0x33333333
+        n = (n ^ (n << 1)) & 0x55555555
+        return n
+
+    return part1by1(x) | (part1by1(y) << 1)
+
+
+def generate_spatially_ordered_positions(led_count, height, width, block_size, seed=42):
+    """Generate LED positions with spatial Morton ordering for cache locality."""
+    np.random.seed(seed)
+
+    # Generate random positions within valid bounds
+    max_row = height - block_size
+    max_col = width - block_size
+
+    positions = []
+    for _ in range(led_count):
+        top_row = np.random.randint(0, max_row)
+        top_col = np.random.randint(0, max_col)
+        positions.append((top_row, top_col))
+
+    # Calculate Morton codes for spatial ordering
+    morton_codes = []
+    for top_row, top_col in positions:
+        # Normalize coordinates to fit in 16-bit range for Morton encoding
+        norm_row = int((top_row / max_row) * 65535) if max_row > 0 else 0
+        norm_col = int((top_col / max_col) * 65535) if max_col > 0 else 0
+        morton_code = morton_encode(norm_col, norm_row)  # (x, y) ordering
+        morton_codes.append(morton_code)
+
+    # Sort positions by Morton code for spatial locality
+    sorted_indices = np.argsort(morton_codes)
+    sorted_positions = [positions[i] for i in sorted_indices]
+
+    return sorted_positions
+
+
 @pytest.fixture
 def mixed_sparse_tensor():
     """Create a realistic mixed sparse tensor for testing CUDA kernels."""
@@ -49,17 +94,18 @@ def mixed_sparse_tensor():
         block_size=block_size,
     )
 
-    # Generate realistic diffusion patterns
+    # Generate LED positions with spatial Morton ordering for cache locality
+    led_positions = generate_spatially_ordered_positions(
+        led_count, height, width, block_size, seed=42
+    )
+
+    # Generate realistic diffusion patterns with spatially ordered placement
     np.random.seed(42)  # For reproducible results
 
     for led_idx in range(led_count):
-        for channel_idx in range(channels):
-            # Random block position within valid bounds
-            max_row = height - block_size
-            max_col = width - block_size
-            top_row = np.random.randint(0, max_row)
-            top_col = np.random.randint(0, max_col)
+        top_row, top_col = led_positions[led_idx]
 
+        for channel_idx in range(channels):
             # Generate realistic diffusion pattern (Gaussian-like)
             center_row, center_col = block_size // 2, block_size // 2
             y_coords, x_coords = np.ogrid[:block_size, :block_size]
@@ -157,21 +203,22 @@ def large_mixed_sparse_tensor():
         block_size=block_size,
     )
 
-    # Generate realistic diffusion patterns
-    np.random.seed(42)  # For reproducible results
-
+    # Generate LED positions with spatial Morton ordering for cache locality
     logger.info(
         f"Generating large tensor with {led_count} LEDs for performance testing..."
     )
 
-    for led_idx in range(led_count):
-        for channel_idx in range(channels):
-            # Random block position within valid bounds
-            max_row = height - block_size
-            max_col = width - block_size
-            top_row = np.random.randint(0, max_row)
-            top_col = np.random.randint(0, max_col)
+    led_positions = generate_spatially_ordered_positions(
+        led_count, height, width, block_size, seed=42
+    )
 
+    # Generate realistic diffusion patterns with spatially ordered placement
+    np.random.seed(42)  # For reproducible results
+
+    for led_idx in range(led_count):
+        top_row, top_col = led_positions[led_idx]
+
+        for channel_idx in range(channels):
             # Generate realistic diffusion pattern (Gaussian-like)
             center_row, center_col = block_size // 2, block_size // 2
             y_coords, x_coords = np.ogrid[:block_size, :block_size]
@@ -280,8 +327,8 @@ class TestCudaKernels:
         block_positions = large_mixed_sparse_tensor.block_positions
 
         # Test parameters
-        warmup_runs = 3
-        benchmark_runs = 5
+        warmup_runs = 5
+        benchmark_runs = 20
 
         original_times = []
         experimental_times = []
@@ -316,35 +363,35 @@ class TestCudaKernels:
         logger.info(f"    Total operations: {total_operations:,}")
 
         for img_idx, test_image in enumerate(test_images):
-            target_gpu = cp.asarray(test_image)
-
             # Cache warming phase - run both kernels multiple times
             logger.info(
                 f"\nCache warming for image {img_idx + 1}/{len(test_images)}..."
             )
 
             for warmup in range(warmup_runs):
-                # Warm up original kernel
+                # Create fresh copy for original kernel warmup
+                target_gpu_fresh = cp.asarray(test_image.copy())
                 with perf_timer.section(
                     f"warmup_original_img{img_idx}_{warmup}", use_gpu_events=True
                 ):
                     _ = cuda_transpose_dot_product_3d_compute_optimized(
                         sparse_values=sparse_values,
                         block_positions=block_positions,
-                        target_3d=target_gpu,
+                        target_3d=target_gpu_fresh,
                         batch_size=large_mixed_sparse_tensor.batch_size,
                         channels=large_mixed_sparse_tensor.channels,
                         block_size=large_mixed_sparse_tensor.block_size,
                     )
 
-                # Warm up experimental kernel
+                # Create fresh copy for experimental kernel warmup
+                target_gpu_fresh = cp.asarray(test_image.copy())
                 with perf_timer.section(
                     f"warmup_experimental_img{img_idx}_{warmup}", use_gpu_events=True
                 ):
                     _ = cuda_transpose_dot_product_3d_compute_optimized_experimental(
                         sparse_values=sparse_values,
                         block_positions=block_positions,
-                        target_3d=target_gpu,
+                        target_3d=target_gpu_fresh,
                         batch_size=large_mixed_sparse_tensor.batch_size,
                         channels=large_mixed_sparse_tensor.channels,
                         block_size=large_mixed_sparse_tensor.block_size,
@@ -357,20 +404,22 @@ class TestCudaKernels:
             img_experimental_times = []
 
             for run in range(benchmark_runs):
-                # Benchmark original kernel
+                # Create fresh copy for original kernel benchmark
+                target_gpu_fresh = cp.asarray(test_image.copy())
                 with perf_timer.section(
                     f"benchmark_original_img{img_idx}_{run}", use_gpu_events=True
                 ) as timer:
                     result_original = cuda_transpose_dot_product_3d_compute_optimized(
                         sparse_values=sparse_values,
                         block_positions=block_positions,
-                        target_3d=target_gpu,
+                        target_3d=target_gpu_fresh,
                         batch_size=large_mixed_sparse_tensor.batch_size,
                         channels=large_mixed_sparse_tensor.channels,
                         block_size=large_mixed_sparse_tensor.block_size,
                     )
 
-                # Benchmark experimental kernel
+                # Create fresh copy for experimental kernel benchmark
+                target_gpu_fresh = cp.asarray(test_image.copy())
                 with perf_timer.section(
                     f"benchmark_experimental_img{img_idx}_{run}", use_gpu_events=True
                 ) as timer:
@@ -378,7 +427,7 @@ class TestCudaKernels:
                         cuda_transpose_dot_product_3d_compute_optimized_experimental(
                             sparse_values=sparse_values,
                             block_positions=block_positions,
-                            target_3d=target_gpu,
+                            target_3d=target_gpu_fresh,
                             batch_size=large_mixed_sparse_tensor.batch_size,
                             channels=large_mixed_sparse_tensor.channels,
                             block_size=large_mixed_sparse_tensor.block_size,
@@ -493,15 +542,17 @@ class TestCudaKernels:
                 block_size=block_size,
             )
 
-            # Generate test patterns for this block size
+            # Generate LED positions with spatial Morton ordering for cache locality
+            led_positions = generate_spatially_ordered_positions(
+                led_count, height, width, block_size, seed=42
+            )
+
+            # Generate test patterns for this block size with Morton ordering
             np.random.seed(42)  # Consistent patterns
             for led_idx in range(led_count):
-                for channel_idx in range(channels):
-                    max_row = height - block_size
-                    max_col = width - block_size
-                    top_row = np.random.randint(0, max_row)
-                    top_col = np.random.randint(0, max_col)
+                top_row, top_col = led_positions[led_idx]
 
+                for channel_idx in range(channels):
                     # Simple pattern for testing
                     pattern = np.random.rand(block_size, block_size).astype(np.float32)
                     mixed_tensor.set_block(
