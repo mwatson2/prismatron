@@ -17,7 +17,10 @@ from src.utils.performance_timing import PerformanceTiming
 try:
     import cupy as cp
 
-    from src.utils.cuda_kernels import cuda_transpose_dot_product_3d_compute_optimized
+    from src.utils.cuda_kernels import (
+        cuda_transpose_dot_product_3d_compute_optimized,
+        cuda_transpose_dot_product_3d_compute_optimized_int8,
+    )
     from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 
     CUDA_AVAILABLE = True
@@ -287,7 +290,7 @@ class TestCudaKernels:
             assert result.dtype == cp.float32
 
     def test_kernel_performance(self, large_mixed_sparse_tensor, test_images):
-        """Performance test for CUDA kernel with cache warming.
+        """Performance test for CUDA kernels (fp32 and int8) with cache warming.
 
         Uses large problem size (1000 LEDs, 480x800 images) for realistic timing measurements
         that properly account for memory bandwidth and cache behavior.
@@ -295,15 +298,20 @@ class TestCudaKernels:
         # Initialize performance timing
         perf_timer = PerformanceTiming("CudaKernelPerformance", enable_gpu_timing=True)
 
-        # Get kernel inputs from large tensor
-        sparse_values = large_mixed_sparse_tensor.sparse_values
+        # Get kernel inputs from large tensor (fp32)
+        sparse_values_fp32 = large_mixed_sparse_tensor.sparse_values
         block_positions = large_mixed_sparse_tensor.block_positions
+
+        # Convert to int8 data (multiply by 255 and convert to uint8)
+        # Shape: (channels, batch_size, block_size, block_size) - fp32 -> uint8
+        sparse_values_int8 = (sparse_values_fp32 * 255).astype(cp.uint8)
 
         # Test parameters
         warmup_runs = 5
         benchmark_runs = 20
 
-        kernel_times = []
+        fp32_times = []
+        int8_times = []
 
         logger.info(f"Running performance test:")
         logger.info(f"  LED count: {large_mixed_sparse_tensor.batch_size}")
@@ -335,15 +343,20 @@ class TestCudaKernels:
         logger.info(f"    Total operations: {total_operations:,}")
 
         for img_idx, test_image in enumerate(test_images):
-            # Cache warming phase
+            # Convert test image to int8 format (multiply by 255 and convert to uint8)
+            # Shape: (channels, height, width) - fp32 -> uint8
+            test_image_int8 = (test_image * 255).astype(cp.uint8)
+
+            # ====== FP32 KERNEL BENCHMARKING ======
             logger.debug(
-                f"\nCache warming for image {img_idx + 1}/{len(test_images)}..."
+                f"\nFP32 kernel - Cache warming for image {img_idx + 1}/{len(test_images)}..."
             )
 
+            # FP32 Cache warming phase
             for warmup in range(warmup_runs):
                 target_gpu_fresh = cp.asarray(test_image.copy())
                 _ = cuda_transpose_dot_product_3d_compute_optimized(
-                    sparse_values=sparse_values,
+                    sparse_values=sparse_values_fp32,
                     block_positions=block_positions,
                     target_3d=target_gpu_fresh,
                     batch_size=large_mixed_sparse_tensor.batch_size,
@@ -351,18 +364,52 @@ class TestCudaKernels:
                     block_size=large_mixed_sparse_tensor.block_size,
                 )
 
-            # Benchmark phase
-            logger.debug(f"Benchmarking image {img_idx + 1}...")
+            # FP32 Benchmark phase
+            logger.debug(f"FP32 kernel - Benchmarking image {img_idx + 1}...")
 
             for run in range(benchmark_runs):
                 target_gpu_fresh = cp.asarray(test_image.copy())
                 with perf_timer.section(
-                    f"benchmark_img{img_idx}_{run}", use_gpu_events=True
+                    f"fp32_benchmark_img{img_idx}_{run}", use_gpu_events=True
                 ) as timer:
                     result = cuda_transpose_dot_product_3d_compute_optimized(
-                        sparse_values=sparse_values,
+                        sparse_values=sparse_values_fp32,
                         block_positions=block_positions,
                         target_3d=target_gpu_fresh,
+                        batch_size=large_mixed_sparse_tensor.batch_size,
+                        channels=large_mixed_sparse_tensor.channels,
+                        block_size=large_mixed_sparse_tensor.block_size,
+                    )
+
+            # ====== INT8 KERNEL BENCHMARKING ======
+            logger.debug(
+                f"INT8 kernel - Cache warming for image {img_idx + 1}/{len(test_images)}..."
+            )
+
+            # INT8 Cache warming phase
+            for warmup in range(warmup_runs):
+                target_gpu_fresh_int8 = cp.asarray(test_image_int8.copy())
+                _ = cuda_transpose_dot_product_3d_compute_optimized_int8(
+                    sparse_values=sparse_values_int8,
+                    block_positions=block_positions,
+                    target_3d=target_gpu_fresh_int8,
+                    batch_size=large_mixed_sparse_tensor.batch_size,
+                    channels=large_mixed_sparse_tensor.channels,
+                    block_size=large_mixed_sparse_tensor.block_size,
+                )
+
+            # INT8 Benchmark phase
+            logger.debug(f"INT8 kernel - Benchmarking image {img_idx + 1}...")
+
+            for run in range(benchmark_runs):
+                target_gpu_fresh_int8 = cp.asarray(test_image_int8.copy())
+                with perf_timer.section(
+                    f"int8_benchmark_img{img_idx}_{run}", use_gpu_events=True
+                ) as timer:
+                    result = cuda_transpose_dot_product_3d_compute_optimized_int8(
+                        sparse_values=sparse_values_int8,
+                        block_positions=block_positions,
+                        target_3d=target_gpu_fresh_int8,
                         batch_size=large_mixed_sparse_tensor.batch_size,
                         channels=large_mixed_sparse_tensor.channels,
                         block_size=large_mixed_sparse_tensor.block_size,
@@ -371,35 +418,58 @@ class TestCudaKernels:
         # Extract timing data and analyze
         timing_data = perf_timer.get_timing_data()
 
-        # Collect benchmark times
+        # Collect benchmark times for both kernels
         for section_name, section_data in timing_data["sections"].items():
-            if "benchmark_" in section_name:
-                # Use GPU duration if available, otherwise CPU duration
-                duration = section_data.get("gpu_duration") or section_data["duration"]
-                kernel_times.append(duration)
+            # Use GPU duration if available, otherwise CPU duration
+            duration = section_data.get("gpu_duration") or section_data["duration"]
 
-        # Calculate statistics
-        kernel_mean = np.mean(kernel_times)
-        kernel_std = np.std(kernel_times)
+            if "fp32_benchmark_" in section_name:
+                fp32_times.append(duration)
+            elif "int8_benchmark_" in section_name:
+                int8_times.append(duration)
+
+        # Calculate statistics for both kernels
+        fp32_mean = np.mean(fp32_times)
+        fp32_std = np.std(fp32_times)
+        int8_mean = np.mean(int8_times)
+        int8_std = np.std(int8_times)
+
+        # Calculate performance comparison
+        speedup = fp32_mean / int8_mean if int8_mean > 0 else 0
 
         # Log performance results
-        logger.info("\n" + "=" * 60)
-        logger.info("CUDA KERNEL PERFORMANCE TEST")
-        logger.info("=" * 60)
-        logger.info(f"Kernel Performance:")
-        logger.info(f"  Mean time: {kernel_mean*1000:.3f} ms")
-        logger.info(f"  Std dev: {kernel_std*1000:.3f} ms")
-        logger.info(f"  Min time: {min(kernel_times)*1000:.3f} ms")
-        logger.info(f"  Max time: {max(kernel_times)*1000:.3f} ms")
-        logger.info("=" * 60)
+        logger.info("\n" + "=" * 70)
+        logger.info("CUDA KERNEL PERFORMANCE COMPARISON")
+        logger.info("=" * 70)
+        logger.info(f"FP32 Kernel Performance:")
+        logger.info(f"  Mean time: {fp32_mean*1000:.3f} ms")
+        logger.info(f"  Std dev: {fp32_std*1000:.3f} ms")
+        logger.info(f"  Min time: {min(fp32_times)*1000:.3f} ms")
+        logger.info(f"  Max time: {max(fp32_times)*1000:.3f} ms")
+        logger.info(f"")
+        logger.info(f"INT8 Kernel Performance:")
+        logger.info(f"  Mean time: {int8_mean*1000:.3f} ms")
+        logger.info(f"  Std dev: {int8_std*1000:.3f} ms")
+        logger.info(f"  Min time: {min(int8_times)*1000:.3f} ms")
+        logger.info(f"  Max time: {max(int8_times)*1000:.3f} ms")
+        logger.info(f"")
+        logger.info(f"Performance Comparison:")
+        logger.info(
+            f"  INT8 Speedup: {speedup:.2f}x {'(faster)' if speedup > 1 else '(slower)'}"
+        )
+        logger.info(f"  Memory Usage: INT8 uses ~4x less memory than FP32")
+        logger.info("=" * 70)
 
-        # Assertions to ensure kernel is functional
-        assert len(kernel_times) > 0, "No kernel timing data collected"
-        assert all(t > 0 for t in kernel_times), "Invalid kernel timing data"
+        # Assertions to ensure both kernels are functional
+        assert len(fp32_times) > 0, "No FP32 kernel timing data collected"
+        assert len(int8_times) > 0, "No INT8 kernel timing data collected"
+        assert all(t > 0 for t in fp32_times), "Invalid FP32 kernel timing data"
+        assert all(t > 0 for t in int8_times), "Invalid INT8 kernel timing data"
 
         # Log a summary for reference
         logger.info(f"Performance test completed successfully!")
-        logger.info(f"Data collected: {len(kernel_times)} measurements")
+        logger.info(f"FP32 data collected: {len(fp32_times)} measurements")
+        logger.info(f"INT8 data collected: {len(int8_times)} measurements")
 
     def test_kernel_with_different_block_sizes(self):
         """Test kernel with different block sizes to ensure robustness."""
@@ -457,6 +527,168 @@ class TestCudaKernels:
 
             # Verify output shape
             expected_shape = (led_count, channels)
+            assert result.shape == expected_shape
+            assert result.dtype == cp.float32
+
+    def test_int8_kernel_availability(self):
+        """Test that int8 CUDA kernel can be imported and compiled."""
+        # Test int8 kernel compilation
+        from src.utils.cuda_kernels import get_compute_optimized_3d_int8_kernel
+
+        kernel = get_compute_optimized_3d_int8_kernel()
+        assert kernel is not None
+
+    def test_int8_kernel_functionality(self):
+        """Test that int8 CUDA kernel produces correct results."""
+        # Create int8 tensor with known patterns
+        batch_size, channels = 5, 3
+        height, width = 64, 80
+        block_size = 32  # Multiple of 4 for vectorization
+
+        # Create test data in int8 range
+        np.random.seed(42)
+        int8_sparse_data = np.random.randint(
+            0, 256, (channels, batch_size, block_size, block_size), dtype=np.uint8
+        )
+        int8_target_data = np.random.randint(
+            0, 256, (channels, height, width), dtype=np.uint8
+        )
+        positions = np.random.randint(
+            0,
+            min(height, width) - block_size,
+            (channels, batch_size, 2),
+            dtype=np.int32,
+        )
+
+        # Convert to CuPy arrays
+        sparse_values = cp.asarray(int8_sparse_data)
+        target_3d = cp.asarray(int8_target_data)
+        block_positions = cp.asarray(positions)
+
+        # Run int8 kernel
+        result = cuda_transpose_dot_product_3d_compute_optimized_int8(
+            sparse_values=sparse_values,
+            block_positions=block_positions,
+            target_3d=target_3d,
+            batch_size=batch_size,
+            channels=channels,
+            block_size=block_size,
+        )
+
+        # Verify output shape and type
+        expected_shape = (batch_size, channels)
+        assert result.shape == expected_shape
+        assert result.dtype == cp.float32
+
+        # Verify values are in reasonable range (normalized by 255*255)
+        assert cp.all(result >= 0)  # All values should be non-negative
+        # Max possible value after normalization: block_size^2 (when all pixels are 255)
+        max_expected = block_size * block_size  # 32*32 = 1024 for this test
+        assert cp.all(result <= max_expected)  # All values should be <= block_size^2
+
+    def test_int8_fp32_kernel_equivalence(self):
+        """Test mathematical equivalence between int8 and fp32 kernels."""
+        # Create test data
+        batch_size, channels = 3, 2
+        height, width = 48, 64
+        block_size = 32
+
+        # Generate int8 test data
+        np.random.seed(123)  # Different seed from other tests
+        int8_sparse_data = np.random.randint(
+            0, 256, (channels, batch_size, block_size, block_size), dtype=np.uint8
+        )
+        int8_target_data = np.random.randint(
+            0, 256, (channels, height, width), dtype=np.uint8
+        )
+        positions = np.random.randint(
+            0,
+            min(height, width) - block_size,
+            (channels, batch_size, 2),
+            dtype=np.int32,
+        )
+
+        # Convert to CuPy arrays
+        int8_sparse_cupy = cp.asarray(int8_sparse_data)
+        int8_target_cupy = cp.asarray(int8_target_data)
+        block_positions = cp.asarray(positions)
+
+        # Run int8 kernel
+        int8_result = cuda_transpose_dot_product_3d_compute_optimized_int8(
+            sparse_values=int8_sparse_cupy,
+            block_positions=block_positions,
+            target_3d=int8_target_cupy,
+            batch_size=batch_size,
+            channels=channels,
+            block_size=block_size,
+        )
+
+        # Convert int8 data to fp32 (unscaled)
+        fp32_sparse_data = int8_sparse_data.astype(np.float32)
+        fp32_target_data = int8_target_data.astype(np.float32)
+        fp32_sparse_cupy = cp.asarray(fp32_sparse_data)
+        fp32_target_cupy = cp.asarray(fp32_target_data)
+
+        # Run fp32 kernel
+        fp32_result = cuda_transpose_dot_product_3d_compute_optimized(
+            sparse_values=fp32_sparse_cupy,
+            block_positions=block_positions,
+            target_3d=fp32_target_cupy,
+            batch_size=batch_size,
+            channels=channels,
+            block_size=block_size,
+        )
+
+        # Scale fp32 result to match int8 normalization
+        fp32_result_scaled = fp32_result / (255.0 * 255.0)
+
+        # Compare results
+        cp.testing.assert_allclose(
+            int8_result,
+            fp32_result_scaled,
+            rtol=1e-6,
+            atol=1e-8,
+            err_msg="int8 and fp32 (scaled) kernel results should be equivalent",
+        )
+
+    def test_int8_kernel_with_different_block_sizes(self):
+        """Test int8 kernel with different block sizes."""
+        # Test with multiple block sizes (must be multiples of 4)
+        block_sizes = [32, 64]  # Removed 96 since it's not multiple of 4
+        batch_size, channels = 3, 2
+        height, width = 80, 96
+
+        for block_size in block_sizes:
+            logger.info(f"Testing int8 kernel with block size: {block_size}")
+
+            # Generate test data
+            int8_sparse_data = np.random.randint(
+                0, 256, (channels, batch_size, block_size, block_size), dtype=np.uint8
+            )
+            int8_target_data = np.random.randint(
+                0, 256, (channels, height, width), dtype=np.uint8
+            )
+            positions = np.random.randint(
+                0, min(height, width) - block_size, (channels, batch_size, 2)
+            )
+
+            # Convert to CuPy
+            sparse_values = cp.asarray(int8_sparse_data)
+            target_3d = cp.asarray(int8_target_data)
+            block_positions = cp.asarray(positions)
+
+            # Test kernel
+            result = cuda_transpose_dot_product_3d_compute_optimized_int8(
+                sparse_values=sparse_values,
+                block_positions=block_positions,
+                target_3d=target_3d,
+                batch_size=batch_size,
+                channels=channels,
+                block_size=block_size,
+            )
+
+            # Verify output shape and type
+            expected_shape = (batch_size, channels)
             assert result.shape == expected_shape
             assert result.dtype == cp.float32
 

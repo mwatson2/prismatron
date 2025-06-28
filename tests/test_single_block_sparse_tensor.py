@@ -13,6 +13,7 @@ from pathlib import Path
 
 import cupy as cp
 import numpy as np
+import pytest
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -66,59 +67,6 @@ def test_basic_functionality():
     logger.info("✓ Basic functionality test passed")
 
 
-def test_transpose_dot_product():
-    """Test the core A^T @ b operation."""
-    logger.info("=== Testing Transpose Dot Product ===")
-
-    # Create a small tensor with known patterns
-    batch_size, channels = 3, 2
-    height, width = 50, 60
-    block_size = 8
-
-    tensor = SingleBlockMixedSparseTensor(
-        batch_size, channels, height, width, block_size
-    )
-
-    # Set blocks with known values and positions
-    test_cases = [
-        (0, 0, 10, 15, cp.ones((8, 8)) * 2.0),  # LED 0, Red: all 2.0s at (10,15)
-        (0, 1, 20, 25, cp.ones((8, 8)) * 3.0),  # LED 0, Green: all 3.0s at (20,25)
-        (1, 0, 5, 30, cp.ones((8, 8)) * 4.0),  # LED 1, Red: all 4.0s at (5,30)
-        (1, 1, 35, 10, cp.ones((8, 8)) * 5.0),  # LED 1, Green: all 5.0s at (35,10)
-        (2, 0, 25, 45, cp.ones((8, 8)) * 6.0),  # LED 2, Red: all 6.0s at (25,45)
-        (2, 1, 15, 5, cp.ones((8, 8)) * 7.0),  # LED 2, Green: all 7.0s at (15,5)
-    ]
-
-    for batch_idx, channel_idx, row, col, values in test_cases:
-        tensor.set_block(batch_idx, channel_idx, row, col, values)
-
-    # Create a target image with known values
-    target = cp.zeros((height, width), dtype=cp.float32)
-    target[10:18, 15:23] = 1.0  # Overlaps with LED 0, Red (2.0 * 1.0 * 64 = 128)
-    target[20:28, 25:33] = 0.5  # Overlaps with LED 0, Green (3.0 * 0.5 * 64 = 96)
-    target[5:13, 30:38] = 2.0  # Overlaps with LED 1, Red (4.0 * 2.0 * 64 = 512)
-
-    # Compute A^T @ b
-    result = tensor.transpose_dot_product(target)
-
-    logger.info(f"Transpose dot product result shape: {result.shape}")
-    logger.info(f"Result values:\n{result}")
-
-    # Verify expected results
-    expected = cp.array(
-        [
-            [128.0, 96.0],  # LED 0: Red=2*1*64, Green=3*0.5*64
-            [512.0, 0.0],  # LED 1: Red=4*2*64, Green=0 (no overlap)
-            [0.0, 0.0],  # LED 2: No overlaps
-        ]
-    )
-
-    assert cp.allclose(
-        result, expected, rtol=1e-5
-    ), f"Expected {expected}, got {result}"
-    logger.info("✓ Transpose dot product test passed")
-
-
 def test_batch_operations():
     """Test batch setting operations."""
     logger.info("=== Testing Batch Operations ===")
@@ -146,11 +94,11 @@ def test_batch_operations():
 
     # All blocks are assumed to be set - no explicit verification needed
 
-    # Test single target computation
-    target = cp.random.rand(height, width).astype(cp.float32)
-    result = tensor.transpose_dot_product(target)
+    # Test 3D target computation
+    target_3d = cp.random.rand(channels, height, width).astype(cp.float32)
+    result = tensor.transpose_dot_product_3d(target_3d)
 
-    logger.info(f"Single target result shape: {result.shape}")
+    logger.info(f"3D target result shape: {result.shape}")
     assert result.shape == (batch_size, channels)
 
     logger.info("✓ Batch operations test passed")
@@ -226,9 +174,9 @@ def test_performance_comparison():
     )
     tensor.set_blocks_batch(positions, values)
 
-    # Create multiple target matrices
+    # Create multiple target matrices (3D format)
     num_targets = 10
-    targets = cp.random.rand(num_targets, height, width).astype(cp.float32)
+    targets_3d = cp.random.rand(num_targets, channels, height, width).astype(cp.float32)
 
     # Time sparse implementation
     cp.cuda.Device().synchronize()
@@ -236,7 +184,7 @@ def test_performance_comparison():
 
     sparse_results = []
     for i in range(num_targets):
-        result = tensor.transpose_dot_product(targets[i])
+        result = tensor.transpose_dot_product_3d(targets_3d[i])
         sparse_results.append(result)
 
     cp.cuda.Device().synchronize()
@@ -322,9 +270,9 @@ def test_save_load():
     assert cp.array_equal(loaded.block_positions, original.block_positions)
 
     # Verify same computational results
-    target = cp.random.rand(40, 50).astype(cp.float32)
-    original_result = original.transpose_dot_product(target)
-    loaded_result = loaded.transpose_dot_product(target)
+    target_3d = cp.random.rand(2, 40, 50).astype(cp.float32)
+    original_result = original.transpose_dot_product_3d(target_3d)
+    loaded_result = loaded.transpose_dot_product_3d(target_3d)
 
     assert cp.allclose(
         original_result, loaded_result
@@ -351,33 +299,37 @@ def test_error_handling():
     # Test out-of-bounds indices
     try:
         tensor.set_block(10, 0, 0, 0, cp.ones((8, 8)))
-        assert False, "Should have raised ValueError for batch_idx out of bounds"
+        raise AssertionError(
+            "Should have raised ValueError for batch_idx out of bounds"
+        )
     except ValueError:
         pass
 
     try:
         tensor.set_block(0, 5, 0, 0, cp.ones((8, 8)))
-        assert False, "Should have raised ValueError for channel_idx out of bounds"
+        raise AssertionError(
+            "Should have raised ValueError for channel_idx out of bounds"
+        )
     except ValueError:
         pass
 
     # Test out-of-bounds positions
     try:
         tensor.set_block(0, 0, 50, 0, cp.ones((8, 8)))  # row too large
-        assert False, "Should have raised ValueError for row out of bounds"
+        raise AssertionError("Should have raised ValueError for row out of bounds")
     except ValueError:
         pass
 
     try:
         tensor.set_block(0, 0, 0, 60, cp.ones((8, 8)))  # col too large
-        assert False, "Should have raised ValueError for col out of bounds"
+        raise AssertionError("Should have raised ValueError for col out of bounds")
     except ValueError:
         pass
 
     # Test wrong value shape
     try:
         tensor.set_block(0, 0, 0, 0, cp.ones((10, 10)))  # wrong block size
-        assert False, "Should have raised ValueError for wrong value shape"
+        raise AssertionError("Should have raised ValueError for wrong value shape")
     except ValueError:
         pass
 
@@ -433,7 +385,8 @@ def test_to_dense_patterns():
         np.testing.assert_array_equal(
             individual_pattern,
             batch_pattern,
-            err_msg=f"Mismatch between extract_pattern and to_dense_patterns for LED {batch_idx}, channel {channel_idx}",
+            err_msg=f"Mismatch between extract_pattern and to_dense_patterns for LED "
+            f"{batch_idx}, channel {channel_idx}",
         )
 
     logger.info("✓ to_dense_patterns test passed")
@@ -565,13 +518,13 @@ def test_extract_pattern():
     # Test error handling
     try:
         tensor.extract_pattern(batch_size, 0)  # Invalid LED index
-        assert False, "Should have raised ValueError for invalid LED index"
+        raise AssertionError("Should have raised ValueError for invalid LED index")
     except ValueError:
         pass
 
     try:
         tensor.extract_pattern(0, channels)  # Invalid channel index
-        assert False, "Should have raised ValueError for invalid channel index"
+        raise AssertionError("Should have raised ValueError for invalid channel index")
     except ValueError:
         pass
 
@@ -633,13 +586,288 @@ def test_enhancement_methods_consistency():
     logger.info("✓ Enhancement methods consistency test passed")
 
 
+@pytest.mark.parametrize("dtype", [cp.float32, cp.uint8])
+def test_dtype_support(dtype):
+    """Test tensor creation and basic operations with different dtypes."""
+    logger.info(f"=== Testing dtype support: {dtype} ===")
+
+    # Create tensor with specified dtype
+    tensor = SingleBlockMixedSparseTensor(
+        batch_size=3, channels=2, height=40, width=50, block_size=8, dtype=dtype
+    )
+
+    # Verify dtype is set correctly
+    assert tensor.dtype == dtype
+    assert tensor.sparse_values.dtype == dtype
+
+    # Create test data of appropriate dtype
+    if dtype == cp.float32:
+        test_value = 0.5
+        values = cp.ones((8, 8), dtype=dtype) * test_value
+    else:  # uint8
+        test_value = 128
+        values = cp.ones((8, 8), dtype=dtype) * test_value
+
+    # Test setting blocks with correct dtype
+    tensor.set_block(0, 0, 5, 10, values)
+
+    # Verify block was set correctly
+    block_info = tensor.get_block_info(0, 0)
+    assert cp.allclose(block_info["values"], test_value)
+
+    logger.info(f"✓ dtype support test passed for {dtype}")
+
+
+def test_dtype_validation():
+    """Test dtype validation in constructor and methods."""
+    logger.info("=== Testing dtype validation ===")
+
+    # Test unsupported dtype in constructor
+    try:
+        SingleBlockMixedSparseTensor(5, 2, 40, 50, 8, dtype=cp.int32)
+        raise AssertionError("Should have raised ValueError for unsupported dtype")
+    except ValueError:
+        pass
+
+    # Test dtype mismatch in set_block
+    tensor = SingleBlockMixedSparseTensor(5, 2, 40, 50, 8, dtype=cp.float32)
+
+    try:
+        wrong_dtype_values = cp.ones((8, 8), dtype=cp.uint8)
+        tensor.set_block(0, 0, 5, 10, wrong_dtype_values)
+        raise AssertionError("Should have raised ValueError for dtype mismatch")
+    except ValueError:
+        pass
+
+    # Test dtype mismatch in set_blocks_batch
+    try:
+        positions = cp.zeros((2, 5, 2), dtype=cp.int32)
+        wrong_dtype_values = cp.ones((2, 5, 8, 8), dtype=cp.uint8)
+        tensor.set_blocks_batch(positions, wrong_dtype_values)
+        raise AssertionError("Should have raised ValueError for dtype mismatch")
+    except ValueError:
+        pass
+
+    logger.info("✓ dtype validation test passed")
+
+
+def test_file_io_with_dtype():
+    """Test save/load functionality preserves dtype."""
+    logger.info("=== Testing file I/O with dtype ===")
+
+    for dtype in [cp.float32, cp.uint8]:
+        logger.info(f"Testing file I/O with {dtype}")
+
+        # Create tensor with specific dtype
+        original = SingleBlockMixedSparseTensor(4, 2, 30, 40, 8, dtype=dtype)
+
+        # Set some test data
+        if dtype == cp.float32:
+            test_values = [0.1, 0.5, 0.9, 1.0]
+        else:  # uint8
+            test_values = [25, 128, 200, 255]
+
+        for i, test_value in enumerate(test_values):
+            values = cp.ones((8, 8), dtype=dtype) * test_value
+            original.set_block(i, 0, 5 + i * 5, 10, values)
+
+        # Save to dict
+        data_dict = original.to_dict()
+        assert "dtype" in data_dict
+        assert str(data_dict["dtype"]) == dtype.__name__
+
+        # Load from dict
+        loaded = SingleBlockMixedSparseTensor.from_dict(data_dict)
+
+        # Verify dtype is preserved
+        assert loaded.dtype == dtype
+        assert loaded.sparse_values.dtype == dtype
+
+        # Verify data is preserved
+        assert cp.allclose(loaded.sparse_values, original.sparse_values)
+
+    logger.info("✓ file I/O dtype test passed")
+
+
+def test_int8_fp32_equivalence():
+    """
+    Test that int8 and fp32 kernels produce equivalent results.
+
+    Strategy:
+    1. Create int8 tensor and target data
+    2. Convert int8 data to fp32 (unscaled: 0-255 range)
+    3. Run fp32 kernel and divide result by (255*255)
+    4. Run int8 kernel directly
+    5. Compare results - should be identical
+    """
+    logger.info("=== Testing int8/fp32 equivalence ===")
+
+    # Test parameters
+    batch_size, channels = 5, 3
+    height, width = 64, 80
+    block_size = 32  # Multiple of 4 for vectorization
+
+    # Create test data in int8 range [0, 255]
+    np.random.seed(42)  # For reproducibility
+    int8_sparse_data = np.random.randint(
+        0, 256, (channels, batch_size, block_size, block_size), dtype=np.uint8
+    )
+    int8_target_data = np.random.randint(
+        0, 256, (channels, height, width), dtype=np.uint8
+    )
+    positions = np.random.randint(
+        0, min(height, width) - block_size, (channels, batch_size, 2), dtype=np.int32
+    )
+
+    # Convert to CuPy arrays
+    int8_sparse_cupy = cp.asarray(int8_sparse_data)
+    int8_target_cupy = cp.asarray(int8_target_data)
+    positions_cupy = cp.asarray(positions)
+
+    # 1. Create int8 tensor and compute result
+    int8_tensor = SingleBlockMixedSparseTensor(
+        batch_size, channels, height, width, block_size, dtype=cp.uint8
+    )
+    int8_tensor.set_blocks_batch(positions_cupy, int8_sparse_cupy)
+
+    int8_result = int8_tensor.transpose_dot_product_3d(int8_target_cupy)
+
+    # 2. Create fp32 tensor with unscaled data (0-255 range) and compute result
+    fp32_sparse_data = int8_sparse_data.astype(np.float32)  # Unscaled conversion
+    fp32_target_data = int8_target_data.astype(np.float32)  # Unscaled conversion
+
+    fp32_sparse_cupy = cp.asarray(fp32_sparse_data)
+    fp32_target_cupy = cp.asarray(fp32_target_data)
+
+    fp32_tensor = SingleBlockMixedSparseTensor(
+        batch_size, channels, height, width, block_size, dtype=cp.float32
+    )
+    fp32_tensor.set_blocks_batch(positions_cupy, fp32_sparse_cupy)
+
+    fp32_result = fp32_tensor.transpose_dot_product_3d(fp32_target_cupy)
+
+    # 3. Scale fp32 result by (255*255) to match int8 kernel normalization
+    fp32_result_scaled = fp32_result / (255.0 * 255.0)
+
+    # 4. Compare results - should be identical (or very close due to floating point precision)
+    logger.info(f"int8 result sample: {int8_result[0, :3]}")
+    logger.info(f"fp32 scaled result sample: {fp32_result_scaled[0, :3]}")
+    logger.info(
+        f"Max absolute difference: {cp.max(cp.abs(int8_result - fp32_result_scaled))}"
+    )
+
+    # Allow small tolerance for floating point precision differences
+    cp.testing.assert_allclose(
+        int8_result,
+        fp32_result_scaled,
+        rtol=1e-6,
+        atol=1e-8,
+        err_msg="int8 and fp32 (scaled) results should be equivalent",
+    )
+
+    logger.info(
+        "✓ int8/fp32 equivalence test passed - results are mathematically equivalent!"
+    )
+
+
+def test_memory_efficiency_comparison():
+    """Test memory efficiency between int8 and fp32 tensors."""
+    logger.info("=== Testing memory efficiency comparison ===")
+
+    # Create tensors with same dimensions but different dtypes
+    batch_size, channels = 100, 3
+    height, width = 200, 300
+    block_size = 64
+
+    fp32_tensor = SingleBlockMixedSparseTensor(
+        batch_size, channels, height, width, block_size, dtype=cp.float32
+    )
+
+    int8_tensor = SingleBlockMixedSparseTensor(
+        batch_size, channels, height, width, block_size, dtype=cp.uint8
+    )
+
+    # Get memory info
+    fp32_memory = fp32_tensor.memory_info()
+    int8_memory = int8_tensor.memory_info()
+
+    logger.info(f"fp32 memory usage: {fp32_memory['total_mb']:.2f}MB")
+    logger.info(f"int8 memory usage: {int8_memory['total_mb']:.2f}MB")
+
+    # int8 should use ~4x less memory for sparse_values
+    memory_ratio = fp32_memory["total_mb"] / int8_memory["total_mb"]
+    logger.info(f"Memory reduction factor: {memory_ratio:.2f}x")
+
+    # Should be close to 4x reduction (exact ratio depends on position storage overhead)
+    assert memory_ratio > 3.0, f"Expected >3x memory reduction, got {memory_ratio:.2f}x"
+
+    logger.info("✓ memory efficiency comparison test passed")
+
+
+@pytest.mark.parametrize("dtype", [cp.float32, cp.uint8])
+def test_transpose_dot_product_3d_dtypes(dtype):
+    """Test transpose_dot_product_3d with different dtypes."""
+    logger.info(f"=== Testing transpose_dot_product_3d with {dtype} ===")
+
+    batch_size, channels = 3, 2
+    height, width = 48, 64
+    block_size = 16
+
+    tensor = SingleBlockMixedSparseTensor(
+        batch_size, channels, height, width, block_size, dtype=dtype
+    )
+
+    # Create test data of appropriate dtype and range
+    if dtype == cp.float32:
+        # Use [0, 1] range for fp32
+        sparse_data = cp.random.rand(
+            channels, batch_size, block_size, block_size
+        ).astype(dtype)
+        target_data = cp.random.rand(channels, height, width).astype(dtype)
+    else:  # uint8
+        # Use [0, 255] range for int8
+        sparse_data = cp.random.randint(
+            0, 256, (channels, batch_size, block_size, block_size), dtype=dtype
+        )
+        target_data = cp.random.randint(0, 256, (channels, height, width), dtype=dtype)
+
+    positions = cp.random.randint(
+        0, min(height, width) - block_size, (channels, batch_size, 2)
+    )
+
+    # Set data
+    tensor.set_blocks_batch(positions, sparse_data)
+
+    # Test dtype mismatch error
+    if dtype == cp.float32:
+        wrong_target = cp.random.randint(
+            0, 256, (channels, height, width), dtype=cp.uint8
+        )
+    else:
+        wrong_target = cp.random.rand(channels, height, width).astype(cp.float32)
+
+    try:
+        tensor.transpose_dot_product_3d(wrong_target)
+        raise AssertionError("Should have raised ValueError for dtype mismatch")
+    except ValueError:
+        pass
+
+    # Test correct computation
+    result = tensor.transpose_dot_product_3d(target_data)
+
+    # Verify output shape and dtype
+    assert result.shape == (batch_size, channels)
+    assert result.dtype == cp.float32  # Output is always fp32
+
+    logger.info(f"✓ transpose_dot_product_3d test passed for {dtype}")
+
+
 def main():
     """Run all tests."""
     logger.info("Starting SingleBlockMixedSparseTensor tests...")
 
     try:
         test_basic_functionality()
-        test_transpose_dot_product()
         test_batch_operations()
         test_memory_efficiency()
         test_performance_comparison()
@@ -651,6 +879,16 @@ def main():
         test_get_block_summary()
         test_extract_pattern()
         test_enhancement_methods_consistency()
+
+        # New dtype support tests
+        test_dtype_support(cp.float32)
+        test_dtype_support(cp.uint8)
+        test_dtype_validation()
+        test_file_io_with_dtype()
+        test_int8_fp32_equivalence()
+        test_memory_efficiency_comparison()
+        test_transpose_dot_product_3d_dtypes(cp.float32)
+        test_transpose_dot_product_3d_dtypes(cp.uint8)
 
         logger.info("🎉 All tests passed successfully!")
 
