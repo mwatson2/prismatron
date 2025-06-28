@@ -78,6 +78,10 @@ class SingleBlockMixedSparseTensor:
             (channels, batch_size, block_size, block_size), dtype=cp.float32
         )
 
+        assert (
+            self.sparse_values.data.ptr % 16 == 0
+        ), "Sparse values array must be 16-byte aligned"
+
         # Storage for block positions (top-left coordinates)
         # Shape: (channels, batch_size, 2) for planar layout
         self.block_positions = cp.zeros((channels, batch_size, 2), dtype=cp.int32)

@@ -220,6 +220,19 @@ def cuda_transpose_dot_product_3d_compute_optimized(
 
 # Experimental kernel - row-based processing optimization
 EXPERIMENTAL_COMPUTE_OPTIMIZED_3D_KERNEL = r"""
+#include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h>
+using namespace cooperative_groups;
+
+__device__ float dot(float4 a, float4 b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+}
+
+__device__ __forceinline__ float4 load_float4_unaligned(const float* ptr) {
+    // This may generate less efficient code but handles any alignment
+    return make_float4(ptr[0], ptr[1], ptr[2], ptr[3]);
+}
+
 extern "C" __global__
 void experimental_compute_optimized_3d_transpose_dot_product_kernel(
     const float* sparse_values,     // Shape: (channels, batch_size, block_size, block_size)
@@ -237,6 +250,8 @@ void experimental_compute_optimized_3d_transpose_dot_product_kernel(
     // Grid: (batch_size, channels) - one block per (LED, channel) combination
     // Block: (32 threads, 1, 1) - each thread processes block_size/32 complete rows
 
+    auto warp = tiled_partition<32>(this_thread_block());
+
     int led_id = blockIdx.x;
     int channel_id = blockIdx.y;
 
@@ -249,10 +264,6 @@ void experimental_compute_optimized_3d_transpose_dot_product_kernel(
     int pos_idx = channel_id * (batch_size * 2) + led_id * 2;
     int top_row = block_positions[pos_idx + 0];
     int top_col = block_positions[pos_idx + 1];
-
-    // Shared memory optimization: only reduction workspace
-    extern __shared__ float shared_mem[];
-    float* reduction_workspace = shared_mem; // 32 floats (128 bytes)
 
     // Row-based processing: each thread handles exactly rows_per_thread rows
     int rows_per_thread = block_size / 32;  // e.g., 64/32 = 2 rows per thread
@@ -268,57 +279,29 @@ void experimental_compute_optimized_3d_transpose_dot_product_kernel(
     int target_offset = channel_id * height * width + top_row * width + top_col;
 
     // Initialize row variables outside loop for efficiency
-    int thread_row = threadIdx.x * rows_per_thread;  // Thread's starting row
-    int thread_row_offset = thread_row * width;  // Offset into target image for thread's row
+    int thread_row = threadIdx.x * rows_per_thread;     // Thread's starting row
+    int max_thread_row = thread_row + rows_per_thread;  // End row for this thread
     int sparse_idx = sparse_offset + thread_row * block_size; // Starting index for first row
-    int target_idx = target_offset + thread_row_offset;
+    int target_idx = target_offset + thread_row * width;
 
     // Each thread processes rows_per_thread complete rows
-    for (   int row = 0;
-            row < rows_per_thread;
-            row++, thread_row++, target_idx += width - block_size) {
+    for (   ;
+            thread_row < max_thread_row;
+            thread_row++, target_idx += width - block_size) {
         // Process all columns in this row
         for (int col = 0;
              col < block_size;
-             col++, target_idx++, sparse_idx++) {
-            // Direct read from sparse values (no bounds checks needed - block_size % 32 == 0)
-            float sparse_val = sparse_values[sparse_idx];
-
-            // Direct read from target image (planar access)
-            float target_val = target_3d[target_idx];
-
-            thread_sum += sparse_val * target_val;
+             col += 4, target_idx += 4, sparse_idx += 4) {
+            float4 sparse_vec = *reinterpret_cast<const float4*>(&sparse_values[sparse_idx]);
+            float4 target_vec = load_float4_unaligned(&target_3d[target_idx]);
+            thread_sum += dot(sparse_vec, target_vec);
         }
     }
 
-    // Store in shared memory for reduction
-    reduction_workspace[threadIdx.x] = thread_sum;
-    __syncthreads();
+    float sum = reduce(warp, thread_sum, plus<float>());
 
-    // Parallel reduction: 32 → 1 using tree reduction
-    // Optimized for 32 threads (single warp, no sync needed within warp)
-    if (threadIdx.x < 16) {
-        reduction_workspace[threadIdx.x] += reduction_workspace[threadIdx.x + 16];
-    }
-    __syncthreads();
-
-    if (threadIdx.x < 8) {
-        reduction_workspace[threadIdx.x] += reduction_workspace[threadIdx.x + 8];
-    }
-    __syncthreads();
-
-    if (threadIdx.x < 4) {
-        reduction_workspace[threadIdx.x] += reduction_workspace[threadIdx.x + 4];
-    }
-    __syncthreads();
-
-    if (threadIdx.x < 2) {
-        reduction_workspace[threadIdx.x] += reduction_workspace[threadIdx.x + 2];
-    }
-    __syncthreads();
-
-    if (threadIdx.x == 0) {
-        result[idx] = reduction_workspace[0] + reduction_workspace[1];
+    if (warp.thread_rank() == 0) {
+        result[idx] = sum;
     }
 }
 """
