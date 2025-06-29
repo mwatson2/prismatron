@@ -465,7 +465,9 @@ class SyntheticPatternGenerator:
                 if pattern_height <= block_size and pattern_width <= block_size:
                     # Place block to contain the entire pattern
                     top_row = max(0, min(height - block_size, min_row))
-                    top_col = max(0, min(width - block_size, min_col))
+                    top_col_candidate = max(0, min(width - block_size, min_col))
+                    # ALIGNMENT: Round down x-coordinate to multiple of 4
+                    top_col = (top_col_candidate // 4) * 4
                 else:
                     # Pattern is larger than block, use LED position as center
                     if self.led_positions is not None and led_id < len(
@@ -478,9 +480,11 @@ class SyntheticPatternGenerator:
                             top_row = max(
                                 0, min(height - block_size, led_y - block_size // 2)
                             )
-                            top_col = max(
+                            top_col_candidate = max(
                                 0, min(width - block_size, led_x - block_size // 2)
                             )
+                            # ALIGNMENT: Round down x-coordinate to multiple of 4
+                            top_col = (top_col_candidate // 4) * 4
                         else:
                             # Fallback: use pattern center
                             center_row = (min_row + max_row) // 2
@@ -489,9 +493,11 @@ class SyntheticPatternGenerator:
                                 0,
                                 min(height - block_size, center_row - block_size // 2),
                             )
-                            top_col = max(
+                            top_col_candidate = max(
                                 0, min(width - block_size, center_col - block_size // 2)
                             )
+                            # ALIGNMENT: Round down x-coordinate to multiple of 4
+                            top_col = (top_col_candidate // 4) * 4
                     else:
                         # Fallback: use pattern center
                         center_row = (min_row + max_row) // 2
@@ -499,9 +505,11 @@ class SyntheticPatternGenerator:
                         top_row = max(
                             0, min(height - block_size, center_row - block_size // 2)
                         )
-                        top_col = max(
+                        top_col_candidate = max(
                             0, min(width - block_size, center_col - block_size // 2)
                         )
+                        # ALIGNMENT: Round down x-coordinate to multiple of 4
+                        top_col = (top_col_candidate // 4) * 4
 
                 # Create the dense block
                 block = np.zeros((block_size, block_size), dtype=np.float32)

@@ -222,10 +222,10 @@ def test_save_load():
 
     # Set some blocks with known values
     test_data = [
-        (0, 0, 5, 10, cp.ones((8, 8)) * 1.5),
-        (1, 1, 15, 20, cp.ones((8, 8)) * 2.5),
-        (3, 0, 25, 5, cp.ones((8, 8)) * 3.5),
-        (7, 1, 10, 35, cp.ones((8, 8)) * 4.5),
+        (0, 0, 5, 10, cp.ones((8, 8), dtype=cp.float32) * 1.5),
+        (1, 1, 15, 20, cp.ones((8, 8), dtype=cp.float32) * 2.5),
+        (3, 0, 25, 5, cp.ones((8, 8), dtype=cp.float32) * 3.5),
+        (7, 1, 10, 35, cp.ones((8, 8), dtype=cp.float32) * 4.5),
     ]
 
     for batch_idx, channel_idx, row, col, values in test_data:
