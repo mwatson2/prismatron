@@ -247,16 +247,6 @@ void compute_optimized_3d_transpose_dot_product_int8_experimental_kernel(
     int top_row = block_positions[pos_idx + 0];
     int top_col = block_positions[pos_idx + 1];
 
-    // EXPERIMENTAL: Verify alignment requirement (top_col % 4 == 0)
-    // This allows us to use aligned uchar4 loads for the target
-    if (top_col % 4 != 0) {
-        // Fallback to unaligned loads if alignment is not met
-        if (warp.thread_rank() == 0) {
-            result[idx] = 0.0f;  // Or handle error appropriately
-        }
-        return;
-    }
-
     // Row-based processing: each thread handles exactly rows_per_thread rows
     int rows_per_thread = block_size / 32;  // e.g., 64/32 = 2 rows per thread
     int block_elements = block_size * block_size;  // 4096 for 64x64
@@ -285,13 +275,12 @@ void compute_optimized_3d_transpose_dot_product_int8_experimental_kernel(
         for (int col = 0;
              col < block_size;
              col += 4, target_idx += 4, sparse_idx += 4) {
-            // EXPERIMENTAL: Use aligned uchar4 loads for both sparse and target
             uchar4 sparse_vec = *reinterpret_cast<const uchar4*>(
                 &sparse_values[sparse_idx]
             );
             uchar4 target_vec = *reinterpret_cast<const uchar4*>(
                 &target_3d[target_idx]
-            );  // Aligned access
+            );
             thread_sum_int += dot_int8(sparse_vec, target_vec);
         }
     }
@@ -382,24 +371,12 @@ void compute_optimized_3d_transpose_dot_product_int8_kernel(
         for (int col = 0;
              col < block_size;
              col += 4, target_idx += 4, sparse_idx += 4) {
-            // Use aligned uchar4 loads for both sparse and target data
-            uchar4 sparse_vec = *reinterpret_cast<const uchar4*>(&sparse_values[sparse_idx]);
-
-            // For target data, use aligned load if x-position is aligned, otherwise unaligned
-            uchar4 target_vec;
-            if (top_col % 4 == 0) {
-                // Aligned access for optimal performance
-                target_vec = *reinterpret_cast<const uchar4*>(&target_3d[target_idx]);
-            } else {
-                // Fallback to unaligned access for compatibility
-                target_vec = make_uchar4(
-                    target_3d[target_idx],
-                    target_3d[target_idx + 1],
-                    target_3d[target_idx + 2],
-                    target_3d[target_idx + 3]
-                );
-            }
-
+            uchar4 sparse_vec = *reinterpret_cast<const uchar4*>(
+                &sparse_values[sparse_idx]
+            );
+            uchar4 target_vec = *reinterpret_cast<const uchar4*>(
+                &target_3d[target_idx]
+            );
             thread_sum_int += dot_int8(sparse_vec, target_vec);
         }
     }

@@ -273,7 +273,8 @@ def large_mixed_sparse_tensor():
 
 @pytest.fixture
 def large_mixed_sparse_tensor_aligned():
-    """Create a large mixed sparse tensor with x-positions aligned to multiples of 4 for experimental kernel testing."""
+    """Create a large mixed sparse tensor with x-positions
+    aligned to multiples of 4 for experimental kernel testing."""
     # Large problem size for accurate performance measurements
     led_count = 1000  # Full problem size for performance testing
     channels = 3
@@ -379,7 +380,8 @@ class TestCudaKernels:
     def test_kernel_performance_comprehensive(
         self, large_mixed_sparse_tensor, large_mixed_sparse_tensor_aligned, test_images
     ):
-        """Comprehensive performance test for all CUDA kernels (fp32, int8, int8_experimental) with cache warming.
+        """Comprehensive performance test for all CUDA kernels
+        (fp32, int8, int8_experimental) with cache warming.
 
         Uses large problem size (1000 LEDs, 480x800 images) for realistic timing measurements
         that properly account for memory bandwidth and cache behavior.
@@ -486,11 +488,11 @@ class TestCudaKernels:
                 target_gpu_fresh_int8 = cp.asarray(test_image_int8.copy())
                 _ = cuda_transpose_dot_product_3d_compute_optimized_int8(
                     sparse_values=sparse_values_int8,
-                    block_positions=block_positions,
+                    block_positions=block_positions_aligned,
                     target_3d=target_gpu_fresh_int8,
-                    batch_size=large_mixed_sparse_tensor.batch_size,
-                    channels=large_mixed_sparse_tensor.channels,
-                    block_size=large_mixed_sparse_tensor.block_size,
+                    batch_size=large_mixed_sparse_tensor_aligned.batch_size,
+                    channels=large_mixed_sparse_tensor_aligned.channels,
+                    block_size=large_mixed_sparse_tensor_aligned.block_size,
                 )
 
             # INT8 Benchmark phase
@@ -503,16 +505,17 @@ class TestCudaKernels:
                 ) as timer:
                     result = cuda_transpose_dot_product_3d_compute_optimized_int8(
                         sparse_values=sparse_values_int8,
-                        block_positions=block_positions,
+                        block_positions=block_positions_aligned,
                         target_3d=target_gpu_fresh_int8,
-                        batch_size=large_mixed_sparse_tensor.batch_size,
-                        channels=large_mixed_sparse_tensor.channels,
-                        block_size=large_mixed_sparse_tensor.block_size,
+                        batch_size=large_mixed_sparse_tensor_aligned.batch_size,
+                        channels=large_mixed_sparse_tensor_aligned.channels,
+                        block_size=large_mixed_sparse_tensor_aligned.block_size,
                     )
 
             # ====== INT8 EXPERIMENTAL KERNEL BENCHMARKING ======
             logger.debug(
-                f"INT8 EXPERIMENTAL kernel - Cache warming for image {img_idx + 1}/{len(test_images)}..."
+                "INT8 EXPERIMENTAL kernel - "
+                f"Cache warming for image {img_idx + 1}/{len(test_images)}..."
             )
 
             # INT8 Experimental Cache warming phase
@@ -602,10 +605,12 @@ class TestCudaKernels:
             f"  INT8 vs FP32: {int8_speedup:.2f}x {'(faster)' if int8_speedup > 1 else '(slower)'}"
         )
         logger.info(
-            f"  INT8_EXP vs FP32: {int8_exp_speedup:.2f}x {'(faster)' if int8_exp_speedup > 1 else '(slower)'}"
+            f"  INT8_EXP vs FP32: {int8_exp_speedup:.2f}x "
+            f"{'(faster)' if int8_exp_speedup > 1 else '(slower)'}"
         )
         logger.info(
-            f"  INT8_EXP vs INT8: {exp_vs_regular_int8:.2f}x {'(faster)' if exp_vs_regular_int8 > 1 else '(slower)'}"
+            f"  INT8_EXP vs INT8: {exp_vs_regular_int8:.2f}x "
+            f"{'(faster)' if exp_vs_regular_int8 > 1 else '(slower)'}"
         )
         logger.info(f"  Memory Usage: INT8 uses ~4x less memory than FP32")
         logger.info("=" * 70)
@@ -630,7 +635,9 @@ class TestCudaKernels:
             f"INT8_EXP data collected: {len(int8_experimental_times)} measurements"
         )
 
-    def test_kernel_performance(self, large_mixed_sparse_tensor, test_images):
+    def test_kernel_performance(
+        self, large_mixed_sparse_tensor, large_mixed_sparse_tensor_aligned, test_images
+    ):
         """Performance test for CUDA kernels (fp32 and int8) with cache warming.
 
         Uses large problem size (1000 LEDs, 480x800 images) for realistic timing measurements
@@ -642,6 +649,8 @@ class TestCudaKernels:
         # Get kernel inputs from large tensor (fp32)
         sparse_values_fp32 = large_mixed_sparse_tensor.sparse_values
         block_positions = large_mixed_sparse_tensor.block_positions
+
+        block_positions_aligned = large_mixed_sparse_tensor_aligned.block_positions
 
         # Convert to int8 data (multiply by 255 and convert to uint8)
         # Shape: (channels, batch_size, block_size, block_size) - fp32 -> uint8
@@ -732,11 +741,11 @@ class TestCudaKernels:
                 target_gpu_fresh_int8 = cp.asarray(test_image_int8.copy())
                 _ = cuda_transpose_dot_product_3d_compute_optimized_int8(
                     sparse_values=sparse_values_int8,
-                    block_positions=block_positions,
+                    block_positions=block_positions_aligned,
                     target_3d=target_gpu_fresh_int8,
-                    batch_size=large_mixed_sparse_tensor.batch_size,
-                    channels=large_mixed_sparse_tensor.channels,
-                    block_size=large_mixed_sparse_tensor.block_size,
+                    batch_size=large_mixed_sparse_tensor_aligned.batch_size,
+                    channels=large_mixed_sparse_tensor_aligned.channels,
+                    block_size=large_mixed_sparse_tensor_aligned.block_size,
                 )
 
             # INT8 Benchmark phase
@@ -749,11 +758,11 @@ class TestCudaKernels:
                 ) as timer:
                     result = cuda_transpose_dot_product_3d_compute_optimized_int8(
                         sparse_values=sparse_values_int8,
-                        block_positions=block_positions,
+                        block_positions=block_positions_aligned,
                         target_3d=target_gpu_fresh_int8,
-                        batch_size=large_mixed_sparse_tensor.batch_size,
-                        channels=large_mixed_sparse_tensor.channels,
-                        block_size=large_mixed_sparse_tensor.block_size,
+                        batch_size=large_mixed_sparse_tensor_aligned.batch_size,
+                        channels=large_mixed_sparse_tensor_aligned.channels,
+                        block_size=large_mixed_sparse_tensor_aligned.block_size,
                     )
 
         # Extract timing data and analyze
@@ -895,11 +904,10 @@ class TestCudaKernels:
             0, 256, (channels, height, width), dtype=np.uint8
         )
         positions = np.random.randint(
-            0,
-            min(height, width) - block_size,
-            (channels, batch_size, 2),
-            dtype=np.int32,
+            0, (min(height, width) - block_size) // 4, (channels, batch_size, 2)
         )
+
+        positions = positions * 4  # Ensure positions are multiples of 4
 
         # Convert to CuPy arrays
         sparse_values = cp.asarray(int8_sparse_data)
@@ -943,11 +951,10 @@ class TestCudaKernels:
             0, 256, (channels, height, width), dtype=np.uint8
         )
         positions = np.random.randint(
-            0,
-            min(height, width) - block_size,
-            (channels, batch_size, 2),
-            dtype=np.int32,
+            0, (min(height, width) - block_size) // 4, (channels, batch_size, 2)
         )
+
+        positions = positions * 4  # Ensure positions are multiples of 4
 
         # Convert to CuPy arrays
         int8_sparse_cupy = cp.asarray(int8_sparse_data)
@@ -1010,8 +1017,10 @@ class TestCudaKernels:
                 0, 256, (channels, height, width), dtype=np.uint8
             )
             positions = np.random.randint(
-                0, min(height, width) - block_size, (channels, batch_size, 2)
+                0, (min(height, width) - block_size) // 4, (channels, batch_size, 2)
             )
+
+            positions = positions * 4  # Ensure positions are multiples of 4
 
             # Convert to CuPy
             sparse_values = cp.asarray(int8_sparse_data)
@@ -1036,7 +1045,8 @@ class TestCudaKernels:
     def test_experimental_vs_original_int8_kernel_equivalence(
         self, large_mixed_sparse_tensor_aligned
     ):
-        """Test that experimental int8 kernel produces equivalent results to the original int8 kernel."""
+        """Test that experimental int8 kernel produces equivalent
+        results to the original int8 kernel."""
         # Use aligned tensor for experimental kernel
         aligned_tensor = large_mixed_sparse_tensor_aligned
 
@@ -1102,7 +1112,8 @@ class TestCudaKernels:
             result_original,
             rtol=1e-6,
             atol=1e-8,
-            err_msg="Experimental and original int8 kernel results should be equivalent for aligned data",
+            err_msg="Experimental and original int8 kernel results should "
+            "be equivalent for aligned data",
         )
 
         logger.info(
@@ -1110,7 +1121,8 @@ class TestCudaKernels:
         )
         logger.info(f"✓ Result shape: {result_experimental.shape}")
         logger.info(
-            f"✓ Max absolute difference: {cp.max(cp.abs(result_experimental - result_original)).get():.2e}"
+            "✓ Max absolute difference: "
+            f"{cp.max(cp.abs(result_experimental - result_original)).get():.2e}"
         )
 
     def test_experimental_kernel_availability(self):
@@ -1126,7 +1138,8 @@ class TestCudaKernels:
     def test_int8_vs_experimental_performance_comparison(
         self, large_mixed_sparse_tensor, large_mixed_sparse_tensor_aligned, test_images
     ):
-        """Focused performance comparison between int8 and int8_experimental kernels with alignment experiment.
+        """Focused performance comparison between int8 and int8_experimental
+        kernels with alignment experiment.
 
         This test demonstrates the performance impact of aligned uchar4 loads by comparing:
         1. Original int8 kernel with random LED positions
@@ -1162,10 +1175,13 @@ class TestCudaKernels:
         logger.info("INT8 vs EXPERIMENTAL KERNEL ALIGNMENT EXPERIMENT")
         logger.info("=" * 60)
         logger.info(
-            f"Regular tensor - x-positions aligned to 4: {regular_aligned_count}/{total_positions} ({100*regular_aligned_count/total_positions:.1f}%)"
+            f"Regular tensor - x-positions aligned to 4: "
+            f"{regular_aligned_count}/{total_positions} "
+            f"({100*regular_aligned_count/total_positions:.1f}%)"
         )
         logger.info(
-            f"Aligned tensor - x-positions aligned to 4: {aligned_count}/{total_positions} ({100*aligned_count/total_positions:.1f}%)"
+            f"Aligned tensor - x-positions aligned to 4: "
+            f"{aligned_count}/{total_positions} ({100*aligned_count/total_positions:.1f}%)"
         )
         assert (
             aligned_count == total_positions
@@ -1198,12 +1214,12 @@ class TestCudaKernels:
         for warmup in range(warmup_runs):
             target_gpu_fresh = cp.asarray(test_image_int8.copy())
             _ = cuda_transpose_dot_product_3d_compute_optimized_int8(
-                sparse_values=sparse_values_regular,
-                block_positions=block_positions_regular,
+                sparse_values=sparse_values_aligned,
+                block_positions=block_positions_aligned,
                 target_3d=target_gpu_fresh,
-                batch_size=large_mixed_sparse_tensor.batch_size,
-                channels=large_mixed_sparse_tensor.channels,
-                block_size=large_mixed_sparse_tensor.block_size,
+                batch_size=large_mixed_sparse_tensor_aligned.batch_size,
+                channels=large_mixed_sparse_tensor_aligned.channels,
+                block_size=large_mixed_sparse_tensor_aligned.block_size,
             )
 
         # Benchmark
@@ -1214,12 +1230,12 @@ class TestCudaKernels:
                 f"int8_regular_{run}", use_gpu_events=True
             ) as timer:
                 result_regular = cuda_transpose_dot_product_3d_compute_optimized_int8(
-                    sparse_values=sparse_values_regular,
-                    block_positions=block_positions_regular,
+                    sparse_values=sparse_values_aligned,
+                    block_positions=block_positions_aligned,
                     target_3d=target_gpu_fresh,
-                    batch_size=large_mixed_sparse_tensor.batch_size,
-                    channels=large_mixed_sparse_tensor.channels,
-                    block_size=large_mixed_sparse_tensor.block_size,
+                    batch_size=large_mixed_sparse_tensor_aligned.batch_size,
+                    channels=large_mixed_sparse_tensor_aligned.channels,
+                    block_size=large_mixed_sparse_tensor_aligned.block_size,
                 )
 
         # ====== INT8 EXPERIMENTAL KERNEL (Aligned positions) ======
@@ -1294,7 +1310,8 @@ class TestCudaKernels:
         logger.info(f"")
         logger.info(f"ALIGNMENT PERFORMANCE IMPACT:")
         logger.info(
-            f"  Speedup from 4-byte alignment: {speedup:.3f}x {'(faster)' if speedup > 1 else '(slower)'}"
+            f"  Speedup from 4-byte alignment: {speedup:.3f}x "
+            f"{'(faster)' if speedup > 1 else '(slower)'}"
         )
         logger.info(f"  Performance change: {((speedup - 1) * 100):+.1f}%")
 
