@@ -34,7 +34,6 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
-from src.consumer.led_optimizer_dense import DenseLEDOptimizer, DenseOptimizationResult
 
 try:
     import torch
@@ -46,15 +45,23 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+from src.utils.diagonal_ata_matrix import DiagonalATAMatrix
 
-# Import shared utilities
-from src.utils.optimization_utils import OptimizationPipeline
+# Import frame optimization function and supporting classes
+from src.utils.frame_optimizer import (
+    FrameOptimizationResult,
+    optimize_frame_led_values,
+    optimize_frame_with_dia_matrix,
+    optimize_frame_with_mixed_tensor,
+)
+from src.utils.led_diffusion_csc_matrix import LEDDiffusionCSCMatrix
+from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 
 
 class StandaloneOptimizer:
-    """Standalone LED optimization tool with dense, sparse, and mixed optimizers."""
+    """Standalone LED optimization tool using the new frame_optimizer function."""
 
-    def __init__(self, diffusion_patterns_path: str, optimizer_type: str = "dense"):
+    def __init__(self, diffusion_patterns_path: str, optimizer_type: str = "sparse"):
         """Initialize optimizer with patterns file and optimizer type."""
         if not diffusion_patterns_path:
             raise ValueError("Diffusion patterns path is required")
@@ -62,25 +69,56 @@ class StandaloneOptimizer:
         self.diffusion_patterns_path = diffusion_patterns_path
         self.optimizer_type = optimizer_type.lower()
 
+        logger.info(f"Loading patterns from: {diffusion_patterns_path}")
+
+        # Load the diffusion patterns
+        patterns_data = np.load(diffusion_patterns_path, allow_pickle=True)
+
         if self.optimizer_type == "mixed":
-            # Use unified optimizer with mixed tensor mode
-            self.optimizer = DenseLEDOptimizer(
-                diffusion_patterns_path=diffusion_patterns_path,
-                use_mixed_tensor=True,
-                enable_performance_timing=True,
+            # Load mixed tensor format
+            self.mixed_tensor = SingleBlockMixedSparseTensor.from_npz(
+                diffusion_patterns_path
             )
-            if not self.optimizer.initialize():
-                raise RuntimeError("Failed to initialize mixed tensor optimizer")
-            self.pipeline = None
-        else:
-            # Use shared optimization pipeline for dense/sparse
-            use_dense = self.optimizer_type == "dense"
-            self.pipeline = OptimizationPipeline(
-                diffusion_patterns_path=diffusion_patterns_path, use_dense=use_dense
+            # For mixed tensor, we need dense A^T A matrix
+            # This would normally be computed from the patterns
+            logger.warning(
+                "Mixed tensor mode requires dense A^T A matrix - using sparse mode instead"
             )
-            if not self.pipeline.initialize():
-                raise RuntimeError("Failed to initialize optimization pipeline")
-            self.optimizer = None
+            self.optimizer_type = "sparse"
+
+        if self.optimizer_type in ["sparse", "dense"]:
+            # Load CSC sparse matrices and DIA A^T A matrix
+            # Extract CSC data from nested dictionary format
+            if (
+                "diffusion_matrix" in patterns_data
+                and "csc_data" in patterns_data["diffusion_matrix"].item()
+            ):
+                csc_data_dict = patterns_data["diffusion_matrix"].item()
+                self.diffusion_csc = LEDDiffusionCSCMatrix.from_dict(csc_data_dict)
+            else:
+                self.diffusion_csc = LEDDiffusionCSCMatrix.from_dict(patterns_data)
+
+            # Try to load DIA matrix, fallback to creating one if needed
+            try:
+                if "dia_matrix" in patterns_data:
+                    dia_data_dict = patterns_data["dia_matrix"].item()
+                    self.dia_matrix = DiagonalATAMatrix.from_dict(dia_data_dict)
+                else:
+                    raise KeyError("DIA matrix not in patterns file")
+            except Exception as e:
+                logger.warning(f"Could not load DIA matrix: {e}")
+                logger.info("Creating DIA matrix from CSC patterns...")
+                self.dia_matrix = DiagonalATAMatrix(
+                    led_count=self.diffusion_csc.led_count
+                )
+                csc_matrix = self.diffusion_csc.to_csc_matrix()
+                led_positions = patterns_data["led_positions"]
+                self.dia_matrix.build_from_diffusion_matrix(csc_matrix, led_positions)
+
+        self.led_count = self.diffusion_csc.led_count
+        logger.info(
+            f"Initialized {self.optimizer_type} optimizer with {self.led_count} LEDs"
+        )
 
     def show_preview(self, rendered_result: np.ndarray, target_image: np.ndarray):
         """Show side-by-side comparison."""
@@ -112,137 +150,93 @@ class StandaloneOptimizer:
         output_path: Optional[str] = None,
         show_preview: bool = False,
     ):
-        """Run optimization on input image three times to analyze cache warming effects."""
+        """Run optimization on input image using the new frame_optimizer function."""
 
         # Track timing for each phase
         total_start = time.time()
 
-        # Phase 1: Load image once and create three distinct copies
+        # Phase 1: Load and prepare image
         load_start = time.time()
-        if self.optimizer_type == "mixed":
-            original_image = self._load_image_mixed(input_path)
-        else:
-            original_image = self.pipeline.load_image(input_path)
-
-        # Create three distinct copies in memory to avoid image caching effects
-        target_images = [
-            original_image.copy(),  # Run 1 copy
-            original_image.copy(),  # Run 2 copy
-            original_image.copy(),  # Run 3 copy
-        ]
+        original_image = self._load_image(input_path)
         load_time = time.time() - load_start
 
-        # Phase 2: Run optimization three times with the same optimizer instance
-        optimize_times = []
-        results = []
+        # Phase 2: Run optimization using the new frame optimizer function
+        optimize_start = time.time()
 
-        for run_num in range(1, 4):
-            logger.info(f"=== Optimization Run {run_num}/3 ===")
+        logger.info(f"Running {self.optimizer_type} optimization...")
 
-            optimize_start = time.time()
-            if self.optimizer_type == "mixed":
-                result = self.optimizer.optimize_frame(
-                    target_images[run_num - 1], debug=True
-                )
-            else:
-                result = self.pipeline.optimize_image(
-                    target_images[run_num - 1], max_iterations=None
-                )
-            optimize_time = time.time() - optimize_start
-
-            optimize_times.append(optimize_time)
-            results.append(result)
-
-            logger.info(f"Run {run_num} optimization time: {optimize_time:.3f}s")
-
-            # Log performance timing details for each run
-            if self.optimizer_type == "mixed":
-                logger.info(f"=== PerformanceTiming Details - Run {run_num} ===")
-                self.optimizer.log_performance_timing(logger)
-                # Reset timing for next run to get clean per-run metrics
-                self.optimizer.reset_timing()
-            elif self.optimizer_type == "dense":
-                logger.info(f"=== PerformanceTiming Details - Run {run_num} ===")
-                self.pipeline.optimizer.log_performance_timing(logger)
-                # Reset timing for next run to get clean per-run metrics
-                self.pipeline.optimizer.reset_timing()
-
-        # Use the last result for rendering and saving
-        result = results[-1]
-        target_image = target_images[-1]
-
-        # Phase 3: Render result from final run
-        render_start = time.time()
         if self.optimizer_type == "mixed":
-            rendered_result = self._render_result_mixed(result, target_image)
+            # Mixed tensor optimization (if we had the dense ATA matrix)
+            result = optimize_frame_with_mixed_tensor(
+                target_frame=original_image,
+                mixed_tensor=self.mixed_tensor,
+                ata_dense=None,  # Would need to compute this
+                max_iterations=10,
+                debug=True,
+            )
         else:
-            rendered_result = self.pipeline.render_result(result)
+            # Sparse optimization with DIA matrix
+            result = optimize_frame_with_dia_matrix(
+                target_frame=original_image,
+                diffusion_csc=self.diffusion_csc,
+                dia_matrix=self.dia_matrix,
+                max_iterations=10,
+                compute_error_metrics=True,
+                debug=True,
+            )
+
+        optimize_time = time.time() - optimize_start
+
+        # Phase 3: Render result
+        render_start = time.time()
+        rendered_result = self._render_result(result, original_image)
         render_time = time.time() - render_start
 
         # Phase 4: Save (if requested)
         save_time = 0.0
         if output_path:
             save_start = time.time()
-            if self.optimizer_type == "mixed":
-                self._save_image_mixed(rendered_result, output_path)
-            else:
-                self.pipeline.save_image(rendered_result, output_path)
+            self._save_image(rendered_result, output_path)
             save_time = time.time() - save_start
 
         total_time = time.time() - total_start
 
-        # Calculate cache warming statistics
-        first_run_time = optimize_times[0]
-        warm_run_times = optimize_times[1:]
-        avg_warm_time = sum(warm_run_times) / len(warm_run_times)
-        cache_speedup = (first_run_time - avg_warm_time) / first_run_time * 100
+        logger.info("=== Optimization Summary ===")
+        logger.info(f"Optimization time: {optimize_time:.3f}s")
+        logger.info(f"Converged: {result.converged} in {result.iterations} iterations")
+        if result.error_metrics:
+            logger.info(f"MSE: {result.error_metrics.get('mse', 'N/A'):.6f}")
+            logger.info(f"PSNR: {result.error_metrics.get('psnr', 'N/A'):.2f} dB")
 
-        logger.info("=== Cache Warming Analysis ===")
-        logger.info(f"First run (cold cache): {first_run_time:.3f}s")
-        logger.info(f"Average warm runs: {avg_warm_time:.3f}s")
-        logger.info(f"Cache warming speedup: {cache_speedup:.1f}%")
-        for i, opt_time in enumerate(optimize_times, 1):
-            logger.info(f"Run {i}: {opt_time:.3f}s")
-
-        # Store timing breakdown in result for reporting (including multi-run analysis)
+        # Store timing breakdown for compatibility
         result.timing_breakdown = {
             "load_time": load_time,
-            "optimize_time": avg_warm_time,  # Use average warm time as primary metric
+            "optimize_time": optimize_time,
             "render_time": render_time,
             "save_time": save_time,
             "total_time": total_time,
-            # Multi-run timing analysis
-            "optimize_times_all_runs": optimize_times,
-            "first_run_time": first_run_time,
-            "avg_warm_time": avg_warm_time,
-            "cache_speedup_percent": cache_speedup,
         }
 
         # DEBUG: Save LED values for comparison
-        if self.optimizer_type == "mixed":
-            np.savez("debug_mixed_led_values.npz", led_values=result.led_values)
-            logger.info(
-                f"Mixed LED values stats: min={result.led_values.min()}, "
-                f"max={result.led_values.max()}, mean={result.led_values.mean():.3f}"
-            )
-        else:
-            np.savez("debug_csc_led_values.npz", led_values=result.led_values)
-            logger.info(
-                f"CSC LED values stats: min={result.led_values.min()}, "
-                f"max={result.led_values.max()}, mean={result.led_values.mean():.3f}"
-            )
+        np.savez(
+            f"debug_{self.optimizer_type}_led_values.npz", led_values=result.led_values
+        )
+        logger.info(
+            f"LED values stats: min={result.led_values.min()}, "
+            f"max={result.led_values.max()}, mean={result.led_values.mean():.3f}"
+        )
 
         # Show preview if requested
         if show_preview:
-            self.show_preview(rendered_result, target_image)
+            self.show_preview(rendered_result, original_image)
 
         # Add rendered result to result object for compatibility
         result.rendered_result = rendered_result
 
-        return result, target_image
+        return result, original_image
 
-    def _load_image_mixed(self, input_path: str) -> np.ndarray:
-        """Load and resize image for mixed tensor optimization."""
+    def _load_image(self, input_path: str) -> np.ndarray:
+        """Load and resize image for optimization."""
         if PIL_AVAILABLE:
             try:
                 image = Image.open(input_path).convert("RGB")
@@ -261,46 +255,46 @@ class StandaloneOptimizer:
         image = cv2.resize(image, (FRAME_WIDTH, FRAME_HEIGHT))
         return image.astype(np.uint8)
 
-    def _render_result_mixed(
-        self, result: DenseOptimizationResult, target_image: np.ndarray
+    def _render_result(
+        self, result: FrameOptimizationResult, target_image: np.ndarray
     ) -> np.ndarray:
-        """Render optimization result for mixed tensor using CSC matrices."""
-        logger.info("Rendering result using CSC matrices...")
+        """Render optimization result using CSC matrices."""
+        logger.info("Rendering result using CSC forward pass...")
 
-        # Use the CSC matrices that were loaded alongside the mixed tensor
-        # These are available in the unified optimizer when use_mixed_tensor=True
-        A_r = self.optimizer._A_r_csc_gpu.tocsr()
-        A_g = self.optimizer._A_g_csc_gpu.tocsr()
-        A_b = self.optimizer._A_b_csc_gpu.tocsr()
-
-        # Convert to CPU for rendering
-        try:
-            import cupy as cp
-
-            A_r_cpu = A_r.get().tocsr()
-            A_g_cpu = A_g.get().tocsr()
-            A_b_cpu = A_b.get().tocsr()
-        except Exception:
-            A_r_cpu = A_r
-            A_g_cpu = A_g
-            A_b_cpu = A_b
+        # Get the CSC matrix for forward rendering
+        csc_A = self.diffusion_csc.to_csc_matrix()  # Shape: (pixels, led_count*3)
+        led_count = result.led_values.shape[1]
 
         # Convert LED values from uint8 [0,255] to float32 [0,1]
-        led_values_normalized = result.led_values.astype(np.float32) / 255.0
+        led_values_normalized = (
+            result.led_values.astype(np.float32) / 255.0
+        )  # Shape: (3, led_count)
 
         logger.info(f"LED values shape: {result.led_values.shape}")
-        logger.info(f"Dense reconstruction - RGB matrix shapes: {A_r_cpu.shape}")
+        logger.info(f"CSC matrix shape: {csc_A.shape}")
 
-        # Render each channel separately: A @ x
-        rendered_r = A_r_cpu @ led_values_normalized[:, 0]  # (pixels,)
-        rendered_g = A_g_cpu @ led_values_normalized[:, 1]
-        rendered_b = A_b_cpu @ led_values_normalized[:, 2]
-
-        # Reshape each channel separately then combine (matches CSC approach)
+        # Initialize rendered frame
         rendered_image = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.float32)
-        rendered_image[:, :, 0] = rendered_r.reshape(FRAME_HEIGHT, FRAME_WIDTH)
-        rendered_image[:, :, 1] = rendered_g.reshape(FRAME_HEIGHT, FRAME_WIDTH)
-        rendered_image[:, :, 2] = rendered_b.reshape(FRAME_HEIGHT, FRAME_WIDTH)
+
+        # Process each channel separately
+        for channel in range(3):
+            # Get LED values for this channel
+            led_channel = led_values_normalized[channel]  # Shape: (led_count,)
+
+            # Extract A matrix columns for this channel
+            # Channel 0 (R): columns 0, 3, 6, 9, ...
+            # Channel 1 (G): columns 1, 4, 7, 10, ...
+            # Channel 2 (B): columns 2, 5, 8, 11, ...
+            channel_cols = np.arange(channel, csc_A.shape[1], 3)
+            A_channel = csc_A[:, channel_cols]  # Shape: (pixels, led_count)
+
+            # Forward pass: A @ led_values
+            rendered_channel = A_channel @ led_channel  # Shape: (pixels,)
+
+            # Reshape to spatial dimensions
+            rendered_image[:, :, channel] = rendered_channel.reshape(
+                FRAME_HEIGHT, FRAME_WIDTH
+            )
 
         # Convert back to uint8 [0, 255] and clip
         rendered_image = np.clip(rendered_image * 255.0, 0, 255).astype(np.uint8)
@@ -308,8 +302,8 @@ class StandaloneOptimizer:
         logger.info(f"Rendered image shape: {rendered_image.shape}")
         return rendered_image
 
-    def _save_image_mixed(self, image: np.ndarray, output_path: str) -> None:
-        """Save image for mixed tensor optimization."""
+    def _save_image(self, image: np.ndarray, output_path: str) -> None:
+        """Save image."""
         if PIL_AVAILABLE:
             try:
                 pil_image = Image.fromarray(image.astype(np.uint8))
@@ -397,7 +391,7 @@ def main():
         if args.test:
             logger.info("Test mode: LED count determined by patterns file")
 
-        # Determine optimizer type
+        # Determine optimizer type (default to sparse for new frame optimizer)
         if args.optimizer != "dense":
             optimizer_type = args.optimizer
         elif args.mixed:
@@ -405,9 +399,9 @@ def main():
         elif args.sparse:
             optimizer_type = "sparse"
         else:
-            optimizer_type = "dense"
+            optimizer_type = "sparse"  # Default to sparse for frame optimizer
 
-        logger.info(f"Using {optimizer_type} tensor optimizer")
+        logger.info(f"Using {optimizer_type} frame optimizer")
         optimizer = StandaloneOptimizer(
             diffusion_patterns_path=args.patterns, optimizer_type=optimizer_type
         )
@@ -447,62 +441,29 @@ def main():
                 )
             logger.info(f"Total time:        {timing['total_time']:.3f}s")
 
-            # Print cache warming analysis
-            if "optimize_times_all_runs" in timing:
-                logger.info("=== Cache Warming Analysis ===")
-                logger.info(f"First run (cold):   {timing['first_run_time']:.3f}s")
-                logger.info(f"Average warm runs:  {timing['avg_warm_time']:.3f}s")
-                logger.info(
-                    f"Cache speedup:      {timing['cache_speedup_percent']:.1f}%"
-                )
-                for i, run_time in enumerate(timing["optimize_times_all_runs"], 1):
-                    logger.info(f"  Run {i}:          {run_time:.3f}s")
+            # Estimate FPS from optimization time
+            fps = 1.0 / timing["optimize_time"] if timing["optimize_time"] > 0 else 0.0
+            logger.info(f"Estimated FPS:     {fps:.1f}")
 
-            # Print core per-frame timing
-            if "core_per_frame_time" in timing:
-                core_time = timing["core_per_frame_time"]
-                core_pct = core_time / timing["total_time"] * 100
-                logger.info(f"Core per-frame:    {core_time:.3f}s ({core_pct:.1f}%)")
-                fps = 1.0 / core_time if core_time > 0 else 0.0
-                logger.info(f"Estimated FPS:     {fps:.1f}")
-        else:
-            logger.info(f"Total time: {result.optimization_time:.3f}s")
-
-        # Print core optimizer timing details if available
-        if (
-            hasattr(result, "flop_info")
-            and result.flop_info
-            and "detailed_timing" in result.flop_info
-        ):
-            detailed = result.flop_info["detailed_timing"]
-            logger.info("=== Core Optimizer Timing ===")
-            if "atb_time" in detailed:
-                logger.info(f"A^T*b calculation: {detailed['atb_time']:.3f}s")
-            if "loop_time" in detailed:
-                logger.info(f"Optimization loop: {detailed['loop_time']:.3f}s")
-            if "einsum_time" in detailed:
-                logger.info(f"  - Dense einsum:  {detailed['einsum_time']:.3f}s")
-            if "step_size_time" in detailed:
-                logger.info(f"  - Step size:     {detailed['step_size_time']:.3f}s")
-            if "iterations_completed" in detailed:
-                logger.info(f"  - Iterations:    {detailed['iterations_completed']}")
-            if "core_optimization_time" in detailed:
-                core_opt = detailed["core_optimization_time"]
-                fps = 1.0 / core_opt if core_opt > 0 else 0.0
-                logger.info(f"Core optimization: {core_opt:.3f}s ({fps:.1f} FPS)")
+        # Print step size information if available
+        if hasattr(result, "step_sizes") and result.step_sizes is not None:
+            logger.info("=== Optimization Details ===")
+            logger.info(
+                f"Step sizes: min={result.step_sizes.min():.6f}, "
+                f"max={result.step_sizes.max():.6f}, avg={result.step_sizes.mean():.6f}"
+            )
 
         # Print optimization quality metrics
         if hasattr(result, "error_metrics") and result.error_metrics:
             logger.info("=== Quality Metrics ===")
-            logger.info(f"MSE: {result.error_metrics.get('mse', 'N/A'):.6f}")
-            logger.info(f"RMSE: {result.error_metrics.get('rmse', 'N/A'):.6f}")
-
-        # Print FLOP performance if available
-        if hasattr(result, "flop_info") and result.flop_info:
-            flop_info = result.flop_info
-            logger.info("=== Performance Metrics ===")
-            logger.info(f"Total FLOPs: {flop_info.get('total_flops', 0):,}")
-            logger.info(f"GFLOPS/second: {flop_info.get('gflops_per_second', 0):.1f}")
+            for metric, value in result.error_metrics.items():
+                if isinstance(value, float):
+                    if "psnr" in metric.lower():
+                        logger.info(f"{metric.upper()}: {value:.2f} dB")
+                    else:
+                        logger.info(f"{metric.upper()}: {value:.6f}")
+                else:
+                    logger.info(f"{metric.upper()}: {value}")
 
         logger.info(
             f"LED values range: [{result.led_values.min()}, {result.led_values.max()}]"

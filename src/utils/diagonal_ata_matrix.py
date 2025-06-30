@@ -11,15 +11,14 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import cupy
-import cupyx.scipy.sparse as cusp
 import numpy as np
 import scipy.sparse as sp
-from scipy.sparse.csgraph import reverse_cuthill_mckee
-from scipy.spatial import cKDTree
+
+from .spatial_ordering import compute_rcm_ordering, reorder_matrix_columns
 
 # Import custom DIA kernel
 try:
-    from custom_dia_kernel import CustomDIAMatVec
+    from .custom_dia_kernel import CustomDIAMatVec
 
     CUSTOM_KERNEL_AVAILABLE = True
 except ImportError:
@@ -60,11 +59,6 @@ class DiagonalATAMatrix:
             None  # Shape: (k,) - unified diagonal offsets for non-empty diagonals only
         )
         self.k = None  # Number of non-empty diagonal bands (max across all channels)
-
-        # Legacy storage for compatibility (will be deprecated)
-        self.dia_matrix_cpu = None  # For backward compatibility
-        self.dia_matrix_gpu = None  # For backward compatibility
-        self.channel_offsets = None  # For backward compatibility
 
         # RCM ordering information
         self.led_order = None
@@ -115,11 +109,14 @@ class DiagonalATAMatrix:
         # Apply RCM ordering if requested
         if use_rcm:
             print(f"  Applying RCM ordering...")
-            self.led_order = self._compute_rcm_ordering(led_positions)
-            self.inverse_led_order = np.argsort(self.led_order)
+            self.led_order, self.inverse_led_order = compute_rcm_ordering(
+                led_positions, self.crop_size
+            )
 
             # Reorder A matrix columns according to RCM
-            A_reordered = self._reorder_diffusion_matrix(A, self.led_order)
+            A_reordered = reorder_matrix_columns(
+                A, self.led_order, channels_per_block=self.channels
+            )
         else:
             print(f"  Using original LED ordering...")
             self.led_order = np.arange(self.led_count)
@@ -234,13 +231,6 @@ class DiagonalATAMatrix:
             )
             self.dia_data_gpu = cupy.asarray(self.dia_data_cpu)
 
-        # Create legacy block diagonal format for backward compatibility
-        self.channel_offsets = [
-            channel * self.led_count for channel in range(self.channels)
-        ]
-        self.dia_matrix_cpu = sp.block_diag(channel_matrices, format="dia")
-        self.dia_matrix_gpu = cusp.dia_matrix(self.dia_matrix_cpu)
-
         # Store overall metadata
         self.nnz = total_nnz
         total_elements = self.channels * self.led_count * self.led_count
@@ -251,73 +241,15 @@ class DiagonalATAMatrix:
         dia_3d_elements = self.channels * self.k * self.led_count
         dia_3d_sparsity = dia_3d_nnz / dia_3d_elements * 100
 
-        # Compute bandwidth
-        self.bandwidth = self._estimate_bandwidth(self.dia_matrix_cpu)
+        # Compute bandwidth from 3D DIA offsets
+        self.bandwidth = int(np.max(np.abs(self.dia_offsets))) if self.k > 0 else 0
 
         print(f"  3D DIA structure: shape {self.dia_data_cpu.shape}")
         print(f"  3D DIA nnz: {dia_3d_nnz}, sparsity: {dia_3d_sparsity:.3f}%")
-        print(f"  Block diagonal shape: {self.dia_matrix_cpu.shape}")
         print(f"  Total nnz: {self.nnz}, overall sparsity: {self.sparsity:.3f}%")
         print(f"  Estimated bandwidth: {self.bandwidth}")
 
         print(f"  True 3D DIA matrices built successfully!")
-
-    def _compute_rcm_ordering(self, led_positions: np.ndarray) -> np.ndarray:
-        """Compute RCM ordering based on LED spatial adjacency."""
-        # Build adjacency graph using KD-tree for efficiency
-        tree = cKDTree(led_positions)
-        max_distance = self.crop_size * np.sqrt(2)  # Conservative distance
-        pairs = tree.query_pairs(max_distance)
-
-        # Build sparse adjacency matrix
-        adjacency = sp.lil_matrix((self.led_count, self.led_count), dtype=bool)
-
-        overlaps = 0
-        for i, j in pairs:
-            led1_x, led1_y = led_positions[i]
-            led2_x, led2_y = led_positions[j]
-
-            # Check actual crop region overlap
-            x1_min, x1_max = led1_x - self.crop_size // 2, led1_x + self.crop_size // 2
-            y1_min, y1_max = led1_y - self.crop_size // 2, led1_y + self.crop_size // 2
-            x2_min, x2_max = led2_x - self.crop_size // 2, led2_x + self.crop_size // 2
-            y2_min, y2_max = led2_y - self.crop_size // 2, led2_y + self.crop_size // 2
-
-            x_overlap = max(0, min(x1_max, x2_max) - max(x1_min, x2_min))
-            y_overlap = max(0, min(y1_max, y2_max) - max(y1_min, y2_min))
-
-            if x_overlap > 0 and y_overlap > 0:
-                adjacency[i, j] = True
-                adjacency[j, i] = True
-                overlaps += 1
-
-        print(f"    Found {overlaps} LED region overlaps")
-
-        # Apply RCM algorithm
-        adjacency_csr = adjacency.tocsr()
-        rcm_order = reverse_cuthill_mckee(adjacency_csr, symmetric_mode=True)
-
-        return rcm_order
-
-    def _reorder_diffusion_matrix(
-        self, A: sp.spmatrix, led_order: np.ndarray
-    ) -> sp.spmatrix:
-        """Reorder diffusion matrix columns according to LED ordering."""
-        # Create column permutation for RGB channels
-        col_permutation = []
-        for led_idx in led_order:
-            # Add R, G, B columns for this LED
-            col_permutation.extend([led_idx * 3, led_idx * 3 + 1, led_idx * 3 + 2])
-
-        # Reorder columns
-        return A[:, col_permutation]
-
-    def _estimate_bandwidth(self, dia_matrix: sp.dia_matrix) -> int:
-        """Estimate bandwidth of DIA matrix."""
-        if dia_matrix is None or len(dia_matrix.offsets) == 0:
-            return 0
-
-        return int(np.max(np.abs(dia_matrix.offsets)))
 
     def multiply_3d(
         self,
@@ -365,19 +297,8 @@ class DiagonalATAMatrix:
             led_values_gpu = led_values.astype(cupy.float32)
 
         # Perform 3D DIA matrix-vector multiplication
-        if use_custom_kernel and self.custom_kernel_basic is not None:
-            # Use custom 3D DIA kernel
-            kernel = (
-                self.custom_kernel_optimized
-                if optimized_kernel
-                else self.custom_kernel_basic
-            )
-            result_gpu = kernel.multiply_3d(
-                self.dia_data_gpu, self.dia_offsets, led_values_gpu
-            )
-        else:
-            # Fallback to CPU or legacy block diagonal
-            result_gpu = self._multiply_3d_fallback(led_values_gpu)
+        # Custom kernels don't have 3D multiply yet, so use fallback
+        result_gpu = self._multiply_3d_fallback(led_values_gpu)
 
         # Convert back to numpy if input was numpy
         if isinstance(led_values, np.ndarray):
@@ -438,104 +359,6 @@ class DiagonalATAMatrix:
 
         return result_gpu
 
-    def multiply(
-        self,
-        led_values: np.ndarray,
-        use_custom_kernel: bool = True,
-        optimized_kernel: bool = False,
-    ) -> np.ndarray:
-        """
-        Perform matrix-vector multiplication: (A^T)A @ led_values.
-
-        This performs the einsum operation: ijk,ik->ij where:
-        - i: channel (R, G, B)
-        - j,k: LED indices
-        - Input: led_values (3, leds)
-        - Output: result (3, leds)
-
-        Args:
-            led_values: LED values array (3, leds) in RCM order
-            use_custom_kernel: Whether to use custom DIA kernel
-            optimized_kernel: Whether to use optimized custom kernel
-
-        Returns:
-            Result array (3, leds) in RCM order
-        """
-        if led_values.shape != (self.channels, self.led_count):
-            raise ValueError(
-                f"LED values should be shape ({self.channels}, {self.led_count}), "
-                f"got {led_values.shape}"
-            )
-
-        # Check if matrix is built
-        if self.dia_matrix_gpu is None:
-            raise RuntimeError(
-                "Diagonal A^T A matrix not built. Call build_from_diffusion_matrix() first."
-            )
-
-        # Convert to GPU arrays
-        if not isinstance(led_values, cupy.ndarray):
-            led_values_gpu = cupy.asarray(led_values, dtype=cupy.float32)
-        else:
-            led_values_gpu = led_values.astype(cupy.float32)
-
-        # Flatten (3, leds) -> (3*leds,) for block diagonal multiplication
-        led_values_flat = led_values_gpu.flatten()  # Shape: (3*leds,)
-
-        # Single matrix multiplication: (3*leds, 3*leds) @ (3*leds,) -> (3*leds,)
-        if use_custom_kernel and self.custom_kernel_basic is not None:
-            # Use custom DIA kernel
-            kernel = (
-                self.custom_kernel_optimized
-                if optimized_kernel
-                else self.custom_kernel_basic
-            )
-            result_flat = kernel(self.dia_matrix_gpu, led_values_flat)
-        else:
-            # Use CuPy built-in DIA
-            result_flat = self.dia_matrix_gpu @ led_values_flat
-
-        # Reshape back to (3, leds)
-        result_gpu = result_flat.reshape(self.channels, self.led_count)
-
-        # Convert back to numpy if input was numpy
-        if isinstance(led_values, np.ndarray):
-            return cupy.asnumpy(result_gpu)
-        else:
-            return result_gpu
-
-    def multiply_cpu(self, led_values: np.ndarray) -> np.ndarray:
-        """
-        CPU version of matrix-vector multiplication.
-
-        Args:
-            led_values: LED values array (3, leds) in RCM order
-
-        Returns:
-            Result array (3, leds) in RCM order
-        """
-        if led_values.shape != (self.channels, self.led_count):
-            raise ValueError(
-                f"LED values should be shape ({self.channels}, {self.led_count}), "
-                f"got {led_values.shape}"
-            )
-
-        if self.dia_matrix_cpu is None:
-            raise RuntimeError("Diagonal A^T A matrix not built.")
-
-        led_values = led_values.astype(np.float32)
-
-        # Flatten (3, leds) -> (3*leds,) for block diagonal multiplication
-        led_values_flat = led_values.flatten()  # Shape: (3*leds,)
-
-        # Single matrix multiplication: (3*leds, 3*leds) @ (3*leds,) -> (3*leds,)
-        result_flat = self.dia_matrix_cpu @ led_values_flat
-
-        # Reshape back to (3, leds)
-        result = result_flat.reshape(self.channels, self.led_count)
-
-        return result
-
     def g_ata_g_3d(
         self,
         gradient: np.ndarray,
@@ -581,17 +404,8 @@ class DiagonalATAMatrix:
             gradient_gpu = gradient.astype(cupy.float32)
 
         # Compute (A^T A) @ g using unified 3D DIA
-        if use_custom_kernel and self.custom_kernel_basic is not None:
-            kernel = (
-                self.custom_kernel_optimized
-                if optimized_kernel
-                else self.custom_kernel_basic
-            )
-            ata_g_gpu = kernel.multiply_3d(
-                self.dia_data_gpu, self.dia_offsets, gradient_gpu
-            )
-        else:
-            ata_g_gpu = self._multiply_3d_fallback(gradient_gpu)
+        # Custom kernels don't have 3D multiply yet, so use fallback
+        ata_g_gpu = self._multiply_3d_fallback(gradient_gpu)
 
         # Compute g^T @ (A^T A @ g) for each channel using vectorized operation: (channels,leds) * (channels,leds) -> (channels,)
         result_gpu = cupy.sum(gradient_gpu * ata_g_gpu, axis=1)  # Shape: (channels,)
@@ -601,111 +415,6 @@ class DiagonalATAMatrix:
             return cupy.asnumpy(result_gpu)
         else:
             return result_gpu
-
-    def g_ata_g(
-        self,
-        gradient: np.ndarray,
-        use_custom_kernel: bool = True,
-        optimized_kernel: bool = False,
-    ) -> np.ndarray:
-        """
-        Compute g^T (A^T A) g for step size calculation in optimization.
-
-        This performs the einsum operation: ij,ijk,ik->i where:
-        - i: channel (R, G, B)
-        - j,k: LED indices
-        - Input: gradient g (3, leds) in RCM order
-        - Output: result (3,) - one value per channel
-
-        Args:
-            gradient: Gradient array (3, leds) in RCM order
-            use_custom_kernel: Whether to use custom DIA kernel
-            optimized_kernel: Whether to use optimized custom kernel
-
-        Returns:
-            Result array (3,) - g^T (A^T A) g for each channel
-        """
-        if gradient.shape != (self.channels, self.led_count):
-            raise ValueError(
-                f"Gradient should be shape ({self.channels}, {self.led_count}), "
-                f"got {gradient.shape}"
-            )
-
-        if self.dia_matrix_gpu is None:
-            raise RuntimeError(
-                "Diagonal A^T A matrix not built. Call build_from_diffusion_matrix() first."
-            )
-
-        # Convert to GPU arrays
-        if not isinstance(gradient, cupy.ndarray):
-            gradient_gpu = cupy.asarray(gradient, dtype=cupy.float32)
-        else:
-            gradient_gpu = gradient.astype(cupy.float32)
-
-        # Flatten (3, leds) -> (3*leds,) for block diagonal multiplication
-        gradient_flat = gradient_gpu.flatten()  # Shape: (3*leds,)
-
-        # Compute (A^T A) @ g: (3*leds, 3*leds) @ (3*leds,) -> (3*leds,)
-        if use_custom_kernel and self.custom_kernel_basic is not None:
-            kernel = (
-                self.custom_kernel_optimized
-                if optimized_kernel
-                else self.custom_kernel_basic
-            )
-            ata_g_flat = kernel(self.dia_matrix_gpu, gradient_flat)
-        else:
-            ata_g_flat = self.dia_matrix_gpu @ gradient_flat
-
-        # Reshape back to (3, leds) for channel-wise dot products
-        ata_g = ata_g_flat.reshape(self.channels, self.led_count)
-
-        # Compute g^T @ (A^T A @ g) for each channel: (leds,) @ (leds,) -> scalar
-        result_gpu = cupy.zeros(self.channels, dtype=cupy.float32)
-        for channel in range(self.channels):
-            result_gpu[channel] = cupy.dot(gradient_gpu[channel], ata_g[channel])
-
-        # Convert back to numpy if input was numpy
-        if isinstance(gradient, np.ndarray):
-            return cupy.asnumpy(result_gpu)
-        else:
-            return result_gpu
-
-    def g_ata_g_cpu(self, gradient: np.ndarray) -> np.ndarray:
-        """
-        CPU version of g^T (A^T A) g computation.
-
-        Args:
-            gradient: Gradient array (3, leds) in RCM order
-
-        Returns:
-            Result array (3,) - g^T (A^T A) g for each channel
-        """
-        if gradient.shape != (self.channels, self.led_count):
-            raise ValueError(
-                f"Gradient should be shape ({self.channels}, {self.led_count}), "
-                f"got {gradient.shape}"
-            )
-
-        if self.dia_matrix_cpu is None:
-            raise RuntimeError("Diagonal A^T A matrix not built.")
-
-        gradient = gradient.astype(np.float32)
-
-        # Flatten (3, leds) -> (3*leds,) for block diagonal multiplication
-        gradient_flat = gradient.flatten()  # Shape: (3*leds,)
-
-        # Compute (A^T A) @ g: (3*leds, 3*leds) @ (3*leds,) -> (3*leds,)
-        ata_g_flat = self.dia_matrix_cpu @ gradient_flat
-
-        # Reshape back to (3, leds) for channel-wise dot products
-        ata_g = ata_g_flat.reshape(self.channels, self.led_count)
-
-        # Compute g^T @ (A^T A @ g) for each channel: (leds,) @ (leds,) -> scalar
-        result = np.zeros(self.channels, dtype=np.float32)
-        for channel in range(self.channels):
-            result[channel] = np.dot(gradient[channel], ata_g[channel])
-
-        return result
 
     def reorder_led_values_to_rcm(self, led_values_original: np.ndarray) -> np.ndarray:
         """
@@ -717,15 +426,14 @@ class DiagonalATAMatrix:
         Returns:
             LED values in RCM order (3, leds)
         """
+        from .spatial_ordering import reorder_block_values
+
         if self.led_order is None:
             return led_values_original.copy()
 
-        # Reorder each channel
-        result = np.zeros_like(led_values_original)
-        for channel in range(self.channels):
-            result[channel] = led_values_original[channel, self.led_order]
-
-        return result
+        return reorder_block_values(
+            led_values_original, self.led_order, from_ordered=False
+        )
 
     def reorder_led_values_from_rcm(self, led_values_rcm: np.ndarray) -> np.ndarray:
         """
@@ -737,15 +445,12 @@ class DiagonalATAMatrix:
         Returns:
             LED values in original order (3, leds)
         """
-        if self.inverse_led_order is None:
+        from .spatial_ordering import reorder_block_values
+
+        if self.led_order is None:
             return led_values_rcm.copy()
 
-        # Reorder each channel back
-        result = np.zeros_like(led_values_rcm)
-        for channel in range(self.channels):
-            result[channel] = led_values_rcm[channel, self.inverse_led_order]
-
-        return result
+        return reorder_block_values(led_values_rcm, self.led_order, from_ordered=True)
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -754,15 +459,6 @@ class DiagonalATAMatrix:
         Returns:
             Dictionary containing all necessary data
         """
-        # Convert block diagonal DIA matrix to dict format (legacy)
-        if self.dia_matrix_cpu is not None:
-            dia_dict = {
-                "data": self.dia_matrix_cpu.data,
-                "offsets": self.dia_matrix_cpu.offsets,
-                "shape": self.dia_matrix_cpu.shape,
-            }
-        else:
-            dia_dict = None
 
         return {
             "led_count": self.led_count,
@@ -772,9 +468,6 @@ class DiagonalATAMatrix:
             "dia_data_3d": self.dia_data_cpu,
             "dia_offsets_3d": self.dia_offsets,
             "k": self.k,
-            # Legacy block diagonal format
-            "dia_matrix": dia_dict,
-            "channel_offsets": self.channel_offsets,
             # Common metadata
             "led_order": self.led_order,
             "inverse_led_order": self.inverse_led_order,
@@ -782,7 +475,7 @@ class DiagonalATAMatrix:
             "sparsity": self.sparsity,
             "nnz": self.nnz,
             "channel_nnz": self.channel_nnz,
-            "version": "5.0",  # Updated for unified 3D DIA storage (channels, k, leds)
+            "version": "6.0",  # Removed block diagonal backward compatibility
         }
 
     @classmethod
@@ -810,12 +503,11 @@ class DiagonalATAMatrix:
         # Handle version compatibility
         version = data.get("version", "1.0")
 
-        if version == "5.0":
-            # Unified 3D DIA format (current)
+        if version == "6.0":
+            # Current unified 3D DIA format
             instance.dia_data_cpu = data["dia_data_3d"]
             instance.dia_offsets = data["dia_offsets_3d"]
             instance.k = data["k"]
-            instance.channel_offsets = data["channel_offsets"]
             instance.channel_nnz = data["channel_nnz"]
 
             # Create GPU version
@@ -823,38 +515,10 @@ class DiagonalATAMatrix:
                 instance.dia_data_gpu = cupy.asarray(instance.dia_data_cpu)
             else:
                 instance.dia_data_gpu = None
-
-            # Restore block diagonal DIA matrix
-            dia_dict = data["dia_matrix"]
-            if dia_dict is not None:
-                dia_cpu = sp.dia_matrix(
-                    (dia_dict["data"], dia_dict["offsets"]), shape=dia_dict["shape"]
-                )
-                instance.dia_matrix_cpu = dia_cpu
-                instance.dia_matrix_gpu = cusp.dia_matrix(dia_cpu)
-        elif version == "2.0" or version == "3.0" or version == "4.0":
-            # Legacy formats - require rebuild
-            instance.channel_offsets = data.get("channel_offsets")
-            instance.channel_nnz = data.get("channel_nnz")
-
-            # Restore block diagonal DIA matrix if available
-            dia_dict = data.get("dia_matrix")
-            if dia_dict is not None:
-                dia_cpu = sp.dia_matrix(
-                    (dia_dict["data"], dia_dict["offsets"]), shape=dia_dict["shape"]
-                )
-                instance.dia_matrix_cpu = dia_cpu
-                instance.dia_matrix_gpu = cusp.dia_matrix(dia_cpu)
-
-            # Initialize empty unified format (will need to be rebuilt)
-            instance.dia_data_cpu = None
-            instance.dia_data_gpu = None
-            instance.dia_offsets = None
-            instance.k = None
         else:
-            # Legacy format with separate channel matrices - convert to new format
+            # Legacy formats no longer supported
             raise ValueError(
-                f"Legacy format version {version} not supported. Please rebuild matrices."
+                f"Legacy format version {version} not supported. Please rebuild matrices with current version."
             )
 
         return instance
@@ -914,18 +578,19 @@ class DiagonalATAMatrix:
             "channel_nnz": self.channel_nnz,
             "rcm_applied": self.led_order is not None,
             "custom_kernel_available": CUSTOM_KERNEL_AVAILABLE,
-            "matrix_built": self.dia_matrix_cpu is not None,
             "unified_storage_built": unified_storage_built,
             "unified_k": self.k,
             "unified_storage_shape": self.dia_data_cpu.shape
             if self.dia_data_cpu is not None
             else None,
-            "storage_format": "unified_3d_dia_v5",
+            "storage_format": "unified_3d_dia_v6",
         }
 
-    def benchmark(self, num_trials: int = 50, num_warmup: int = 10) -> Dict[str, float]:
+    def benchmark_3d(
+        self, num_trials: int = 50, num_warmup: int = 10
+    ) -> Dict[str, float]:
         """
-        Benchmark multiplication performance.
+        Benchmark 3D DIA multiplication performance.
 
         Args:
             num_trials: Number of timing trials
@@ -934,8 +599,8 @@ class DiagonalATAMatrix:
         Returns:
             Timing results dictionary
         """
-        if self.dia_matrix_gpu is None:
-            raise RuntimeError("Matrix not built")
+        if self.dia_data_gpu is None:
+            raise RuntimeError("3D DIA matrix not built")
 
         # Create test LED values
         test_values_cpu = [
@@ -946,35 +611,9 @@ class DiagonalATAMatrix:
 
         results = {}
 
-        # CPU timing (multiply)
+        # GPU timing (3D DIA multiply - fallback)
         for i in range(num_warmup):
-            _ = self.multiply_cpu(test_values_cpu[i])
-
-        times = []
-        for i in range(num_warmup, num_warmup + num_trials):
-            start = time.perf_counter()
-            _ = self.multiply_cpu(test_values_cpu[i])
-            end = time.perf_counter()
-            times.append((end - start) * 1000)  # ms
-
-        results["cpu"] = np.mean(times)
-
-        # CPU timing (g_ata_g)
-        for i in range(num_warmup):
-            _ = self.g_ata_g_cpu(test_values_cpu[i])
-
-        times = []
-        for i in range(num_warmup, num_warmup + num_trials):
-            start = time.perf_counter()
-            _ = self.g_ata_g_cpu(test_values_cpu[i])
-            end = time.perf_counter()
-            times.append((end - start) * 1000)  # ms
-
-        results["cpu_g_ata_g"] = np.mean(times)
-
-        # GPU timing (built-in multiply)
-        for i in range(num_warmup):
-            _ = self.multiply(test_values_gpu[i], use_custom_kernel=False)
+            _ = self.multiply_3d(test_values_gpu[i], use_custom_kernel=False)
         cupy.cuda.Stream.null.synchronize()
 
         times = []
@@ -983,17 +622,17 @@ class DiagonalATAMatrix:
             end_event = cupy.cuda.Event()
 
             start_event.record()
-            _ = self.multiply(test_values_gpu[i], use_custom_kernel=False)
+            _ = self.multiply_3d(test_values_gpu[i], use_custom_kernel=False)
             end_event.record()
             end_event.synchronize()
 
             times.append(cupy.cuda.get_elapsed_time(start_event, end_event))
 
-        results["gpu_builtin"] = np.mean(times)
+        results["gpu_3d_fallback"] = np.mean(times)
 
-        # GPU timing (built-in g_ata_g)
+        # GPU timing (3D DIA g_ata_g - fallback)
         for i in range(num_warmup):
-            _ = self.g_ata_g(test_values_gpu[i], use_custom_kernel=False)
+            _ = self.g_ata_g_3d(test_values_gpu[i], use_custom_kernel=False)
         cupy.cuda.Stream.null.synchronize()
 
         times = []
@@ -1002,18 +641,18 @@ class DiagonalATAMatrix:
             end_event = cupy.cuda.Event()
 
             start_event.record()
-            _ = self.g_ata_g(test_values_gpu[i], use_custom_kernel=False)
+            _ = self.g_ata_g_3d(test_values_gpu[i], use_custom_kernel=False)
             end_event.record()
             end_event.synchronize()
 
             times.append(cupy.cuda.get_elapsed_time(start_event, end_event))
 
-        results["gpu_builtin_g_ata_g"] = np.mean(times)
+        results["gpu_3d_g_ata_g_fallback"] = np.mean(times)
 
-        # GPU timing (custom kernel)
+        # GPU timing (3D DIA custom kernel)
         if CUSTOM_KERNEL_AVAILABLE:
             for i in range(num_warmup):
-                _ = self.multiply(test_values_gpu[i], use_custom_kernel=True)
+                _ = self.multiply_3d(test_values_gpu[i], use_custom_kernel=True)
             cupy.cuda.Stream.null.synchronize()
 
             times = []
@@ -1022,17 +661,17 @@ class DiagonalATAMatrix:
                 end_event = cupy.cuda.Event()
 
                 start_event.record()
-                _ = self.multiply(test_values_gpu[i], use_custom_kernel=True)
+                _ = self.multiply_3d(test_values_gpu[i], use_custom_kernel=True)
                 end_event.record()
                 end_event.synchronize()
 
                 times.append(cupy.cuda.get_elapsed_time(start_event, end_event))
 
-            results["gpu_custom"] = np.mean(times)
+            results["gpu_3d_custom"] = np.mean(times)
 
-            # GPU timing (custom kernel g_ata_g)
+            # GPU timing (3D DIA custom kernel g_ata_g)
             for i in range(num_warmup):
-                _ = self.g_ata_g(test_values_gpu[i], use_custom_kernel=True)
+                _ = self.g_ata_g_3d(test_values_gpu[i], use_custom_kernel=True)
             cupy.cuda.Stream.null.synchronize()
 
             times = []
@@ -1041,12 +680,12 @@ class DiagonalATAMatrix:
                 end_event = cupy.cuda.Event()
 
                 start_event.record()
-                _ = self.g_ata_g(test_values_gpu[i], use_custom_kernel=True)
+                _ = self.g_ata_g_3d(test_values_gpu[i], use_custom_kernel=True)
                 end_event.record()
                 end_event.synchronize()
 
                 times.append(cupy.cuda.get_elapsed_time(start_event, end_event))
 
-            results["gpu_custom_g_ata_g"] = np.mean(times)
+            results["gpu_3d_custom_g_ata_g"] = np.mean(times)
 
         return results
