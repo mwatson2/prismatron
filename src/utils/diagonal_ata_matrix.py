@@ -16,14 +16,16 @@ import scipy.sparse as sp
 
 from .spatial_ordering import compute_rcm_ordering, reorder_matrix_columns
 
-# Import custom DIA kernel
+# Import custom DIA kernels
 try:
-    from .custom_dia_kernel import CustomDIAMatVec
+    from .custom_dia_kernel import CustomDIA3DMatVec, CustomDIAMatVec
 
     CUSTOM_KERNEL_AVAILABLE = True
+    CUSTOM_3D_KERNEL_AVAILABLE = True
 except ImportError:
     CUSTOM_KERNEL_AVAILABLE = False
-    print("Warning: Custom DIA kernel not available")
+    CUSTOM_3D_KERNEL_AVAILABLE = False
+    print("Warning: Custom DIA kernels not available")
 
 
 class DiagonalATAMatrix:
@@ -67,6 +69,10 @@ class DiagonalATAMatrix:
         # Custom kernel instances
         self.custom_kernel_basic = None
         self.custom_kernel_optimized = None
+
+        # 3D kernel instances
+        self.custom_3d_kernel_basic = None
+        self.custom_3d_kernel_optimized = None
 
         # Metadata
         self.bandwidth = None
@@ -297,8 +303,29 @@ class DiagonalATAMatrix:
             led_values_gpu = led_values.astype(cupy.float32)
 
         # Perform 3D DIA matrix-vector multiplication
-        # Custom kernels don't have 3D multiply yet, so use fallback
-        result_gpu = self._multiply_3d_fallback(led_values_gpu)
+        if use_custom_kernel and CUSTOM_3D_KERNEL_AVAILABLE:
+            # Use custom 3D CUDA kernel
+            if optimized_kernel:
+                if self.custom_3d_kernel_optimized is None:
+                    self.custom_3d_kernel_optimized = CustomDIA3DMatVec(
+                        use_optimized=True
+                    )
+                result_gpu = self.custom_3d_kernel_optimized(
+                    self.dia_data_gpu,  # Shape: (channels, k, leds)
+                    cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                    led_values_gpu,  # Shape: (channels, leds)
+                )
+            else:
+                if self.custom_3d_kernel_basic is None:
+                    self.custom_3d_kernel_basic = CustomDIA3DMatVec(use_optimized=False)
+                result_gpu = self.custom_3d_kernel_basic(
+                    self.dia_data_gpu,  # Shape: (channels, k, leds)
+                    cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                    led_values_gpu,  # Shape: (channels, leds)
+                )
+        else:
+            # Fallback to Python loop implementation
+            result_gpu = self._multiply_3d_fallback(led_values_gpu)
 
         # Convert back to numpy if input was numpy
         if isinstance(led_values, np.ndarray):
@@ -404,8 +431,29 @@ class DiagonalATAMatrix:
             gradient_gpu = gradient.astype(cupy.float32)
 
         # Compute (A^T A) @ g using unified 3D DIA
-        # Custom kernels don't have 3D multiply yet, so use fallback
-        ata_g_gpu = self._multiply_3d_fallback(gradient_gpu)
+        if use_custom_kernel and CUSTOM_3D_KERNEL_AVAILABLE:
+            # Use custom 3D CUDA kernel
+            if optimized_kernel:
+                if self.custom_3d_kernel_optimized is None:
+                    self.custom_3d_kernel_optimized = CustomDIA3DMatVec(
+                        use_optimized=True
+                    )
+                ata_g_gpu = self.custom_3d_kernel_optimized(
+                    self.dia_data_gpu,  # Shape: (channels, k, leds)
+                    cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                    gradient_gpu,  # Shape: (channels, leds)
+                )
+            else:
+                if self.custom_3d_kernel_basic is None:
+                    self.custom_3d_kernel_basic = CustomDIA3DMatVec(use_optimized=False)
+                ata_g_gpu = self.custom_3d_kernel_basic(
+                    self.dia_data_gpu,  # Shape: (channels, k, leds)
+                    cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                    gradient_gpu,  # Shape: (channels, leds)
+                )
+        else:
+            # Fallback to Python loop implementation
+            ata_g_gpu = self._multiply_3d_fallback(gradient_gpu)
 
         # Compute g^T @ (A^T A @ g) for each channel using vectorized operation: (channels,leds) * (channels,leds) -> (channels,)
         result_gpu = cupy.sum(gradient_gpu * ata_g_gpu, axis=1)  # Shape: (channels,)

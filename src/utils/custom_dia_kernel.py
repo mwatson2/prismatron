@@ -123,6 +123,136 @@ void dia_matvec_optimized_kernel(
 }
 """
 
+# 3D DIA kernel for multi-channel matrix-vector multiplication
+DIA_MATVEC_3D_KERNEL = r"""
+extern "C" __global__
+void dia_matvec_3d_kernel(
+    const float* __restrict__ data,      // 3D DIA matrix data: shape (channels, num_bands, n)
+    const int* __restrict__ offsets,     // Band offsets: shape (num_bands,) - shared across channels
+    const float* __restrict__ x,         // Input vectors: shape (channels, n) - channel-major layout
+    float* __restrict__ y,               // Output vectors: shape (channels, n) - channel-major layout
+    const int n,                         // Matrix dimension (number of LEDs)
+    const int num_bands,                 // Number of diagonal bands
+    const int channels                   // Number of channels (3 for RGB)
+) {
+    // 2D grid: blockIdx.x covers LED indices, blockIdx.y covers channels
+    const int led_idx = blockIdx.x * blockDim.x + threadIdx.x;  // LED index [0, n)
+    const int channel = blockIdx.y;                             // Channel index [0, channels)
+
+    // Bounds checking
+    if (led_idx >= n || channel >= channels) return;
+
+    float sum = 0.0f;
+
+    // Calculate base pointers for this channel
+    // data: (channels, num_bands, n) -> channel * (num_bands * n) + band * n + led
+    // x: (channels, n) -> channel * n + led
+    const float* data_channel = data + channel * num_bands * n;  // Points to start of this channel's data
+    const float* x_channel = x + channel * n;                   // Points to start of this channel's input vector
+
+    // Iterate through all diagonal bands for this channel
+    for (int band = 0; band < num_bands; band++) {
+        const int offset = offsets[band];
+        const int j = led_idx + offset;  // Column index: A[led_idx,j] where j = led_idx + offset
+
+        // Check bounds for this diagonal element
+        if (j >= 0 && j < n) {
+            // 3D DIA format: A[channel,led_idx,j] is stored at data_channel[band * n + j]
+            // Memory layout: data_channel points to (num_bands, n) for this channel
+            const float matrix_val = data_channel[band * n + j];
+            if (matrix_val != 0.0f) {  // Skip explicit zeros
+                sum += matrix_val * x_channel[j];
+            }
+        }
+    }
+
+    // Write result: y[channel, led_idx] = sum
+    // y: (channels, n) -> channel * n + led_idx
+    y[channel * n + led_idx] = sum;
+}
+"""
+
+# Optimized 3D DIA kernel with shared memory
+DIA_MATVEC_3D_OPTIMIZED_KERNEL = r"""
+extern "C" __global__
+void dia_matvec_3d_optimized_kernel(
+    const float* __restrict__ data,      // 3D DIA matrix data: shape (channels, num_bands, n)
+    const int* __restrict__ offsets,     // Band offsets: shape (num_bands,) - shared across channels
+    const float* __restrict__ x,         // Input vectors: shape (channels, n) - channel-major layout
+    float* __restrict__ y,               // Output vectors: shape (channels, n) - channel-major layout
+    const int n,                         // Matrix dimension (number of LEDs)
+    const int num_bands,                 // Number of diagonal bands
+    const int channels                   // Number of channels (3 for RGB)
+) {
+    extern __shared__ float shared_mem[];  // Shared memory for vector caching
+
+    // 2D grid: blockIdx.x covers LED indices, blockIdx.y covers channels
+    const int tid = threadIdx.x;
+    const int bid_x = blockIdx.x;
+    const int channel = blockIdx.y;
+    const int block_size = blockDim.x;
+    const int led_idx = bid_x * block_size + tid;
+
+    // Bounds checking for channel
+    if (channel >= channels) return;
+
+    // Calculate shared memory layout per channel
+    // Each channel gets its own section of shared memory for vector caching
+    const int max_band_offset = 1000;  // Estimate based on typical bandwidth
+    const int shared_size = block_size + 2 * max_band_offset;  // +/- max_band_offset
+    const int shared_start = bid_x * block_size - max_band_offset;
+
+    // Load vector elements into shared memory for this channel
+    const float* x_channel = x + channel * n;
+    float* shared_x = shared_mem;  // Each block uses shared memory independently
+
+    // Cooperative loading with bounds checking
+    for (int i = tid; i < shared_size; i += block_size) {
+        const int global_idx = shared_start + i;
+        if (global_idx >= 0 && global_idx < n) {
+            shared_x[i] = x_channel[global_idx];
+        } else {
+            shared_x[i] = 0.0f;  // Pad with zeros
+        }
+    }
+
+    __syncthreads();  // Ensure all threads have loaded their data
+
+    // Bounds checking for LED index
+    if (led_idx >= n) return;
+
+    float sum = 0.0f;
+
+    // Calculate base pointer for this channel's matrix data
+    const float* data_channel = data + channel * num_bands * n;
+
+    // Iterate through all diagonal bands
+    for (int band = 0; band < num_bands; band++) {
+        const int offset = offsets[band];
+        const int j = led_idx + offset;  // Column index
+
+        // Check bounds for this diagonal element
+        if (j >= 0 && j < n) {
+            // 3D DIA format: A[channel,led_idx,j] stored at data_channel[band * n + j]
+            const float matrix_val = data_channel[band * n + j];
+            if (matrix_val != 0.0f) {
+                // Use shared memory for vector access
+                const int shared_idx = j - shared_start;
+                if (shared_idx >= 0 && shared_idx < shared_size) {
+                    sum += matrix_val * shared_x[shared_idx];
+                } else {
+                    // Fallback to global memory (should be rare)
+                    sum += matrix_val * x_channel[j];
+                }
+            }
+        }
+    }
+
+    // Write result: y[channel, led_idx] = sum
+    y[channel * n + led_idx] = sum;
+}
+"""
+
 
 class CustomDIAMatVec:
     """Custom CUDA implementation for DIA matrix-vector multiplication."""
@@ -195,6 +325,105 @@ class CustomDIAMatVec:
             )
 
         return y_output
+
+
+class CustomDIA3DMatVec:
+    """Custom CUDA implementation for 3D DIA matrix-vector multiplication.
+
+    Handles multi-channel (RGB) DIA matrices efficiently using 2D GPU grid:
+    - blockIdx.x: LED indices
+    - blockIdx.y: Channel indices
+    """
+
+    def __init__(self, use_optimized: bool = True):
+        """Initialize the custom 3D DIA kernel.
+
+        Args:
+            use_optimized: Use optimized kernel with shared memory
+        """
+        self.use_optimized = use_optimized
+
+        # Compile 3D kernels
+        if use_optimized:
+            self.kernel = cupy.RawKernel(
+                DIA_MATVEC_3D_OPTIMIZED_KERNEL, "dia_matvec_3d_optimized_kernel"
+            )
+        else:
+            self.kernel = cupy.RawKernel(DIA_MATVEC_3D_KERNEL, "dia_matvec_3d_kernel")
+
+    def __call__(
+        self,
+        dia_data_3d: cupy.ndarray,  # Shape: (channels, num_bands, n)
+        dia_offsets: cupy.ndarray,  # Shape: (num_bands,)
+        x: cupy.ndarray,  # Shape: (channels, n)
+    ) -> cupy.ndarray:
+        """Perform 3D DIA matrix-vector multiplication using custom kernel.
+
+        Args:
+            dia_data_3d: 3D DIA matrix data (channels, num_bands, n)
+            dia_offsets: Band offsets shared across channels (num_bands,)
+            x: Input vectors for each channel (channels, n)
+
+        Returns:
+            Result vectors y = A @ x for each channel (channels, n)
+        """
+        channels, num_bands, n = dia_data_3d.shape
+        assert dia_offsets.shape == (
+            num_bands,
+        ), f"Offsets shape mismatch: {dia_offsets.shape}"
+        assert x.shape == (channels, n), f"Input shape mismatch: {x.shape}"
+
+        # Prepare GPU arrays with proper types
+        data_gpu = cupy.asarray(
+            dia_data_3d, dtype=cupy.float32
+        )  # Shape: (channels, num_bands, n)
+        offsets_gpu = cupy.asarray(dia_offsets, dtype=cupy.int32)  # Shape: (num_bands,)
+        x_gpu = cupy.asarray(x, dtype=cupy.float32)  # Shape: (channels, n)
+        y_gpu = cupy.zeros((channels, n), dtype=cupy.float32)  # Shape: (channels, n)
+
+        # Launch configuration for 2D grid
+        block_size = 256
+        grid_x = (n + block_size - 1) // block_size  # LED dimension
+        grid_y = channels  # Channel dimension
+
+        if self.use_optimized:
+            # Calculate shared memory size for optimized kernel
+            max_band_offset = 1000  # Conservative estimate
+            shared_size = block_size + 2 * max_band_offset
+            shared_mem_bytes = shared_size * 4  # 4 bytes per float32
+
+            # Launch optimized kernel with shared memory
+            self.kernel(
+                (grid_x, grid_y),
+                (block_size,),
+                (
+                    data_gpu,  # const float* data (channels, num_bands, n)
+                    offsets_gpu,  # const int* offsets (num_bands,)
+                    x_gpu,  # const float* x (channels, n)
+                    y_gpu,  # float* y (channels, n)
+                    n,  # int n (LED count)
+                    num_bands,  # int num_bands
+                    channels,  # int channels
+                ),
+                shared_mem=shared_mem_bytes,
+            )
+        else:
+            # Launch basic kernel without shared memory
+            self.kernel(
+                (grid_x, grid_y),
+                (block_size,),
+                (
+                    data_gpu,  # const float* data (channels, num_bands, n)
+                    offsets_gpu,  # const int* offsets (num_bands,)
+                    x_gpu,  # const float* x (channels, n)
+                    y_gpu,  # float* y (channels, n)
+                    n,  # int n (LED count)
+                    num_bands,  # int num_bands
+                    channels,  # int channels
+                ),
+            )
+
+        return y_gpu
 
 
 def create_test_dia_matrix(

@@ -61,7 +61,7 @@ from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 class StandaloneOptimizer:
     """Standalone LED optimization tool using the new frame_optimizer function."""
 
-    def __init__(self, diffusion_patterns_path: str, optimizer_type: str = "sparse"):
+    def __init__(self, diffusion_patterns_path: str, optimizer_type: str = "mixed"):
         """Initialize optimizer with patterns file and optimizer type."""
         if not diffusion_patterns_path:
             raise ValueError("Diffusion patterns path is required")
@@ -70,50 +70,62 @@ class StandaloneOptimizer:
         self.optimizer_type = optimizer_type.lower()
 
         logger.info(f"Loading patterns from: {diffusion_patterns_path}")
+        logger.info(f"Using optimizer type: {self.optimizer_type}")
 
         # Load the diffusion patterns
         patterns_data = np.load(diffusion_patterns_path, allow_pickle=True)
 
-        if self.optimizer_type == "mixed":
-            # Load mixed tensor format
-            self.mixed_tensor = SingleBlockMixedSparseTensor.from_npz(
-                diffusion_patterns_path
+        # Initialize both mixed tensor and DIA matrix for all modes
+        self.mixed_tensor = None
+        self.dia_matrix = None
+        self.diffusion_csc = None
+
+        # Load mixed tensor if available
+        if "mixed_tensor" in patterns_data:
+            logger.info("Loading mixed tensor from patterns...")
+            mixed_tensor_dict = patterns_data["mixed_tensor"].item()
+            self.mixed_tensor = SingleBlockMixedSparseTensor.from_dict(
+                mixed_tensor_dict
             )
-            # For mixed tensor, we need dense A^T A matrix
-            # This would normally be computed from the patterns
+            logger.info(
+                f"Mixed tensor loaded: {self.mixed_tensor.batch_size} LEDs, dtype={self.mixed_tensor.dtype}"
+            )
+        elif self.optimizer_type == "mixed":
             logger.warning(
-                "Mixed tensor mode requires dense A^T A matrix - using sparse mode instead"
+                "Mixed tensor not found in patterns file, falling back to sparse mode"
             )
             self.optimizer_type = "sparse"
 
-        if self.optimizer_type in ["sparse", "dense"]:
-            # Load CSC sparse matrices and DIA A^T A matrix
-            # Extract CSC data from nested dictionary format
-            if (
-                "diffusion_matrix" in patterns_data
-                and "csc_data" in patterns_data["diffusion_matrix"].item()
-            ):
-                csc_data_dict = patterns_data["diffusion_matrix"].item()
-                self.diffusion_csc = LEDDiffusionCSCMatrix.from_dict(csc_data_dict)
-            else:
-                self.diffusion_csc = LEDDiffusionCSCMatrix.from_dict(patterns_data)
+        # Load CSC matrix for DIA creation and sparse fallback
+        if "diffusion_matrix" in patterns_data:
+            csc_data_dict = patterns_data["diffusion_matrix"].item()
+            self.diffusion_csc = LEDDiffusionCSCMatrix.from_dict(csc_data_dict)
+            logger.info(
+                f"CSC diffusion matrix loaded: {self.diffusion_csc.led_count} LEDs"
+            )
+        else:
+            logger.error("No diffusion matrix found in patterns file")
+            raise ValueError("Patterns file must contain diffusion_matrix")
 
-            # Try to load DIA matrix, fallback to creating one if needed
-            try:
-                if "dia_matrix" in patterns_data:
-                    dia_data_dict = patterns_data["dia_matrix"].item()
-                    self.dia_matrix = DiagonalATAMatrix.from_dict(dia_data_dict)
-                else:
-                    raise KeyError("DIA matrix not in patterns file")
-            except Exception as e:
-                logger.warning(f"Could not load DIA matrix: {e}")
-                logger.info("Creating DIA matrix from CSC patterns...")
-                self.dia_matrix = DiagonalATAMatrix(
-                    led_count=self.diffusion_csc.led_count
-                )
-                csc_matrix = self.diffusion_csc.to_csc_matrix()
-                led_positions = patterns_data["led_positions"]
-                self.dia_matrix.build_from_diffusion_matrix(csc_matrix, led_positions)
+        # Create DIA matrix from CSC patterns
+        logger.info("Creating DIA matrix from CSC patterns...")
+        led_positions = patterns_data.get("led_positions", None)
+        if led_positions is None:
+            logger.warning("No LED positions found, DIA matrix may be less optimal")
+
+        self.dia_matrix = DiagonalATAMatrix(led_count=self.diffusion_csc.led_count)
+        csc_matrix = self.diffusion_csc.to_csc_matrix()
+
+        # Suppress DIA build output
+        import sys
+        from io import StringIO
+
+        old_stdout = sys.stdout
+        sys.stdout = StringIO()
+        self.dia_matrix.build_from_diffusion_matrix(csc_matrix, led_positions)
+        sys.stdout = old_stdout
+
+        logger.info("DIA matrix built successfully")
 
         self.led_count = self.diffusion_csc.led_count
         logger.info(
@@ -165,22 +177,30 @@ class StandaloneOptimizer:
 
         logger.info(f"Running {self.optimizer_type} optimization...")
 
-        if self.optimizer_type == "mixed":
-            # Mixed tensor optimization (if we had the dense ATA matrix)
-            result = optimize_frame_with_mixed_tensor(
+        # Use unified optimization function for all modes
+        if self.optimizer_type == "mixed" and self.mixed_tensor is not None:
+            # Mixed tensor + DIA matrix optimization (new preferred method)
+            logger.info("Using Mixed tensor A^T + DIA matrix A^T A")
+            result = optimize_frame_led_values(
                 target_frame=original_image,
-                mixed_tensor=self.mixed_tensor,
-                ata_dense=None,  # Would need to compute this
+                AT_matrix=self.mixed_tensor,
+                ATA_matrix=self.dia_matrix,
                 max_iterations=10,
+                convergence_threshold=1e-6,
+                step_size_scaling=0.8,
+                compute_error_metrics=True,
                 debug=True,
             )
         else:
-            # Sparse optimization with DIA matrix
-            result = optimize_frame_with_dia_matrix(
+            # CSC sparse + DIA matrix optimization (fallback)
+            logger.info("Using CSC sparse A^T + DIA matrix A^T A")
+            result = optimize_frame_led_values(
                 target_frame=original_image,
-                diffusion_csc=self.diffusion_csc,
-                dia_matrix=self.dia_matrix,
+                AT_matrix=self.diffusion_csc,
+                ATA_matrix=self.dia_matrix,
                 max_iterations=10,
+                convergence_threshold=1e-6,
+                step_size_scaling=0.8,
                 compute_error_metrics=True,
                 debug=True,
             )
@@ -352,8 +372,8 @@ def main():
     parser.add_argument(
         "--optimizer",
         choices=["dense", "sparse", "mixed"],
-        default="dense",
-        help="Optimizer type to use (default: dense)",
+        default="mixed",
+        help="Optimizer type to use (default: mixed)",
     )
 
     args = parser.parse_args()
@@ -391,15 +411,15 @@ def main():
         if args.test:
             logger.info("Test mode: LED count determined by patterns file")
 
-        # Determine optimizer type (default to sparse for new frame optimizer)
-        if args.optimizer != "dense":
-            optimizer_type = args.optimizer
-        elif args.mixed:
+        # Determine optimizer type (default to mixed for best performance)
+        if args.mixed:
             optimizer_type = "mixed"
         elif args.sparse:
             optimizer_type = "sparse"
         else:
-            optimizer_type = "sparse"  # Default to sparse for frame optimizer
+            optimizer_type = (
+                args.optimizer
+            )  # Use the --optimizer argument (default: mixed)
 
         logger.info(f"Using {optimizer_type} frame optimizer")
         optimizer = StandaloneOptimizer(

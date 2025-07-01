@@ -75,24 +75,26 @@ def optimize_frame_led_values(
         )
 
     # Handle both planar (3, H, W) and standard (H, W, 3) formats
+    # Keep target as uint8 for int8 mixed tensors, convert to float32 for CSC matrices
     if target_frame.shape == (3, 480, 800):
-        # Already in planar format
-        target_planar = target_frame.astype(np.float32) / 255.0
+        # Already in planar format - keep as uint8
+        target_planar_uint8 = target_frame.astype(np.uint8)
     elif target_frame.shape == (480, 800, 3):
-        # Convert from HWC to CHW planar format
-        target_normalized = target_frame.astype(np.float32) / 255.0
-        target_planar = target_normalized.transpose(2, 0, 1)  # (H, W, 3) -> (3, H, W)
+        # Convert from HWC to CHW planar format - keep as uint8
+        target_planar_uint8 = target_frame.astype(np.uint8).transpose(
+            2, 0, 1
+        )  # (H, W, 3) -> (3, H, W)
     else:
         raise ValueError(
             f"Unsupported frame shape {target_frame.shape}, expected (3, 480, 800) or (480, 800, 3)"
         )
 
-    debug and logger.info(f"Target frame shape: {target_planar.shape}")
+    debug and logger.info(f"Target frame shape: {target_planar_uint8.shape}")
 
     # Step 1: Calculate A^T @ b using the appropriate format
     debug and logger.info("Computing A^T @ b...")
     ATb = _calculate_ATb(
-        target_planar, AT_matrix, debug=debug
+        target_planar_uint8, AT_matrix, debug=debug
     )  # Shape: (3, led_count) or (led_count, 3)
 
     # Ensure ATb is in (3, led_count) format for consistency
@@ -149,8 +151,8 @@ def optimize_frame_led_values(
                 ATA_x = cp.asarray(ATA_x)
         else:
             # Dense matrix: ATA shape (led_count, led_count, 3), x shape (3, led_count)
-            # Einsum: 'ijk,ki->ji' to compute A^T A @ x for each channel
-            ATA_x = cp.einsum("ijk,ki->ji", cp.asarray(ATA_matrix), led_values_gpu)
+            # For each channel c: ATA[:,:,c] @ x[c,:]
+            ATA_x = cp.einsum("ijc,cj->ci", cp.asarray(ATA_matrix), led_values_gpu)
 
         gradient = ATA_x - ATb_gpu  # Shape: (3, led_count)
 
@@ -165,8 +167,9 @@ def optimize_frame_led_values(
             g_dot_ATA_g = cp.sum(g_dot_ATA_g_per_channel)
         else:
             # Dense matrix computation
+            # gradient: (3, led_count), ATA: (led_count, led_count, 3)
             g_dot_ATA_g = cp.einsum(
-                "ji,ijk,ki->", gradient, cp.asarray(ATA_matrix), led_values_gpu
+                "ci,ijc,cj->", gradient, cp.asarray(ATA_matrix), gradient
             )
 
         if g_dot_ATA_g > 0:
@@ -215,7 +218,7 @@ def optimize_frame_led_values(
     error_metrics = {}
     if compute_error_metrics:
         error_metrics = _compute_error_metrics(
-            led_values_spatial, target_planar, AT_matrix, debug=debug
+            led_values_spatial, target_planar_uint8, AT_matrix, debug=debug
         )
 
     # Create result
@@ -249,21 +252,34 @@ def _calculate_ATb(
         A^T @ b result (3, led_count) or (led_count, 3) depending on matrix format
     """
     if isinstance(AT_matrix, SingleBlockMixedSparseTensor):
-        # Mixed tensor format: use 3D CUDA kernel
+        # Mixed tensor format: use 3D CUDA kernel with uint8 data
         debug and logger.info("Using mixed tensor format for A^T @ b")
-        target_gpu = cp.asarray(target_planar)  # Shape: (3, height, width)
-        result = AT_matrix.transpose_dot_product_3d(target_gpu)  # Shape: (led_count, 3)
+
+        # For int8 mixed tensors, pass uint8 target directly
+        if AT_matrix.dtype == cp.uint8:
+            target_gpu = cp.asarray(target_planar)  # Keep as uint8: (3, height, width)
+        else:
+            # For float32 mixed tensors, convert target to float32 [0,1]
+            target_float32 = target_planar.astype(np.float32) / 255.0
+            target_gpu = cp.asarray(target_float32)
+
+        result = AT_matrix.transpose_dot_product_3d(
+            target_gpu
+        )  # Shape: (led_count, 3), dtype: float32
         return cp.asnumpy(result)
 
     elif isinstance(AT_matrix, LEDDiffusionCSCMatrix):
-        # CSC sparse format: use sparse matrix operations
+        # CSC sparse format: use sparse matrix operations with float32 data
         debug and logger.info("Using CSC sparse format for A^T @ b")
+
+        # Convert target to float32 [0,1] for CSC matrix operations
+        target_float32 = target_planar.astype(np.float32) / 255.0
 
         # CSC matrix format: (pixels, led_count*3), columns: [LED0_R, LED0_G, LED0_B, ...]
         # We need to compute A^T @ target for each channel separately then combine
 
         csc_A = AT_matrix.to_csc_matrix()  # Get A matrix: (pixels, led_count*3)
-        pixels = target_planar.shape[1] * target_planar.shape[2]
+        pixels = target_float32.shape[1] * target_float32.shape[2]
         led_count = csc_A.shape[1] // 3
 
         # Initialize result: (led_count, 3)
@@ -271,7 +287,7 @@ def _calculate_ATb(
 
         # Process each channel separately
         for channel in range(3):
-            target_channel = target_planar[channel].flatten()  # Shape: (pixels,)
+            target_channel = target_float32[channel].flatten()  # Shape: (pixels,)
 
             # Extract columns for this channel from A matrix
             # Channel 0 (R): columns 0, 3, 6, 9, ... (every 3rd starting from 0)
@@ -346,8 +362,11 @@ def _compute_error_metrics(
             debug and logger.warning("Error metrics not supported for this matrix type")
             return {"mse": 0.0, "mae": 0.0}
 
-        # Compute error metrics
-        diff = rendered_planar - target_planar
+        # Convert target to float32 [0,1] for error computation
+        target_float32 = target_planar.astype(np.float32) / 255.0
+
+        # Compute error metrics (both in [0,1] range)
+        diff = rendered_planar - target_float32
         mse = float(np.mean(diff**2))
         mae = float(np.mean(np.abs(diff)))
 

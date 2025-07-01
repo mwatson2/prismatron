@@ -294,6 +294,72 @@ class SingleBlockMixedSparseTensor:
                 "The previous transpose_dot_product fallback has been removed."
             )
 
+    def forward_pass_3d(self, led_values: cp.ndarray) -> cp.ndarray:
+        """
+        Compute A @ x operation (forward pass) with LED values input.
+
+        This method implements the forward pass: A @ led_values -> rendered_frame
+        where A is the diffusion matrix and led_values are the LED brightness values.
+
+        Args:
+            led_values: LED brightness values, shape (batch_size, channels)
+
+        Returns:
+            Rendered frame in planar form, shape (channels, height, width)
+        """
+        if led_values.shape != (self.batch_size, self.channels):
+            raise ValueError(
+                f"led_values shape {led_values.shape} != expected "
+                f"({self.batch_size}, {self.channels})"
+            )
+
+        # Initialize output frame
+        output_frame = cp.zeros(
+            (self.channels, self.height, self.width), dtype=cp.float32
+        )
+
+        # Process each LED and channel
+        for led_idx in range(self.batch_size):
+            for channel in range(self.channels):
+                # Get LED brightness for this channel
+                led_brightness = led_values[led_idx, channel]
+
+                # Skip if brightness is zero (optimization)
+                if led_brightness == 0.0:
+                    continue
+
+                # Get block position for this LED and channel
+                top_row = int(self.block_positions[channel, led_idx, 0])
+                top_col = int(self.block_positions[channel, led_idx, 1])
+
+                # Get the diffusion pattern block
+                pattern_block = self.sparse_values[
+                    channel, led_idx
+                ]  # Shape: (block_size, block_size)
+
+                # Add weighted pattern to output frame
+                bottom_row = min(top_row + self.block_size, self.height)
+                right_col = min(top_col + self.block_size, self.width)
+
+                # Handle boundary clipping
+                pattern_height = bottom_row - top_row
+                pattern_width = right_col - top_col
+
+                if pattern_height > 0 and pattern_width > 0:
+                    # Apply scaling to match the kernel normalization
+                    if self.dtype == cp.uint8:
+                        # For int8 data, apply same normalization as the int8 kernel
+                        scale_factor = led_brightness / (255.0 * 255.0)
+                    else:
+                        # For float32 data, apply direct scaling
+                        scale_factor = led_brightness
+
+                    output_frame[channel, top_row:bottom_row, top_col:right_col] += (
+                        pattern_block[:pattern_height, :pattern_width] * scale_factor
+                    )
+
+        return output_frame
+
     def to_array(self, batch_idx: int, channel_idx: int) -> cp.ndarray:
         """
         Convert a specific sub-tensor to dense array format for debugging/visualization.

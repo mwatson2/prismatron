@@ -43,6 +43,32 @@ The Prismatron LED Display System is **95% complete** with all major components 
 - **Comprehensive Testing**: 190 unit tests covering all components
 - **Regression Testing**: Pixel-perfect optimization validation with PSNR fallback
 
+## Development Context and Performance Expectations
+
+**IMPORTANT**: This project is in early-stage optimization development. The focus should be on improving individual components and algorithms, not speculating about overall system performance.
+
+### Current Development Phase
+- **Target Scale**: System must ultimately support **2600 LEDs** (not the current 500-1000 LED test patterns)
+- **Component Focus**: Optimization work targets individual pieces (matrix operations, kernels, algorithms)
+- **Performance Context**: Overall FPS will be affected by multiple system processes (producer, consumer, web server, OS overhead)
+- **Techniques Pipeline**: Many optimization techniques remain unexplored and will be implemented iteratively
+
+### Performance Guidelines for Development
+1. **Do not speculate about frames-per-second** for the complete system
+2. **Focus on algorithmic improvements** for the specific component being worked on
+3. **Measure component-level performance** (e.g., matrix multiply time, kernel execution time)
+4. **Scale considerations** should focus on algorithmic complexity, not raw performance numbers
+5. **Benchmark against baseline** implementations to measure improvement, not absolute performance
+
+### Development Priorities
+- Optimize individual matrix operations and CUDA kernels
+- Improve memory usage and bandwidth characteristics  
+- Enhance algorithmic efficiency for larger LED counts
+- Maintain code quality and comprehensive testing
+- **Defer overall system performance evaluation** until explicitly requested
+
+When overall system performance evaluation is needed, it will be explicitly requested. Until then, focus on making the current optimization component as efficient as possible.
+
 ## Project description
 
 # Prismatron LED Display Software Specification
@@ -397,6 +423,26 @@ python -m src.consumer.consumer  # Consumer process only
 - **Regression Tests**: Pixel-perfect optimization validation with PSNR fallback
 - **Performance**: Sparse matrix optimization achieves 15+ FPS target
 
+### ⚠️ CRITICAL: Pattern Generation Requirements
+
+**DIA Matrix Performance Issue**: If the DIA matrix has >100 diagonals (e.g., 979), the patterns were generated incorrectly. The correct pattern generation constraints are:
+
+1. **LED Count**: Always use **1000 LEDs** (system default, never change arbitrarily)
+2. **Random LED positions**: Properly distributed spatial locations
+3. **96x96 block cropping**: Consistent block size for mixed tensor
+4. **X-coordinates rounded to multiple of 4**: For CUDA kernel alignment
+5. **RCM ordering**: Use the RCM utility function for bandwidth optimization
+
+**Symptom of incorrect patterns**: DIA matrix with 900+ diagonals (98% dense)
+**Expected with correct patterns**: DIA matrix with 10-100 diagonals (<10% dense)
+
+**NEVER change LED count from 1000** without explicit user approval. The system architecture is designed around 1000 LEDs.
+
+**Solution**: Regenerate patterns using:
+```bash
+python tools/generate_synthetic_patterns.py --output diffusion_patterns/synthetic_1000.npz --led-count 1000 --seed 42 --verbose
+```
+
 ## Remaining Tasks for Production Deployment
 
 ### Phase 6: System Integration (Final 5%)
@@ -444,6 +490,22 @@ This ensures that LED patterns remain stable and don't flicker back to WLED's de
 
 ## Recent Architectural Changes
 
+### Pattern Generation Fix (Jan 2025) ✅
+- **FIXED**: Pattern generator RCM ordering sequence corrected
+- **Issue**: Generator was using Z-order spatial mapping then applying RCM afterward, causing 98% dense DIA matrices (979+ diagonals)
+- **Solution**: Generate patterns directly in RCM order during block position calculation
+- **Result**: Proper sparse DIA matrices with ~185 diagonals for 100 LEDs (vs 979+ before)
+- **Performance**: Individual operations now <1ms each (✅ target met for ≤500 LEDs)
+
+### Pattern Generation RCM Ordering Requirements
+**CRITICAL**: Pattern generator must use RCM ordering DURING generation, not afterward:
+1. Generate random LED positions
+2. Calculate 96x96 block positions with x-coordinates rounded to multiple of 4  
+3. Compute RCM ordering directly from block positions
+4. Generate patterns in RCM order using spatial mapping
+5. **NEVER apply RCM reordering afterward** - this breaks sparsity
+
+**WARNING**: DIA matrix with >400 diagonals indicates incorrect pattern generation (should be ~1.5-2x LED count)
 
 ### Mixed Tensor experiments
 - **Approach**: custom mixed sparse/dense tensor for diffusion patterns with custom CUDA kernel for (A^T)b calculation

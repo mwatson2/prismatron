@@ -31,6 +31,7 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.utils.led_diffusion_csc_matrix import LEDDiffusionCSCMatrix
 from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
+from src.utils.spatial_ordering import compute_rcm_ordering, reorder_matrix_columns
 
 # Constants (can be overridden by command line)
 DEFAULT_FRAME_WIDTH = 800
@@ -61,6 +62,7 @@ class SyntheticPatternGenerator:
         """
         self.frame_width = frame_width
         self.frame_height = frame_height
+        self.seed = seed  # Store seed attribute
         self.sparsity_threshold = sparsity_threshold
 
         if seed is not None:
@@ -74,7 +76,7 @@ class SyntheticPatternGenerator:
 
     def generate_led_positions(self, led_count: int) -> np.ndarray:
         """
-        Generate random LED positions across the frame.
+        Generate random LED positions (realistic hardware layout simulation).
 
         Args:
             led_count: Number of LEDs to position
@@ -82,22 +84,30 @@ class SyntheticPatternGenerator:
         Returns:
             Array of LED positions (led_count, 2) with [x, y] coordinates
         """
-        positions = np.zeros((led_count, 2), dtype=int)
-        positions[:, 0] = np.random.randint(0, self.frame_width, led_count)
-        positions[:, 1] = np.random.randint(0, self.frame_height, led_count)
+        logger.info(f"Generating {led_count} random LED positions...")
 
+        if self.seed is not None:
+            np.random.seed(self.seed)
+
+        # Generate completely random positions within frame bounds
+        # This simulates realistic hardware where LED positions are fixed
+        margin = 20  # Small margin to avoid edge effects
+        width_range = (margin, self.frame_width - margin)
+        height_range = (margin, self.frame_height - margin)
+
+        # Uniform random distribution across the frame
+        x_positions = np.random.randint(width_range[0], width_range[1], led_count)
+        y_positions = np.random.randint(height_range[0], height_range[1], led_count)
+
+        positions = np.column_stack((x_positions, y_positions))
         self.led_positions = positions
 
-        # Create spatial ordering for cache optimization
-        self.led_spatial_mapping = self.create_led_spatial_ordering(positions)
+        logger.info(f"Generated {led_count} random LED positions")
 
-        # Create reverse spatial mapping: spatial_matrix_index -> physical_led_id
-        self.reverse_spatial_mapping = {
-            spatial_idx: physical_id
-            for physical_id, spatial_idx in self.led_spatial_mapping.items()
-        }
+        # Don't create spatial mapping yet - will be done after RCM ordering
+        self.led_spatial_mapping = None
+        self.reverse_spatial_mapping = None
 
-        logger.info(f"Generated {led_count} LED positions with spatial ordering")
         return positions
 
     def morton_encode(self, x: float, y: float) -> int:
@@ -156,7 +166,7 @@ class SyntheticPatternGenerator:
         base_intensity: float = 1.0,
     ) -> np.ndarray:
         """
-        Generate a single LED diffusion pattern.
+        Generate a single LED diffusion pattern with 96x96 cropping constraint.
 
         Args:
             led_position: LED position as (x, y) coordinates
@@ -167,6 +177,18 @@ class SyntheticPatternGenerator:
             Pattern array (height, width, 3) for RGB channels
         """
         x, y = led_position
+
+        # Limit pattern generation to 96x96 region around LED for efficiency
+        crop_size = 96
+
+        # Calculate crop boundaries
+        half_crop = crop_size // 2
+        crop_x_min = max(0, x - half_crop)
+        crop_x_max = min(self.frame_width, x + half_crop)
+        crop_y_min = max(0, y - half_crop)
+        crop_y_max = min(self.frame_height, y + half_crop)
+
+        # Create full-size pattern but only generate values in crop region
         pattern = np.zeros((self.frame_height, self.frame_width, 3), dtype=np.float32)
 
         if pattern_type == "gaussian_multi":
@@ -190,17 +212,20 @@ class SyntheticPatternGenerator:
                     sigma = np.random.uniform(8, 30)
                     intensity = np.random.uniform(0.3, 1.0) * base_intensity
 
-                    # Create meshgrid
+                    # Create meshgrid only for crop region
                     xx, yy = np.meshgrid(
-                        np.arange(self.frame_width) - center_x,
-                        np.arange(self.frame_height) - center_y,
+                        np.arange(crop_x_min, crop_x_max) - center_x,
+                        np.arange(crop_y_min, crop_y_max) - center_y,
                     )
 
-                    # Gaussian pattern
+                    # Gaussian pattern (cropped)
                     gaussian = intensity * np.exp(
                         -(xx**2 + yy**2) / (2 * sigma**2)
                     )
-                    channel_pattern += gaussian
+                    # Only update the crop region
+                    channel_pattern[
+                        crop_y_min:crop_y_max, crop_x_min:crop_x_max
+                    ] += gaussian
 
                 # Add some color variation between channels
                 color_variation = np.random.uniform(0.7, 1.3)
@@ -280,11 +305,39 @@ class SyntheticPatternGenerator:
 
         start_time = time.time()
 
-        # Generate LED positions and spatial mapping
+        # Generate LED positions
         if self.led_positions is None or len(self.led_positions) != led_count:
             self.generate_led_positions(led_count)
 
-        # Use the stored reverse spatial mapping
+        # Calculate 96x96 block positions with x-coordinates rounded to multiple of 4
+        block_size = 96
+        block_positions = []
+        for led_id, (x, y) in enumerate(self.led_positions):
+            # Calculate block top-left corner centered on LED
+            block_x_candidate = max(
+                0, min(self.frame_width - block_size, x - block_size // 2)
+            )
+            block_y = max(0, min(self.frame_height - block_size, y - block_size // 2))
+
+            # CRITICAL: Round x-coordinate down to multiple of 4 for CUDA kernel alignment
+            block_x = (block_x_candidate // 4) * 4
+
+            block_positions.append([block_x, block_y])
+
+        block_positions = np.array(block_positions)
+
+        # Compute RCM ordering directly from block positions
+        logger.info("Computing RCM ordering for optimal bandwidth...")
+        rcm_order, inverse_order = compute_rcm_ordering(block_positions, block_size)
+
+        # Create mapping: physical_led_id -> rcm_ordered_matrix_index
+        self.led_spatial_mapping = {
+            original_id: rcm_pos for rcm_pos, original_id in enumerate(rcm_order)
+        }
+        # Create reverse mapping: rcm_ordered_matrix_index -> physical_led_id
+        self.reverse_spatial_mapping = {
+            rcm_pos: original_id for rcm_pos, original_id in enumerate(rcm_order)
+        }
 
         # Calculate chunk parameters
         num_chunks = (led_count + chunk_size - 1) // chunk_size
@@ -293,7 +346,7 @@ class SyntheticPatternGenerator:
         # List to store sparse matrix chunks
         sparse_chunks = []
 
-        logger.info(f"Processing {num_chunks} chunks in spatial order...")
+        logger.info(f"Processing {num_chunks} chunks in RCM order...")
 
         for chunk_idx in range(num_chunks):
             chunk_start = chunk_idx * chunk_size
@@ -384,17 +437,28 @@ class SyntheticPatternGenerator:
         logger.info(f"Actual sparsity: {actual_sparsity:.3f}%")
         logger.info(f"Memory usage: {memory_mb:.1f} MB")
 
-        # Wrap the sparse matrix in our LEDDiffusionCSCMatrix wrapper
+        # Matrix is already in RCM order from generation - no need to reorder
+        logger.info(
+            "Matrix already generated in RCM order - skipping redundant reordering"
+        )
+        reordered_matrix = final_sparse_matrix
+
+        # LED spatial mapping is already in RCM order from generation
+        rcm_led_mapping = self.led_spatial_mapping
+
+        # Wrap the reordered sparse matrix in our LEDDiffusionCSCMatrix wrapper
         diffusion_matrix = LEDDiffusionCSCMatrix(
-            csc_matrix=final_sparse_matrix,
+            csc_matrix=reordered_matrix,
             height=self.frame_height,
             width=self.frame_width,
             channels=3,
         )
 
-        logger.info(f"Created LEDDiffusionCSCMatrix wrapper: {diffusion_matrix}")
+        logger.info(
+            f"Created LEDDiffusionCSCMatrix wrapper with RCM ordering: {diffusion_matrix}"
+        )
 
-        return diffusion_matrix, self.led_spatial_mapping
+        return diffusion_matrix, rcm_led_mapping
 
     def _generate_mixed_tensor_format(
         self, sparse_matrix: sp.csc_matrix
