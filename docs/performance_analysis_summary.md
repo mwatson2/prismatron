@@ -70,20 +70,57 @@ The performance analysis focused on optimizing matrix operations in the LED opti
 3. **RCM ordering**: Apply during pattern generation, not afterward
 4. **X-alignment**: Round block x-coordinates to multiple of 4 for CUDA alignment
 
-## Performance Projections
+## Performance Baselines
 
-### Single Iteration Performance (1000 LEDs)
+### 2600 LED Performance Baseline (Actual Measurements)
+
+**Test Configuration:**
+- Hardware: Development machine (not target Jetson Orin Nano)
+- LEDs: 2600 LEDs with 64x64 block patterns
+- Matrix format: Mixed tensor (A^T b) + DIA matrix (A^T A)
+- DIA matrix: 5157 diagonals, bandwidth=2595
+- Pattern file: 111.9 MB (legacy v6.0 format)
+
+**Performance Results (10 trials, 10 iterations):**
+- **Total optimization time**: 174.87±13.12ms
+- **Time per iteration**: 17.49ms
+- **FPS potential**: 5.7 fps
+- **Target achievement**: ❌ 5.7 fps < 15 fps target (need 2.6x speedup)
+
+**Timing Breakdown:**
+| Component | Time (ms) | Percentage |
+|-----------|-----------|------------|
+| A^T b calculation | 22.02 | 12.1% |
+| Optimization loop | 150.86 | 82.9% |
+| - ATA multiply | 0.48 | 0.3% |
+| - Step size calc | 6.98 | 3.8% |
+| - Gradient step | 0.41 | 0.2% |
+| - Convergence check | 0.46 | 0.3% |
+| GPU transfers | 0.50 | 0.3% |
+| CPU transfer | 0.23 | 0.1% |
+
+**Iteration Scaling Analysis:**
+| Iterations | Time/Iter (ms) | FPS Potential |
+|------------|----------------|---------------|
+| 1 | 33.69 | 29.7 fps ✅ |
+| 3 | 17.46 | 19.1 fps ✅ |
+| 5 | 14.59 | 13.7 fps ❌ |
+| 8 | 12.12 | 10.3 fps ❌ |
+| 10 | 10.89 | 9.2 fps ❌ |
+
+**Key Findings:**
+1. **Single iteration performance**: 29.7 fps achieves target
+2. **3 iterations**: 19.1 fps still above 15 fps target
+3. **5+ iterations**: Below target performance
+4. **DIA matrix issues**: 5157 diagonals (very dense, expected ~400-600)
+5. **Pattern generation**: Using legacy v6.0 patterns (should regenerate with v7.0)
+
+### Single Iteration Performance (1000 LEDs - Previous Analysis)
 - **A^T b calculation**: ~13ms (mixed tensor)
 - **A^T A multiplication**: ~2.1ms (custom DIA kernel)  
 - **Step size calculation**: ~2.4ms (custom DIA kernel)
 - **Overhead**: ~2ms (GPU transfers, convergence check)
 - **Total**: ~19.5ms → **51 FPS potential**
-
-### Target Performance (2600 LEDs)
-Scaling analysis suggests:
-- A^T A operations scale as O(k × n) where k = diagonals, n = LEDs
-- Expected time: ~2.1ms × (2600/1000) × (400/185) ≈ **11.5ms per iteration**
-- With optimizations: **Target of 5ms per iteration achievable**
 
 ## Recommendations
 
@@ -92,10 +129,29 @@ Scaling analysis suggests:
 2. ✅ **Fix pattern generation** - Ensure proper RCM ordering and sparsity
 3. ✅ **Add performance timing** - Comprehensive benchmarking infrastructure
 4. ✅ **Optimize memory transfers** - Reduce GPU/CPU copying overhead
+5. ✅ **2600 LED baseline testing** - Establish performance baseline
+
+### Critical Performance Issues Identified (2600 LED Baseline)
+
+**Priority 1: Pattern Generation Issues**
+- Current DIA matrix: 5157 diagonals (98% dense!)
+- Expected for 2600 LEDs: ~600-800 diagonals (<15% dense)
+- Root cause: Using legacy v6.0 patterns with suboptimal generation
+- **Action**: Regenerate 2600 LED patterns with v7.0 pattern generator
+
+**Priority 2: Iteration Count Optimization**
+- Target achieved with 1-3 iterations only
+- Quality vs speed tradeoff needs investigation
+- **Action**: Test convergence quality with fewer iterations
+
+**Priority 3: Performance Optimization Targets**
+- A^T b calculation: 22ms (12.1%) - room for optimization
+- Step size calculation: 7ms (3.8%) - could be reduced
+- **Action**: Profile and optimize these components
 
 ### Next Steps for Production
-1. **Scale testing to 2600 LEDs** - Validate performance projections
-2. **Optimize A^T b calculation** - Currently bottleneck at 13ms
+1. **Regenerate patterns with v7.0** - Fix DIA matrix sparsity
+2. **Optimize for 1-3 iterations** - Target quality with minimal iterations  
 3. **Hardware validation** - Test on target NVIDIA Jetson Orin Nano
 4. **Real diffusion patterns** - Replace synthetic patterns with captured data
 
