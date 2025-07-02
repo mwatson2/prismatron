@@ -143,7 +143,9 @@ def optimize_frame_led_values(
         # DIA matrix expects values in same order as pattern generation (pre-optimized)
         ATb_opt_order = ATb
         led_values_opt_order = led_values_normalized
-        debug and logger.info("Using DIA matrix with pre-optimized ordering from pattern generation")
+        debug and logger.info(
+            "Using DIA matrix with pre-optimized ordering from pattern generation"
+        )
     else:
         # Dense ATA matrix uses same order
         ATb_opt_order = ATb
@@ -194,18 +196,28 @@ def optimize_frame_led_values(
                 for c in range(3):
                     ATA_x[c] = ATA_matrix_gpu[:, :, c] @ led_values_gpu[c]
 
-        gradient = ATA_x - ATb_gpu  # Shape: (3, led_count)
-
-        # Compute step size: (g^T @ g) / (g^T @ A^T A @ g)
+        # Compute gradient: A^T A @ x - A^T @ b
         if timing:
-            with timing.section("step_size_calculation", use_gpu_events=True):
-                g_dot_g = cp.sum(gradient * gradient)
+            with timing.section("gradient_calculation", use_gpu_events=True):
+                gradient = ATA_x - ATb_gpu  # Shape: (3, led_count)
+        else:
+            gradient = ATA_x - ATb_gpu  # Shape: (3, led_count)
 
+        # Compute step size: (g^T @ g) / (g^T @ A^T A @ g) - broken down into components
+        if timing:
+            # Component 1: Compute g^T @ g (gradient norm squared)
+            with timing.section("step_size_g_dot_g", use_gpu_events=True):
+                g_dot_g = cp.sum(gradient * gradient)  # Shape: scalar, stays on GPU
+
+            # Component 2: Compute g^T @ A^T A @ g
+            with timing.section("step_size_g_ata_g", use_gpu_events=True):
                 if isinstance(ATA_matrix, DiagonalATAMatrix):
                     # Use DIA matrix for g^T @ A^T A @ g
                     g_dot_ATA_g_per_channel = ATA_matrix.g_ata_g_3d(gradient)
                     # g_ata_g_3d returns cupy array, no conversion needed
-                    g_dot_ATA_g = cp.sum(g_dot_ATA_g_per_channel)
+                    g_dot_ATA_g = cp.sum(
+                        g_dot_ATA_g_per_channel
+                    )  # Shape: scalar, stays on GPU
                 else:
                     # Dense matrix computation - use optimized matrix multiply per channel
                     # gradient: (3, led_count), ATA: (led_count, led_count, 3)
@@ -215,18 +227,24 @@ def optimize_frame_led_values(
                         ata_g = ATA_matrix_gpu[:, :, c] @ gradient[c]
                         g_dot_ATA_g += cp.dot(gradient[c], ata_g)
 
+            # Component 3: Compute final step size (division and CPU transfer)
+            with timing.section("step_size_division", use_gpu_events=True):
                 if g_dot_ATA_g > 0:
+                    # Convert to CPU scalar only once for final step size
                     step_size = float(step_size_scaling * g_dot_g / g_dot_ATA_g)
                 else:
                     step_size = 0.01  # Fallback
         else:
-            g_dot_g = cp.sum(gradient * gradient)
+            # Non-timing version - same logic without timing sections
+            g_dot_g = cp.sum(gradient * gradient)  # Shape: scalar, stays on GPU
 
             if isinstance(ATA_matrix, DiagonalATAMatrix):
                 # Use DIA matrix for g^T @ A^T A @ g
                 g_dot_ATA_g_per_channel = ATA_matrix.g_ata_g_3d(gradient)
                 # g_ata_g_3d returns cupy array, no conversion needed
-                g_dot_ATA_g = cp.sum(g_dot_ATA_g_per_channel)
+                g_dot_ATA_g = cp.sum(
+                    g_dot_ATA_g_per_channel
+                )  # Shape: scalar, stays on GPU
             else:
                 # Dense matrix computation - use optimized matrix multiply per channel
                 # gradient: (3, led_count), ATA: (led_count, led_count, 3)
@@ -237,12 +255,19 @@ def optimize_frame_led_values(
                     g_dot_ATA_g += cp.dot(gradient[c], ata_g)
 
             if g_dot_ATA_g > 0:
+                # Convert to CPU scalar only once for final step size
                 step_size = float(step_size_scaling * g_dot_g / g_dot_ATA_g)
             else:
                 step_size = 0.01  # Fallback
 
-        if debug and step_sizes is not None:
-            step_sizes.append(step_size)
+        # Record step size for debugging
+        if timing:
+            with timing.section("debug_step_size_logging", use_gpu_events=True):
+                if debug and step_sizes is not None:
+                    step_sizes.append(step_size)
+        else:
+            if debug and step_sizes is not None:
+                step_sizes.append(step_size)
 
         # Gradient descent step with projection to [0, 1]
         if timing:
@@ -258,19 +283,36 @@ def optimize_frame_led_values(
         else:
             delta = cp.linalg.norm(led_values_new - led_values_gpu)
 
-        if delta < convergence_threshold:
-            debug and logger.info(
-                f"Converged after {iteration+1} iterations, delta: {delta:.6f}"
-            )
+        # Convergence logic and variable updates
+        if timing:
+            with timing.section("convergence_and_updates", use_gpu_events=True):
+                if delta < convergence_threshold:
+                    debug and logger.info(
+                        f"Converged after {iteration+1} iterations, delta: {delta:.6f}"
+                    )
+                    led_values_gpu = led_values_new
+                    break
+
+                led_values_gpu = led_values_new
+
+                if debug and (iteration + 1) % 5 == 0:
+                    logger.info(
+                        f"Iteration {iteration+1}: delta={delta:.6f}, step_size={step_size:.6f}"
+                    )
+        else:
+            if delta < convergence_threshold:
+                debug and logger.info(
+                    f"Converged after {iteration+1} iterations, delta: {delta:.6f}"
+                )
+                led_values_gpu = led_values_new
+                break
+
             led_values_gpu = led_values_new
-            break
 
-        led_values_gpu = led_values_new
-
-        if debug and (iteration + 1) % 5 == 0:
-            logger.info(
-                f"Iteration {iteration+1}: delta={delta:.6f}, step_size={step_size:.6f}"
-            )
+            if debug and (iteration + 1) % 5 == 0:
+                logger.info(
+                    f"Iteration {iteration+1}: delta={delta:.6f}, step_size={step_size:.6f}"
+                )
 
     if timing:
         timing.stop("optimization_loop")
@@ -282,7 +324,7 @@ def optimize_frame_led_values(
         with timing.section("cpu_transfer", use_gpu_events=True):
             # Values are already in correct order (pattern generation handles ordering)
             led_values_spatial = cp.asnumpy(led_values_final_gpu)
-            
+
             # Convert to uint8 [0, 255] range
             led_values_output = (led_values_spatial * 255.0).astype(np.uint8)
     else:

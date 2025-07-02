@@ -108,12 +108,39 @@ The performance analysis focused on optimizing matrix operations in the LED opti
 | 8 | 12.12 | 10.3 fps ❌ |
 | 10 | 10.89 | 9.2 fps ❌ |
 
-**Key Findings:**
+**Key Findings (Legacy v6.0 Patterns):**
 1. **Single iteration performance**: 29.7 fps achieves target
 2. **3 iterations**: 19.1 fps still above 15 fps target
 3. **5+ iterations**: Below target performance
 4. **DIA matrix issues**: 5157 diagonals (very dense, expected ~400-600)
-5. **Pattern generation**: Using legacy v6.0 patterns (should regenerate with v7.0)
+5. **Pattern generation**: Using legacy v6.0 patterns (needed regeneration)
+
+### 2600 LED Performance - NEW v7.0 Patterns (Pattern Generation Fixed)
+
+**Test Configuration:**
+- Hardware: Development machine (not target Jetson Orin Nano)
+- LEDs: 2600 LEDs with 64x64 block patterns
+- Matrix format: Mixed tensor (A^T b) + DIA matrix (A^T A)
+- DIA matrix: 793 diagonals, bandwidth=396 (✅ FIXED!)
+- Pattern file: 110.4 MB (new v7.0 format)
+
+**Performance Results Comparison:**
+
+| Configuration | 1 Iteration | 3 Iterations | 5 Iterations |
+|---------------|-------------|---------------|---------------|
+| **v6.0 (legacy)** | 24.9 fps ✅ | 17.8 fps ✅ | 12.1 fps ❌ |
+| **v7.0 (fixed)** | **32.2 fps** ✅ | **26.9 fps** ✅ | **19.8 fps** ✅ |
+| **Speedup** | **1.29x** | **1.51x** | **1.64x** |
+
+**DIA Matrix Improvement:**
+- v6.0: 5157 diagonals (98% dense)
+- v7.0: 793 diagonals (13.7% dense)
+- **Improvement: 6.5x fewer diagonals**
+
+**🎯 TARGET ACHIEVED:**
+- ✅ **19.8 fps with 5 iterations** (exceeds 15 fps target!)
+- ✅ **26.9 fps with 3 iterations** (optimal quality/speed balance)
+- ✅ **32.2 fps with 1 iteration** (maximum speed mode)
 
 ### Single Iteration Performance (1000 LEDs - Previous Analysis)
 - **A^T b calculation**: ~13ms (mixed tensor)

@@ -42,11 +42,11 @@ class TestFrameOptimizer:
         """
         from pathlib import Path
 
-        # Load the latest 2600 LED patterns (contains DIA matrix)
+        # Load the latest 2600 LED patterns (v7.0 with optimized sparsity)
         pattern_path = (
             Path(__file__).parent.parent
             / "diffusion_patterns"
-            / "synthetic_2600_64x64.npz"
+            / "synthetic_2600_64x64_v7.npz"
         )
         if not pattern_path.exists():
             raise FileNotFoundError(f"Pattern file not found: {pattern_path}")
@@ -62,11 +62,14 @@ class TestFrameOptimizer:
         dia_dict = data["dia_matrix"].item()
         dia_matrix = DiagonalATAMatrix.from_dict(dia_dict)
         print(
-            f"  DIA matrix: {dia_matrix.led_count} LEDs, bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
+            f"  DIA matrix: {dia_matrix.led_count} LEDs, "
+            f"bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
         )
 
         print(
-            f"  Mixed tensor: {mixed_tensor.batch_size} LEDs, {mixed_tensor.height}x{mixed_tensor.width}, {mixed_tensor.block_size}x{mixed_tensor.block_size} blocks"
+            f"  Mixed tensor: {mixed_tensor.batch_size} LEDs, "
+            f"{mixed_tensor.height}x{mixed_tensor.width}, "
+            f"{mixed_tensor.block_size}x{mixed_tensor.block_size} blocks"
         )
 
         return mixed_tensor, dia_matrix
@@ -133,7 +136,7 @@ class TestFrameOptimizer:
             optimize_frame_led_values(invalid_frame, csc_matrix, dia_matrix)
 
     def test_optimization_with_real_patterns(self):
-        """Test frame optimization using real patterns with DIA matrix and detailed performance profiling."""
+        """Test optimization using real patterns with detailed profiling."""
         # Load real diffusion patterns
         mixed_tensor, dia_matrix = self.load_real_diffusion_patterns()
         led_count = mixed_tensor.batch_size
@@ -253,7 +256,7 @@ class TestFrameOptimizer:
         print(f"    Time per iteration: {avg_time_per_iter:.4f}s")
         print(f"    Potential FPS: {1.0 / avg_time_per_iter:.1f} fps")
 
-        # Step 4: Average timing breakdown across trials
+        # Step 4: Average timing breakdown across trials with detailed step size analysis
         if trial_timings:
             print(f"\n  [Step 4] Average timing breakdown across trials:")
 
@@ -265,11 +268,92 @@ class TestFrameOptimizer:
                     avg_timings[section] = np.mean(section_times)
 
             total_tracked = sum(avg_timings.values())
-            for section, avg_duration in sorted(avg_timings.items()):
+
+            # Group and display timing sections
+            print(f"    === Core Optimization Sections ===")
+            core_sections = [
+                "ata_multiply",
+                "gradient_calculation",
+                "gradient_step",
+                "convergence_check",
+                "convergence_and_updates",
+            ]
+            for section in core_sections:
+                if section in avg_timings:
+                    avg_duration = avg_timings[section]
+                    percentage = (
+                        (avg_duration / total_tracked * 100) if total_tracked > 0 else 0
+                    )
+                    print(f"    {section}: {avg_duration:.4f}s ({percentage:.1f}%)")
+
+            print(f"    === Step Size Calculation Breakdown ===")
+            step_size_sections = [
+                "step_size_g_dot_g",
+                "step_size_g_ata_g",
+                "step_size_division",
+            ]
+            step_size_total = sum(avg_timings.get(s, 0) for s in step_size_sections)
+            for section in step_size_sections:
+                if section in avg_timings:
+                    avg_duration = avg_timings[section]
+                    percentage = (
+                        (avg_duration / total_tracked * 100) if total_tracked > 0 else 0
+                    )
+                    step_pct = (
+                        (avg_duration / step_size_total * 100)
+                        if step_size_total > 0
+                        else 0
+                    )
+                    print(
+                        f"    {section}: {avg_duration:.4f}s "
+                        f"({percentage:.1f}% total, {step_pct:.1f}% of step size)"
+                    )
+
+            step_size_pct = (
+                (step_size_total / total_tracked * 100) if total_tracked > 0 else 0
+            )
+            print(
+                f"    Total step size calculation: {step_size_total:.4f}s "
+                f"({step_size_pct:.1f}%)"
+            )
+
+            print(f"    === Other Sections ===")
+            other_sections = [
+                s
+                for s in avg_timings.keys()
+                if s not in core_sections + step_size_sections
+            ]
+            for section in sorted(other_sections):
+                avg_duration = avg_timings[section]
                 percentage = (
                     (avg_duration / total_tracked * 100) if total_tracked > 0 else 0
                 )
                 print(f"    {section}: {avg_duration:.4f}s ({percentage:.1f}%)")
+
+            # Check for missing time in optimization loop
+            optimization_loop_time = avg_timings.get("optimization_loop", 0)
+            per_iter_sections = (
+                ["ata_multiply", "gradient_calculation"]
+                + step_size_sections
+                + [
+                    "gradient_step",
+                    "convergence_check",
+                    "convergence_and_updates",
+                    "debug_step_size_logging",
+                ]
+            )
+            per_iter_total = sum(avg_timings.get(s, 0) for s in per_iter_sections)
+            missing_time = optimization_loop_time - per_iter_total
+            if optimization_loop_time > 0:
+                missing_pct = (missing_time / optimization_loop_time) * 100
+                print(f"    \n    === Missing Time Analysis ===")
+                print(f"    Optimization loop total: {optimization_loop_time:.4f}s")
+                print(f"    Per-iteration sections total: {per_iter_total:.4f}s")
+                print(f"    Missing time: {missing_time:.4f}s ({missing_pct:.1f}%)")
+                if missing_pct < 10:
+                    print(f"    ✅ Good timing coverage!")
+                else:
+                    print(f"    ⚠️  Significant missing time")
 
         # Final validation
         print(f"\n  === VALIDATION ===")
