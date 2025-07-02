@@ -29,6 +29,7 @@ except ImportError:
 
 # Add path for local imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from src.utils.diagonal_ata_matrix import DiagonalATAMatrix
 from src.utils.led_diffusion_csc_matrix import LEDDiffusionCSCMatrix
 from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 from src.utils.spatial_ordering import compute_rcm_ordering, reorder_matrix_columns
@@ -338,14 +339,15 @@ class SyntheticPatternGenerator:
             f"Expected A^T A diagonals (from adjacency): {expected_ata_diagonals}"
         )
 
+        # Store expected diagonal count for later comparison
+        self.expected_ata_diagonals = expected_ata_diagonals
+
         # Create mapping: physical_led_id -> rcm_ordered_matrix_index
         self.led_spatial_mapping = {
             original_id: rcm_pos for rcm_pos, original_id in enumerate(rcm_order)
         }
         # Create reverse mapping: rcm_ordered_matrix_index -> physical_led_id
-        self.reverse_spatial_mapping = {
-            rcm_pos: original_id for rcm_pos, original_id in enumerate(rcm_order)
-        }
+        self.reverse_spatial_mapping = dict(enumerate(rcm_order))
 
         # Calculate chunk parameters
         num_chunks = (led_count + chunk_size - 1) // chunk_size
@@ -362,7 +364,8 @@ class SyntheticPatternGenerator:
             chunk_led_count = chunk_end - chunk_start
 
             logger.info(
-                f"Processing chunk {chunk_idx + 1}/{num_chunks}: spatial indices {chunk_start}-{chunk_end-1}"
+                f"Processing chunk {chunk_idx + 1}/{num_chunks}: "
+                f"spatial indices {chunk_start}-{chunk_end-1}"
             )
 
             # Generate dense matrix for this chunk (384000, chunk_led_count * 3)
@@ -653,7 +656,8 @@ class SyntheticPatternGenerator:
                 ata_bandwidths.append(bandwidth)
                 logger.info(f"Channel {c+1} A^T @ A bandwidth: {bandwidth} diagonals")
                 logger.info(
-                    f"Channel {c+1} A^T @ A diagonal range: [{diagonal_offsets.min()}, {diagonal_offsets.max()}]"
+                    f"Channel {c+1} A^T @ A diagonal range: "
+                    f"[{diagonal_offsets.min()}, {diagonal_offsets.max()}]"
                 )
                 logger.info(f"Channel {c+1} A^T @ A nnz: {coo.nnz:,}")
                 logger.info(
@@ -711,8 +715,6 @@ class SyntheticPatternGenerator:
         Returns:
             DiagonalATAMatrix object with 3D DIA format
         """
-        from src.utils.diagonal_ata_matrix import DiagonalATAMatrix
-
         logger.info("Building DiagonalATAMatrix from diffusion matrix...")
 
         led_count = sparse_matrix.shape[1] // 3
@@ -724,8 +726,29 @@ class SyntheticPatternGenerator:
         dia_matrix.build_from_diffusion_matrix(sparse_matrix)
 
         logger.info(
-            f"DiagonalATAMatrix built: {led_count} LEDs, bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k}"
+            f"DiagonalATAMatrix built: {led_count} LEDs, "
+            f"bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
         )
+
+        # Compare expected vs actual diagonal counts
+        if hasattr(self, "expected_ata_diagonals"):
+            expected = self.expected_ata_diagonals
+            actual = dia_matrix.k
+            ratio = actual / expected if expected > 0 else float("inf")
+            if ratio > 2.0:
+                logger.warning(
+                    f"DIA matrix diagonal count mismatch: expected={expected}, "
+                    f"actual={actual} ({ratio:.1f}x more than expected!)"
+                )
+                logger.warning(
+                    "This indicates pattern generation may not be following "
+                    "adjacency structure properly"
+                )
+            else:
+                logger.info(
+                    f"DIA matrix diagonal count: expected={expected}, "
+                    f"actual={actual} ({ratio:.1f}x expected - good!)"
+                )
 
         return dia_matrix
 
@@ -807,14 +830,20 @@ class SyntheticPatternGenerator:
             logger.info(f"File size: {file_size:.1f} MB")
             logger.info(f"Mixed tensor format: SingleBlockMixedSparseTensor")
             logger.info(
-                f"Mixed tensor: {mixed_tensor.batch_size} LEDs, {mixed_tensor.height}x{mixed_tensor.width}, {mixed_tensor.block_size}x{mixed_tensor.block_size} blocks"
+                f"Mixed tensor: {mixed_tensor.batch_size} LEDs, "
+                f"{mixed_tensor.height}x{mixed_tensor.width}, "
+                f"{mixed_tensor.block_size}x{mixed_tensor.block_size} blocks"
             )
             logger.info(
-                f"DIA matrix: {dia_matrix.led_count} LEDs, bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
+                f"DIA matrix: {dia_matrix.led_count} LEDs, "
+                f"bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
             )
-            logger.info(
-                f"DIA matrix storage shape: {dia_matrix.dia_data_cpu.shape if dia_matrix.dia_data_cpu is not None else 'None'}"
+            storage_shape = (
+                dia_matrix.dia_data_cpu.shape
+                if dia_matrix.dia_data_cpu is not None
+                else "None"
             )
+            logger.info(f"DIA matrix storage shape: {storage_shape}")
 
             return True
 
