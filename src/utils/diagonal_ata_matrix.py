@@ -115,7 +115,7 @@ class DiagonalATAMatrix:
         # Apply RCM ordering if requested
         if use_rcm:
             print(f"  Applying RCM ordering...")
-            self.led_order, self.inverse_led_order = compute_rcm_ordering(
+            self.led_order, self.inverse_led_order, _ = compute_rcm_ordering(
                 led_positions, self.crop_size
             )
 
@@ -296,13 +296,17 @@ class DiagonalATAMatrix:
                 "Unified 3D DIA matrix not built. Call build_from_diffusion_matrix() first."
             )
 
-        # Convert to GPU arrays
+        # Convert to GPU arrays - avoid unnecessary copies
         if not isinstance(led_values, cupy.ndarray):
             led_values_gpu = cupy.asarray(led_values, dtype=cupy.float32)
         else:
-            led_values_gpu = led_values.astype(cupy.float32)
+            # Only convert dtype if necessary, avoid copy if already float32
+            if led_values.dtype != cupy.float32:
+                led_values_gpu = led_values.astype(cupy.float32)
+            else:
+                led_values_gpu = led_values
 
-        # Perform 3D DIA matrix-vector multiplication
+        # Perform 3D DIA matrix-vector multiplication - ONLY USE CUSTOM KERNEL
         if use_custom_kernel and CUSTOM_3D_KERNEL_AVAILABLE:
             # Use custom 3D CUDA kernel
             if optimized_kernel:
@@ -324,8 +328,10 @@ class DiagonalATAMatrix:
                     led_values_gpu,  # Shape: (channels, leds)
                 )
         else:
-            # Fallback to Python loop implementation
-            result_gpu = self._multiply_3d_fallback(led_values_gpu)
+            # NO FALLBACK - custom kernel required for performance measurement
+            raise RuntimeError(
+                "Custom 3D DIA kernel not available - required for performance measurement"
+            )
 
         # Convert back to numpy if input was numpy
         if isinstance(led_values, np.ndarray):
@@ -424,13 +430,17 @@ class DiagonalATAMatrix:
                 "Unified 3D DIA matrix not built. Call build_from_diffusion_matrix() first."
             )
 
-        # Convert to GPU arrays
+        # Convert to GPU arrays - avoid unnecessary copies
         if not isinstance(gradient, cupy.ndarray):
             gradient_gpu = cupy.asarray(gradient, dtype=cupy.float32)
         else:
-            gradient_gpu = gradient.astype(cupy.float32)
+            # Only convert dtype if necessary, avoid copy if already float32
+            if gradient.dtype != cupy.float32:
+                gradient_gpu = gradient.astype(cupy.float32)
+            else:
+                gradient_gpu = gradient
 
-        # Compute (A^T A) @ g using unified 3D DIA
+        # Compute (A^T A) @ g using unified 3D DIA - ONLY USE CUSTOM KERNEL
         if use_custom_kernel and CUSTOM_3D_KERNEL_AVAILABLE:
             # Use custom 3D CUDA kernel
             if optimized_kernel:
@@ -452,8 +462,10 @@ class DiagonalATAMatrix:
                     gradient_gpu,  # Shape: (channels, leds)
                 )
         else:
-            # Fallback to Python loop implementation
-            ata_g_gpu = self._multiply_3d_fallback(gradient_gpu)
+            # NO FALLBACK - custom kernel required for performance measurement
+            raise RuntimeError(
+                "Custom 3D DIA kernel not available - required for performance measurement"
+            )
 
         # Compute g^T @ (A^T A @ g) for each channel using vectorized operation: (channels,leds) * (channels,leds) -> (channels,)
         result_gpu = cupy.sum(gradient_gpu * ata_g_gpu, axis=1)  # Shape: (channels,)

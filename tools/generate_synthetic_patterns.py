@@ -50,6 +50,7 @@ class SyntheticPatternGenerator:
         frame_height: int = DEFAULT_FRAME_HEIGHT,
         seed: Optional[int] = None,
         sparsity_threshold: float = 0.01,
+        block_size: int = 96,
     ):
         """
         Initialize pattern generator.
@@ -59,11 +60,13 @@ class SyntheticPatternGenerator:
             frame_height: Height of output frames
             seed: Random seed for reproducible patterns
             sparsity_threshold: Threshold below which pixels are considered zero
+            block_size: Size of diffusion blocks (e.g., 64, 96)
         """
         self.frame_width = frame_width
         self.frame_height = frame_height
         self.seed = seed  # Store seed attribute
         self.sparsity_threshold = sparsity_threshold
+        self.block_size = block_size
 
         if seed is not None:
             np.random.seed(seed)
@@ -162,31 +165,30 @@ class SyntheticPatternGenerator:
     def generate_single_pattern(
         self,
         led_position: Tuple[int, int],
+        block_position: Tuple[int, int],
         pattern_type: str = "gaussian_multi",
         base_intensity: float = 1.0,
     ) -> np.ndarray:
         """
-        Generate a single LED diffusion pattern with 96x96 cropping constraint.
+        Generate a single LED diffusion pattern with proper block position cropping.
 
         Args:
-            led_position: LED position as (x, y) coordinates
+            led_position: LED position as (x, y) coordinates (center of LED)
+            block_position: Block top-left position as (x, y) coordinates (aligned to multiple of 4)
             pattern_type: Type of pattern to generate
             base_intensity: Base intensity multiplier
 
         Returns:
             Pattern array (height, width, 3) for RGB channels
         """
-        x, y = led_position
+        led_x, led_y = led_position
+        block_x, block_y = block_position
 
-        # Limit pattern generation to 96x96 region around LED for efficiency
-        crop_size = 96
-
-        # Calculate crop boundaries
-        half_crop = crop_size // 2
-        crop_x_min = max(0, x - half_crop)
-        crop_x_max = min(self.frame_width, x + half_crop)
-        crop_y_min = max(0, y - half_crop)
-        crop_y_max = min(self.frame_height, y + half_crop)
+        # Use block boundaries for cropping (consistent with adjacency calculation)
+        crop_x_min = block_x
+        crop_x_max = min(self.frame_width, block_x + self.block_size)
+        crop_y_min = block_y
+        crop_y_max = min(self.frame_height, block_y + self.block_size)
 
         # Create full-size pattern but only generate values in crop region
         pattern = np.zeros((self.frame_height, self.frame_width, 3), dtype=np.float32)
@@ -202,17 +204,17 @@ class SyntheticPatternGenerator:
                 num_blobs = np.random.randint(2, 5)
 
                 for _ in range(num_blobs):
-                    # Random offset for sub-patterns
+                    # Random offset for sub-patterns (centered around LED position)
                     offset_x = np.random.normal(0, 15)
                     offset_y = np.random.normal(0, 15)
-                    center_x = np.clip(x + offset_x, 0, self.frame_width - 1)
-                    center_y = np.clip(y + offset_y, 0, self.frame_height - 1)
+                    center_x = np.clip(led_x + offset_x, 0, self.frame_width - 1)
+                    center_y = np.clip(led_y + offset_y, 0, self.frame_height - 1)
 
                     # Random sigma for different spread
                     sigma = np.random.uniform(8, 30)
                     intensity = np.random.uniform(0.3, 1.0) * base_intensity
 
-                    # Create meshgrid only for crop region
+                    # Create meshgrid only for crop region (block boundaries)
                     xx, yy = np.meshgrid(
                         np.arange(crop_x_min, crop_x_max) - center_x,
                         np.arange(crop_y_min, crop_y_max) - center_y,
@@ -227,47 +229,57 @@ class SyntheticPatternGenerator:
                         crop_y_min:crop_y_max, crop_x_min:crop_x_max
                     ] += gaussian
 
-                # Add some color variation between channels
+                # Add some color variation between channels (only to cropped region)
                 color_variation = np.random.uniform(0.7, 1.3)
-                pattern[:, :, c] = channel_pattern * color_variation
+                pattern[crop_y_min:crop_y_max, crop_x_min:crop_x_max, c] = (
+                    channel_pattern[crop_y_min:crop_y_max, crop_x_min:crop_x_max]
+                    * color_variation
+                )
 
         elif pattern_type == "gaussian_simple":
-            # Single Gaussian per channel
+            # Single Gaussian per channel (centered on LED, cropped to block)
             for c in range(3):
                 sigma = np.random.uniform(15, 40)
                 intensity = np.random.uniform(0.5, 1.0) * base_intensity
 
-                # Create meshgrid
+                # Create meshgrid only for crop region
                 xx, yy = np.meshgrid(
-                    np.arange(self.frame_width) - x, np.arange(self.frame_height) - y
+                    np.arange(crop_x_min, crop_x_max) - led_x,
+                    np.arange(crop_y_min, crop_y_max) - led_y,
                 )
 
-                # Gaussian pattern with color variation
+                # Gaussian pattern with color variation (cropped)
                 color_variation = np.random.uniform(0.8, 1.2)
                 gaussian = (
                     intensity
                     * color_variation
                     * np.exp(-(xx**2 + yy**2) / (2 * sigma**2))
                 )
-                pattern[:, :, c] = gaussian
+                # Only update the crop region
+                pattern[crop_y_min:crop_y_max, crop_x_min:crop_x_max, c] = gaussian
 
         elif pattern_type == "exponential":
-            # Exponential falloff pattern
+            # Exponential falloff pattern (centered on LED, cropped to block)
             for c in range(3):
                 decay_rate = np.random.uniform(0.05, 0.15)
                 intensity = np.random.uniform(0.4, 1.0) * base_intensity
 
-                # Create distance map
+                # Create distance map only for crop region
                 xx, yy = np.meshgrid(
-                    np.arange(self.frame_width) - x, np.arange(self.frame_height) - y
+                    np.arange(crop_x_min, crop_x_max) - led_x,
+                    np.arange(crop_y_min, crop_y_max) - led_y,
                 )
                 distances = np.sqrt(xx**2 + yy**2)
 
-                # Exponential decay with color variation
+                # Exponential decay with color variation (cropped)
                 color_variation = np.random.uniform(0.7, 1.3)
-                pattern[:, :, c] = (
+                exponential_pattern = (
                     intensity * color_variation * np.exp(-decay_rate * distances)
                 )
+                # Only update the crop region
+                pattern[
+                    crop_y_min:crop_y_max, crop_x_min:crop_x_max, c
+                ] = exponential_pattern
 
         # Normalize and clip to valid range
         if np.max(pattern) > 0:
@@ -309,26 +321,22 @@ class SyntheticPatternGenerator:
         if self.led_positions is None or len(self.led_positions) != led_count:
             self.generate_led_positions(led_count)
 
-        # Calculate 96x96 block positions with x-coordinates rounded to multiple of 4
-        block_size = 96
-        block_positions = []
-        for led_id, (x, y) in enumerate(self.led_positions):
-            # Calculate block top-left corner centered on LED
-            block_x_candidate = max(
-                0, min(self.frame_width - block_size, x - block_size // 2)
-            )
-            block_y = max(0, min(self.frame_height - block_size, y - block_size // 2))
+        # Import and use the unified block position calculation
+        from tools.led_position_utils import calculate_block_positions
 
-            # CRITICAL: Round x-coordinate down to multiple of 4 for CUDA kernel alignment
-            block_x = (block_x_candidate // 4) * 4
-
-            block_positions.append([block_x, block_y])
-
-        block_positions = np.array(block_positions)
+        # Calculate block positions with x-coordinates rounded to multiple of 4
+        block_positions = calculate_block_positions(
+            self.led_positions, self.block_size, self.frame_width, self.frame_height
+        )
 
         # Compute RCM ordering directly from block positions
         logger.info("Computing RCM ordering for optimal bandwidth...")
-        rcm_order, inverse_order = compute_rcm_ordering(block_positions, block_size)
+        rcm_order, inverse_order, expected_ata_diagonals = compute_rcm_ordering(
+            block_positions, self.block_size
+        )
+        logger.info(
+            f"Expected A^T A diagonals (from adjacency): {expected_ata_diagonals}"
+        )
 
         # Create mapping: physical_led_id -> rcm_ordered_matrix_index
         self.led_spatial_mapping = {
@@ -376,8 +384,12 @@ class SyntheticPatternGenerator:
 
                 # Generate pattern for this PHYSICAL LED at this SPATIAL position
                 led_pos = tuple(self.led_positions[physical_led_id])
+                block_pos = tuple(block_positions[physical_led_id])
                 pattern = self.generate_single_pattern(
-                    led_pos, pattern_type=pattern_type, base_intensity=base_intensity
+                    led_pos,
+                    block_pos,
+                    pattern_type=pattern_type,
+                    base_intensity=base_intensity,
                 )
 
                 # Process all three color channels for this LED
@@ -480,7 +492,7 @@ class SyntheticPatternGenerator:
         led_count = sparse_matrix.shape[1] // 3
         channels = 3
         height, width = self.frame_height, self.frame_width
-        block_size = 96  # Standard block size
+        block_size = self.block_size  # Configurable block size
 
         # Create the SingleBlockMixedSparseTensor
         mixed_tensor = SingleBlockMixedSparseTensor(
@@ -618,6 +630,9 @@ class SyntheticPatternGenerator:
 
         start_time = time.time()
 
+        # Track bandwidth statistics for all channels
+        ata_bandwidths = []
+
         # Compute A^T @ A for each channel separately
         for c in range(channels):
             logger.info(f"Computing A^T @ A for channel {c+1}/{channels}")
@@ -629,6 +644,34 @@ class SyntheticPatternGenerator:
             # Compute A_c^T @ A_c (led_count, led_count) - this is dense
             ATA_channel = A_channel.T @ A_channel
 
+            # Compute bandwidth before converting to dense
+            coo = ATA_channel.tocoo()
+            if coo.nnz > 0:
+                diagonal_offsets = coo.col - coo.row
+                unique_diagonals = np.unique(diagonal_offsets)
+                bandwidth = len(unique_diagonals)
+                ata_bandwidths.append(bandwidth)
+                logger.info(f"Channel {c+1} A^T @ A bandwidth: {bandwidth} diagonals")
+                logger.info(
+                    f"Channel {c+1} A^T @ A diagonal range: [{diagonal_offsets.min()}, {diagonal_offsets.max()}]"
+                )
+                logger.info(f"Channel {c+1} A^T @ A nnz: {coo.nnz:,}")
+                logger.info(
+                    f"Channel {c+1} A^T @ A diagonals present: {sorted(unique_diagonals.tolist())}"
+                )
+                # Check if main diagonal (0) is present
+                if 0 in unique_diagonals:
+                    logger.info(
+                        f"Channel {c+1} main diagonal (0) is present in A^T @ A"
+                    )
+                else:
+                    logger.info(
+                        f"Channel {c+1} main diagonal (0) is MISSING from A^T @ A"
+                    )
+            else:
+                ata_bandwidths.append(0)
+                logger.info(f"Channel {c+1} A^T @ A is empty")
+
             # Convert to dense and store
             ATA_dense[:, :, c] = ATA_channel.toarray().astype(np.float32)
 
@@ -637,17 +680,56 @@ class SyntheticPatternGenerator:
 
         total_time = time.time() - start_time
         memory_mb = ATA_dense.nbytes / (1024 * 1024)
+        avg_ata_bandwidth = np.mean(ata_bandwidths) if ata_bandwidths else 0
 
         logger.info(f"Dense A^T @ A precomputation completed in {total_time:.2f}s")
         logger.info(f"Dense A^T @ A tensor shape: {ATA_dense.shape}")
         logger.info(f"Dense A^T @ A memory: {memory_mb:.1f}MB")
+        logger.info(
+            f"Average A^T @ A bandwidth across channels: {avg_ata_bandwidth:.1f} diagonals"
+        )
 
         return {
             "dense_ata_matrices": ATA_dense,
             "dense_ata_led_count": led_count,
             "dense_ata_channels": channels,
             "dense_ata_computation_time": total_time,
+            "ata_bandwidths": ata_bandwidths,
+            "avg_ata_bandwidth": avg_ata_bandwidth,
         }
+
+    def _generate_dia_matrix(
+        self, sparse_matrix: sp.csc_matrix, led_positions: np.ndarray
+    ) -> "DiagonalATAMatrix":
+        """
+        Generate DiagonalATAMatrix from sparse diffusion matrix.
+
+        Args:
+            sparse_matrix: Sparse CSC diffusion matrix (pixels, leds*3)
+            led_positions: LED positions array (leds, 2)
+
+        Returns:
+            DiagonalATAMatrix object with 3D DIA format
+        """
+        from src.utils.diagonal_ata_matrix import DiagonalATAMatrix
+
+        logger.info("Building DiagonalATAMatrix from diffusion matrix...")
+
+        led_count = sparse_matrix.shape[1] // 3
+
+        # Create DiagonalATAMatrix instance
+        dia_matrix = DiagonalATAMatrix(led_count, crop_size=self.block_size)
+
+        # Build from diffusion matrix with RCM ordering
+        dia_matrix.build_from_diffusion_matrix(
+            sparse_matrix, led_positions, use_rcm=True
+        )
+
+        logger.info(
+            f"DiagonalATAMatrix built: {led_count} LEDs, bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k}"
+        )
+
+        return dia_matrix
 
     def save_sparse_matrix(
         self,
@@ -699,26 +781,23 @@ class SyntheticPatternGenerator:
             if metadata:
                 save_metadata.update(metadata)
 
-            # Precompute dense A^T @ A matrices from sparse matrix
-            logger.info("Precomputing dense A^T @ A matrices from sparse CSC...")
-            dense_ata_data = self._precompute_dense_ata_matrices(
-                diffusion_matrix.to_csc_matrix()
+            # Generate DiagonalATAMatrix (DIA format)
+            logger.info("Generating DiagonalATAMatrix (DIA format)...")
+            dia_matrix = self._generate_dia_matrix(
+                diffusion_matrix.to_csc_matrix(), self.led_positions
             )
 
             # Save everything in a single NPZ file
-            # Use LEDDiffusionCSCMatrix's to_dict() method for storage
             save_dict = {
                 # LED information
                 "led_positions": self.led_positions,
                 "led_spatial_mapping": led_spatial_mapping,
                 # Metadata
                 "metadata": save_metadata,
-                # CSC format diffusion matrix
-                "diffusion_matrix": diffusion_matrix.to_dict(),
                 # Mixed tensor stored as nested element using to_dict()
                 "mixed_tensor": mixed_tensor.to_dict(),
-                # Dense A^T @ A matrices
-                "dense_ata": dense_ata_data,
+                # DIA format A^T @ A matrix
+                "dia_matrix": dia_matrix.to_dict(),
             }
 
             np.savez_compressed(output_path, **save_dict)
@@ -726,18 +805,17 @@ class SyntheticPatternGenerator:
             # Log file info
             file_size = Path(output_path).stat().st_size / (1024 * 1024)  # MB
 
-            logger.info(
-                f"Saved LEDDiffusionCSCMatrix and mixed tensor to {output_path}"
-            )
+            logger.info(f"Saved mixed tensor and DIA matrix to {output_path}")
             logger.info(f"File size: {file_size:.1f} MB")
-            logger.info(f"Matrix shape: {diffusion_matrix.shape}")
-            logger.info(f"Non-zero entries: {diffusion_matrix.matrix.nnz:,}")
             logger.info(f"Mixed tensor format: SingleBlockMixedSparseTensor")
             logger.info(
-                f"Dense A^T @ A tensor shape: {dense_ata_data['dense_ata_matrices'].shape}"
+                f"Mixed tensor: {mixed_tensor.batch_size} LEDs, {mixed_tensor.height}x{mixed_tensor.width}, {mixed_tensor.block_size}x{mixed_tensor.block_size} blocks"
             )
             logger.info(
-                f"Dense A^T @ A memory: {dense_ata_data['dense_ata_matrices'].nbytes / (1024*1024):.1f}MB"
+                f"DIA matrix: {dia_matrix.led_count} LEDs, bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
+            )
+            logger.info(
+                f"DIA matrix storage shape: {dia_matrix.dia_data_cpu.shape if dia_matrix.dia_data_cpu is not None else 'None'}"
             )
 
             return True
@@ -799,6 +877,12 @@ def main():
         help="Number of LEDs to process per chunk for sparse generation (default: 50)",
     )
     parser.add_argument(
+        "--block-size",
+        type=int,
+        default=96,
+        help="Block size for LED diffusion patterns (default: 96)",
+    )
+    parser.add_argument(
         "--verbose", "-v", action="store_true", help="Enable verbose logging"
     )
 
@@ -817,6 +901,7 @@ def main():
             frame_height=args.height,
             seed=args.seed,
             sparsity_threshold=args.sparsity_threshold,
+            block_size=args.block_size,
         )
 
         # Prepare metadata
@@ -824,6 +909,7 @@ def main():
             "pattern_type": args.pattern_type,
             "seed": args.seed,
             "intensity_variation": not args.no_intensity_variation,
+            "block_size": args.block_size,
             "command_line": " ".join(sys.argv),
         }
 

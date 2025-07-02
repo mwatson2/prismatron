@@ -733,6 +733,114 @@ class SingleBlockMixedSparseTensor:
         )
         return dense_pattern
 
+    def compute_ata_dense(self) -> np.ndarray:
+        """
+        Compute A^T A matrix directly from block data avoiding CSC conversion issues.
+
+        This method computes the (led_count, led_count, channels) A^T A matrix
+        by directly computing dot products between overlapping block regions.
+        This gives us the exact sparsity pattern we expect based on block adjacency.
+
+        Returns:
+            Dense A^T A array of shape (led_count, led_count, channels) where
+            ata[i, j, c] = dot(pattern_i_c, pattern_j_c) for overlapping regions
+        """
+        logger.info(f"Computing A^T A directly from block data...")
+
+        # Initialize A^T A matrix: (led_count, led_count, channels)
+        ata_matrix = np.zeros(
+            (self.batch_size, self.batch_size, self.channels), dtype=np.float32
+        )
+
+        # Convert block data to numpy for computation
+        block_values = cp.asnumpy(
+            self.sparse_values
+        )  # (channels, batch_size, block_size, block_size)
+        block_positions = cp.asnumpy(self.block_positions)  # (channels, batch_size, 2)
+
+        total_pairs = self.batch_size * (self.batch_size + 1) // 2
+        computed_pairs = 0
+
+        # Compute A^T A for each pair of LEDs
+        for led_i in range(self.batch_size):
+            for led_j in range(
+                led_i, self.batch_size
+            ):  # Only upper triangle + diagonal
+                # For each RGB channel
+                for channel in range(self.channels):
+                    # Get block positions and values for both LEDs
+                    pos_i = block_positions[channel, led_i]  # (2,) [row, col]
+                    pos_j = block_positions[channel, led_j]  # (2,) [row, col]
+
+                    values_i = block_values[channel, led_i]  # (block_size, block_size)
+                    values_j = block_values[channel, led_j]  # (block_size, block_size)
+
+                    # Calculate block extents
+                    r1_start, c1_start = int(pos_i[0]), int(pos_i[1])
+                    r1_end = r1_start + self.block_size
+                    c1_end = c1_start + self.block_size
+
+                    r2_start, c2_start = int(pos_j[0]), int(pos_j[1])
+                    r2_end = r2_start + self.block_size
+                    c2_end = c2_start + self.block_size
+
+                    # Find overlapping region
+                    overlap_r_start = max(r1_start, r2_start)
+                    overlap_r_end = min(r1_end, r2_end)
+                    overlap_c_start = max(c1_start, c2_start)
+                    overlap_c_end = min(c1_end, c2_end)
+
+                    # Check if blocks overlap
+                    if (
+                        overlap_r_start < overlap_r_end
+                        and overlap_c_start < overlap_c_end
+                    ):
+                        # Extract overlapping regions from both blocks
+                        # Convert global coordinates to local block coordinates
+                        local_r1_start = overlap_r_start - r1_start
+                        local_r1_end = overlap_r_end - r1_start
+                        local_c1_start = overlap_c_start - c1_start
+                        local_c1_end = overlap_c_end - c1_start
+
+                        local_r2_start = overlap_r_start - r2_start
+                        local_r2_end = overlap_r_end - r2_start
+                        local_c2_start = overlap_c_start - c2_start
+                        local_c2_end = overlap_c_end - c2_start
+
+                        # Extract overlapping regions
+                        overlap_i = values_i[
+                            local_r1_start:local_r1_end, local_c1_start:local_c1_end
+                        ]
+                        overlap_j = values_j[
+                            local_r2_start:local_r2_end, local_c2_start:local_c2_end
+                        ]
+
+                        # Compute dot product: sum of element-wise multiplication
+                        dot_product = np.sum(overlap_i * overlap_j)
+
+                        # Store in A^T A matrix
+                        ata_matrix[led_i, led_j, channel] = dot_product
+                        if led_i != led_j:  # Symmetric matrix
+                            ata_matrix[led_j, led_i, channel] = dot_product
+
+                computed_pairs += 1
+                if computed_pairs % 10000 == 0:
+                    progress = computed_pairs / total_pairs * 100
+                    logger.info(
+                        f"  Computed {computed_pairs}/{total_pairs} LED pairs ({progress:.1f}%)"
+                    )
+
+        # Count non-zeros per channel for validation
+        for channel in range(self.channels):
+            nnz = np.count_nonzero(ata_matrix[:, :, channel])
+            sparsity = nnz / (self.batch_size**2) * 100
+            logger.info(
+                f"  Channel {channel+1}: {nnz} non-zeros ({sparsity:.2f}% dense)"
+            )
+
+        logger.info(f"A^T A computation complete: shape {ata_matrix.shape}")
+        return ata_matrix
+
     def __repr__(self) -> str:
         """String representation of the tensor."""
         blocks_stored = self.batch_size * self.channels  # All blocks assumed to be set
