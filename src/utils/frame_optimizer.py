@@ -138,19 +138,17 @@ def optimize_frame_led_values(
 
     debug and logger.info(f"Initial LED values shape: {led_values_normalized.shape}")
 
-    # Convert matrices to optimization order if needed (RCM for DIA)
+    # Use values in their provided order (pattern generation handles optimal ordering)
     if isinstance(ATA_matrix, DiagonalATAMatrix):
-        # Convert ATb and initial values to RCM order for DIA matrix
-        ATb_opt_order = ATA_matrix.reorder_led_values_to_rcm(ATb)
-        led_values_opt_order = ATA_matrix.reorder_led_values_to_rcm(
-            led_values_normalized
-        )
-        debug and logger.info("Using DIA matrix with RCM ordering")
-    else:
-        # Dense ATA matrix uses spatial order
+        # DIA matrix expects values in same order as pattern generation (pre-optimized)
         ATb_opt_order = ATb
         led_values_opt_order = led_values_normalized
-        debug and logger.info("Using dense ATA matrix with spatial ordering")
+        debug and logger.info("Using DIA matrix with pre-optimized ordering from pattern generation")
+    else:
+        # Dense ATA matrix uses same order
+        ATb_opt_order = ATb
+        led_values_opt_order = led_values_normalized
+        debug and logger.info("Using dense ATA matrix with provided ordering")
 
     # Step 3: Transfer to GPU for optimization
     if timing:
@@ -281,27 +279,15 @@ def optimize_frame_led_values(
     led_values_final_gpu = led_values_gpu
 
     if timing:
-        with timing.section("cpu_transfer_and_reorder", use_gpu_events=True):
-            if isinstance(ATA_matrix, DiagonalATAMatrix):
-                # Convert from RCM order back to spatial order
-                led_values_spatial = ATA_matrix.reorder_led_values_from_rcm(
-                    cp.asnumpy(led_values_final_gpu)
-                )
-            else:
-                # Already in spatial order
-                led_values_spatial = cp.asnumpy(led_values_final_gpu)
-
+        with timing.section("cpu_transfer", use_gpu_events=True):
+            # Values are already in correct order (pattern generation handles ordering)
+            led_values_spatial = cp.asnumpy(led_values_final_gpu)
+            
             # Convert to uint8 [0, 255] range
             led_values_output = (led_values_spatial * 255.0).astype(np.uint8)
     else:
-        if isinstance(ATA_matrix, DiagonalATAMatrix):
-            # Convert from RCM order back to spatial order
-            led_values_spatial = ATA_matrix.reorder_led_values_from_rcm(
-                cp.asnumpy(led_values_final_gpu)
-            )
-        else:
-            # Already in spatial order
-            led_values_spatial = cp.asnumpy(led_values_final_gpu)
+        # Values are already in correct order (pattern generation handles ordering)
+        led_values_spatial = cp.asnumpy(led_values_final_gpu)
 
         # Convert to uint8 [0, 255] range
         led_values_output = (led_values_spatial * 255.0).astype(np.uint8)

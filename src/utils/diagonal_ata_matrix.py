@@ -14,7 +14,7 @@ import cupy
 import numpy as np
 import scipy.sparse as sp
 
-from .spatial_ordering import compute_rcm_ordering, reorder_matrix_columns
+# Note: RCM ordering is now handled by pattern generation tool directly
 
 # Import custom DIA kernels
 try:
@@ -33,7 +33,10 @@ class DiagonalATAMatrix:
     Utility class for diagonal A^T A matrices in LED optimization.
 
     Stores A^T A matrices for each RGB channel in true 3D DIA format with shared
-    diagonal structure and RCM ordering for efficient matrix-vector multiplication.
+    diagonal structure for efficient matrix-vector multiplication.
+    
+    Note: Expects diffusion matrix A to already be in optimal ordering (RCM) 
+    from pattern generation tool.
 
     3D DIA Format:
     - data: (3, k, leds) - diagonal band data for R, G, B channels
@@ -62,9 +65,7 @@ class DiagonalATAMatrix:
         )
         self.k = None  # Number of non-empty diagonal bands (max across all channels)
 
-        # RCM ordering information
-        self.led_order = None
-        self.inverse_led_order = None
+        # Note: RCM ordering handled by pattern generation, not stored here
 
         # Custom kernel instances
         self.custom_kernel_basic = None
@@ -85,16 +86,15 @@ class DiagonalATAMatrix:
             self.custom_kernel_basic = CustomDIAMatVec(use_optimized=False)
             self.custom_kernel_optimized = CustomDIAMatVec(use_optimized=True)
 
-    def build_from_diffusion_matrix(
-        self, A: sp.spmatrix, led_positions: np.ndarray, use_rcm: bool = True
-    ) -> None:
+    def build_from_diffusion_matrix(self, A: sp.spmatrix) -> None:
         """
         Build diagonal A^T A matrices from diffusion matrix A.
+        
+        Note: Expects diffusion matrix A to already be in optimal ordering 
+        (RCM) from pattern generation tool.
 
         Args:
-            A: Diffusion matrix (pixels, leds*3)
-            led_positions: LED positions array (leds, 2)
-            use_rcm: Whether to apply RCM ordering
+            A: Diffusion matrix (pixels, leds*3) in optimal ordering
         """
         print(f"Building diagonal A^T A matrices...")
         print(f"  Input A: shape {A.shape}, nnz {A.nnz}")
@@ -107,27 +107,8 @@ class DiagonalATAMatrix:
                 f"A matrix should have {expected_cols} columns, got {A.shape[1]}"
             )
 
-        if len(led_positions) != self.led_count:
-            raise ValueError(
-                f"LED positions should have {self.led_count} entries, got {len(led_positions)}"
-            )
-
-        # Apply RCM ordering if requested
-        if use_rcm:
-            print(f"  Applying RCM ordering...")
-            self.led_order, self.inverse_led_order, _ = compute_rcm_ordering(
-                led_positions, self.crop_size
-            )
-
-            # Reorder A matrix columns according to RCM
-            A_reordered = reorder_matrix_columns(
-                A, self.led_order, channels_per_block=self.channels
-            )
-        else:
-            print(f"  Using original LED ordering...")
-            self.led_order = np.arange(self.led_count)
-            self.inverse_led_order = np.arange(self.led_count)
-            A_reordered = A
+        print(f"  Using diffusion matrix A in pre-optimized ordering (RCM from pattern generation)")
+        A_ordered = A
 
         # Build unified 3D DIA format - shape (channels, k, leds) where k = max non-empty diagonals
         print(f"  Building unified 3D DIA format...")
@@ -141,9 +122,9 @@ class DiagonalATAMatrix:
         for channel in range(self.channels):
             print(f"  Processing channel {channel} ({['R', 'G', 'B'][channel]})...")
 
-            # Extract channel columns: A_reordered shape (pixels, leds*3)
-            channel_cols = np.arange(channel, A_reordered.shape[1], self.channels)
-            A_channel = A_reordered[:, channel_cols]  # Shape: (pixels, leds)
+            # Extract channel columns: A_ordered shape (pixels, leds*3)
+            channel_cols = np.arange(channel, A_ordered.shape[1], self.channels)
+            A_channel = A_ordered[:, channel_cols]  # Shape: (pixels, leds)
 
             # Compute A^T A for this channel: (leds, pixels) @ (pixels, leds) -> (leds, leds)
             ATA_channel = A_channel.T @ A_channel
@@ -476,41 +457,7 @@ class DiagonalATAMatrix:
         else:
             return result_gpu
 
-    def reorder_led_values_to_rcm(self, led_values_original: np.ndarray) -> np.ndarray:
-        """
-        Reorder LED values from original ordering to RCM ordering.
-
-        Args:
-            led_values_original: LED values in original order (3, leds)
-
-        Returns:
-            LED values in RCM order (3, leds)
-        """
-        from .spatial_ordering import reorder_block_values
-
-        if self.led_order is None:
-            return led_values_original.copy()
-
-        return reorder_block_values(
-            led_values_original, self.led_order, from_ordered=False
-        )
-
-    def reorder_led_values_from_rcm(self, led_values_rcm: np.ndarray) -> np.ndarray:
-        """
-        Reorder LED values from RCM ordering back to original ordering.
-
-        Args:
-            led_values_rcm: LED values in RCM order (3, leds)
-
-        Returns:
-            LED values in original order (3, leds)
-        """
-        from .spatial_ordering import reorder_block_values
-
-        if self.led_order is None:
-            return led_values_rcm.copy()
-
-        return reorder_block_values(led_values_rcm, self.led_order, from_ordered=True)
+    # Note: RCM reordering methods removed - ordering handled by pattern generation
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -528,14 +475,12 @@ class DiagonalATAMatrix:
             "dia_data_3d": self.dia_data_cpu,
             "dia_offsets_3d": self.dia_offsets,
             "k": self.k,
-            # Common metadata
-            "led_order": self.led_order,
-            "inverse_led_order": self.inverse_led_order,
+            # Metadata
             "bandwidth": self.bandwidth,
             "sparsity": self.sparsity,
             "nnz": self.nnz,
             "channel_nnz": self.channel_nnz,
-            "version": "6.0",  # Removed block diagonal backward compatibility
+            "version": "7.0",  # Removed RCM ordering (handled by pattern generation)
         }
 
     @classmethod
@@ -554,8 +499,6 @@ class DiagonalATAMatrix:
 
         # Restore metadata
         instance.channels = data["channels"]
-        instance.led_order = data["led_order"]
-        instance.inverse_led_order = data["inverse_led_order"]
         instance.bandwidth = data["bandwidth"]
         instance.sparsity = data["sparsity"]
         instance.nnz = data["nnz"]
@@ -563,8 +506,8 @@ class DiagonalATAMatrix:
         # Handle version compatibility
         version = data.get("version", "1.0")
 
-        if version == "6.0":
-            # Current unified 3D DIA format
+        if version == "7.0":
+            # Current unified 3D DIA format (no RCM ordering stored)
             instance.dia_data_cpu = data["dia_data_3d"]
             instance.dia_offsets = data["dia_offsets_3d"]
             instance.k = data["k"]
@@ -575,6 +518,22 @@ class DiagonalATAMatrix:
                 instance.dia_data_gpu = cupy.asarray(instance.dia_data_cpu)
             else:
                 instance.dia_data_gpu = None
+                
+        elif version == "6.0":
+            # Legacy version with RCM ordering stored (still supported)
+            instance.dia_data_cpu = data["dia_data_3d"]
+            instance.dia_offsets = data["dia_offsets_3d"]
+            instance.k = data["k"]
+            instance.channel_nnz = data["channel_nnz"]
+
+            # Create GPU version
+            if instance.dia_data_cpu is not None:
+                instance.dia_data_gpu = cupy.asarray(instance.dia_data_cpu)
+            else:
+                instance.dia_data_gpu = None
+            
+            print("Warning: Loading legacy DIA matrix with RCM ordering. Consider regenerating patterns.")
+            
         else:
             # Legacy formats no longer supported
             raise ValueError(
@@ -636,14 +595,14 @@ class DiagonalATAMatrix:
             "sparsity": self.sparsity,
             "nnz": self.nnz,
             "channel_nnz": self.channel_nnz,
-            "rcm_applied": self.led_order is not None,
+            "ordering": "pre_optimized_from_pattern_generation",
             "custom_kernel_available": CUSTOM_KERNEL_AVAILABLE,
             "unified_storage_built": unified_storage_built,
             "unified_k": self.k,
             "unified_storage_shape": self.dia_data_cpu.shape
             if self.dia_data_cpu is not None
             else None,
-            "storage_format": "unified_3d_dia_v6",
+            "storage_format": "unified_3d_dia_v7",
         }
 
     def benchmark_3d(

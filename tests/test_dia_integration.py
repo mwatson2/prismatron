@@ -65,7 +65,7 @@ class TestDIAIntegration:
                     
                     dia_matrix = DiagonalATAMatrix(mixed_tensor.batch_size, crop_size=64)
                     A_matrix = diffusion_csc.to_csc_matrix()
-                    dia_matrix.build_from_diffusion_matrix(A_matrix, led_positions)
+                    dia_matrix.build_from_diffusion_matrix(A_matrix)
                 
                 return mixed_tensor, dia_matrix, mixed_tensor.batch_size
                 

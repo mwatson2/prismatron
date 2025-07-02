@@ -720,10 +720,8 @@ class SyntheticPatternGenerator:
         # Create DiagonalATAMatrix instance
         dia_matrix = DiagonalATAMatrix(led_count, crop_size=self.block_size)
 
-        # Build from diffusion matrix with RCM ordering
-        dia_matrix.build_from_diffusion_matrix(
-            sparse_matrix, led_positions, use_rcm=True
-        )
+        # Build from diffusion matrix (already in optimal RCM ordering)
+        dia_matrix.build_from_diffusion_matrix(sparse_matrix)
 
         logger.info(
             f"DiagonalATAMatrix built: {led_count} LEDs, bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k}"
