@@ -35,9 +35,7 @@ def normalize_mixed_tensor(
     # Normalize each LED's pattern across all channels
     for led_idx in range(mixed_tensor.batch_size):
         for channel in range(mixed_tensor.channels):
-            pattern = normalized_values[
-                channel, led_idx
-            ]  # Shape: (block_size, block_size)
+            pattern = normalized_values[channel, led_idx]  # Shape: (block_size, block_size)
             pattern_sum = float(cp.sum(pattern))
 
             if pattern_sum > 0:
@@ -58,20 +56,16 @@ def normalize_mixed_tensor(
     normalized_tensor.sparse_values = normalized_values
     normalized_tensor.block_positions = mixed_tensor.block_positions.copy()
 
-    print(f"Normalized tensor created")
+    print("Normalized tensor created")
 
     # Check normalization
     sample_sums = []
     for led_idx in range(min(10, mixed_tensor.batch_size)):
         for channel in range(mixed_tensor.channels):
-            pattern_sum = float(
-                cp.sum(normalized_tensor.sparse_values[channel, led_idx])
-            )
+            pattern_sum = float(cp.sum(normalized_tensor.sparse_values[channel, led_idx]))
             sample_sums.append(pattern_sum)
 
-    print(
-        f"Sample pattern sums after normalization: {sample_sums[:5]} (should be ~1.0)"
-    )
+    print(f"Sample pattern sums after normalization: {sample_sums[:5]} (should be ~1.0)")
 
     return normalized_tensor
 
@@ -100,7 +94,7 @@ def normalize_csc_matrix(csc_matrix, led_count: int):
                 col_idx = led_idx * 3 + channel
                 normalized_matrix[:, col_idx] = normalized_matrix[:, col_idx] / led_sum
 
-    print(f"CSC matrix normalized")
+    print("CSC matrix normalized")
     return normalized_matrix
 
 
@@ -144,7 +138,7 @@ def test_with_normalization():
     image = Image.open(image_path).convert("RGB").resize((800, 480))
     target_image = np.array(image, dtype=np.uint8)
 
-    print(f"\n=== Testing Optimization with Normalized Patterns ===")
+    print("\n=== Testing Optimization with Normalized Patterns ===")
 
     # Test with normalized patterns
     result = optimize_frame_led_values(
@@ -158,7 +152,7 @@ def test_with_normalization():
         debug=True,
     )
 
-    print(f"\n=== Results ===")
+    print("\n=== Results ===")
     print(f"Converged: {result.converged}")
     print(f"Iterations: {result.iterations}")
     print(f"LED values range: [{result.led_values.min()}, {result.led_values.max()}]")
@@ -170,9 +164,7 @@ def test_with_normalization():
 
     if result.step_sizes is not None:
         print(f"Step sizes: {result.step_sizes}")
-        print(
-            f"Step size range: [{np.min(result.step_sizes):.6f}, {np.max(result.step_sizes):.6f}]"
-        )
+        print(f"Step size range: [{np.min(result.step_sizes):.6f}, {np.max(result.step_sizes):.6f}]")
 
 
 if __name__ == "__main__":

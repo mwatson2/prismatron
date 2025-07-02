@@ -120,9 +120,7 @@ class TestWLEDClient(unittest.TestCase):
         mock_socket_class.return_value = mock_socket
 
         # Mock successful query response
-        with patch.object(
-            self.client, "_send_query", return_value=(True, {"name": "WLED"})
-        ):
+        with patch.object(self.client, "_send_query", return_value=(True, {"name": "WLED"})):
             result = self.client.connect()
 
         self.assertTrue(result)
@@ -213,9 +211,7 @@ class TestWLEDClient(unittest.TestCase):
             self.client.connect()
 
         # Create valid LED data
-        led_data = np.random.randint(0, 255, (self.config.led_count, 3)).astype(
-            np.uint8
-        )
+        led_data = np.random.randint(0, 255, (self.config.led_count, 3)).astype(np.uint8)
 
         result = self.client.send_led_data(led_data)
 
@@ -225,9 +221,7 @@ class TestWLEDClient(unittest.TestCase):
 
     def test_led_data_without_connection(self):
         """Test sending LED data without connection."""
-        led_data = np.random.randint(0, 255, (self.config.led_count, 3)).astype(
-            np.uint8
-        )
+        led_data = np.random.randint(0, 255, (self.config.led_count, 3)).astype(np.uint8)
 
         result = self.client.send_led_data(led_data)
 
@@ -306,18 +300,16 @@ class TestWLEDClient(unittest.TestCase):
         mock_socket = Mock()
         mock_socket_class.return_value = mock_socket
 
-        with patch.object(self.client, "_send_query", return_value=(True, {})):
-            with self.client as client:
-                self.assertTrue(client.is_connected)
+        with patch.object(self.client, "_send_query", return_value=(True, {})), self.client as client:
+            self.assertTrue(client.is_connected)
 
         self.assertFalse(self.client.is_connected)
 
     def test_context_manager_connection_failure(self):
         """Test context manager with connection failure."""
-        with patch.object(self.client, "connect", return_value=False):
-            with self.assertRaises(ConnectionError):
-                with self.client:
-                    pass
+        with patch.object(self.client, "connect", return_value=False), self.assertRaises(ConnectionError):
+            with self.client:
+                pass
 
     def test_fragmentation_calculation(self):
         """Test LED data fragmentation calculation."""

@@ -56,16 +56,12 @@ class BufferInfo:
     frame_id: int
     metadata: Optional[FrameMetadata] = None
 
-    def get_array(
-        self, width: int, height: int, channels: int = FRAME_CHANNELS
-    ) -> np.ndarray:
+    def get_array(self, width: int, height: int, channels: int = FRAME_CHANNELS) -> np.ndarray:
         """Create numpy array view of the buffer with specified dimensions in PLANAR format."""
         # Buffer stores data in planar format (C, H, W)
         return np.ndarray((channels, height, width), dtype=np.uint8, buffer=self.buffer)
 
-    def get_array_interleaved(
-        self, width: int, height: int, channels: int = FRAME_CHANNELS
-    ) -> np.ndarray:
+    def get_array_interleaved(self, width: int, height: int, channels: int = FRAME_CHANNELS) -> np.ndarray:
         """Create numpy array view of the buffer in interleaved format (H, W, C) for legacy support."""
         # Get planar array and convert to interleaved
         planar_array = self.get_array(width, height, channels)
@@ -206,9 +202,7 @@ class FrameRingBuffer:
         if not self._initialized or self._control_array is None:
             raise RuntimeError("Buffer must be initialized and have control array")
         if not (0 <= buffer_index < self.buffer_count):
-            raise IndexError(
-                f"Buffer index {buffer_index} out of range [0, {self.buffer_count})"
-            )
+            raise IndexError(f"Buffer index {buffer_index} out of range [0, {self.buffer_count})")
         return float(self._control_array[4 + buffer_index])
 
     def _set_buffer_timestamp(self, buffer_index: int, timestamp: float) -> None:
@@ -216,9 +210,7 @@ class FrameRingBuffer:
         if not self._initialized or self._control_array is None:
             raise RuntimeError("Buffer must be initialized and have control array")
         if not (0 <= buffer_index < self.buffer_count):
-            raise IndexError(
-                f"Buffer index {buffer_index} out of range [0, {self.buffer_count})"
-            )
+            raise IndexError(f"Buffer index {buffer_index} out of range [0, {self.buffer_count})")
         self._control_array[4 + buffer_index] = timestamp
 
     def _is_write_buffer_available(self, write_idx: int, current_frame: int) -> bool:
@@ -250,9 +242,7 @@ class FrameRingBuffer:
 
         # Allow writing if we're not too far ahead
         # For no consumer case, allow some buffering before blocking
-        max_frames_ahead = (
-            self.buffer_count if min_consumed_frame > 0 else self.buffer_count * 2
-        )
+        max_frames_ahead = self.buffer_count if min_consumed_frame > 0 else self.buffer_count * 2
         return frames_ahead <= max_frames_ahead
 
     def get_status(self) -> Dict:
@@ -277,9 +267,7 @@ class FrameRingBuffer:
                     "local_read_index": self._local_read_index,
                     "buffer_count": self.buffer_count,
                     "buffer_size": self.buffer_size,
-                    "buffer_timestamps": [
-                        self._get_buffer_timestamp(i) for i in range(self.buffer_count)
-                    ],
+                    "buffer_timestamps": [self._get_buffer_timestamp(i) for i in range(self.buffer_count)],
                     "frames_behind": self._get_frame_counter() - self._local_read_index,
                 }
         except Exception as e:
@@ -299,9 +287,7 @@ class FrameRingBuffer:
         Note: This is provided for backwards compatibility. For new code,
         use FrameProducer.get_write_buffer() instead.
         """
-        logger.warning(
-            "get_write_buffer called on base class - consider using FrameProducer"
-        )
+        logger.warning("get_write_buffer called on base class - consider using FrameProducer")
         return None
 
     def advance_write(self) -> bool:
@@ -311,9 +297,7 @@ class FrameRingBuffer:
         Note: This is provided for backwards compatibility. For new code,
         use FrameProducer.advance_write() instead.
         """
-        logger.warning(
-            "advance_write called on base class - consider using FrameProducer"
-        )
+        logger.warning("advance_write called on base class - consider using FrameProducer")
         return False
 
     def wait_for_ready_buffer(self, timeout: float = 1.0) -> Optional[BufferInfo]:
@@ -323,9 +307,7 @@ class FrameRingBuffer:
         Note: This is provided for backwards compatibility. For new code,
         use FrameConsumer.wait_for_ready_buffer() instead.
         """
-        logger.warning(
-            "wait_for_ready_buffer called on base class - consider using FrameConsumer"
-        )
+        logger.warning("wait_for_ready_buffer called on base class - consider using FrameConsumer")
         return None
 
     def release_read_buffer(self) -> bool:
@@ -335,9 +317,7 @@ class FrameRingBuffer:
         Note: This is provided for backwards compatibility. For new code,
         use FrameConsumer.release_read_buffer() instead.
         """
-        logger.warning(
-            "release_read_buffer called on base class - consider using FrameConsumer"
-        )
+        logger.warning("release_read_buffer called on base class - consider using FrameConsumer")
         return False
 
     def cleanup(self) -> None:
@@ -427,9 +407,7 @@ class FrameProducer(FrameRingBuffer):
             # Create shared memory for frame buffers
             for i in range(self.buffer_count):
                 shm_name = f"{self.name}_buffer_{i}"
-                shm = shared_memory.SharedMemory(
-                    name=shm_name, create=True, size=self.buffer_size
-                )
+                shm = shared_memory.SharedMemory(name=shm_name, create=True, size=self.buffer_size)
                 self._shared_memory.append(shm)
 
             # Create shared memory for frame metadata
@@ -478,9 +456,7 @@ class FrameProducer(FrameRingBuffer):
 
             self._initialized = True
 
-            logger.info(
-                f"Initialized ring buffer '{self.name}' with {self.buffer_count} buffers"
-            )
+            logger.info(f"Initialized ring buffer '{self.name}' with {self.buffer_count} buffers")
             return True
 
         except Exception as e:
@@ -526,9 +502,9 @@ class FrameProducer(FrameRingBuffer):
                     # We can't write to a buffer that the consumer is currently reading
                     # read_idx == -1 means no buffer is currently being read
                     # Also check if we've filled all buffers without any consumption
-                    if (
-                        read_idx == -1 or write_idx != read_idx
-                    ) and self._is_write_buffer_available(write_idx, current_frame):
+                    if (read_idx == -1 or write_idx != read_idx) and self._is_write_buffer_available(
+                        write_idx, current_frame
+                    ):
                         # Safe to write to current buffer
                         current_time = time.time()
 
@@ -542,18 +518,10 @@ class FrameProducer(FrameRingBuffer):
 
                         # Store metadata for this buffer
                         if self._metadata_array is not None:
-                            self._metadata_array[write_idx][
-                                "presentation_timestamp"
-                            ] = presentation_timestamp
-                            self._metadata_array[write_idx][
-                                "source_width"
-                            ] = source_width
-                            self._metadata_array[write_idx][
-                                "source_height"
-                            ] = source_height
-                            self._metadata_array[write_idx][
-                                "capture_timestamp"
-                            ] = current_time
+                            self._metadata_array[write_idx]["presentation_timestamp"] = presentation_timestamp
+                            self._metadata_array[write_idx]["source_width"] = source_width
+                            self._metadata_array[write_idx]["source_height"] = source_height
+                            self._metadata_array[write_idx]["capture_timestamp"] = current_time
 
                         # Create metadata object for return
                         metadata = FrameMetadata(
@@ -622,10 +590,7 @@ class FrameProducer(FrameRingBuffer):
                 if hasattr(self, "_frames_written"):
                     self._frames_written += 1
 
-                logger.debug(
-                    f"Advanced write: buffer {write_idx} -> {next_write_idx}, "
-                    f"frame {new_frame_count}"
-                )
+                logger.debug(f"Advanced write: buffer {write_idx} -> {next_write_idx}, frame {new_frame_count}")
                 return True
 
         except Exception as e:
@@ -640,9 +605,7 @@ class FrameProducer(FrameRingBuffer):
                 "frames_written": self._frames_written,
                 "is_producer": True,
                 "write_buffer_available": (
-                    self._is_write_buffer_available(
-                        int(self._control_array[0]), int(self._control_array[2])
-                    )
+                    self._is_write_buffer_available(int(self._control_array[0]), int(self._control_array[2]))
                     if self._initialized and self._control_array is not None
                     else False
                 ),
@@ -664,9 +627,9 @@ class FrameProducer(FrameRingBuffer):
                 read_idx = int(self._control_array[1])
                 current_frame = int(self._control_array[2])
 
-                return (
-                    read_idx == -1 or write_idx != read_idx
-                ) and self._is_write_buffer_available(write_idx, current_frame)
+                return (read_idx == -1 or write_idx != read_idx) and self._is_write_buffer_available(
+                    write_idx, current_frame
+                )
         except Exception:
             return False
 
@@ -699,14 +662,10 @@ class FrameConsumer(FrameRingBuffer):
                 self._shared_memory.append(shm)
 
             # Connect to existing metadata shared memory
-            self._metadata_memory = shared_memory.SharedMemory(
-                name=f"{self.name}_metadata"
-            )
+            self._metadata_memory = shared_memory.SharedMemory(name=f"{self.name}_metadata")
 
             # Connect to existing control structure
-            self._control_memory = shared_memory.SharedMemory(
-                name=f"{self.name}_control"
-            )
+            self._control_memory = shared_memory.SharedMemory(name=f"{self.name}_control")
 
             # Create array views from shared memory
             if not self._create_array_views_from_shared_memory():
@@ -769,14 +728,10 @@ class FrameConsumer(FrameRingBuffer):
                         if self._metadata_array is not None:
                             metadata_record = self._metadata_array[read_idx]
                             metadata = FrameMetadata(
-                                presentation_timestamp=float(
-                                    metadata_record["presentation_timestamp"]
-                                ),
+                                presentation_timestamp=float(metadata_record["presentation_timestamp"]),
                                 source_width=int(metadata_record["source_width"]),
                                 source_height=int(metadata_record["source_height"]),
-                                capture_timestamp=float(
-                                    metadata_record["capture_timestamp"]
-                                ),
+                                capture_timestamp=float(metadata_record["capture_timestamp"]),
                             )
 
                         buffer_info = BufferInfo(
@@ -786,9 +741,7 @@ class FrameConsumer(FrameRingBuffer):
                             metadata=metadata,
                         )
 
-                        logger.debug(
-                            f"Consumer got buffer {read_idx}, frame {current_frame}"
-                        )
+                        logger.debug(f"Consumer got buffer {read_idx}, frame {current_frame}")
                         return buffer_info
 
                 # Brief sleep to avoid busy-waiting
@@ -852,9 +805,7 @@ class FrameConsumer(FrameRingBuffer):
         current_time = time.time()
         frame_rate = 0.0
         if self._frames_consumed > 0 and self._last_frame_time > 0:
-            elapsed = current_time - (
-                self._last_frame_time - (self._frames_consumed * 0.033)
-            )  # Estimate
+            elapsed = current_time - (self._last_frame_time - (self._frames_consumed * 0.033))  # Estimate
             if elapsed > 0:
                 frame_rate = self._frames_consumed / elapsed
 
@@ -905,20 +856,14 @@ def get_shared_control_state(ring_buffer: FrameRingBuffer) -> Dict[str, Any]:
                     "buffer_size": ring_buffer.buffer_size,
                 },
                 "timing_info": {
-                    "buffer_timestamps": [
-                        control_array[4 + i] for i in range(ring_buffer.buffer_count)
-                    ],
-                    "last_write_time": max(
-                        [control_array[4 + i] for i in range(ring_buffer.buffer_count)]
-                    ),
+                    "buffer_timestamps": [control_array[4 + i] for i in range(ring_buffer.buffer_count)],
+                    "last_write_time": max([control_array[4 + i] for i in range(ring_buffer.buffer_count)]),
                     "current_time": time.time(),
                 },
                 "flow_control": {
                     "frames_ahead": int(control_array[2]) - int(control_array[3]),
-                    "buffers_full": int(control_array[2]) - int(control_array[3])
-                    >= ring_buffer.buffer_count,
-                    "producer_blocked": int(control_array[2]) - int(control_array[3])
-                    >= ring_buffer.buffer_count * 2,
+                    "buffers_full": int(control_array[2]) - int(control_array[3]) >= ring_buffer.buffer_count,
+                    "producer_blocked": int(control_array[2]) - int(control_array[3]) >= ring_buffer.buffer_count * 2,
                     "consumer_waiting": int(control_array[2]) == int(control_array[3]),
                 },
             }
@@ -988,25 +933,17 @@ def get_frame_timing_info(ring_buffer: FrameRingBuffer) -> Dict[str, Any]:
     if len(valid_timestamps) >= 2:
         # Sort timestamps to get intervals
         sorted_times = sorted(valid_timestamps)
-        intervals = [
-            sorted_times[i] - sorted_times[i - 1] for i in range(1, len(sorted_times))
-        ]
+        intervals = [sorted_times[i] - sorted_times[i - 1] for i in range(1, len(sorted_times))]
 
         if intervals:
             avg_interval = sum(intervals) / len(intervals)
-            frame_timing["estimated_frame_rate"] = (
-                1.0 / avg_interval if avg_interval > 0 else 0.0
-            )
+            frame_timing["estimated_frame_rate"] = 1.0 / avg_interval if avg_interval > 0 else 0.0
             frame_timing["frame_interval_ms"] = avg_interval * 1000.0
 
             # Calculate consistency (lower std dev = more consistent)
             if len(intervals) > 1:
-                variance = sum(
-                    (interval - avg_interval) ** 2 for interval in intervals
-                ) / len(intervals)
+                variance = sum((interval - avg_interval) ** 2 for interval in intervals) / len(intervals)
                 std_dev = variance**0.5
-                frame_timing["timing_consistency"] = max(
-                    0.0, 1.0 - (std_dev / avg_interval)
-                )
+                frame_timing["timing_consistency"] = max(0.0, 1.0 - (std_dev / avg_interval))
 
     return frame_timing

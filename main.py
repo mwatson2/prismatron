@@ -135,9 +135,7 @@ class ProcessManager:
                 except Exception as e:
                     logger.error(f"Web server error: {e}")
 
-            process = multiprocessing.Process(
-                target=web_server_worker, name="WebServer"
-            )
+            process = multiprocessing.Process(target=web_server_worker, name="WebServer")
             process.start()
             self.processes["web_server"] = process
 
@@ -165,9 +163,7 @@ class ProcessManager:
                     consumer = ConsumerProcess(
                         wled_host=self.config.get("wled_host", "192.168.1.100"),
                         wled_port=self.config.get("wled_port", 4048),
-                        diffusion_patterns_path=self.config.get(
-                            "diffusion_patterns_path"
-                        ),
+                        diffusion_patterns_path=self.config.get("diffusion_patterns_path"),
                     )
 
                     # Initialize and wait for WLED connection
@@ -181,9 +177,7 @@ class ProcessManager:
                             break
                         else:
                             retry_count += 1
-                            logger.info(
-                                f"WLED connection attempt {retry_count}/{max_retries}"
-                            )
+                            logger.info(f"WLED connection attempt {retry_count}/{max_retries}")
                             time.sleep(1)
 
                     if retry_count >= max_retries:
@@ -392,12 +386,8 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--web-host", default="0.0.0.0", help="Web server host")
     parser.add_argument("--web-port", type=int, default=8000, help="Web server port")
-    parser.add_argument(
-        "--wled-host", default="192.168.1.100", help="WLED controller IP"
-    )
-    parser.add_argument(
-        "--wled-port", type=int, default=4048, help="WLED controller port"
-    )
+    parser.add_argument("--wled-host", default="192.168.1.100", help="WLED controller IP")
+    parser.add_argument("--wled-port", type=int, default=4048, help="WLED controller port")
     parser.add_argument("--content-dir", help="Default content directory to load")
     parser.add_argument("--diffusion-patterns", help="Path to diffusion patterns file")
 
@@ -434,9 +424,7 @@ def main():
             sys.exit(1)
 
         logger.info("System started successfully!")
-        logger.info(
-            f"Web interface available at http://{args.web_host}:{args.web_port}"
-        )
+        logger.info(f"Web interface available at http://{args.web_host}:{args.web_port}")
 
         # Monitor processes
         manager.monitor_processes()

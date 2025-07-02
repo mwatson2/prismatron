@@ -38,9 +38,7 @@ class TestComputeRCMOrdering:
     def test_two_overlapping_positions(self):
         """Test with two overlapping positions."""
         # Two positions that should overlap with block_size=64
-        positions = np.array(
-            [[100, 100], [120, 120]]
-        )  # Distance ~28, both blocks size 64
+        positions = np.array([[100, 100], [120, 120]])  # Distance ~28, both blocks size 64
         rcm_order, inverse_order = compute_rcm_ordering(positions, block_size=64)
 
         assert len(rcm_order) == 2
@@ -129,17 +127,13 @@ class TestReorderMatrixColumns:
         reordered = reorder_matrix_columns(matrix, block_order, channels_per_block=3)
 
         # Expected: columns [3,4,5,0,1,2] (block 1 channels, then block 0 channels)
-        expected = sp.csr_matrix(
-            [[4, 5, 6, 1, 2, 3], [10, 11, 12, 7, 8, 9], [16, 17, 18, 13, 14, 15]]
-        )
+        expected = sp.csr_matrix([[4, 5, 6, 1, 2, 3], [10, 11, 12, 7, 8, 9], [16, 17, 18, 13, 14, 15]])
 
         np.testing.assert_array_equal(reordered.toarray(), expected.toarray())
 
     def test_reorder_identity_order(self):
         """Test reordering with identity order (no change)."""
-        matrix = sp.random(
-            5, 9, density=0.5, random_state=42
-        )  # 5x9 matrix (3 blocks × 3 channels)
+        matrix = sp.random(5, 9, density=0.5, random_state=42)  # 5x9 matrix (3 blocks × 3 channels)
         block_order = np.array([0, 1, 2])  # Identity order
 
         reordered = reorder_matrix_columns(matrix, block_order, channels_per_block=3)
@@ -221,14 +215,10 @@ class TestReorderBlockValues:
         block_order = np.array([2, 0, 1])  # Spatial ordering
 
         # First reorder to spatial order
-        spatial_ordered = reorder_block_values(
-            original, block_order, from_ordered=False
-        )
+        spatial_ordered = reorder_block_values(original, block_order, from_ordered=False)
 
         # Then reorder back to original
-        back_to_original = reorder_block_values(
-            spatial_ordered, block_order, from_ordered=True
-        )
+        back_to_original = reorder_block_values(spatial_ordered, block_order, from_ordered=True)
 
         np.testing.assert_array_equal(back_to_original, original)
 
@@ -281,15 +271,11 @@ class TestIntegration:
         rcm_order, inverse_order = compute_rcm_ordering(positions, block_size=64)
 
         # Reorder matrix
-        reordered_matrix = reorder_matrix_columns(
-            matrix, rcm_order, channels_per_block=3
-        )
+        reordered_matrix = reorder_matrix_columns(matrix, rcm_order, channels_per_block=3)
 
         # Should have same shape and density
         assert reordered_matrix.shape == matrix.shape
-        assert (
-            abs(reordered_matrix.nnz - matrix.nnz) <= 1
-        )  # Allow small differences due to sparsity
+        assert abs(reordered_matrix.nnz - matrix.nnz) <= 1  # Allow small differences due to sparsity
 
     def test_values_reorder_roundtrip(self):
         """Test values reordering roundtrip."""
@@ -306,13 +292,9 @@ class TestIntegration:
         rcm_order, _ = compute_rcm_ordering(positions, block_size=64)
 
         # Reorder to spatial order
-        spatial_values = reorder_block_values(
-            original_values, rcm_order, from_ordered=False
-        )
+        spatial_values = reorder_block_values(original_values, rcm_order, from_ordered=False)
 
         # Reorder back to original
-        restored_values = reorder_block_values(
-            spatial_values, rcm_order, from_ordered=True
-        )
+        restored_values = reorder_block_values(spatial_values, rcm_order, from_ordered=True)
 
         np.testing.assert_array_equal(restored_values, original_values)

@@ -38,7 +38,7 @@ def test_csc_vs_dia_performance():
     print(f"A matrix shape: {A_csc.shape}, nnz: {A_csc.nnz}")
 
     # === Method 1: Current DIA matrix approach ===
-    print(f"\n--- Method 1: DIA Matrix ---")
+    print("\n--- Method 1: DIA Matrix ---")
 
     dia_matrix = DiagonalATAMatrix(led_count=led_count)
 
@@ -58,7 +58,7 @@ def test_csc_vs_dia_performance():
     print(f"DIA diagonals: {dia_matrix.dia_data_cpu.shape[1]}")
 
     # === Method 2: Direct CSC A^T A computation ===
-    print(f"\n--- Method 2: CSC A^T A Matrix ---")
+    print("\n--- Method 2: CSC A^T A Matrix ---")
 
     # Compute A^T A directly using CSC operations
     ata_start = time.time()
@@ -78,19 +78,17 @@ def test_csc_vs_dia_performance():
     print(f"CSC A^T A build time: {ata_time:.3f}s")
     print(f"A^T A per channel shape: {ATA_per_channel[0].shape}")
     print(f"A^T A per channel nnz: {[mat.nnz for mat in ATA_per_channel]}")
-    print(
-        f"A^T A sparsity: {[mat.nnz / (led_count**2) * 100 for mat in ATA_per_channel]}%"
-    )
+    print(f"A^T A sparsity: {[mat.nnz / (led_count**2) * 100 for mat in ATA_per_channel]}%")
 
     # === Performance Testing ===
-    print(f"\n--- Performance Comparison ---")
+    print("\n--- Performance Comparison ---")
 
     # Test vectors
     test_led_values = np.full((3, led_count), 0.5, dtype=np.float32)
     test_led_values_gpu = cp.asarray(test_led_values)
 
     # Test DIA performance
-    print(f"\nDIA Matrix Performance:")
+    print("\nDIA Matrix Performance:")
     dia_times = []
     for _ in range(10):
         start = time.time()
@@ -104,7 +102,7 @@ def test_csc_vs_dia_performance():
     print(f"  DIA multiply_3d: {dia_avg:.3f}ms")
 
     # Test CSC performance
-    print(f"\nCSC Matrix Performance:")
+    print("\nCSC Matrix Performance:")
     csc_times = []
 
     # Convert CSC matrices to GPU
@@ -125,7 +123,7 @@ def test_csc_vs_dia_performance():
     print(f"  CSC A^T A @ x: {csc_avg:.3f}ms")
 
     # === Test g^T @ A^T A @ g operation ===
-    print(f"\nTesting g^T @ A^T A @ g:")
+    print("\nTesting g^T @ A^T A @ g:")
 
     test_gradient = dia_result  # Use DIA result as test gradient
 
@@ -160,29 +158,27 @@ def test_csc_vs_dia_performance():
     print(f"  CSC g^T @ A^T A @ g: {csc_gatag_avg:.3f}ms")
 
     # === Summary ===
-    print(f"\n--- Summary ---")
+    print("\n--- Summary ---")
     print(
-        f"DIA matrix diagonals: {dia_matrix.dia_data_cpu.shape[1]} (efficiency: {dia_matrix.dia_data_cpu.shape[1]/999*100:.1f}% of dense)"
+        f"DIA matrix diagonals: {dia_matrix.dia_data_cpu.shape[1]} (efficiency: {dia_matrix.dia_data_cpu.shape[1] / 999 * 100:.1f}% of dense)"
     )
-    print(
-        f"CSC matrix density: {np.mean([mat.nnz / (led_count**2) * 100 for mat in ATA_per_channel]):.1f}%"
-    )
-    print(f"")
-    print(f"Performance (target: <1ms each):")
+    print(f"CSC matrix density: {np.mean([mat.nnz / (led_count**2) * 100 for mat in ATA_per_channel]):.1f}%")
+    print("")
+    print("Performance (target: <1ms each):")
     print(f"  DIA A^T A @ x:       {dia_avg:.3f}ms")
     print(f"  CSC A^T A @ x:       {csc_avg:.3f}ms")
     print(f"  DIA g^T @ A^T A @ g:  {dia_gatag_avg:.3f}ms")
     print(f"  CSC g^T @ A^T A @ g:  {csc_gatag_avg:.3f}ms")
-    print(f"")
+    print("")
     if csc_avg < dia_avg:
-        print(f"🏆 CSC is {dia_avg/csc_avg:.1f}x faster for A^T A @ x")
+        print(f"🏆 CSC is {dia_avg / csc_avg:.1f}x faster for A^T A @ x")
     else:
-        print(f"🏆 DIA is {csc_avg/dia_avg:.1f}x faster for A^T A @ x")
+        print(f"🏆 DIA is {csc_avg / dia_avg:.1f}x faster for A^T A @ x")
 
     if csc_gatag_avg < dia_gatag_avg:
-        print(f"🏆 CSC is {dia_gatag_avg/csc_gatag_avg:.1f}x faster for g^T @ A^T A @ g")
+        print(f"🏆 CSC is {dia_gatag_avg / csc_gatag_avg:.1f}x faster for g^T @ A^T A @ g")
     else:
-        print(f"🏆 DIA is {csc_gatag_avg/dia_gatag_avg:.1f}x faster for g^T @ A^T A @ g")
+        print(f"🏆 DIA is {csc_gatag_avg / dia_gatag_avg:.1f}x faster for g^T @ A^T A @ g")
 
 
 if __name__ == "__main__":

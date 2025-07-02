@@ -19,7 +19,7 @@ def compare_sparse_formats():
     nnz = 41_945_614
 
     logger.info("=== Sparse Format Storage Comparison ===")
-    logger.info(f"Matrix: {pixels:,} pixels × {leds*channels:,} LED channels")
+    logger.info(f"Matrix: {pixels:,} pixels × {leds * channels:,} LED channels")
     logger.info(f"Non-zero values: {nnz:,}")
     logger.info(f"Density: {(nnz / (pixels * leds * channels)) * 100:.3f}%")
 
@@ -32,9 +32,7 @@ def compare_sparse_formats():
 
     logger.info(f"Data array:      {csc_data / 1024**2:.1f} MB ({nnz:,} × 4 bytes)")
     logger.info(f"Row indices:     {csc_indices / 1024**2:.1f} MB ({nnz:,} × 4 bytes)")
-    logger.info(
-        f"Column pointers: {csc_indptr / 1024**2:.3f} MB ({leds*channels+1:,} × 4 bytes)"
-    )
+    logger.info(f"Column pointers: {csc_indptr / 1024**2:.3f} MB ({leds * channels + 1:,} × 4 bytes)")
     logger.info(f"Total CSC:       {csc_total / 1024**2:.1f} MB")
 
     logger.info("\n=== COO Format (PyTorch approach) ===")
@@ -57,9 +55,7 @@ def compare_sparse_formats():
 
     logger.info(f"\n4D COO tensor (PyTorch implementation):")
     logger.info(f"  Data array:    {coo_4d_data / 1024**2:.1f} MB")
-    logger.info(
-        f"  Coordinates:   {coo_4d_coords / 1024**2:.1f} MB ({nnz:,} × 4 dims × 8 bytes)"
-    )
+    logger.info(f"  Coordinates:   {coo_4d_coords / 1024**2:.1f} MB ({nnz:,} × 4 dims × 8 bytes)")
     logger.info(f"  Total 4D COO:  {coo_4d_total / 1024**2:.1f} MB")
 
     logger.info("\n=== Memory Efficiency Analysis ===")
@@ -77,9 +73,7 @@ def compare_sparse_formats():
     logger.info("4. PyTorch uses int64 (8 bytes) vs int32 (4 bytes) for coordinates")
 
     coord_overhead = coo_4d_coords / coo_4d_data
-    logger.info(
-        f"5. Coordinate overhead in 4D COO: {coord_overhead:.1f}x the data size!"
-    )
+    logger.info(f"5. Coordinate overhead in 4D COO: {coord_overhead:.1f}x the data size!")
 
     logger.info("\n=== Recommendations ===")
     logger.info("1. The 4D COO approach is fundamentally memory-inefficient")

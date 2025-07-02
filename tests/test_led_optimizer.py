@@ -81,9 +81,7 @@ class TestLEDOptimizer(unittest.TestCase):
         self._create_test_patterns()
 
         # Create optimizer with test patterns
-        self.optimizer = LEDOptimizer(
-            diffusion_patterns_path=self.patterns_path.replace(".npz", "")
-        )
+        self.optimizer = LEDOptimizer(diffusion_patterns_path=self.patterns_path.replace(".npz", ""))
 
     def _create_test_patterns(self):
         """Create minimal test diffusion patterns in new nested format for testing."""
@@ -106,14 +104,10 @@ class TestLEDOptimizer(unittest.TestCase):
         data = np.random.random(nnz).astype(np.float32)
 
         # Create sparse matrix
-        matrix = sparse.csc_matrix(
-            (data, (row_coords, col_coords)), shape=(pixels, cols)
-        )
+        matrix = sparse.csc_matrix((data, (row_coords, col_coords)), shape=(pixels, cols))
 
         # Create LEDDiffusionCSCMatrix utility class
-        diffusion_matrix = LEDDiffusionCSCMatrix(
-            csc_matrix=matrix, height=FRAME_HEIGHT, width=FRAME_WIDTH, channels=3
-        )
+        diffusion_matrix = LEDDiffusionCSCMatrix(csc_matrix=matrix, height=FRAME_HEIGHT, width=FRAME_WIDTH, channels=3)
 
         # Create SingleBlockMixedSparseTensor utility class
         mixed_tensor = SingleBlockMixedSparseTensor(
@@ -202,9 +196,7 @@ class TestLEDOptimizer(unittest.TestCase):
         self.optimizer.initialize()
 
         # Create test frame
-        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 3)).astype(
-            np.uint8
-        )
+        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 3)).astype(np.uint8)
 
         # Run optimization with debug mode to get error metrics
         result = self.optimizer.optimize_frame(test_frame, debug=True, max_iterations=5)
@@ -246,16 +238,12 @@ class TestLEDOptimizer(unittest.TestCase):
         """Test optimization with initial LED values."""
         self.optimizer.initialize()
 
-        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 3)).astype(
-            np.uint8
-        )
+        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 3)).astype(np.uint8)
         # Get actual LED count from test patterns
         test_led_count = 50  # matches our test pattern size
         initial_values = np.random.random((test_led_count, 3)).astype(np.float32) * 255
 
-        result = self.optimizer.optimize_frame(
-            test_frame, initial_values=initial_values, max_iterations=5
-        )
+        result = self.optimizer.optimize_frame(test_frame, initial_values=initial_values, max_iterations=5)
 
         self.assertEqual(result.led_values.shape[1], 3)  # RGB channels
         self.assertGreater(result.led_values.shape[0], 0)  # Some LEDs
@@ -266,9 +254,7 @@ class TestLEDOptimizer(unittest.TestCase):
         self.optimizer.initialize()
 
         # Run a few optimizations
-        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 3)).astype(
-            np.uint8
-        )
+        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 3)).astype(np.uint8)
         self.optimizer.optimize_frame(test_frame, max_iterations=3)
         self.optimizer.optimize_frame(test_frame, max_iterations=3)
 
@@ -304,9 +290,7 @@ class TestLEDOptimizer(unittest.TestCase):
 
         # Should successfully initialize with new format fixture patterns
         result = optimizer.initialize()
-        self.assertTrue(
-            result, "Should successfully load sparse patterns from new format fixture"
-        )
+        self.assertTrue(result, "Should successfully load sparse patterns from new format fixture")
         self.assertTrue(optimizer._matrix_loaded, "Matrix should be loaded")
 
         # Get stats to verify pattern details
@@ -343,9 +327,7 @@ class TestLEDOptimizer(unittest.TestCase):
     def test_error_handling_in_optimization(self):
         """Test error handling during optimization."""
         # Test with uninitialized optimizer
-        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 3)).astype(
-            np.uint8
-        )
+        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 3)).astype(np.uint8)
 
         result = self.optimizer.optimize_frame(test_frame)
 
@@ -358,9 +340,7 @@ class TestLEDOptimizer(unittest.TestCase):
         """Test that optimization time is measured correctly."""
         self.optimizer.initialize()
 
-        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 3)).astype(
-            np.uint8
-        )
+        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 3)).astype(np.uint8)
 
         result = self.optimizer.optimize_frame(test_frame, max_iterations=3)
 
@@ -372,9 +352,7 @@ class TestLEDOptimizer(unittest.TestCase):
         """Test optimization with different iteration counts."""
         self.optimizer.initialize()
 
-        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 3)).astype(
-            np.uint8
-        )
+        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 3)).astype(np.uint8)
 
         # Test few iterations
         result1 = self.optimizer.optimize_frame(test_frame, max_iterations=1)
@@ -419,9 +397,7 @@ class TestOptimizerIntegration(unittest.TestCase):
         self._create_test_patterns()
 
         # Create optimizer with test patterns
-        self.optimizer = LEDOptimizer(
-            diffusion_patterns_path=self.patterns_path.replace(".npz", "")
-        )
+        self.optimizer = LEDOptimizer(diffusion_patterns_path=self.patterns_path.replace(".npz", ""))
 
     def _create_test_patterns(self):
         """Create minimal test diffusion patterns in new nested format for testing."""
@@ -444,14 +420,10 @@ class TestOptimizerIntegration(unittest.TestCase):
         data = np.random.random(nnz).astype(np.float32)
 
         # Create sparse matrix
-        matrix = sparse.csc_matrix(
-            (data, (row_coords, col_coords)), shape=(pixels, cols)
-        )
+        matrix = sparse.csc_matrix((data, (row_coords, col_coords)), shape=(pixels, cols))
 
         # Create LEDDiffusionCSCMatrix utility class
-        diffusion_matrix = LEDDiffusionCSCMatrix(
-            csc_matrix=matrix, height=FRAME_HEIGHT, width=FRAME_WIDTH, channels=3
-        )
+        diffusion_matrix = LEDDiffusionCSCMatrix(csc_matrix=matrix, height=FRAME_HEIGHT, width=FRAME_WIDTH, channels=3)
 
         # Create SingleBlockMixedSparseTensor utility class
         mixed_tensor = SingleBlockMixedSparseTensor(
@@ -555,12 +527,8 @@ class TestOptimizerIntegration(unittest.TestCase):
         test_led_count = 50  # matches our test pattern size
         initial_values = np.zeros((test_led_count, 3), dtype=np.float32)
 
-        result1 = self.optimizer.optimize_frame(
-            test_frame, initial_values=initial_values.copy()
-        )
-        result2 = self.optimizer.optimize_frame(
-            test_frame, initial_values=initial_values.copy()
-        )
+        result1 = self.optimizer.optimize_frame(test_frame, initial_values=initial_values.copy())
+        result2 = self.optimizer.optimize_frame(test_frame, initial_values=initial_values.copy())
 
         # Results should be very similar (allowing for minor numerical differences)
         diff = np.abs(result1.led_values - result2.led_values)

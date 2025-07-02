@@ -28,9 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 
 # Set up logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -69,15 +67,9 @@ class CSCMatrixWrapper:
                     continue
 
                 # Get block data and position
-                block_values = cp.asnumpy(
-                    single_block_tensor.sparse_values[batch_idx, channel_idx]
-                )
-                top_row = int(
-                    single_block_tensor.block_positions[batch_idx, channel_idx, 0]
-                )
-                top_col = int(
-                    single_block_tensor.block_positions[batch_idx, channel_idx, 1]
-                )
+                block_values = cp.asnumpy(single_block_tensor.sparse_values[batch_idx, channel_idx])
+                top_row = int(single_block_tensor.block_positions[batch_idx, channel_idx, 0])
+                top_col = int(single_block_tensor.block_positions[batch_idx, channel_idx, 1])
 
                 # Convert block to sparse entries
                 block_size = single_block_tensor.block_size
@@ -99,16 +91,10 @@ class CSCMatrixWrapper:
                             data.append(value)
 
         # Create CSC matrix
-        self.A_combined = sp.csc_matrix(
-            (data, (rows, cols)), shape=self.matrix_shape, dtype=np.float32
-        )
+        self.A_combined = sp.csc_matrix((data, (rows, cols)), shape=self.matrix_shape, dtype=np.float32)
 
-        logger.info(
-            f"Created CSC matrix with {self.A_combined.nnz:,} non-zero elements"
-        )
-        logger.info(
-            f"Matrix density: {self.A_combined.nnz / (self.matrix_shape[0] * self.matrix_shape[1]) * 100:.3f}%"
-        )
+        logger.info(f"Created CSC matrix with {self.A_combined.nnz:,} non-zero elements")
+        logger.info(f"Matrix density: {self.A_combined.nnz / (self.matrix_shape[0] * self.matrix_shape[1]) * 100:.3f}%")
 
         # Transfer to GPU
         from cupyx.scipy.sparse import csc_matrix as cupy_csc_matrix
@@ -131,9 +117,7 @@ class CSCMatrixWrapper:
         for c in range(self.channels):
             start_idx = c * self.pixels
             end_idx = (c + 1) * self.pixels
-            target_combined[
-                start_idx:end_idx
-            ] = target_flat  # Same target for all channels
+            target_combined[start_idx:end_idx] = target_flat  # Same target for all channels
 
         # Compute A^T @ b
         result_combined = self.A_combined_gpu.T @ target_combined
@@ -158,9 +142,7 @@ def create_test_tensor():
     width = 800
     block_size = 64
 
-    tensor = SingleBlockMixedSparseTensor(
-        batch_size, channels, height, width, block_size
-    )
+    tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size)
 
     # Set blocks for all LEDs with realistic patterns
     logger.info("Generating realistic LED diffusion patterns...")
@@ -173,18 +155,14 @@ def create_test_tensor():
             top_col = np.random.randint(0, width - block_size)
 
             # Create Gaussian-like diffusion pattern
-            y, x = np.meshgrid(
-                np.arange(block_size), np.arange(block_size), indexing="ij"
-            )
+            y, x = np.meshgrid(np.arange(block_size), np.arange(block_size), indexing="ij")
             center_y, center_x = block_size // 2, block_size // 2
 
             # Gaussian decay with some randomness
             sigma = np.random.uniform(8.0, 16.0)  # Variable diffusion width
             intensity = np.random.uniform(0.3, 1.0)  # Variable LED intensity
 
-            pattern = intensity * np.exp(
-                -((y - center_y) ** 2 + (x - center_x) ** 2) / (2 * sigma**2)
-            )
+            pattern = intensity * np.exp(-((y - center_y) ** 2 + (x - center_x) ** 2) / (2 * sigma**2))
 
             # Add some noise for realism
             noise = np.random.normal(0, 0.02, pattern.shape)
@@ -224,17 +202,12 @@ def estimate_operations(tensor_shape, nnz_per_led_channel, num_targets=1):
     return operations_per_target * num_targets
 
 
-def benchmark_single_block_tensor(
-    tensor: SingleBlockMixedSparseTensor, num_runs: int = 10
-):
+def benchmark_single_block_tensor(tensor: SingleBlockMixedSparseTensor, num_runs: int = 10):
     """Benchmark SingleBlockMixedSparseTensor performance."""
     logger.info("=== Benchmarking SingleBlockMixedSparseTensor ===")
 
     # Create test target images
-    targets = [
-        cp.random.rand(tensor.height, tensor.width).astype(cp.float32)
-        for _ in range(num_runs)
-    ]
+    targets = [cp.random.rand(tensor.height, tensor.width).astype(cp.float32) for _ in range(num_runs)]
 
     # Warm up (exclude from timing)
     logger.info("Warming up GPU cache...")
@@ -242,7 +215,7 @@ def benchmark_single_block_tensor(
     cp.cuda.Device().synchronize()
 
     # Benchmark runs
-    logger.info(f"Running {num_runs-1} timed iterations...")
+    logger.info(f"Running {num_runs - 1} timed iterations...")
     times = []
 
     for i in range(1, num_runs):  # Skip first run (warm-up)
@@ -259,10 +232,10 @@ def benchmark_single_block_tensor(
     avg_time = np.mean(times)
     std_time = np.std(times)
 
-    logger.info(f"SingleBlockMixedSparseTensor results:")
-    logger.info(f"  Average time: {avg_time*1000:.2f}ms ± {std_time*1000:.2f}ms")
-    logger.info(f"  Min time: {min(times)*1000:.2f}ms")
-    logger.info(f"  Max time: {max(times)*1000:.2f}ms")
+    logger.info("SingleBlockMixedSparseTensor results:")
+    logger.info(f"  Average time: {avg_time * 1000:.2f}ms ± {std_time * 1000:.2f}ms")
+    logger.info(f"  Min time: {min(times) * 1000:.2f}ms")
+    logger.info(f"  Max time: {max(times) * 1000:.2f}ms")
 
     return avg_time, result
 
@@ -272,10 +245,7 @@ def benchmark_csc_matrix(csc_wrapper: CSCMatrixWrapper, num_runs: int = 10):
     logger.info("=== Benchmarking CSC Matrix ===")
 
     # Create test target images
-    targets = [
-        cp.random.rand(csc_wrapper.height, csc_wrapper.width).astype(cp.float32)
-        for _ in range(num_runs)
-    ]
+    targets = [cp.random.rand(csc_wrapper.height, csc_wrapper.width).astype(cp.float32) for _ in range(num_runs)]
 
     # Warm up (exclude from timing)
     logger.info("Warming up GPU cache...")
@@ -283,7 +253,7 @@ def benchmark_csc_matrix(csc_wrapper: CSCMatrixWrapper, num_runs: int = 10):
     cp.cuda.Device().synchronize()
 
     # Benchmark runs
-    logger.info(f"Running {num_runs-1} timed iterations...")
+    logger.info(f"Running {num_runs - 1} timed iterations...")
     times = []
 
     for i in range(1, num_runs):  # Skip first run (warm-up)
@@ -300,17 +270,15 @@ def benchmark_csc_matrix(csc_wrapper: CSCMatrixWrapper, num_runs: int = 10):
     avg_time = np.mean(times)
     std_time = np.std(times)
 
-    logger.info(f"CSC Matrix results:")
-    logger.info(f"  Average time: {avg_time*1000:.2f}ms ± {std_time*1000:.2f}ms")
-    logger.info(f"  Min time: {min(times)*1000:.2f}ms")
-    logger.info(f"  Max time: {max(times)*1000:.2f}ms")
+    logger.info("CSC Matrix results:")
+    logger.info(f"  Average time: {avg_time * 1000:.2f}ms ± {std_time * 1000:.2f}ms")
+    logger.info(f"  Min time: {min(times) * 1000:.2f}ms")
+    logger.info(f"  Max time: {max(times) * 1000:.2f}ms")
 
     return avg_time, result
 
 
-def verify_correctness(
-    single_block_result: cp.ndarray, csc_result: cp.ndarray, tolerance: float = 1e-4
-):
+def verify_correctness(single_block_result: cp.ndarray, csc_result: cp.ndarray, tolerance: float = 1e-4):
     """Verify that both approaches produce the same results."""
     logger.info("=== Verifying Correctness ===")
 
@@ -318,7 +286,7 @@ def verify_correctness(
     mean_diff = cp.mean(cp.abs(single_block_result - csc_result))
     relative_diff = max_diff / cp.max(cp.abs(single_block_result))
 
-    logger.info(f"Result comparison:")
+    logger.info("Result comparison:")
     logger.info(f"  Max absolute difference: {max_diff:.6f}")
     logger.info(f"  Mean absolute difference: {mean_diff:.6f}")
     logger.info(f"  Max relative difference: {relative_diff:.6f}")
@@ -355,21 +323,17 @@ def main():
     tensor = create_test_tensor()
 
     # Setup CSC matrix for comparison
-    csc_wrapper = CSCMatrixWrapper(
-        tensor.batch_size, tensor.channels, tensor.height, tensor.width
-    )
+    csc_wrapper = CSCMatrixWrapper(tensor.batch_size, tensor.channels, tensor.height, tensor.width)
     csc_wrapper.set_blocks_from_tensor(tensor)
 
     # Get memory usage information
     tensor_memory = tensor.memory_info()
     csc_memory_mb = csc_wrapper.A_combined_gpu.data.nbytes / (1024 * 1024)
 
-    logger.info(f"\nMemory Usage:")
+    logger.info("\nMemory Usage:")
     logger.info(f"  SingleBlockMixedSparseTensor: {tensor_memory['total_mb']:.1f}MB")
     logger.info(f"  CSC Matrix: {csc_memory_mb:.1f}MB")
-    logger.info(
-        f"  Memory ratio (SingleBlock/CSC): {tensor_memory['total_mb']/csc_memory_mb:.2f}x"
-    )
+    logger.info(f"  Memory ratio (SingleBlock/CSC): {tensor_memory['total_mb'] / csc_memory_mb:.2f}x")
 
     # Estimate operations for GFLOPS calculation
     # Average block is 64x64 = 4096 elements, but some may be zero due to Gaussian pattern
@@ -385,9 +349,7 @@ def main():
     # Run benchmarks
     num_runs = 11  # 10 timed runs + 1 warmup
 
-    single_block_time, single_block_result = benchmark_single_block_tensor(
-        tensor, num_runs
-    )
+    single_block_time, single_block_result = benchmark_single_block_tensor(tensor, num_runs)
     csc_time, csc_result = benchmark_csc_matrix(csc_wrapper, num_runs)
 
     # Verify correctness
@@ -404,34 +366,28 @@ def main():
 
     speedup = csc_time / single_block_time
 
-    logger.info(f"SingleBlockMixedSparseTensor:")
-    logger.info(f"  Time: {single_block_time*1000:.2f}ms")
+    logger.info("SingleBlockMixedSparseTensor:")
+    logger.info(f"  Time: {single_block_time * 1000:.2f}ms")
     logger.info(f"  GFLOPS: {single_block_gflops:.2f}")
     logger.info(f"  Memory: {tensor_memory['total_mb']:.1f}MB")
 
-    logger.info(f"\nCSC Matrix:")
-    logger.info(f"  Time: {csc_time*1000:.2f}ms")
+    logger.info("\nCSC Matrix:")
+    logger.info(f"  Time: {csc_time * 1000:.2f}ms")
     logger.info(f"  GFLOPS: {csc_gflops:.2f}")
     logger.info(f"  Memory: {csc_memory_mb:.1f}MB")
 
-    logger.info(f"\nPerformance Comparison:")
+    logger.info("\nPerformance Comparison:")
     logger.info(f"  Speedup: {speedup:.2f}x")
-    logger.info(f"  GFLOPS improvement: {single_block_gflops/csc_gflops:.2f}x")
-    logger.info(
-        f"  Memory efficiency: {csc_memory_mb/tensor_memory['total_mb']:.2f}x less memory"
-    )
+    logger.info(f"  GFLOPS improvement: {single_block_gflops / csc_gflops:.2f}x")
+    logger.info(f"  Memory efficiency: {csc_memory_mb / tensor_memory['total_mb']:.2f}x less memory")
     logger.info(f"  Results correctness: {'✓ PASS' if results_match else '✗ FAIL'}")
 
     # Final recommendations
-    logger.info(f"\nRecommendations:")
+    logger.info("\nRecommendations:")
     if speedup > 1.5:
-        logger.info(
-            "✓ SingleBlockMixedSparseTensor shows significant performance advantage"
-        )
+        logger.info("✓ SingleBlockMixedSparseTensor shows significant performance advantage")
     elif speedup > 1.1:
-        logger.info(
-            "✓ SingleBlockMixedSparseTensor shows moderate performance advantage"
-        )
+        logger.info("✓ SingleBlockMixedSparseTensor shows moderate performance advantage")
     else:
         logger.info("⚠ Performance difference is marginal")
 

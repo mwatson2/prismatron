@@ -28,16 +28,12 @@ from src.core.shared_buffer import (
 )
 
 
-def get_buffer_array(
-    buffer_info, width=FRAME_WIDTH, height=FRAME_HEIGHT, channels=FRAME_CHANNELS
-):
+def get_buffer_array(buffer_info, width=FRAME_WIDTH, height=FRAME_HEIGHT, channels=FRAME_CHANNELS):
     """Helper function to get array from BufferInfo for backwards compatibility."""
     return buffer_info.get_array_interleaved(width, height, channels)
 
 
-@unittest.skipUnless(
-    SHARED_MEMORY_AVAILABLE, "Shared memory not available (requires Python 3.8+)"
-)
+@unittest.skipUnless(SHARED_MEMORY_AVAILABLE, "Shared memory not available (requires Python 3.8+)")
 class TestFrameRingBuffer(unittest.TestCase):
     """Test cases for FrameRingBuffer class."""
 
@@ -72,9 +68,7 @@ class TestFrameRingBuffer(unittest.TestCase):
 
         array = get_buffer_array(buffer_info)
         expected_shape = (FRAME_HEIGHT, FRAME_WIDTH, FRAME_CHANNELS)
-        self.assertEqual(
-            array.shape, expected_shape, f"Buffer should have shape {expected_shape}"
-        )
+        self.assertEqual(array.shape, expected_shape, f"Buffer should have shape {expected_shape}")
         self.assertEqual(array.dtype, np.uint8, "Buffer should be uint8 type")
 
     def test_write_buffer_operations(self):
@@ -86,9 +80,7 @@ class TestFrameRingBuffer(unittest.TestCase):
         self.assertIsNotNone(buffer_info)
 
         # Write test data
-        test_pattern = np.random.randint(
-            0, 255, (FRAME_HEIGHT, FRAME_WIDTH, FRAME_CHANNELS), dtype=np.uint8
-        )
+        test_pattern = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, FRAME_CHANNELS), dtype=np.uint8)
         array = get_buffer_array(buffer_info)
         array[:] = test_pattern
 
@@ -149,9 +141,7 @@ class TestFrameRingBuffer(unittest.TestCase):
 
         # Next write should timeout due to backpressure (no consumer)
         buffer_info = self.ring_buffer.get_write_buffer(timeout=0.1)
-        self.assertIsNone(
-            buffer_info, "Should timeout when buffers are full and no consumer"
-        )
+        self.assertIsNone(buffer_info, "Should timeout when buffers are full and no consumer")
 
     def test_timestamp_tracking(self):
         """Test that timestamps are properly tracked."""
@@ -180,9 +170,7 @@ class TestFrameRingBuffer(unittest.TestCase):
 
         # Write some test data
         buffer_info = self.ring_buffer.get_write_buffer()
-        test_data = np.full(
-            (FRAME_HEIGHT, FRAME_WIDTH, FRAME_CHANNELS), 42, dtype=np.uint8
-        )
+        test_data = np.full((FRAME_HEIGHT, FRAME_WIDTH, FRAME_CHANNELS), 42, dtype=np.uint8)
         get_buffer_array(buffer_info)[:] = test_data
         self.ring_buffer.advance_write()
 
@@ -341,14 +329,8 @@ def consumer_process(
                 if test_timing:
                     # Simple timing check - if frame is too old, consider it dropped
                     current_time = time.time()
-                    if (
-                        buffer_info.metadata
-                        and buffer_info.metadata.presentation_timestamp > 0
-                    ):
-                        if (
-                            current_time
-                            > buffer_info.metadata.presentation_timestamp + 0.1
-                        ):  # 100ms tolerance
+                    if buffer_info.metadata and buffer_info.metadata.presentation_timestamp > 0:
+                        if current_time > buffer_info.metadata.presentation_timestamp + 0.1:  # 100ms tolerance
                             frames_dropped += 1
                             should_display = False
 
@@ -357,17 +339,11 @@ def consumer_process(
                         continue
 
                 # Test resolution metadata if requested
-                if test_resolution and should_display:
-                    if buffer_info.metadata:
-                        # Verify we got valid resolution metadata
-                        if (
-                            buffer_info.metadata.source_width <= 0
-                            or buffer_info.metadata.source_height <= 0
-                        ):
-                            print(
-                                f"Invalid resolution metadata for frame {frames_received}"
-                            )
-                            sys.exit(1)
+                if test_resolution and should_display and buffer_info.metadata:
+                    # Verify we got valid resolution metadata
+                    if buffer_info.metadata.source_width <= 0 or buffer_info.metadata.source_height <= 0:
+                        print(f"Invalid resolution metadata for frame {frames_received}")
+                        sys.exit(1)
 
                 # Verify pattern in a sample area instead of entire buffer
                 # Ring buffers provide latest frame, not necessarily every frame
@@ -381,16 +357,12 @@ def consumer_process(
                     ring_buffer.release_read_buffer()
                 else:
                     print(f"Pattern mismatch in frame {frames_received}")
-                    print(
-                        f"Expected: {expected_pattern}, got sample: {sample_array[0,0,:]}"
-                    )
+                    print(f"Expected: {expected_pattern}, got sample: {sample_array[0, 0, :]}")
                     sys.exit(1)
 
         # For timing tests, allow some frames to be dropped
         if test_timing:
-            result = (
-                frames_received >= expected_frames * 0.6
-            )  # Allow 40% drop rate for timing tests
+            result = frames_received >= expected_frames * 0.6  # Allow 40% drop rate for timing tests
             print(
                 f"Consumer: received {frames_received}, dropped {frames_dropped}, "
                 f"expected >= {expected_frames * 0.6}, result: {result}"
@@ -413,9 +385,7 @@ def consumer_process(
         sys.exit(0 if result else 1)
 
 
-@unittest.skipUnless(
-    SHARED_MEMORY_AVAILABLE, "Shared memory not available (requires Python 3.8+)"
-)
+@unittest.skipUnless(SHARED_MEMORY_AVAILABLE, "Shared memory not available (requires Python 3.8+)")
 class TestMultiprocessCommunication(unittest.TestCase):
     """Test multiprocess communication through ring buffer."""
 
@@ -428,18 +398,14 @@ class TestMultiprocessCommunication(unittest.TestCase):
         pattern_value = 123
 
         # Start producer process (it will initialize the buffer)
-        producer = mp.Process(
-            target=producer_process, args=(buffer_name, num_frames, pattern_value)
-        )
+        producer = mp.Process(target=producer_process, args=(buffer_name, num_frames, pattern_value))
         producer.start()
 
         # Small delay to let producer initialize buffer
         time.sleep(0.1)
 
         # Start consumer process (it will connect to existing buffer)
-        consumer = mp.Process(
-            target=consumer_process, args=(buffer_name, num_frames, pattern_value)
-        )
+        consumer = mp.Process(target=consumer_process, args=(buffer_name, num_frames, pattern_value))
         consumer.start()
 
         # Wait for completion with longer timeouts
@@ -472,32 +438,22 @@ class TestMultiprocessCommunication(unittest.TestCase):
         test_patterns = [11, 22, 33, 44, 55]
 
         for pattern in test_patterns:
-            buffer_name = (
-                f"test_integrity_{os.getpid()}_{int(time.time() * 1000000)}_{pattern}"
-            )
+            buffer_name = f"test_integrity_{os.getpid()}_{int(time.time() * 1000000)}_{pattern}"
 
-            producer = mp.Process(
-                target=producer_process, args=(buffer_name, 1, pattern)
-            )
+            producer = mp.Process(target=producer_process, args=(buffer_name, 1, pattern))
             producer.start()
 
             # Small delay to let producer initialize buffer
             time.sleep(0.1)
 
-            consumer = mp.Process(
-                target=consumer_process, args=(buffer_name, 1, pattern)
-            )
+            consumer = mp.Process(target=consumer_process, args=(buffer_name, 1, pattern))
             consumer.start()
 
             producer.join(timeout=5)
             consumer.join(timeout=5)
 
-            self.assertEqual(
-                producer.exitcode, 0, f"Producer failed for pattern {pattern}"
-            )
-            self.assertEqual(
-                consumer.exitcode, 0, f"Consumer failed for pattern {pattern}"
-            )
+            self.assertEqual(producer.exitcode, 0, f"Producer failed for pattern {pattern}")
+            self.assertEqual(consumer.exitcode, 0, f"Consumer failed for pattern {pattern}")
 
     def test_fast_producer_slow_consumer_backpressure(self):
         """Test backpressure when producer is faster than consumer."""
@@ -537,9 +493,7 @@ class TestMultiprocessCommunication(unittest.TestCase):
         producer_duration = time.time() - producer_start_time
 
         # Verify both processes completed successfully
-        self.assertEqual(
-            producer.exitcode, 0, "Producer should handle backpressure gracefully"
-        )
+        self.assertEqual(producer.exitcode, 0, "Producer should handle backpressure gracefully")
         self.assertEqual(consumer.exitcode, 0, "Consumer should receive all frames")
 
         # Producer should be slowed down by consumer (should take longer than num_frames * 0.01)
@@ -584,9 +538,7 @@ class TestMultiprocessCommunication(unittest.TestCase):
 
         # Verify both processes completed successfully
         self.assertEqual(producer.exitcode, 0, "Producer should complete successfully")
-        self.assertEqual(
-            consumer.exitcode, 0, "Consumer should wait and receive all frames"
-        )
+        self.assertEqual(consumer.exitcode, 0, "Consumer should wait and receive all frames")
 
         # Consumer should be slowed down by producer (should take roughly as long as producer)
         min_expected_duration = num_frames * 0.04  # Should wait for producer
@@ -598,9 +550,7 @@ class TestMultiprocessCommunication(unittest.TestCase):
 
     def test_producer_timeout_behavior(self):
         """Test producer timeout when consumer never reads."""
-        buffer_name = (
-            f"test_producer_timeout_{os.getpid()}_{int(time.time() * 1000000)}"
-        )
+        buffer_name = f"test_producer_timeout_{os.getpid()}_{int(time.time() * 1000000)}"
 
         ring_buffer = FrameProducer(buffer_name)
         self.assertTrue(ring_buffer.initialize())
@@ -622,9 +572,7 @@ class TestMultiprocessCommunication(unittest.TestCase):
                 buffer_info,
                 "Should timeout when no consumer reads and buffers are full",
             )
-            self.assertGreaterEqual(
-                end_time - start_time, 0.15, "Should have waited for timeout"
-            )
+            self.assertGreaterEqual(end_time - start_time, 0.15, "Should have waited for timeout")
             self.assertLess(end_time - start_time, 0.5, "Should not wait too long")
 
         finally:
@@ -632,9 +580,7 @@ class TestMultiprocessCommunication(unittest.TestCase):
 
     def test_consumer_timeout_behavior(self):
         """Test consumer timeout when producer never writes."""
-        buffer_name = (
-            f"test_consumer_timeout_{os.getpid()}_{int(time.time() * 1000000)}"
-        )
+        buffer_name = f"test_consumer_timeout_{os.getpid()}_{int(time.time() * 1000000)}"
 
         producer = FrameProducer(buffer_name)
         self.assertTrue(producer.initialize())
@@ -650,9 +596,7 @@ class TestMultiprocessCommunication(unittest.TestCase):
             end_time = time.time()
 
             self.assertIsNone(buffer_info, "Should timeout when no data available")
-            self.assertGreaterEqual(
-                end_time - start_time, 0.15, "Should have waited for timeout"
-            )
+            self.assertGreaterEqual(end_time - start_time, 0.15, "Should have waited for timeout")
             self.assertLess(end_time - start_time, 0.5, "Should not wait too long")
 
         finally:
@@ -690,9 +634,7 @@ class TestMultiprocessCommunication(unittest.TestCase):
 
             # Check status - read index should be cleared
             status = producer.get_status()
-            self.assertEqual(
-                status["read_index"], -1, "Read index should be cleared after release"
-            )
+            self.assertEqual(status["read_index"], -1, "Read index should be cleared after release")
 
         finally:
             producer.cleanup()
@@ -727,12 +669,8 @@ class TestMultiprocessCommunication(unittest.TestCase):
         consumer.join(timeout=10)
 
         # Verify successful completion
-        self.assertEqual(
-            producer.exitcode, 0, "High throughput producer should succeed"
-        )
-        self.assertEqual(
-            consumer.exitcode, 0, "High throughput consumer should succeed"
-        )
+        self.assertEqual(producer.exitcode, 0, "High throughput producer should succeed")
+        self.assertEqual(consumer.exitcode, 0, "High throughput consumer should succeed")
 
     def test_presentation_timestamp_sequence(self):
         """Test presentation timestamps are maintained in correct sequence."""
@@ -756,9 +694,7 @@ class TestMultiprocessCommunication(unittest.TestCase):
                 expected_timestamps.append(future_time)
 
                 # Write frame
-                buffer_info = producer.get_write_buffer(
-                    presentation_timestamp=future_time
-                )
+                buffer_info = producer.get_write_buffer(presentation_timestamp=future_time)
                 self.assertIsNotNone(buffer_info)
                 get_buffer_array(buffer_info).fill(100 + i)
                 producer.advance_write()
@@ -773,12 +709,8 @@ class TestMultiprocessCommunication(unittest.TestCase):
                 consumer.release_read_buffer()
 
             # Verify timestamps are in expected order
-            for i, (expected, actual) in enumerate(
-                zip(expected_timestamps, actual_timestamps)
-            ):
-                self.assertAlmostEqual(
-                    actual, expected, places=6, msg=f"Frame {i} timestamp mismatch"
-                )
+            for i, (expected, actual) in enumerate(zip(expected_timestamps, actual_timestamps)):
+                self.assertAlmostEqual(actual, expected, places=6, msg=f"Frame {i} timestamp mismatch")
 
         finally:
             producer.cleanup()
@@ -829,15 +761,11 @@ class TestMultiprocessCommunication(unittest.TestCase):
 
         # Verify both processes completed successfully
         self.assertEqual(producer.exitcode, 0, "Producer should complete successfully")
-        self.assertEqual(
-            consumer.exitcode, 0, "Consumer should handle resolution metadata correctly"
-        )
+        self.assertEqual(consumer.exitcode, 0, "Consumer should handle resolution metadata correctly")
 
     def test_presentation_timestamp_storage(self):
         """Test that presentation timestamps are stored correctly."""
-        buffer_name = (
-            f"test_timing_decisions_{os.getpid()}_{int(time.time() * 1000000)}"
-        )
+        buffer_name = f"test_timing_decisions_{os.getpid()}_{int(time.time() * 1000000)}"
 
         producer = FrameProducer(buffer_name)
         self.assertTrue(producer.initialize())
@@ -845,9 +773,7 @@ class TestMultiprocessCommunication(unittest.TestCase):
         try:
             # Test frame with specific presentation timestamp
             test_timestamp = time.time() + 0.1
-            buffer_info = producer.get_write_buffer(
-                presentation_timestamp=test_timestamp
-            )
+            buffer_info = producer.get_write_buffer(presentation_timestamp=test_timestamp)
             self.assertIsNotNone(buffer_info)
             producer.advance_write()
 
@@ -861,9 +787,7 @@ class TestMultiprocessCommunication(unittest.TestCase):
             # Verify presentation timestamp is stored correctly
             metadata = read_info.metadata
             self.assertIsNotNone(metadata)
-            self.assertAlmostEqual(
-                metadata.presentation_timestamp, test_timestamp, places=6
-            )
+            self.assertAlmostEqual(metadata.presentation_timestamp, test_timestamp, places=6)
 
             # Test frame with default presentation timestamp (current time)
             buffer_info = producer.get_write_buffer()  # No timestamp specified
@@ -895,9 +819,7 @@ class TestMultiprocessCommunication(unittest.TestCase):
             self.assertTrue(consumer.connect())
 
             # Test 16:9 content resolution metadata
-            buffer_info = producer.get_write_buffer(
-                source_width=1920, source_height=1080
-            )
+            buffer_info = producer.get_write_buffer(source_width=1920, source_height=1080)
             self.assertIsNotNone(buffer_info)
             producer.advance_write()
 
@@ -911,9 +833,7 @@ class TestMultiprocessCommunication(unittest.TestCase):
             self.assertEqual(metadata.source_height, 1080)
 
             # Test 4:3 content resolution metadata
-            buffer_info = producer.get_write_buffer(
-                source_width=1280, source_height=960
-            )
+            buffer_info = producer.get_write_buffer(source_width=1280, source_height=960)
             self.assertIsNotNone(buffer_info)
             producer.advance_write()
 
@@ -930,9 +850,7 @@ class TestMultiprocessCommunication(unittest.TestCase):
 
     def test_metadata_persistence_across_processes(self):
         """Test that metadata persists correctly across process boundaries."""
-        buffer_name = (
-            f"test_metadata_persist_{os.getpid()}_{int(time.time() * 1000000)}"
-        )
+        buffer_name = f"test_metadata_persist_{os.getpid()}_{int(time.time() * 1000000)}"
 
         ring_buffer = FrameProducer(buffer_name)
         self.assertTrue(ring_buffer.initialize())
@@ -980,9 +898,7 @@ class TestMultiprocessCommunication(unittest.TestCase):
             ring_buffer.cleanup()
 
 
-@unittest.skipUnless(
-    SHARED_MEMORY_AVAILABLE, "Shared memory not available (requires Python 3.8+)"
-)
+@unittest.skipUnless(SHARED_MEMORY_AVAILABLE, "Shared memory not available (requires Python 3.8+)")
 class TestProducerConsumerSubclasses(unittest.TestCase):
     """Test the specialized producer and consumer subclasses."""
 
@@ -1013,8 +929,9 @@ class TestProducerConsumerSubclasses(unittest.TestCase):
         self.assertIsNotNone(buffer_info, "Should get write buffer")
 
         # Write directly to buffer (producer can write however they want)
-        h, w = min(test_frame.shape[0], get_buffer_array(buffer_info).shape[0]), min(
-            test_frame.shape[1], get_buffer_array(buffer_info).shape[1]
+        h, w = (
+            min(test_frame.shape[0], get_buffer_array(buffer_info).shape[0]),
+            min(test_frame.shape[1], get_buffer_array(buffer_info).shape[1]),
         )
         c = min(test_frame.shape[2], get_buffer_array(buffer_info).shape[2])
         get_buffer_array(buffer_info)[:h, :w, :c] = test_frame[:h, :w, :c]
@@ -1035,13 +952,12 @@ class TestProducerConsumerSubclasses(unittest.TestCase):
         test_frame = np.full((480, 640, 3), 100, dtype=np.uint8)
 
         # Write frame using get_write_buffer/advance_write pattern
-        buffer_info = self.producer.get_write_buffer(
-            source_width=640, source_height=480
-        )
+        buffer_info = self.producer.get_write_buffer(source_width=640, source_height=480)
         self.assertIsNotNone(buffer_info)
         # Copy frame data
-        h, w = min(test_frame.shape[0], get_buffer_array(buffer_info).shape[0]), min(
-            test_frame.shape[1], get_buffer_array(buffer_info).shape[1]
+        h, w = (
+            min(test_frame.shape[0], get_buffer_array(buffer_info).shape[0]),
+            min(test_frame.shape[1], get_buffer_array(buffer_info).shape[1]),
         )
         c = min(test_frame.shape[2], get_buffer_array(buffer_info).shape[2])
         get_buffer_array(buffer_info)[:h, :w, :c] = test_frame[:h, :w, :c]
@@ -1084,13 +1000,12 @@ class TestProducerConsumerSubclasses(unittest.TestCase):
 
                 # Write frame using get_write_buffer/advance_write pattern
                 buffer_info = self.producer.get_write_buffer()
-                self.assertIsNotNone(
-                    buffer_info, f"Should get buffer for shape {shape}"
-                )
+                self.assertIsNotNone(buffer_info, f"Should get buffer for shape {shape}")
                 # Copy frame data with shape handling
-                h, w = min(
-                    test_frame.shape[0], get_buffer_array(buffer_info).shape[0]
-                ), min(test_frame.shape[1], get_buffer_array(buffer_info).shape[1])
+                h, w = (
+                    min(test_frame.shape[0], get_buffer_array(buffer_info).shape[0]),
+                    min(test_frame.shape[1], get_buffer_array(buffer_info).shape[1]),
+                )
                 if len(test_frame.shape) == 2:  # Grayscale
                     get_buffer_array(buffer_info)[:h, :w, 0] = test_frame[:h, :w]
                 else:  # Color
@@ -1163,9 +1078,7 @@ class TestProducerConsumerSubclasses(unittest.TestCase):
         for i in range(num_frames):
             # Write one frame
             test_frame = np.full((480, 640, 3), 50 + i * 50, dtype=np.uint8)
-            buffer_info = self.producer.get_write_buffer(
-                source_width=640, source_height=480
-            )
+            buffer_info = self.producer.get_write_buffer(source_width=640, source_height=480)
             self.assertIsNotNone(buffer_info)
             h, w, c = test_frame.shape
             get_buffer_array(buffer_info)[:h, :w, :c] = test_frame

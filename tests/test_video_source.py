@@ -51,7 +51,6 @@ class TestVideoSource(unittest.TestCase):
 
     def tearDown(self):
         """Clean up after tests."""
-        pass
 
     @patch("src.producer.content_sources.video_source.FFMPEG_AVAILABLE", True)
     def test_initialization(self):
@@ -100,9 +99,7 @@ class TestVideoSource(unittest.TestCase):
         mock_ffmpeg.probe.return_value = self.mock_video_metadata
 
         # Mock hardware acceleration detection
-        mock_subprocess.return_value = Mock(
-            returncode=0, stdout="Hardware acceleration methods:\ncuda\nnvdec\n"
-        )
+        mock_subprocess.return_value = Mock(returncode=0, stdout="Hardware acceleration methods:\ncuda\nnvdec\n")
 
         # Mock FFmpeg process
         mock_process = Mock()
@@ -164,9 +161,7 @@ class TestVideoSource(unittest.TestCase):
     @patch("subprocess.run")
     def test_hardware_acceleration_detection_cuda(self, mock_subprocess):
         """Test CUDA hardware acceleration detection."""
-        mock_subprocess.return_value = Mock(
-            returncode=0, stdout="Hardware acceleration methods:\ncuda\n"
-        )
+        mock_subprocess.return_value = Mock(returncode=0, stdout="Hardware acceleration methods:\ncuda\n")
 
         video_source = VideoSource(self.test_video_path)
         video_source._detect_hardware_acceleration()
@@ -176,9 +171,7 @@ class TestVideoSource(unittest.TestCase):
     @patch("subprocess.run")
     def test_hardware_acceleration_detection_nvdec(self, mock_subprocess):
         """Test NVDEC hardware acceleration detection."""
-        mock_subprocess.return_value = Mock(
-            returncode=0, stdout="Hardware acceleration methods:\nnvdec\n"
-        )
+        mock_subprocess.return_value = Mock(returncode=0, stdout="Hardware acceleration methods:\nnvdec\n")
 
         video_source = VideoSource(self.test_video_path)
         video_source._detect_hardware_acceleration()
@@ -188,9 +181,7 @@ class TestVideoSource(unittest.TestCase):
     @patch("subprocess.run")
     def test_hardware_acceleration_detection_none(self, mock_subprocess):
         """Test no hardware acceleration available."""
-        mock_subprocess.return_value = Mock(
-            returncode=0, stdout="Hardware acceleration methods:\nsoftware\n"
-        )
+        mock_subprocess.return_value = Mock(returncode=0, stdout="Hardware acceleration methods:\nsoftware\n")
 
         video_source = VideoSource(self.test_video_path)
         video_source._detect_hardware_acceleration()
@@ -225,18 +216,14 @@ class TestVideoSource(unittest.TestCase):
         # Create mock frame data (RGB24 format)
         frame_width, frame_height = 1920, 1080
         frame_size = frame_width * frame_height * 3
-        mock_frame_data = np.random.randint(
-            0, 255, frame_size, dtype=np.uint8
-        ).tobytes()
+        mock_frame_data = np.random.randint(0, 255, frame_size, dtype=np.uint8).tobytes()
 
         mock_process.stdout.read.return_value = mock_frame_data
         mock_ffmpeg.run_async.return_value = mock_process
 
         video_source = VideoSource(self.test_video_path)
 
-        with patch("queue.Queue") as mock_queue_class, patch(
-            "threading.Thread"
-        ) as mock_thread:
+        with patch("queue.Queue") as mock_queue_class, patch("threading.Thread") as mock_thread:
             # Setup queue mock
             mock_queue = Mock()
             mock_queue_class.return_value = mock_queue
@@ -375,9 +362,7 @@ class TestVideoSource(unittest.TestCase):
         # Setup mocks
         mock_exists.return_value = True
         mock_ffmpeg.probe.return_value = self.mock_video_metadata
-        mock_subprocess.return_value = Mock(
-            returncode=0, stdout="Hardware acceleration methods:\ncuda\n"
-        )
+        mock_subprocess.return_value = Mock(returncode=0, stdout="Hardware acceleration methods:\ncuda\n")
 
         video_source = VideoSource(self.test_video_path)
 
@@ -428,9 +413,8 @@ class TestVideoSource(unittest.TestCase):
         # Mock setup to fail
         video_source.setup = Mock(return_value=False)
 
-        with self.assertRaises(RuntimeError):
-            with video_source:
-                pass
+        with self.assertRaises(RuntimeError), video_source:
+            pass
 
     def test_string_representation(self):
         """Test string representation methods."""
@@ -481,9 +465,7 @@ class TestVideoSourceRegistry(unittest.TestCase):
         """Test creating video source through registry."""
         from src.producer.content_sources.base import ContentSourceRegistry, ContentType
 
-        video_source = ContentSourceRegistry.create_source(
-            "/tmp/test.mp4", ContentType.VIDEO
-        )
+        video_source = ContentSourceRegistry.create_source("/tmp/test.mp4", ContentType.VIDEO)
 
         self.assertIsInstance(video_source, VideoSource)
         self.assertEqual(video_source.filepath, "/tmp/test.mp4")

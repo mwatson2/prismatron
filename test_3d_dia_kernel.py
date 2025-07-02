@@ -56,20 +56,14 @@ def create_test_3d_dia_matrix(
             for j in range(n):
                 if np.random.rand() < density:
                     # Higher values near main diagonal, different per channel
-                    base_intensity = np.exp(-abs(offset) / 10) * (
-                        np.random.rand() * 500 + 100
-                    )
-                    channel_factor = (
-                        channel + 1
-                    ) * 0.8  # Different intensity per channel
+                    base_intensity = np.exp(-abs(offset) / 10) * (np.random.rand() * 500 + 100)
+                    channel_factor = (channel + 1) * 0.8  # Different intensity per channel
                     intensity = base_intensity * channel_factor
 
                     dia_data_3d[channel, i, j] = intensity
 
                     # Also fill dense matrix for verification
-                    row_idx = (
-                        j - offset
-                    )  # In DIA: A[row,col] stored at data[band, col] where col = row + offset
+                    row_idx = j - offset  # In DIA: A[row,col] stored at data[band, col] where col = row + offset
                     if 0 <= row_idx < n:
                         dense_matrices_3d[channel, row_idx, j] = intensity
 
@@ -85,9 +79,7 @@ def test_3d_dia_kernel_correctness():
     num_bands = 51
     channels = 3
 
-    dia_data_3d, dia_offsets, dense_matrices_3d = create_test_3d_dia_matrix(
-        n, num_bands, channels
-    )
+    dia_data_3d, dia_offsets, dense_matrices_3d = create_test_3d_dia_matrix(n, num_bands, channels)
 
     # Create test input vectors
     np.random.seed(123)
@@ -159,9 +151,7 @@ def benchmark_3d_dia_kernel():
     num_trials = 10
     num_warmup = 3
 
-    dia_data_3d, dia_offsets, dense_matrices_3d = create_test_3d_dia_matrix(
-        n, num_bands, channels
-    )
+    dia_data_3d, dia_offsets, dense_matrices_3d = create_test_3d_dia_matrix(n, num_bands, channels)
 
     print(f"Matrix size: {n}x{n} with {num_bands} bands, {channels} channels")
     print(f"Total matrix elements: {channels * n * n:,}")
@@ -169,10 +159,7 @@ def benchmark_3d_dia_kernel():
 
     # Create test vectors
     np.random.seed(456)
-    test_vectors = [
-        np.random.randn(channels, n).astype(np.float32)
-        for _ in range(num_trials + num_warmup)
-    ]
+    test_vectors = [np.random.randn(channels, n).astype(np.float32) for _ in range(num_trials + num_warmup)]
 
     # Convert to GPU
     dia_data_gpu = cupy.asarray(dia_data_3d)
@@ -286,9 +273,7 @@ def benchmark_3d_dia_kernel():
         gflops = data["flops"] / data["mean_time"] / 1e9
         speedup = baseline_time / data["mean_time"]
 
-        print(
-            f"{name:19s}  | {mean_ms:6.2f}±{std_ms:5.2f} | {gflops:8.2f}  | {speedup:6.2f}x"
-        )
+        print(f"{name:19s}  | {mean_ms:6.2f}±{std_ms:5.2f} | {gflops:8.2f}  | {speedup:6.2f}x")
 
     return results
 
@@ -309,13 +294,9 @@ def main():
             # Check if 3D kernels are faster than fallback would be
             opt_time_ms = benchmark_results["3d_optimized"]["mean_time"] * 1000
             if opt_time_ms < 10.0:  # Target: <10ms for 1000 LEDs
-                print(
-                    f"\n✓ 3D DIA kernel performance target met: {opt_time_ms:.2f}ms < 10ms"
-                )
+                print(f"\n✓ 3D DIA kernel performance target met: {opt_time_ms:.2f}ms < 10ms")
             else:
-                print(
-                    f"\n⚠ 3D DIA kernel slower than target: {opt_time_ms:.2f}ms > 10ms"
-                )
+                print(f"\n⚠ 3D DIA kernel slower than target: {opt_time_ms:.2f}ms > 10ms")
 
             print("\n=== 3D DIA Kernel Implementation Complete ===")
             return 0

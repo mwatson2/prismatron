@@ -38,9 +38,7 @@ class TestOptimizationRegression:
     """Regression tests for the complete LED optimization pipeline."""
 
     # Test configuration
-    TEST_IMAGE_PATH = (
-        "env/lib/python3.10/site-packages/sklearn/datasets/images/flower.jpg"
-    )
+    TEST_IMAGE_PATH = "env/lib/python3.10/site-packages/sklearn/datasets/images/flower.jpg"
     PATTERNS_PATH = "tests/fixtures/test_clean"  # Small pattern for faster tests
     MAX_ITERATIONS = 15  # Reduced for test speed
     PSNR_THRESHOLD = 25.0  # Minimum PSNR for acceptable quality
@@ -85,14 +83,10 @@ class TestOptimizationRegression:
         fixture_dir.mkdir(exist_ok=True)
         return fixture_dir / "flower_optimization_expected.png"
 
-    def test_optimization_pipeline_functionality(
-        self, pipeline, test_image_path, temp_dir
-    ):
+    def test_optimization_pipeline_functionality(self, pipeline, test_image_path, temp_dir):
         """Test that the optimization pipeline runs without errors."""
         # Run the complete pipeline
-        original, result, rendered = pipeline.run_full_pipeline(
-            test_image_path, max_iterations=self.MAX_ITERATIONS
-        )
+        original, result, rendered = pipeline.run_full_pipeline(test_image_path, max_iterations=self.MAX_ITERATIONS)
 
         # Basic sanity checks
         assert original.shape == (
@@ -105,24 +99,18 @@ class TestOptimizationRegression:
             800,
             3,
         ), f"Unexpected rendered shape: {rendered.shape}"
-        assert (
-            result.led_values.shape[1] == 3
-        ), "LED values should have 3 channels (RGB)"
+        assert result.led_values.shape[1] == 3, "LED values should have 3 channels (RGB)"
         assert result.converged, "Optimization should converge"
         assert result.optimization_time > 0, "Optimization should take measurable time"
 
         # Check that rendered image is reasonable
-        assert (
-            rendered.min() >= 0 and rendered.max() <= 255
-        ), "Rendered values out of range"
+        assert rendered.min() >= 0 and rendered.max() <= 255, "Rendered values out of range"
         assert not np.all(rendered == 0), "Rendered image should not be all black"
         assert not np.all(rendered == 255), "Rendered image should not be all white"
 
         logger.info(f"Pipeline test passed - MSE: {result.error_metrics['mse']:.6f}")
 
-    def test_optimization_regression_with_pixel_accuracy(
-        self, pipeline, test_image_path, temp_dir
-    ):
+    def test_optimization_regression_with_pixel_accuracy(self, pipeline, test_image_path, temp_dir):
         """
         Test for pixel-accurate regression detection.
 
@@ -133,9 +121,7 @@ class TestOptimizationRegression:
         expected_output_path = self.get_expected_output_path()
 
         # Run optimization
-        original, result, rendered = pipeline.run_full_pipeline(
-            test_image_path, max_iterations=self.MAX_ITERATIONS
-        )
+        original, result, rendered = pipeline.run_full_pipeline(test_image_path, max_iterations=self.MAX_ITERATIONS)
 
         # Save current output for comparison
         current_output_path = Path(temp_dir) / "current_output.png"
@@ -161,14 +147,10 @@ class TestOptimizationRegression:
                     f"Optimization may have improved. Consider updating fixture."
                 )
                 # Save comparison for manual inspection
-                self._save_comparison_image(
-                    original, expected_image, rendered, temp_dir
-                )
+                self._save_comparison_image(original, expected_image, rendered, temp_dir)
             else:
                 # Save comparison for debugging
-                self._save_comparison_image(
-                    original, expected_image, rendered, temp_dir
-                )
+                self._save_comparison_image(original, expected_image, rendered, temp_dir)
                 pytest.fail(
                     f"Optimization output differs significantly from expected. "
                     f"PSNR: {psnr:.2f} dB < {self.PSNR_THRESHOLD} dB threshold. "
@@ -189,7 +171,7 @@ class TestOptimizationRegression:
             # Also save metadata about this test run
             metadata_path = expected_output_path.with_suffix(".txt")
             with open(metadata_path, "w") as f:
-                f.write(f"Test fixture created for optimization regression test\n")
+                f.write("Test fixture created for optimization regression test\n")
                 f.write(f"Input image: {test_image_path}\n")
                 f.write(f"Patterns: {self.PATTERNS_PATH}\n")
                 f.write(f"Max iterations: {self.MAX_ITERATIONS}\n")
@@ -202,41 +184,27 @@ class TestOptimizationRegression:
 
     def test_optimization_quality_metrics(self, pipeline, test_image_path):
         """Test that optimization produces reasonable quality metrics."""
-        original, result, rendered = pipeline.run_full_pipeline(
-            test_image_path, max_iterations=self.MAX_ITERATIONS
-        )
+        original, result, rendered = pipeline.run_full_pipeline(test_image_path, max_iterations=self.MAX_ITERATIONS)
 
         # Calculate quality metrics
         psnr_vs_original = ImageComparison.calculate_psnr(original, rendered)
 
         # Quality thresholds (tuned for test pattern with 100 LEDs)
-        assert (
-            result.error_metrics["mse"] < 1.0
-        ), f"MSE too high: {result.error_metrics['mse']}"
-        assert (
-            psnr_vs_original > 12.0
-        ), f"PSNR too low vs original: {psnr_vs_original:.2f} dB"
+        assert result.error_metrics["mse"] < 1.0, f"MSE too high: {result.error_metrics['mse']}"
+        assert psnr_vs_original > 12.0, f"PSNR too low vs original: {psnr_vs_original:.2f} dB"
 
         logger.info(f"Quality metrics passed - PSNR: {psnr_vs_original:.2f} dB")
 
     def test_reproducibility(self, pipeline, test_image_path):
         """Test that optimization produces reproducible results."""
         # Run optimization twice
-        _, result1, rendered1 = pipeline.run_full_pipeline(
-            test_image_path, max_iterations=self.MAX_ITERATIONS
-        )
+        _, result1, rendered1 = pipeline.run_full_pipeline(test_image_path, max_iterations=self.MAX_ITERATIONS)
 
-        _, result2, rendered2 = pipeline.run_full_pipeline(
-            test_image_path, max_iterations=self.MAX_ITERATIONS
-        )
+        _, result2, rendered2 = pipeline.run_full_pipeline(test_image_path, max_iterations=self.MAX_ITERATIONS)
 
         # Results should be identical (optimization is deterministic)
-        assert np.array_equal(
-            result1.led_values, result2.led_values
-        ), "LED values should be reproducible"
-        assert np.array_equal(
-            rendered1, rendered2
-        ), "Rendered images should be reproducible"
+        assert np.array_equal(result1.led_values, result2.led_values), "LED values should be reproducible"
+        assert np.array_equal(rendered1, rendered2), "Rendered images should be reproducible"
 
         # MSE should be identical
         mse_diff = abs(result1.error_metrics["mse"] - result2.error_metrics["mse"])
@@ -287,9 +255,7 @@ class TestImageComparison:
 
         # Perfect match should give infinite PSNR
         psnr_perfect = ImageComparison.calculate_psnr(img1, img1)
-        assert psnr_perfect == float(
-            "inf"
-        ), "Identical images should have infinite PSNR"
+        assert psnr_perfect == float("inf"), "Identical images should have infinite PSNR"
 
     def test_images_equal(self):
         """Test pixel-perfect image comparison."""
@@ -298,12 +264,8 @@ class TestImageComparison:
         img3 = img1.copy()
         img3[0, 0, 0] = (img3[0, 0, 0] + 1) % 256  # Change one pixel
 
-        assert ImageComparison.images_equal(
-            img1, img2
-        ), "Identical images should be equal"
-        assert not ImageComparison.images_equal(
-            img1, img3
-        ), "Different images should not be equal"
+        assert ImageComparison.images_equal(img1, img2), "Identical images should be equal"
+        assert not ImageComparison.images_equal(img1, img3), "Different images should not be equal"
 
 
 # Pytest configuration for this module

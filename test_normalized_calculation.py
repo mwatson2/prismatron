@@ -95,7 +95,7 @@ def test_with_corrected_scaling():
     image = Image.open(image_path).convert("RGB").resize((800, 480))
     target_image = np.array(image, dtype=np.uint8)
 
-    print(f"\n=== Testing with Corrected Scaling ===")
+    print("\n=== Testing with Corrected Scaling ===")
 
     # Test A^T @ b scaling first
     target_planar = target_image.astype(np.float32) / 255.0
@@ -103,9 +103,7 @@ def test_with_corrected_scaling():
     target_gpu = cp.asarray(target_planar)
 
     ATb = normalized_mixed_tensor.transpose_dot_product_3d(target_gpu)
-    print(
-        f"Corrected A^T @ b range: [{float(cp.min(ATb)):.6f}, {float(cp.max(ATb)):.6f}]"
-    )
+    print(f"Corrected A^T @ b range: [{float(cp.min(ATb)):.6f}, {float(cp.max(ATb)):.6f}]")
     print(f"Corrected A^T @ b mean: {float(cp.mean(ATb)):.6f}")
 
     # Test optimization with much smaller step size scaling
@@ -120,7 +118,7 @@ def test_with_corrected_scaling():
         debug=True,
     )
 
-    print(f"\n=== Results with Corrected Scaling ===")
+    print("\n=== Results with Corrected Scaling ===")
     print(f"Converged: {result.converged}")
     print(f"Iterations: {result.iterations}")
     print(f"LED values range: [{result.led_values.min()}, {result.led_values.max()}]")
@@ -132,9 +130,7 @@ def test_with_corrected_scaling():
 
     if result.step_sizes is not None:
         print(f"Step sizes: {result.step_sizes}")
-        print(
-            f"Step size range: [{np.min(result.step_sizes):.6f}, {np.max(result.step_sizes):.6f}]"
-        )
+        print(f"Step size range: [{np.min(result.step_sizes):.6f}, {np.max(result.step_sizes):.6f}]")
         print(f"Step size mean: {np.mean(result.step_sizes):.6f}")
 
 

@@ -81,16 +81,12 @@ class DenseLEDOptimizer:
                              Both modes use the same dense A^T@A matrices for optimization.
             enable_performance_timing: If True, enable detailed performance timing
         """
-        self.diffusion_patterns_path = (
-            diffusion_patterns_path or "diffusion_patterns/synthetic_1000"
-        )
+        self.diffusion_patterns_path = diffusion_patterns_path or "diffusion_patterns/synthetic_1000"
         self.use_mixed_tensor = use_mixed_tensor
 
         # Performance timing
         self.timing = (
-            PerformanceTiming("DenseLEDOptimizer", enable_gpu_timing=True)
-            if enable_performance_timing
-            else None
+            PerformanceTiming("DenseLEDOptimizer", enable_gpu_timing=True) if enable_performance_timing else None
         )
 
         # Optimization parameters for gradient descent
@@ -106,9 +102,7 @@ class DenseLEDOptimizer:
         self._A_r_csc_gpu = None  # Red channel sparse matrix (pixels, leds)
         self._A_g_csc_gpu = None  # Green channel sparse matrix
         self._A_b_csc_gpu = None  # Blue channel sparse matrix
-        self._A_combined_csc_gpu = (
-            None  # Combined block diagonal matrix for faster A^T*b
-        )
+        self._A_combined_csc_gpu = None  # Combined block diagonal matrix for faster A^T*b
 
         # Pre-allocated arrays for optimization
         self._target_rgb_buffer = None  # (pixels, 3) CPU buffer
@@ -213,15 +207,11 @@ class DenseLEDOptimizer:
                 ]
 
                 if not all(key in dense_ata_dict for key in required_keys):
-                    logger.debug(
-                        "Required A^T@A keys not found in dense_ata dictionary"
-                    )
+                    logger.debug("Required A^T@A keys not found in dense_ata dictionary")
                     return False
 
                 # Load A^T@A data from nested dictionary
-                dense_ata_matrices = dense_ata_dict[
-                    "dense_ata_matrices"
-                ]  # Shape: (led_count, led_count, channels)
+                dense_ata_matrices = dense_ata_dict["dense_ata_matrices"]  # Shape: (led_count, led_count, channels)
                 dense_ata_led_count = int(dense_ata_dict["dense_ata_led_count"])
                 dense_ata_channels = int(dense_ata_dict["dense_ata_channels"])
                 computation_time = dense_ata_dict.get("dense_ata_computation_time", 0.0)
@@ -240,9 +230,7 @@ class DenseLEDOptimizer:
                     return False
 
                 # Load A^T@A data from top-level keys
-                dense_ata_matrices = data[
-                    "dense_ata_matrices"
-                ]  # Shape: (led_count, led_count, channels)
+                dense_ata_matrices = data["dense_ata_matrices"]  # Shape: (led_count, led_count, channels)
                 dense_ata_led_count = int(data["dense_ata_led_count"])
                 dense_ata_channels = int(data["dense_ata_channels"])
                 computation_time = data.get("dense_ata_computation_time", 0.0)
@@ -324,10 +312,7 @@ class DenseLEDOptimizer:
         # Validate matrix dimensions
         expected_pixels = FRAME_HEIGHT * FRAME_WIDTH
         if self._diffusion_matrix.pixels != expected_pixels:
-            logger.error(
-                f"Matrix pixel dimension mismatch: "
-                f"{self._diffusion_matrix.pixels} != {expected_pixels}"
-            )
+            logger.error(f"Matrix pixel dimension mismatch: {self._diffusion_matrix.pixels} != {expected_pixels}")
             return False
 
         # Load precomputed A^T*A matrices
@@ -369,7 +354,7 @@ class DenseLEDOptimizer:
             self._A_combined_csc_gpu,
         ) = self._diffusion_matrix.to_gpu_matrices()
 
-        logger.info(f"CSC matrices transferred to GPU successfully")
+        logger.info("CSC matrices transferred to GPU successfully")
 
     def _calculate_flops_per_iteration(self) -> None:
         """FLOP calculation removed - kept as stub for API compatibility."""
@@ -388,7 +373,7 @@ class DenseLEDOptimizer:
         pixels = FRAME_HEIGHT * FRAME_WIDTH
         led_count = self._actual_led_count
 
-        logger.info(f"Initializing dense workspace arrays...")
+        logger.info("Initializing dense workspace arrays...")
 
         # CPU buffers
         self._target_rgb_buffer = np.empty((pixels, 3), dtype=np.float32)
@@ -405,9 +390,7 @@ class DenseLEDOptimizer:
             "ATA_g": cp.zeros((led_count, 3), dtype=cp.float32),  # ATA @ gradient
         }
 
-        workspace_mb = sum(arr.nbytes for arr in self._gpu_workspace.values()) / (
-            1024 * 1024
-        )
+        workspace_mb = sum(arr.nbytes for arr in self._gpu_workspace.values()) / (1024 * 1024)
         logger.info(f"Dense workspace memory: {workspace_mb:.1f}MB")
 
     def _reset_workspace_references(self) -> None:
@@ -449,9 +432,7 @@ class DenseLEDOptimizer:
 
             # Validate input
             if target_frame.shape != (FRAME_HEIGHT, FRAME_WIDTH, 3):
-                raise ValueError(
-                    f"Target frame shape {target_frame.shape} != {(FRAME_HEIGHT, FRAME_WIDTH, 3)}"
-                )
+                raise ValueError(f"Target frame shape {target_frame.shape} != {(FRAME_HEIGHT, FRAME_WIDTH, 3)}")
 
             # KEY STEP 2: Calculate A^T*b for current frame
             self.timing and self.timing.start("ATb_calculation_total")
@@ -460,11 +441,9 @@ class DenseLEDOptimizer:
 
             # Initialize LED values
             if initial_values is not None:
-                initial_normalized = (
-                    initial_values / 255.0
-                    if initial_values.max() > 1.0
-                    else initial_values
-                ).astype(np.float32)
+                initial_normalized = (initial_values / 255.0 if initial_values.max() > 1.0 else initial_values).astype(
+                    np.float32
+                )
                 self._led_values_gpu[:] = cp.asarray(initial_normalized)
             else:
                 # Use pre-initialized 0.5 values
@@ -488,9 +467,7 @@ class DenseLEDOptimizer:
             # Calculate error metrics if debug mode is enabled
             error_metrics = {}
             if debug:
-                error_metrics = self._compute_error_metrics(
-                    led_values_solved, target_frame
-                )
+                error_metrics = self._compute_error_metrics(led_values_solved, target_frame)
 
             # Create result with optional debug information
             result = DenseOptimizationResult(
@@ -499,13 +476,15 @@ class DenseLEDOptimizer:
                 iterations=iterations_completed,
                 converged=True,
                 target_frame=target_frame.copy() if debug else None,
-                precomputation_info={
-                    "ata_shape": self._ATA_gpu.shape,
-                    "ata_memory_mb": self._ATA_gpu.nbytes / (1024 * 1024),
-                    "approach": "dense_precomputed_ata",
-                }
-                if debug
-                else None,
+                precomputation_info=(
+                    {
+                        "ata_shape": self._ATA_gpu.shape,
+                        "ata_memory_mb": self._ATA_gpu.nbytes / (1024 * 1024),
+                        "approach": "dense_precomputed_ata",
+                    }
+                    if debug
+                    else None
+                ),
             )
 
             # Update statistics
@@ -520,9 +499,7 @@ class DenseLEDOptimizer:
             # Return error result
             return DenseOptimizationResult(
                 led_values=np.zeros((self._actual_led_count, 3), dtype=np.uint8),
-                error_metrics={"mse": float("inf"), "mae": float("inf")}
-                if debug
-                else {},
+                error_metrics=({"mse": float("inf"), "mae": float("inf")} if debug else {}),
                 iterations=0,
                 converged=False,
             )
@@ -602,14 +579,10 @@ class DenseLEDOptimizer:
         self.timing and self.timing.start("ATb_data_preparation")
 
         # Step 1: Normalize target frame and convert to planar form
-        target_normalized = (
-            target_frame.astype(np.float32) / 255.0
-        )  # Shape: (height, width, 3)
+        target_normalized = target_frame.astype(np.float32) / 255.0  # Shape: (height, width, 3)
 
         # Convert from HWC to CHW (planar form): (height, width, 3) -> (3, height, width)
-        target_planar = target_normalized.transpose(
-            2, 0, 1
-        )  # Shape: (3, height, width)
+        target_planar = target_normalized.transpose(2, 0, 1)  # Shape: (3, height, width)
         target_gpu = cp.asarray(target_planar)  # Shape: (3, height, width)
 
         logger.debug(f"Target planar shape: {target_gpu.shape}")
@@ -618,28 +591,20 @@ class DenseLEDOptimizer:
 
         # Step 2: Use the new 3D transpose_dot_product method
         # This processes all channels in one CUDA kernel operation
-        self.timing and self.timing.start(
-            "ATb_mixed_tensor_3d_kernel", use_gpu_events=True
-        )
+        self.timing and self.timing.start("ATb_mixed_tensor_3d_kernel", use_gpu_events=True)
 
-        result = self._mixed_tensor.transpose_dot_product_3d(
-            target_gpu
-        )  # Shape: (batch_size, channels)
+        result = self._mixed_tensor.transpose_dot_product_3d(target_gpu)  # Shape: (batch_size, channels)
 
         self.timing and self.timing.stop("ATb_mixed_tensor_3d_kernel")
 
         # Store in the ATb buffer
         self._ATb_gpu[:] = result
 
-        logger.debug(
-            f"ATb result shape: {self._ATb_gpu.shape}, sample: {self._ATb_gpu[:3].get()}"
-        )
+        logger.debug(f"ATb result shape: {self._ATb_gpu.shape}, sample: {self._ATb_gpu[:3].get()}")
 
         return self._ATb_gpu
 
-    def _solve_dense_gradient_descent(
-        self, ATb: cp.ndarray, max_iterations: Optional[int]
-    ) -> Tuple[cp.ndarray, int]:
+    def _solve_dense_gradient_descent(self, ATb: cp.ndarray, max_iterations: Optional[int]) -> Tuple[cp.ndarray, int]:
         """
         Solve using dense gradient descent with precomputed A^T*A using optimized einsum.
 
@@ -660,10 +625,7 @@ class DenseLEDOptimizer:
             self._actual_led_count,
             self._actual_led_count,
             3,
-        ), (
-            f"ATA shape {self._ATA_gpu.shape} != expected "
-            f"({self._actual_led_count}, {self._actual_led_count}, 3)"
-        )
+        ), f"ATA shape {self._ATA_gpu.shape} != expected ({self._actual_led_count}, {self._actual_led_count}, 3)"
         assert ATb.shape == (
             self._actual_led_count,
             3,
@@ -683,9 +645,7 @@ class DenseLEDOptimizer:
             # KEY OPTIMIZATION: Use einsum for parallel ATA @ x computation
             # ATA: (led_count, led_count, 3), x: (led_count, 3) -> (led_count, 3)
             # einsum 'ijk,jk->ik' computes all 3 channels in parallel
-            self.timing and self.timing.start(
-                "gradient_calculation", use_gpu_events=True
-            )
+            self.timing and self.timing.start("gradient_calculation", use_gpu_events=True)
 
             w["ATA_x"][:] = cp.einsum("ijk,jk->ik", self._ATA_gpu, x)
             w["gradient"][:] = w["ATA_x"] - ATb
@@ -693,9 +653,7 @@ class DenseLEDOptimizer:
             self.timing and self.timing.stop("gradient_calculation")
 
             # KEY STEP 4: Compute step size using optimized dense operations
-            self.timing and self.timing.start(
-                "step_size_calculation", use_gpu_events=True
-            )
+            self.timing and self.timing.start("step_size_calculation", use_gpu_events=True)
 
             step_size = self._compute_dense_step_size(w["gradient"])
 
@@ -711,9 +669,7 @@ class DenseLEDOptimizer:
             # Check convergence
             delta = cp.linalg.norm(w["x_new"] - x)
             if delta < self.convergence_threshold:
-                logger.debug(
-                    f"Converged after {iteration+1} iterations, delta: {delta:.6f}"
-                )
+                logger.debug(f"Converged after {iteration + 1} iterations, delta: {delta:.6f}")
                 break
 
             # Update (copy values to avoid reference swapping issues)
@@ -747,9 +703,7 @@ class DenseLEDOptimizer:
         else:
             return 0.01  # Fallback step size
 
-    def _compute_error_metrics(
-        self, led_values: cp.ndarray, target_frame: np.ndarray
-    ) -> Dict[str, float]:
+    def _compute_error_metrics(self, led_values: cp.ndarray, target_frame: np.ndarray) -> Dict[str, float]:
         """Compute error metrics using sparse matrices for accuracy."""
         # Convert target frame
         target_rgb = target_frame.astype(np.float32) / 255.0

@@ -156,9 +156,7 @@ class SyntheticPatternGenerator:
         led_list.sort(key=lambda item: item[3])
 
         # Create mapping: physical_led_id -> spatially_ordered_matrix_index
-        spatial_mapping = {
-            led_id: matrix_idx for matrix_idx, (led_id, _, _, _) in enumerate(led_list)
-        }
+        spatial_mapping = {led_id: matrix_idx for matrix_idx, (led_id, _, _, _) in enumerate(led_list)}
 
         logger.info(f"Created spatial ordering for {len(spatial_mapping)} LEDs")
         return spatial_mapping
@@ -197,9 +195,7 @@ class SyntheticPatternGenerator:
         if pattern_type == "gaussian_multi":
             # Multiple Gaussian blobs for realistic diffusion
             for c in range(3):  # RGB channels
-                channel_pattern = np.zeros(
-                    (self.frame_height, self.frame_width), dtype=np.float32
-                )
+                channel_pattern = np.zeros((self.frame_height, self.frame_width), dtype=np.float32)
 
                 # Create 2-4 Gaussian blobs per channel
                 num_blobs = np.random.randint(2, 5)
@@ -222,19 +218,14 @@ class SyntheticPatternGenerator:
                     )
 
                     # Gaussian pattern (cropped)
-                    gaussian = intensity * np.exp(
-                        -(xx**2 + yy**2) / (2 * sigma**2)
-                    )
+                    gaussian = intensity * np.exp(-(xx**2 + yy**2) / (2 * sigma**2))
                     # Only update the crop region
-                    channel_pattern[
-                        crop_y_min:crop_y_max, crop_x_min:crop_x_max
-                    ] += gaussian
+                    channel_pattern[crop_y_min:crop_y_max, crop_x_min:crop_x_max] += gaussian
 
                 # Add some color variation between channels (only to cropped region)
                 color_variation = np.random.uniform(0.7, 1.3)
                 pattern[crop_y_min:crop_y_max, crop_x_min:crop_x_max, c] = (
-                    channel_pattern[crop_y_min:crop_y_max, crop_x_min:crop_x_max]
-                    * color_variation
+                    channel_pattern[crop_y_min:crop_y_max, crop_x_min:crop_x_max] * color_variation
                 )
 
         elif pattern_type == "gaussian_simple":
@@ -251,11 +242,7 @@ class SyntheticPatternGenerator:
 
                 # Gaussian pattern with color variation (cropped)
                 color_variation = np.random.uniform(0.8, 1.2)
-                gaussian = (
-                    intensity
-                    * color_variation
-                    * np.exp(-(xx**2 + yy**2) / (2 * sigma**2))
-                )
+                gaussian = intensity * color_variation * np.exp(-(xx**2 + yy**2) / (2 * sigma**2))
                 # Only update the crop region
                 pattern[crop_y_min:crop_y_max, crop_x_min:crop_x_max, c] = gaussian
 
@@ -274,13 +261,9 @@ class SyntheticPatternGenerator:
 
                 # Exponential decay with color variation (cropped)
                 color_variation = np.random.uniform(0.7, 1.3)
-                exponential_pattern = (
-                    intensity * color_variation * np.exp(-decay_rate * distances)
-                )
+                exponential_pattern = intensity * color_variation * np.exp(-decay_rate * distances)
                 # Only update the crop region
-                pattern[
-                    crop_y_min:crop_y_max, crop_x_min:crop_x_max, c
-                ] = exponential_pattern
+                pattern[crop_y_min:crop_y_max, crop_x_min:crop_x_max, c] = exponential_pattern
 
         # Normalize and clip to valid range
         if np.max(pattern) > 0:
@@ -310,9 +293,7 @@ class SyntheticPatternGenerator:
         Returns:
             Tuple of (LEDDiffusionCSCMatrix, led_spatial_mapping)
         """
-        logger.info(
-            f"Generating sparse patterns for {led_count} LEDs in chunks of {chunk_size}..."
-        )
+        logger.info(f"Generating sparse patterns for {led_count} LEDs in chunks of {chunk_size}...")
         logger.info(f"Pattern type: {pattern_type}")
         logger.info(f"Sparsity threshold: {self.sparsity_threshold}")
 
@@ -332,20 +313,14 @@ class SyntheticPatternGenerator:
 
         # Compute RCM ordering directly from block positions
         logger.info("Computing RCM ordering for optimal bandwidth...")
-        rcm_order, inverse_order, expected_ata_diagonals = compute_rcm_ordering(
-            block_positions, self.block_size
-        )
-        logger.info(
-            f"Expected A^T A diagonals (from adjacency): {expected_ata_diagonals}"
-        )
+        rcm_order, inverse_order, expected_ata_diagonals = compute_rcm_ordering(block_positions, self.block_size)
+        logger.info(f"Expected A^T A diagonals (from adjacency): {expected_ata_diagonals}")
 
         # Store expected diagonal count for later comparison
         self.expected_ata_diagonals = expected_ata_diagonals
 
         # Create mapping: physical_led_id -> rcm_ordered_matrix_index
-        self.led_spatial_mapping = {
-            original_id: rcm_pos for rcm_pos, original_id in enumerate(rcm_order)
-        }
+        self.led_spatial_mapping = {original_id: rcm_pos for rcm_pos, original_id in enumerate(rcm_order)}
         # Create reverse mapping: rcm_ordered_matrix_index -> physical_led_id
         self.reverse_spatial_mapping = dict(enumerate(rcm_order))
 
@@ -363,21 +338,14 @@ class SyntheticPatternGenerator:
             chunk_end = min(chunk_start + chunk_size, led_count)
             chunk_led_count = chunk_end - chunk_start
 
-            logger.info(
-                f"Processing chunk {chunk_idx + 1}/{num_chunks}: "
-                f"spatial indices {chunk_start}-{chunk_end-1}"
-            )
+            logger.info(f"Processing chunk {chunk_idx + 1}/{num_chunks}: spatial indices {chunk_start}-{chunk_end - 1}")
 
             # Generate dense matrix for this chunk (384000, chunk_led_count * 3)
-            chunk_matrix = np.zeros(
-                (pixels_per_channel, chunk_led_count * 3), dtype=np.float32
-            )
+            chunk_matrix = np.zeros((pixels_per_channel, chunk_led_count * 3), dtype=np.float32)
 
             for local_led_idx in range(chunk_led_count):
                 spatial_idx = chunk_start + local_led_idx  # Spatial matrix index
-                physical_led_id = self.reverse_spatial_mapping[
-                    spatial_idx
-                ]  # Get actual LED ID
+                physical_led_id = self.reverse_spatial_mapping[spatial_idx]  # Get actual LED ID
 
                 # Vary intensity if requested
                 if intensity_variation:
@@ -407,9 +375,7 @@ class SyntheticPatternGenerator:
                     # Store in dense chunk matrix at spatial position
                     # local_led_idx corresponds to spatial matrix column position
                     chunk_col_idx = local_led_idx * 3 + channel
-                    chunk_matrix[significant_mask, chunk_col_idx] = pattern_flat[
-                        significant_mask
-                    ]
+                    chunk_matrix[significant_mask, chunk_col_idx] = pattern_flat[significant_mask]
 
             # Convert chunk to sparse format
             chunk_sparse = sp.csc_matrix(chunk_matrix, dtype=np.float32)
@@ -419,12 +385,9 @@ class SyntheticPatternGenerator:
             # Progress reporting
             elapsed = time.time() - start_time
             eta = elapsed * (num_chunks / (chunk_idx + 1) - 1)
-            chunk_sparsity = (
-                chunk_sparse.nnz / (chunk_sparse.shape[0] * chunk_sparse.shape[1]) * 100
-            )
+            chunk_sparsity = chunk_sparse.nnz / (chunk_sparse.shape[0] * chunk_sparse.shape[1]) * 100
             logger.info(
-                f"Chunk {chunk_idx + 1}/{num_chunks} complete. "
-                f"Sparsity: {chunk_sparsity:.2f}%, ETA: {eta:.1f}s"
+                f"Chunk {chunk_idx + 1}/{num_chunks} complete. Sparsity: {chunk_sparsity:.2f}%, ETA: {eta:.1f}s"
             )
 
             if progress_callback:
@@ -439,11 +402,7 @@ class SyntheticPatternGenerator:
         final_sparse_matrix = final_sparse_matrix.tocsc()
 
         generation_time = time.time() - start_time
-        actual_sparsity = (
-            final_sparse_matrix.nnz
-            / (final_sparse_matrix.shape[0] * final_sparse_matrix.shape[1])
-            * 100
-        )
+        actual_sparsity = final_sparse_matrix.nnz / (final_sparse_matrix.shape[0] * final_sparse_matrix.shape[1]) * 100
         memory_mb = final_sparse_matrix.data.nbytes / (1024 * 1024)
 
         logger.info(f"Generated chunked sparse matrix in {generation_time:.2f}s")
@@ -453,9 +412,7 @@ class SyntheticPatternGenerator:
         logger.info(f"Memory usage: {memory_mb:.1f} MB")
 
         # Matrix is already in RCM order from generation - no need to reorder
-        logger.info(
-            "Matrix already generated in RCM order - skipping redundant reordering"
-        )
+        logger.info("Matrix already generated in RCM order - skipping redundant reordering")
         reordered_matrix = final_sparse_matrix
 
         # LED spatial mapping is already in RCM order from generation
@@ -469,15 +426,11 @@ class SyntheticPatternGenerator:
             channels=3,
         )
 
-        logger.info(
-            f"Created LEDDiffusionCSCMatrix wrapper with RCM ordering: {diffusion_matrix}"
-        )
+        logger.info(f"Created LEDDiffusionCSCMatrix wrapper with RCM ordering: {diffusion_matrix}")
 
         return diffusion_matrix, rcm_led_mapping
 
-    def _generate_mixed_tensor_format(
-        self, sparse_matrix: sp.csc_matrix
-    ) -> SingleBlockMixedSparseTensor:
+    def _generate_mixed_tensor_format(self, sparse_matrix: sp.csc_matrix) -> SingleBlockMixedSparseTensor:
         """
         Generate SingleBlockMixedSparseTensor from sparse matrix using the proper API.
 
@@ -549,19 +502,13 @@ class SyntheticPatternGenerator:
                     top_col = (top_col_candidate // 4) * 4
                 else:
                     # Pattern is larger than block, use LED position as center
-                    if self.led_positions is not None and led_id < len(
-                        self.led_positions
-                    ):
+                    if self.led_positions is not None and led_id < len(self.led_positions):
                         # Use stored reverse mapping to get physical LED ID from spatial index
                         if led_id in self.reverse_spatial_mapping:
                             physical_led_id = self.reverse_spatial_mapping[led_id]
                             led_x, led_y = self.led_positions[physical_led_id]
-                            top_row = max(
-                                0, min(height - block_size, led_y - block_size // 2)
-                            )
-                            top_col_candidate = max(
-                                0, min(width - block_size, led_x - block_size // 2)
-                            )
+                            top_row = max(0, min(height - block_size, led_y - block_size // 2))
+                            top_col_candidate = max(0, min(width - block_size, led_x - block_size // 2))
                             # ALIGNMENT: Round down x-coordinate to multiple of 4
                             top_col = (top_col_candidate // 4) * 4
                         else:
@@ -572,21 +519,15 @@ class SyntheticPatternGenerator:
                                 0,
                                 min(height - block_size, center_row - block_size // 2),
                             )
-                            top_col_candidate = max(
-                                0, min(width - block_size, center_col - block_size // 2)
-                            )
+                            top_col_candidate = max(0, min(width - block_size, center_col - block_size // 2))
                             # ALIGNMENT: Round down x-coordinate to multiple of 4
                             top_col = (top_col_candidate // 4) * 4
                     else:
                         # Fallback: use pattern center
                         center_row = (min_row + max_row) // 2
                         center_col = (min_col + max_col) // 2
-                        top_row = max(
-                            0, min(height - block_size, center_row - block_size // 2)
-                        )
-                        top_col_candidate = max(
-                            0, min(width - block_size, center_col - block_size // 2)
-                        )
+                        top_row = max(0, min(height - block_size, center_row - block_size // 2))
+                        top_col_candidate = max(0, min(width - block_size, center_col - block_size // 2))
                         # ALIGNMENT: Round down x-coordinate to multiple of 4
                         top_col = (top_col_candidate // 4) * 4
 
@@ -638,7 +579,7 @@ class SyntheticPatternGenerator:
 
         # Compute A^T @ A for each channel separately
         for c in range(channels):
-            logger.info(f"Computing A^T @ A for channel {c+1}/{channels}")
+            logger.info(f"Computing A^T @ A for channel {c + 1}/{channels}")
 
             # Extract channel matrix (pixels, leds) for this channel
             channel_cols = list(range(c, sparse_matrix.shape[1], channels))
@@ -654,33 +595,26 @@ class SyntheticPatternGenerator:
                 unique_diagonals = np.unique(diagonal_offsets)
                 bandwidth = len(unique_diagonals)
                 ata_bandwidths.append(bandwidth)
-                logger.info(f"Channel {c+1} A^T @ A bandwidth: {bandwidth} diagonals")
+                logger.info(f"Channel {c + 1} A^T @ A bandwidth: {bandwidth} diagonals")
                 logger.info(
-                    f"Channel {c+1} A^T @ A diagonal range: "
-                    f"[{diagonal_offsets.min()}, {diagonal_offsets.max()}]"
+                    f"Channel {c + 1} A^T @ A diagonal range: [{diagonal_offsets.min()}, {diagonal_offsets.max()}]"
                 )
-                logger.info(f"Channel {c+1} A^T @ A nnz: {coo.nnz:,}")
-                logger.info(
-                    f"Channel {c+1} A^T @ A diagonals present: {sorted(unique_diagonals.tolist())}"
-                )
+                logger.info(f"Channel {c + 1} A^T @ A nnz: {coo.nnz:,}")
+                logger.info(f"Channel {c + 1} A^T @ A diagonals present: {sorted(unique_diagonals.tolist())}")
                 # Check if main diagonal (0) is present
                 if 0 in unique_diagonals:
-                    logger.info(
-                        f"Channel {c+1} main diagonal (0) is present in A^T @ A"
-                    )
+                    logger.info(f"Channel {c + 1} main diagonal (0) is present in A^T @ A")
                 else:
-                    logger.info(
-                        f"Channel {c+1} main diagonal (0) is MISSING from A^T @ A"
-                    )
+                    logger.info(f"Channel {c + 1} main diagonal (0) is MISSING from A^T @ A")
             else:
                 ata_bandwidths.append(0)
-                logger.info(f"Channel {c+1} A^T @ A is empty")
+                logger.info(f"Channel {c + 1} A^T @ A is empty")
 
             # Convert to dense and store
             ATA_dense[:, :, c] = ATA_channel.toarray().astype(np.float32)
 
             channel_time = time.time() - start_time
-            logger.info(f"Channel {c+1} A^T @ A computed in {channel_time:.2f}s")
+            logger.info(f"Channel {c + 1} A^T @ A computed in {channel_time:.2f}s")
 
         total_time = time.time() - start_time
         memory_mb = ATA_dense.nbytes / (1024 * 1024)
@@ -689,9 +623,7 @@ class SyntheticPatternGenerator:
         logger.info(f"Dense A^T @ A precomputation completed in {total_time:.2f}s")
         logger.info(f"Dense A^T @ A tensor shape: {ATA_dense.shape}")
         logger.info(f"Dense A^T @ A memory: {memory_mb:.1f}MB")
-        logger.info(
-            f"Average A^T @ A bandwidth across channels: {avg_ata_bandwidth:.1f} diagonals"
-        )
+        logger.info(f"Average A^T @ A bandwidth across channels: {avg_ata_bandwidth:.1f} diagonals")
 
         return {
             "dense_ata_matrices": ATA_dense,
@@ -702,9 +634,7 @@ class SyntheticPatternGenerator:
             "avg_ata_bandwidth": avg_ata_bandwidth,
         }
 
-    def _generate_dia_matrix(
-        self, sparse_matrix: sp.csc_matrix, led_positions: np.ndarray
-    ) -> "DiagonalATAMatrix":
+    def _generate_dia_matrix(self, sparse_matrix: sp.csc_matrix, led_positions: np.ndarray) -> "DiagonalATAMatrix":
         """
         Generate DiagonalATAMatrix from sparse diffusion matrix.
 
@@ -726,8 +656,7 @@ class SyntheticPatternGenerator:
         dia_matrix.build_from_diffusion_matrix(sparse_matrix)
 
         logger.info(
-            f"DiagonalATAMatrix built: {led_count} LEDs, "
-            f"bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
+            f"DiagonalATAMatrix built: {led_count} LEDs, bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
         )
 
         # Compare expected vs actual diagonal counts
@@ -740,14 +669,10 @@ class SyntheticPatternGenerator:
                     f"DIA matrix diagonal count mismatch: expected={expected}, "
                     f"actual={actual} ({ratio:.1f}x more than expected!)"
                 )
-                logger.warning(
-                    "This indicates pattern generation may not be following "
-                    "adjacency structure properly"
-                )
+                logger.warning("This indicates pattern generation may not be following adjacency structure properly")
             else:
                 logger.info(
-                    f"DIA matrix diagonal count: expected={expected}, "
-                    f"actual={actual} ({ratio:.1f}x expected - good!)"
+                    f"DIA matrix diagonal count: expected={expected}, actual={actual} ({ratio:.1f}x expected - good!)"
                 )
 
         return dia_matrix
@@ -778,9 +703,7 @@ class SyntheticPatternGenerator:
 
             # Generate mixed tensor format using SingleBlockMixedSparseTensor
             logger.info("Generating mixed tensor format...")
-            mixed_tensor = self._generate_mixed_tensor_format(
-                diffusion_matrix.to_csc_matrix()
-            )
+            mixed_tensor = self._generate_mixed_tensor_format(diffusion_matrix.to_csc_matrix())
 
             # Prepare metadata
             save_metadata = {
@@ -804,9 +727,7 @@ class SyntheticPatternGenerator:
 
             # Generate DiagonalATAMatrix (DIA format)
             logger.info("Generating DiagonalATAMatrix (DIA format)...")
-            dia_matrix = self._generate_dia_matrix(
-                diffusion_matrix.to_csc_matrix(), self.led_positions
-            )
+            dia_matrix = self._generate_dia_matrix(diffusion_matrix.to_csc_matrix(), self.led_positions)
 
             # Save everything in a single NPZ file
             save_dict = {
@@ -828,21 +749,16 @@ class SyntheticPatternGenerator:
 
             logger.info(f"Saved mixed tensor and DIA matrix to {output_path}")
             logger.info(f"File size: {file_size:.1f} MB")
-            logger.info(f"Mixed tensor format: SingleBlockMixedSparseTensor")
+            logger.info("Mixed tensor format: SingleBlockMixedSparseTensor")
             logger.info(
                 f"Mixed tensor: {mixed_tensor.batch_size} LEDs, "
                 f"{mixed_tensor.height}x{mixed_tensor.width}, "
                 f"{mixed_tensor.block_size}x{mixed_tensor.block_size} blocks"
             )
             logger.info(
-                f"DIA matrix: {dia_matrix.led_count} LEDs, "
-                f"bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
+                f"DIA matrix: {dia_matrix.led_count} LEDs, bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
             )
-            storage_shape = (
-                dia_matrix.dia_data_cpu.shape
-                if dia_matrix.dia_data_cpu is not None
-                else "None"
-            )
+            storage_shape = dia_matrix.dia_data_cpu.shape if dia_matrix.dia_data_cpu is not None else "None"
             logger.info(f"DIA matrix storage shape: {storage_shape}")
 
             return True
@@ -854,9 +770,7 @@ class SyntheticPatternGenerator:
 
 def main():
     """Main function."""
-    parser = argparse.ArgumentParser(
-        description="Generate synthetic LED diffusion patterns"
-    )
+    parser = argparse.ArgumentParser(description="Generate synthetic LED diffusion patterns")
     parser.add_argument("--output", "-o", required=True, help="Output NPZ file path")
     parser.add_argument(
         "--led-count",
@@ -883,9 +797,7 @@ def main():
         default="gaussian_multi",
         help="Pattern type to generate",
     )
-    parser.add_argument(
-        "--seed", type=int, help="Random seed for reproducible patterns"
-    )
+    parser.add_argument("--seed", type=int, help="Random seed for reproducible patterns")
     parser.add_argument(
         "--no-intensity-variation",
         action="store_true",
@@ -909,17 +821,13 @@ def main():
         default=96,
         help="Block size for LED diffusion patterns (default: 96)",
     )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose logging"
-    )
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
 
     # Setup logging
     level = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(
-        level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
+    logging.basicConfig(level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
     try:
         # Create generator
@@ -959,9 +867,7 @@ def main():
         )
 
         # Save LEDDiffusionCSCMatrix
-        if not generator.save_sparse_matrix(
-            diffusion_matrix, led_mapping, args.output, metadata
-        ):
+        if not generator.save_sparse_matrix(diffusion_matrix, led_mapping, args.output, metadata):
             logger.error("Failed to save LEDDiffusionCSCMatrix")
             return 1
 

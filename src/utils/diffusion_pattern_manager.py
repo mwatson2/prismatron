@@ -61,18 +61,12 @@ class DiffusionPatternManager:
         self._generation_complete = False
         self._accumulated_patterns = []
 
-        logger.info(
-            f"DiffusionPatternManager initialized: {led_count} LEDs, {frame_height}×{frame_width} frames"
-        )
+        logger.info(f"DiffusionPatternManager initialized: {led_count} LEDs, {frame_height}×{frame_width} frames")
 
     @property
     def is_loaded(self) -> bool:
         """Check if patterns are loaded and ready."""
-        return (
-            self._sparse_matrices is not None
-            and self._dense_ata is not None
-            and self._led_positions is not None
-        )
+        return self._sparse_matrices is not None and self._dense_ata is not None and self._led_positions is not None
 
     @property
     def is_generation_complete(self) -> bool:
@@ -121,12 +115,10 @@ class DiffusionPatternManager:
             led_id: LED identifier (0 to led_count-1)
             diffusion_frame: Diffusion pattern in planar format (3, height, width)
         """
-        assert (
-            0 <= led_id < self.led_count
-        ), f"LED ID {led_id} out of range [0, {self.led_count})"
-        assert (
-            diffusion_frame.shape == self.get_frame_shape()
-        ), f"Frame shape must be {self.get_frame_shape()}, got {diffusion_frame.shape}"
+        assert 0 <= led_id < self.led_count, f"LED ID {led_id} out of range [0, {self.led_count})"
+        assert diffusion_frame.shape == self.get_frame_shape(), (
+            f"Frame shape must be {self.get_frame_shape()}, got {diffusion_frame.shape}"
+        )
 
         # Store pattern for this LED
         pattern_data = {
@@ -136,9 +128,7 @@ class DiffusionPatternManager:
         }
         self._accumulated_patterns.append(pattern_data)
 
-        logger.debug(
-            f"Added pattern for LED {led_id}, total patterns: {len(self._accumulated_patterns)}"
-        )
+        logger.debug(f"Added pattern for LED {led_id}, total patterns: {len(self._accumulated_patterns)}")
 
     def finalize_pattern_generation(self, sparse_format: str = "csc") -> Dict[str, any]:
         """
@@ -183,9 +173,7 @@ class DiffusionPatternManager:
         logger.info(f"Pattern generation completed in {generation_time:.2f}s")
         return stats
 
-    def save_patterns(
-        self, filepath: Union[str, Path], include_diffusion_tensor: bool = False
-    ):
+    def save_patterns(self, filepath: Union[str, Path], include_diffusion_tensor: bool = False):
         """
         Save patterns to file.
 
@@ -268,17 +256,13 @@ class DiffusionPatternManager:
     def get_sparse_matrices(self) -> Dict[str, sp.spmatrix]:
         """Get sparse matrices for optimization."""
         if self._sparse_matrices is None:
-            raise ValueError(
-                "Sparse matrices not available - generate or load patterns first"
-            )
+            raise ValueError("Sparse matrices not available - generate or load patterns first")
         return self._sparse_matrices.copy()
 
     def get_dense_ata(self) -> np.ndarray:
         """Get dense A^T @ A matrices."""
         if self._dense_ata is None:
-            raise ValueError(
-                "Dense A^T @ A not available - generate or load patterns first"
-            )
+            raise ValueError("Dense A^T @ A not available - generate or load patterns first")
         return self._dense_ata.copy()
 
     def get_led_positions(self) -> np.ndarray:
@@ -302,9 +286,7 @@ class DiffusionPatternManager:
         logger.info("Building diffusion tensor from accumulated patterns...")
 
         # Initialize tensor
-        self._diffusion_tensor = np.zeros(
-            (self.led_count, 3, self.frame_height, self.frame_width), dtype=np.float32
-        )
+        self._diffusion_tensor = np.zeros((self.led_count, 3, self.frame_height, self.frame_width), dtype=np.float32)
 
         # Fill tensor from accumulated patterns or loaded patterns
         if self._accumulated_patterns:
@@ -386,13 +368,10 @@ class DiffusionPatternManager:
             "total_nnz": total_nnz,
             "total_size_mb": total_size_mb,
             "combined_shape": A_combined.shape,
-            "combined_density": A_combined.nnz
-            / (A_combined.shape[0] * A_combined.shape[1]),
+            "combined_density": A_combined.nnz / (A_combined.shape[0] * A_combined.shape[1]),
         }
 
-        logger.info(
-            f"Sparse matrices created: {total_nnz:,} NNZ, {total_size_mb:.1f}MB"
-        )
+        logger.info(f"Sparse matrices created: {total_nnz:,} NNZ, {total_size_mb:.1f}MB")
         return stats
 
     def _compute_dense_ata(self) -> Dict[str, any]:
@@ -432,9 +411,7 @@ class DiffusionPatternManager:
             "ata_density": ata_density,
         }
 
-        logger.info(
-            f"Dense A^T @ A computed: {self._dense_ata.shape}, {ata_memory_mb:.1f}MB, {computation_time:.2f}s"
-        )
+        logger.info(f"Dense A^T @ A computed: {self._dense_ata.shape}, {ata_memory_mb:.1f}MB, {computation_time:.2f}s")
         return stats
 
     def _load_planar_format(self, data) -> Dict[str, any]:
@@ -497,9 +474,7 @@ class DiffusionPatternManager:
         logger.info(f"Loading sparse matrix with shape {matrix_shape}")
 
         # Reconstruct the sparse matrix (CSC format)
-        A_combined = sp.csc_matrix(
-            (matrix_data, matrix_indices, matrix_indptr), shape=matrix_shape
-        )
+        A_combined = sp.csc_matrix((matrix_data, matrix_indices, matrix_indptr), shape=matrix_shape)
 
         # The matrix shape is (pixels, led_count * 3)
         # Where pixels = frame_height * frame_width = 480 * 800 = 384000
@@ -509,15 +484,10 @@ class DiffusionPatternManager:
         led_count = led_count_times_3 // 3
 
         if pixels != self.frame_height * self.frame_width:
-            raise ValueError(
-                f"Matrix pixels {pixels} != expected "
-                f"{self.frame_height * self.frame_width}"
-            )
+            raise ValueError(f"Matrix pixels {pixels} != expected {self.frame_height * self.frame_width}")
 
         if led_count != self.led_count:
-            raise ValueError(
-                f"Matrix LED count {led_count} != expected {self.led_count}"
-            )
+            raise ValueError(f"Matrix LED count {led_count} != expected {self.led_count}")
 
         logger.info(f"Matrix format: {pixels} pixels, {led_count} LEDs")
 
@@ -546,9 +516,7 @@ class DiffusionPatternManager:
             pattern_b = pattern_b_vec.reshape(self.frame_height, self.frame_width)
 
             # Combine into planar format (3, H, W)
-            pattern_planar = np.stack([pattern_r, pattern_g, pattern_b], axis=0).astype(
-                np.float32
-            )
+            pattern_planar = np.stack([pattern_r, pattern_g, pattern_b], axis=0).astype(np.float32)
 
             self._patterns[led_id] = pattern_planar
 
@@ -568,9 +536,7 @@ class DiffusionPatternManager:
                 self._led_spatial_mapping = mapping_data.item()
             else:
                 self._led_spatial_mapping = dict(mapping_data)
-            logger.info(
-                f"Loaded LED spatial mapping with {len(self._led_spatial_mapping)} entries"
-            )
+            logger.info(f"Loaded LED spatial mapping with {len(self._led_spatial_mapping)} entries")
 
         # Build diffusion tensor from loaded patterns
         logger.info("Building diffusion tensor from loaded patterns...")

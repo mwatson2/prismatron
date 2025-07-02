@@ -36,7 +36,7 @@ def debug_dia_matrix_performance():
     led_count = 500
     dia_matrix = DiagonalATAMatrix(led_count=led_count)
 
-    print(f"Building DIA matrix...")
+    print("Building DIA matrix...")
     build_start = time.time()
     dia_matrix.build_from_diffusion_matrix(csc_matrix, led_positions)
     build_time = time.time() - build_start
@@ -54,18 +54,16 @@ def debug_dia_matrix_performance():
 
     for test_name, led_values_cpu in test_vectors.items():
         print(f"\n--- Testing with {test_name} values ---")
-        print(
-            f"LED values range: [{led_values_cpu.min():.6f}, {led_values_cpu.max():.6f}]"
-        )
+        print(f"LED values range: [{led_values_cpu.min():.6f}, {led_values_cpu.max():.6f}]")
 
         # Convert to GPU
         transfer_start = time.time()
         led_values_gpu = cp.asarray(led_values_cpu)
         transfer_time = time.time() - transfer_start
-        print(f"CPU->GPU transfer: {transfer_time*1000:.3f}ms")
+        print(f"CPU->GPU transfer: {transfer_time * 1000:.3f}ms")
 
         # === Test multiply_3d (A^T A @ x) ===
-        print(f"\n  Testing multiply_3d (A^T A @ x):")
+        print("\n  Testing multiply_3d (A^T A @ x):")
 
         # Warmup
         for _ in range(3):
@@ -88,12 +86,10 @@ def debug_dia_matrix_performance():
         std_time = np.std(times) * 1000
         print(f"    multiply_3d: {avg_time:7.3f} ± {std_time:5.3f} ms")
         print(f"    Result shape: {result.shape}")
-        print(
-            f"    Result range: [{float(cp.min(result)):.6f}, {float(cp.max(result)):.6f}]"
-        )
+        print(f"    Result range: [{float(cp.min(result)):.6f}, {float(cp.max(result)):.6f}]")
 
         # === Test g_ata_g_3d (g^T @ A^T A @ g) ===
-        print(f"\n  Testing g_ata_g_3d (g^T @ A^T A @ g):")
+        print("\n  Testing g_ata_g_3d (g^T @ A^T A @ g):")
 
         # Use result as gradient for this test
         gradient_gpu = result
@@ -122,18 +118,16 @@ def debug_dia_matrix_performance():
         print(f"    Result values: {[float(x) for x in g_ata_g_result]}")
 
     # === Test implementation details ===
-    print(f"\n--- Implementation Analysis ---")
+    print("\n--- Implementation Analysis ---")
 
     # Check if DIA operations are using CPU or GPU
-    print(
-        f"DIA data location: {'GPU' if hasattr(dia_matrix, 'dia_data_gpu') else 'CPU'}"
-    )
+    print(f"DIA data location: {'GPU' if hasattr(dia_matrix, 'dia_data_gpu') else 'CPU'}")
     print(f"DIA data type: {dia_matrix.dia_data_cpu.dtype}")
 
     # Test CPU vs GPU performance if both are available
     test_led_values = cp.asarray(np.full((3, led_count), 0.5, dtype=np.float32))
 
-    print(f"\nMemory transfer analysis:")
+    print("\nMemory transfer analysis:")
 
     # Test multiple operations to see cumulative overhead
     total_start = time.time()
@@ -149,14 +143,14 @@ def debug_dia_matrix_performance():
         cp.cuda.Device().synchronize()
 
     total_time = time.time() - total_start
-    print(f"5 multiply_3d + g_ata_g_3d operations: {total_time*1000:.3f}ms")
-    print(f"Average per operation pair: {total_time*1000/5:.3f}ms")
+    print(f"5 multiply_3d + g_ata_g_3d operations: {total_time * 1000:.3f}ms")
+    print(f"Average per operation pair: {total_time * 1000 / 5:.3f}ms")
 
     # Check for any scipy warnings or inefficiencies
     import scipy.sparse
 
-    print(f"\nSciPy sparse format analysis:")
-    print(f"  DIA format efficiency warning: Check console for scipy warnings")
+    print("\nSciPy sparse format analysis:")
+    print("  DIA format efficiency warning: Check console for scipy warnings")
 
     # Test manual conversion impact
     dia_sparse = scipy.sparse.diags_array(
@@ -164,9 +158,7 @@ def debug_dia_matrix_performance():
         offsets=dia_matrix.offsets,
         shape=(led_count, led_count),
     )
-    print(
-        f"  DIA matrix density: {dia_sparse.nnz / (led_count * led_count) * 100:.2f}%"
-    )
+    print(f"  DIA matrix density: {dia_sparse.nnz / (led_count * led_count) * 100:.2f}%")
     print(f"  Number of diagonals: {len(dia_matrix.offsets)}")
 
 

@@ -46,9 +46,7 @@ def morton_encode(x, y):
     return part1by1(x) | (part1by1(y) << 1)
 
 
-def generate_spatially_ordered_positions(
-    led_count, height, width, block_size, seed=42, align_x_to_4=False
-):
+def generate_spatially_ordered_positions(led_count, height, width, block_size, seed=42, align_x_to_4=False):
     """Generate LED positions with spatial Morton ordering for cache locality.
 
     Args:
@@ -77,9 +75,7 @@ def generate_spatially_ordered_positions(
                 top_col = 0
             else:
                 # Generate random multiple of 4 within valid range
-                num_positions = (
-                    max_col_aligned // 4 + 1
-                )  # Number of valid 4-aligned positions
+                num_positions = max_col_aligned // 4 + 1  # Number of valid 4-aligned positions
                 top_col = np.random.randint(0, num_positions) * 4
         else:
             top_col = np.random.randint(0, max_col)
@@ -122,9 +118,7 @@ def mixed_sparse_tensor():
     )
 
     # Generate LED positions with spatial Morton ordering for cache locality
-    led_positions = generate_spatially_ordered_positions(
-        led_count, height, width, block_size, seed=42
-    )
+    led_positions = generate_spatially_ordered_positions(led_count, height, width, block_size, seed=42)
 
     # Generate realistic diffusion patterns with spatially ordered placement
     np.random.seed(42)  # For reproducible results
@@ -139,10 +133,7 @@ def mixed_sparse_tensor():
 
             # Gaussian pattern with some randomness
             sigma = block_size / 4
-            gaussian = np.exp(
-                -((x_coords - center_col) ** 2 + (y_coords - center_row) ** 2)
-                / (2 * sigma**2)
-            )
+            gaussian = np.exp(-((x_coords - center_col) ** 2 + (y_coords - center_row) ** 2) / (2 * sigma**2))
 
             # Add some noise and channel-specific intensity
             noise = np.random.normal(0, 0.1, (block_size, block_size))
@@ -150,9 +141,7 @@ def mixed_sparse_tensor():
             pattern = (gaussian * intensity + noise).clip(0, 1).astype(np.float32)
 
             # Set the block
-            tensor.set_block(
-                led_idx, channel_idx, top_row, top_col, cp.asarray(pattern)
-            )
+            tensor.set_block(led_idx, channel_idx, top_row, top_col, cp.asarray(pattern))
 
     return tensor
 
@@ -190,10 +179,7 @@ def test_images():
     # Gaussian blob
     y_center, x_center = height // 2, width // 2
     y_coords, x_coords = np.ogrid[:height, :width]
-    gaussian = np.exp(
-        -((x_coords - x_center) ** 2 + (y_coords - y_center) ** 2)
-        / (2 * (min(height, width) // 4) ** 2)
-    )
+    gaussian = np.exp(-((x_coords - x_center) ** 2 + (y_coords - y_center) ** 2) / (2 * (min(height, width) // 4) ** 2))
     blob_img = np.zeros((channels, height, width), dtype=np.float32)
     for c in range(channels):
         blob_img[c] = gaussian * (c + 1) / channels
@@ -231,13 +217,9 @@ def large_mixed_sparse_tensor():
     )
 
     # Generate LED positions with spatial Morton ordering for cache locality
-    logger.info(
-        f"Generating large tensor with {led_count} LEDs for performance testing..."
-    )
+    logger.info(f"Generating large tensor with {led_count} LEDs for performance testing...")
 
-    led_positions = generate_spatially_ordered_positions(
-        led_count, height, width, block_size, seed=42
-    )
+    led_positions = generate_spatially_ordered_positions(led_count, height, width, block_size, seed=42)
 
     # Generate realistic diffusion patterns with spatially ordered placement
     np.random.seed(42)  # For reproducible results
@@ -252,10 +234,7 @@ def large_mixed_sparse_tensor():
 
             # Gaussian pattern with some randomness
             sigma = block_size / 4
-            gaussian = np.exp(
-                -((x_coords - center_col) ** 2 + (y_coords - center_row) ** 2)
-                / (2 * sigma**2)
-            )
+            gaussian = np.exp(-((x_coords - center_col) ** 2 + (y_coords - center_row) ** 2) / (2 * sigma**2))
 
             # Add some noise and channel-specific intensity
             noise = np.random.normal(0, 0.1, (block_size, block_size))
@@ -263,9 +242,7 @@ def large_mixed_sparse_tensor():
             pattern = (gaussian * intensity + noise).clip(0, 1).astype(np.float32)
 
             # Set the block
-            tensor.set_block(
-                led_idx, channel_idx, top_row, top_col, cp.asarray(pattern)
-            )
+            tensor.set_block(led_idx, channel_idx, top_row, top_col, cp.asarray(pattern))
 
     logger.info(f"Large tensor generation complete: {tensor}")
     return tensor
@@ -292,9 +269,7 @@ def large_mixed_sparse_tensor_aligned():
     )
 
     # Generate LED positions with spatial Morton ordering AND x-alignment for experimental kernel
-    logger.info(
-        f"Generating large aligned tensor with {led_count} LEDs for experimental kernel testing..."
-    )
+    logger.info(f"Generating large aligned tensor with {led_count} LEDs for experimental kernel testing...")
 
     led_positions = generate_spatially_ordered_positions(
         led_count, height, width, block_size, seed=42, align_x_to_4=True
@@ -313,10 +288,7 @@ def large_mixed_sparse_tensor_aligned():
 
             # Gaussian pattern with some randomness
             sigma = block_size / 4
-            gaussian = np.exp(
-                -((x_coords - center_col) ** 2 + (y_coords - center_row) ** 2)
-                / (2 * sigma**2)
-            )
+            gaussian = np.exp(-((x_coords - center_col) ** 2 + (y_coords - center_row) ** 2) / (2 * sigma**2))
 
             # Add some noise and channel-specific intensity
             noise = np.random.normal(0, 0.1, (block_size, block_size))
@@ -324,9 +296,7 @@ def large_mixed_sparse_tensor_aligned():
             pattern = (gaussian * intensity + noise).clip(0, 1).astype(np.float32)
 
             # Set the block
-            tensor.set_block(
-                led_idx, channel_idx, top_row, top_col, cp.asarray(pattern)
-            )
+            tensor.set_block(led_idx, channel_idx, top_row, top_col, cp.asarray(pattern))
 
     logger.info(f"Large aligned tensor generation complete: {tensor}")
     return tensor
@@ -352,12 +322,8 @@ class TestCudaKernels:
             target_gpu = cp.asarray(test_image)
 
             # Get sparse values and block positions from mixed tensor
-            sparse_values = (
-                mixed_sparse_tensor.sparse_values
-            )  # Shape: (channels, batch_size, block_size, block_size)
-            block_positions = (
-                mixed_sparse_tensor.block_positions
-            )  # Shape: (channels, batch_size, 2)
+            sparse_values = mixed_sparse_tensor.sparse_values  # Shape: (channels, batch_size, block_size, block_size)
+            block_positions = mixed_sparse_tensor.block_positions  # Shape: (channels, batch_size, 2)
 
             # Run kernel
             result = cuda_transpose_dot_product_3d_compute_optimized(
@@ -410,11 +376,9 @@ class TestCudaKernels:
         int8_times = []
         int8_experimental_times = []
 
-        logger.info(f"Running comprehensive performance test:")
+        logger.info("Running comprehensive performance test:")
         logger.info(f"  LED count: {large_mixed_sparse_tensor.batch_size}")
-        logger.info(
-            f"  Image size: {large_mixed_sparse_tensor.height}x{large_mixed_sparse_tensor.width}"
-        )
+        logger.info(f"  Image size: {large_mixed_sparse_tensor.height}x{large_mixed_sparse_tensor.width}")
         logger.info(f"  Block size: {large_mixed_sparse_tensor.block_size}")
         logger.info(f"  Test images: {len(test_images)}")
         logger.info(f"  Warmup runs: {warmup_runs}")
@@ -422,19 +386,13 @@ class TestCudaKernels:
 
         # Calculate problem size metrics
         total_pixels = (
-            large_mixed_sparse_tensor.height
-            * large_mixed_sparse_tensor.width
-            * large_mixed_sparse_tensor.channels
+            large_mixed_sparse_tensor.height * large_mixed_sparse_tensor.width * large_mixed_sparse_tensor.channels
         )
-        total_blocks = (
-            large_mixed_sparse_tensor.batch_size * large_mixed_sparse_tensor.channels
-        )
-        block_pixels = (
-            large_mixed_sparse_tensor.block_size * large_mixed_sparse_tensor.block_size
-        )
+        total_blocks = large_mixed_sparse_tensor.batch_size * large_mixed_sparse_tensor.channels
+        block_pixels = large_mixed_sparse_tensor.block_size * large_mixed_sparse_tensor.block_size
         total_operations = total_blocks * block_pixels
 
-        logger.info(f"  Problem size metrics:")
+        logger.info("  Problem size metrics:")
         logger.info(f"    Total image pixels: {total_pixels:,}")
         logger.info(f"    Total LED blocks: {total_blocks:,}")
         logger.info(f"    Total operations: {total_operations:,}")
@@ -445,9 +403,7 @@ class TestCudaKernels:
             test_image_int8 = (test_image * 255).astype(cp.uint8)
 
             # ====== FP32 KERNEL BENCHMARKING ======
-            logger.debug(
-                f"\nFP32 kernel - Cache warming for image {img_idx + 1}/{len(test_images)}..."
-            )
+            logger.debug(f"\nFP32 kernel - Cache warming for image {img_idx + 1}/{len(test_images)}...")
 
             # FP32 Cache warming phase
             for warmup in range(warmup_runs):
@@ -466,9 +422,7 @@ class TestCudaKernels:
 
             for run in range(benchmark_runs):
                 target_gpu_fresh = cp.asarray(test_image.copy())
-                with perf_timer.section(
-                    f"fp32_benchmark_img{img_idx}_{run}", use_gpu_events=True
-                ) as timer:
+                with perf_timer.section(f"fp32_benchmark_img{img_idx}_{run}", use_gpu_events=True) as timer:
                     result = cuda_transpose_dot_product_3d_compute_optimized(
                         sparse_values=sparse_values_fp32,
                         block_positions=block_positions,
@@ -479,9 +433,7 @@ class TestCudaKernels:
                     )
 
             # ====== INT8 KERNEL BENCHMARKING ======
-            logger.debug(
-                f"INT8 kernel - Cache warming for image {img_idx + 1}/{len(test_images)}..."
-            )
+            logger.debug(f"INT8 kernel - Cache warming for image {img_idx + 1}/{len(test_images)}...")
 
             # INT8 Cache warming phase
             for warmup in range(warmup_runs):
@@ -500,9 +452,7 @@ class TestCudaKernels:
 
             for run in range(benchmark_runs):
                 target_gpu_fresh_int8 = cp.asarray(test_image_int8.copy())
-                with perf_timer.section(
-                    f"int8_benchmark_img{img_idx}_{run}", use_gpu_events=True
-                ) as timer:
+                with perf_timer.section(f"int8_benchmark_img{img_idx}_{run}", use_gpu_events=True) as timer:
                     result = cuda_transpose_dot_product_3d_compute_optimized_int8(
                         sparse_values=sparse_values_int8,
                         block_positions=block_positions_aligned,
@@ -513,10 +463,7 @@ class TestCudaKernels:
                     )
 
             # ====== INT8 EXPERIMENTAL KERNEL BENCHMARKING ======
-            logger.debug(
-                "INT8 EXPERIMENTAL kernel - "
-                f"Cache warming for image {img_idx + 1}/{len(test_images)}..."
-            )
+            logger.debug(f"INT8 EXPERIMENTAL kernel - Cache warming for image {img_idx + 1}/{len(test_images)}...")
 
             # INT8 Experimental Cache warming phase
             for warmup in range(warmup_runs):
@@ -531,9 +478,7 @@ class TestCudaKernels:
                 )
 
             # INT8 Experimental Benchmark phase
-            logger.debug(
-                f"INT8 EXPERIMENTAL kernel - Benchmarking image {img_idx + 1}..."
-            )
+            logger.debug(f"INT8 EXPERIMENTAL kernel - Benchmarking image {img_idx + 1}...")
 
             for run in range(benchmark_runs):
                 target_gpu_fresh_int8 = cp.asarray(test_image_int8.copy())
@@ -582,62 +527,48 @@ class TestCudaKernels:
         logger.info("\n" + "=" * 70)
         logger.info("COMPREHENSIVE CUDA KERNEL PERFORMANCE COMPARISON")
         logger.info("=" * 70)
-        logger.info(f"FP32 Kernel Performance:")
-        logger.info(f"  Mean time: {fp32_mean*1000:.3f} ms")
-        logger.info(f"  Std dev: {fp32_std*1000:.3f} ms")
-        logger.info(f"  Min time: {min(fp32_times)*1000:.3f} ms")
-        logger.info(f"  Max time: {max(fp32_times)*1000:.3f} ms")
-        logger.info(f"")
-        logger.info(f"INT8 Kernel Performance:")
-        logger.info(f"  Mean time: {int8_mean*1000:.3f} ms")
-        logger.info(f"  Std dev: {int8_std*1000:.3f} ms")
-        logger.info(f"  Min time: {min(int8_times)*1000:.3f} ms")
-        logger.info(f"  Max time: {max(int8_times)*1000:.3f} ms")
-        logger.info(f"")
-        logger.info(f"INT8 EXPERIMENTAL Kernel Performance:")
-        logger.info(f"  Mean time: {int8_exp_mean*1000:.3f} ms")
-        logger.info(f"  Std dev: {int8_exp_std*1000:.3f} ms")
-        logger.info(f"  Min time: {min(int8_experimental_times)*1000:.3f} ms")
-        logger.info(f"  Max time: {max(int8_experimental_times)*1000:.3f} ms")
-        logger.info(f"")
-        logger.info(f"Performance Comparisons:")
+        logger.info("FP32 Kernel Performance:")
+        logger.info(f"  Mean time: {fp32_mean * 1000:.3f} ms")
+        logger.info(f"  Std dev: {fp32_std * 1000:.3f} ms")
+        logger.info(f"  Min time: {min(fp32_times) * 1000:.3f} ms")
+        logger.info(f"  Max time: {max(fp32_times) * 1000:.3f} ms")
+        logger.info("")
+        logger.info("INT8 Kernel Performance:")
+        logger.info(f"  Mean time: {int8_mean * 1000:.3f} ms")
+        logger.info(f"  Std dev: {int8_std * 1000:.3f} ms")
+        logger.info(f"  Min time: {min(int8_times) * 1000:.3f} ms")
+        logger.info(f"  Max time: {max(int8_times) * 1000:.3f} ms")
+        logger.info("")
+        logger.info("INT8 EXPERIMENTAL Kernel Performance:")
+        logger.info(f"  Mean time: {int8_exp_mean * 1000:.3f} ms")
+        logger.info(f"  Std dev: {int8_exp_std * 1000:.3f} ms")
+        logger.info(f"  Min time: {min(int8_experimental_times) * 1000:.3f} ms")
+        logger.info(f"  Max time: {max(int8_experimental_times) * 1000:.3f} ms")
+        logger.info("")
+        logger.info("Performance Comparisons:")
+        logger.info(f"  INT8 vs FP32: {int8_speedup:.2f}x {'(faster)' if int8_speedup > 1 else '(slower)'}")
+        logger.info(f"  INT8_EXP vs FP32: {int8_exp_speedup:.2f}x {'(faster)' if int8_exp_speedup > 1 else '(slower)'}")
         logger.info(
-            f"  INT8 vs FP32: {int8_speedup:.2f}x {'(faster)' if int8_speedup > 1 else '(slower)'}"
+            f"  INT8_EXP vs INT8: {exp_vs_regular_int8:.2f}x {'(faster)' if exp_vs_regular_int8 > 1 else '(slower)'}"
         )
-        logger.info(
-            f"  INT8_EXP vs FP32: {int8_exp_speedup:.2f}x "
-            f"{'(faster)' if int8_exp_speedup > 1 else '(slower)'}"
-        )
-        logger.info(
-            f"  INT8_EXP vs INT8: {exp_vs_regular_int8:.2f}x "
-            f"{'(faster)' if exp_vs_regular_int8 > 1 else '(slower)'}"
-        )
-        logger.info(f"  Memory Usage: INT8 uses ~4x less memory than FP32")
+        logger.info("  Memory Usage: INT8 uses ~4x less memory than FP32")
         logger.info("=" * 70)
 
         # Assertions to ensure all kernels are functional
         assert len(fp32_times) > 0, "No FP32 kernel timing data collected"
         assert len(int8_times) > 0, "No INT8 kernel timing data collected"
-        assert (
-            len(int8_experimental_times) > 0
-        ), "No INT8 EXPERIMENTAL kernel timing data collected"
+        assert len(int8_experimental_times) > 0, "No INT8 EXPERIMENTAL kernel timing data collected"
         assert all(t > 0 for t in fp32_times), "Invalid FP32 kernel timing data"
         assert all(t > 0 for t in int8_times), "Invalid INT8 kernel timing data"
-        assert all(
-            t > 0 for t in int8_experimental_times
-        ), "Invalid INT8 EXPERIMENTAL kernel timing data"
+        assert all(t > 0 for t in int8_experimental_times), "Invalid INT8 EXPERIMENTAL kernel timing data"
 
         # Log a summary for reference
-        logger.info(f"Comprehensive performance test completed successfully!")
+        logger.info("Comprehensive performance test completed successfully!")
         logger.info(f"FP32 data collected: {len(fp32_times)} measurements")
         logger.info(f"INT8 data collected: {len(int8_times)} measurements")
-        logger.info(
-            f"INT8_EXP data collected: {len(int8_experimental_times)} measurements"
-        )
+        logger.info(f"INT8_EXP data collected: {len(int8_experimental_times)} measurements")
 
-    def test_kernel_performance(
-        self, large_mixed_sparse_tensor, large_mixed_sparse_tensor_aligned, test_images
-    ):
+    def test_kernel_performance(self, large_mixed_sparse_tensor, large_mixed_sparse_tensor_aligned, test_images):
         """Performance test for CUDA kernels (fp32 and int8) with cache warming.
 
         Uses large problem size (1000 LEDs, 480x800 images) for realistic timing measurements
@@ -663,11 +594,9 @@ class TestCudaKernels:
         fp32_times = []
         int8_times = []
 
-        logger.info(f"Running performance test:")
+        logger.info("Running performance test:")
         logger.info(f"  LED count: {large_mixed_sparse_tensor.batch_size}")
-        logger.info(
-            f"  Image size: {large_mixed_sparse_tensor.height}x{large_mixed_sparse_tensor.width}"
-        )
+        logger.info(f"  Image size: {large_mixed_sparse_tensor.height}x{large_mixed_sparse_tensor.width}")
         logger.info(f"  Block size: {large_mixed_sparse_tensor.block_size}")
         logger.info(f"  Test images: {len(test_images)}")
         logger.info(f"  Warmup runs: {warmup_runs}")
@@ -675,19 +604,13 @@ class TestCudaKernels:
 
         # Calculate problem size metrics
         total_pixels = (
-            large_mixed_sparse_tensor.height
-            * large_mixed_sparse_tensor.width
-            * large_mixed_sparse_tensor.channels
+            large_mixed_sparse_tensor.height * large_mixed_sparse_tensor.width * large_mixed_sparse_tensor.channels
         )
-        total_blocks = (
-            large_mixed_sparse_tensor.batch_size * large_mixed_sparse_tensor.channels
-        )
-        block_pixels = (
-            large_mixed_sparse_tensor.block_size * large_mixed_sparse_tensor.block_size
-        )
+        total_blocks = large_mixed_sparse_tensor.batch_size * large_mixed_sparse_tensor.channels
+        block_pixels = large_mixed_sparse_tensor.block_size * large_mixed_sparse_tensor.block_size
         total_operations = total_blocks * block_pixels
 
-        logger.info(f"  Problem size metrics:")
+        logger.info("  Problem size metrics:")
         logger.info(f"    Total image pixels: {total_pixels:,}")
         logger.info(f"    Total LED blocks: {total_blocks:,}")
         logger.info(f"    Total operations: {total_operations:,}")
@@ -698,9 +621,7 @@ class TestCudaKernels:
             test_image_int8 = (test_image * 255).astype(cp.uint8)
 
             # ====== FP32 KERNEL BENCHMARKING ======
-            logger.debug(
-                f"\nFP32 kernel - Cache warming for image {img_idx + 1}/{len(test_images)}..."
-            )
+            logger.debug(f"\nFP32 kernel - Cache warming for image {img_idx + 1}/{len(test_images)}...")
 
             # FP32 Cache warming phase
             for warmup in range(warmup_runs):
@@ -719,9 +640,7 @@ class TestCudaKernels:
 
             for run in range(benchmark_runs):
                 target_gpu_fresh = cp.asarray(test_image.copy())
-                with perf_timer.section(
-                    f"fp32_benchmark_img{img_idx}_{run}", use_gpu_events=True
-                ) as timer:
+                with perf_timer.section(f"fp32_benchmark_img{img_idx}_{run}", use_gpu_events=True) as timer:
                     result = cuda_transpose_dot_product_3d_compute_optimized(
                         sparse_values=sparse_values_fp32,
                         block_positions=block_positions,
@@ -732,9 +651,7 @@ class TestCudaKernels:
                     )
 
             # ====== INT8 KERNEL BENCHMARKING ======
-            logger.debug(
-                f"INT8 kernel - Cache warming for image {img_idx + 1}/{len(test_images)}..."
-            )
+            logger.debug(f"INT8 kernel - Cache warming for image {img_idx + 1}/{len(test_images)}...")
 
             # INT8 Cache warming phase
             for warmup in range(warmup_runs):
@@ -753,9 +670,7 @@ class TestCudaKernels:
 
             for run in range(benchmark_runs):
                 target_gpu_fresh_int8 = cp.asarray(test_image_int8.copy())
-                with perf_timer.section(
-                    f"int8_benchmark_img{img_idx}_{run}", use_gpu_events=True
-                ) as timer:
+                with perf_timer.section(f"int8_benchmark_img{img_idx}_{run}", use_gpu_events=True) as timer:
                     result = cuda_transpose_dot_product_3d_compute_optimized_int8(
                         sparse_values=sparse_values_int8,
                         block_positions=block_positions_aligned,
@@ -791,23 +706,21 @@ class TestCudaKernels:
         logger.info("\n" + "=" * 70)
         logger.info("CUDA KERNEL PERFORMANCE COMPARISON")
         logger.info("=" * 70)
-        logger.info(f"FP32 Kernel Performance:")
-        logger.info(f"  Mean time: {fp32_mean*1000:.3f} ms")
-        logger.info(f"  Std dev: {fp32_std*1000:.3f} ms")
-        logger.info(f"  Min time: {min(fp32_times)*1000:.3f} ms")
-        logger.info(f"  Max time: {max(fp32_times)*1000:.3f} ms")
-        logger.info(f"")
-        logger.info(f"INT8 Kernel Performance:")
-        logger.info(f"  Mean time: {int8_mean*1000:.3f} ms")
-        logger.info(f"  Std dev: {int8_std*1000:.3f} ms")
-        logger.info(f"  Min time: {min(int8_times)*1000:.3f} ms")
-        logger.info(f"  Max time: {max(int8_times)*1000:.3f} ms")
-        logger.info(f"")
-        logger.info(f"Performance Comparison:")
-        logger.info(
-            f"  INT8 Speedup: {speedup:.2f}x {'(faster)' if speedup > 1 else '(slower)'}"
-        )
-        logger.info(f"  Memory Usage: INT8 uses ~4x less memory than FP32")
+        logger.info("FP32 Kernel Performance:")
+        logger.info(f"  Mean time: {fp32_mean * 1000:.3f} ms")
+        logger.info(f"  Std dev: {fp32_std * 1000:.3f} ms")
+        logger.info(f"  Min time: {min(fp32_times) * 1000:.3f} ms")
+        logger.info(f"  Max time: {max(fp32_times) * 1000:.3f} ms")
+        logger.info("")
+        logger.info("INT8 Kernel Performance:")
+        logger.info(f"  Mean time: {int8_mean * 1000:.3f} ms")
+        logger.info(f"  Std dev: {int8_std * 1000:.3f} ms")
+        logger.info(f"  Min time: {min(int8_times) * 1000:.3f} ms")
+        logger.info(f"  Max time: {max(int8_times) * 1000:.3f} ms")
+        logger.info("")
+        logger.info("Performance Comparison:")
+        logger.info(f"  INT8 Speedup: {speedup:.2f}x {'(faster)' if speedup > 1 else '(slower)'}")
+        logger.info("  Memory Usage: INT8 uses ~4x less memory than FP32")
         logger.info("=" * 70)
 
         # Assertions to ensure both kernels are functional
@@ -817,7 +730,7 @@ class TestCudaKernels:
         assert all(t > 0 for t in int8_times), "Invalid INT8 kernel timing data"
 
         # Log a summary for reference
-        logger.info(f"Performance test completed successfully!")
+        logger.info("Performance test completed successfully!")
         logger.info(f"FP32 data collected: {len(fp32_times)} measurements")
         logger.info(f"INT8 data collected: {len(int8_times)} measurements")
 
@@ -846,9 +759,7 @@ class TestCudaKernels:
             )
 
             # Generate LED positions with spatial Morton ordering for cache locality
-            led_positions = generate_spatially_ordered_positions(
-                led_count, height, width, block_size, seed=42
-            )
+            led_positions = generate_spatially_ordered_positions(led_count, height, width, block_size, seed=42)
 
             # Generate test patterns for this block size with Morton ordering
             np.random.seed(42)  # Consistent patterns
@@ -858,9 +769,7 @@ class TestCudaKernels:
                 for channel_idx in range(channels):
                     # Simple pattern for testing
                     pattern = np.random.rand(block_size, block_size).astype(np.float32)
-                    mixed_tensor.set_block(
-                        led_idx, channel_idx, top_row, top_col, cp.asarray(pattern)
-                    )
+                    mixed_tensor.set_block(led_idx, channel_idx, top_row, top_col, cp.asarray(pattern))
 
             sparse_values = mixed_tensor.sparse_values
             block_positions = mixed_tensor.block_positions
@@ -897,15 +806,9 @@ class TestCudaKernels:
 
         # Create test data in int8 range
         np.random.seed(42)
-        int8_sparse_data = np.random.randint(
-            0, 256, (channels, batch_size, block_size, block_size), dtype=np.uint8
-        )
-        int8_target_data = np.random.randint(
-            0, 256, (channels, height, width), dtype=np.uint8
-        )
-        positions = np.random.randint(
-            0, (min(height, width) - block_size) // 4, (channels, batch_size, 2)
-        )
+        int8_sparse_data = np.random.randint(0, 256, (channels, batch_size, block_size, block_size), dtype=np.uint8)
+        int8_target_data = np.random.randint(0, 256, (channels, height, width), dtype=np.uint8)
+        positions = np.random.randint(0, (min(height, width) - block_size) // 4, (channels, batch_size, 2))
 
         positions = positions * 4  # Ensure positions are multiples of 4
 
@@ -944,15 +847,9 @@ class TestCudaKernels:
 
         # Generate int8 test data
         np.random.seed(123)  # Different seed from other tests
-        int8_sparse_data = np.random.randint(
-            0, 256, (channels, batch_size, block_size, block_size), dtype=np.uint8
-        )
-        int8_target_data = np.random.randint(
-            0, 256, (channels, height, width), dtype=np.uint8
-        )
-        positions = np.random.randint(
-            0, (min(height, width) - block_size) // 4, (channels, batch_size, 2)
-        )
+        int8_sparse_data = np.random.randint(0, 256, (channels, batch_size, block_size, block_size), dtype=np.uint8)
+        int8_target_data = np.random.randint(0, 256, (channels, height, width), dtype=np.uint8)
+        positions = np.random.randint(0, (min(height, width) - block_size) // 4, (channels, batch_size, 2))
 
         positions = positions * 4  # Ensure positions are multiples of 4
 
@@ -1010,15 +907,9 @@ class TestCudaKernels:
             logger.info(f"Testing int8 kernel with block size: {block_size}")
 
             # Generate test data
-            int8_sparse_data = np.random.randint(
-                0, 256, (channels, batch_size, block_size, block_size), dtype=np.uint8
-            )
-            int8_target_data = np.random.randint(
-                0, 256, (channels, height, width), dtype=np.uint8
-            )
-            positions = np.random.randint(
-                0, (min(height, width) - block_size) // 4, (channels, batch_size, 2)
-            )
+            int8_sparse_data = np.random.randint(0, 256, (channels, batch_size, block_size, block_size), dtype=np.uint8)
+            int8_target_data = np.random.randint(0, 256, (channels, height, width), dtype=np.uint8)
+            positions = np.random.randint(0, (min(height, width) - block_size) // 4, (channels, batch_size, 2))
 
             positions = positions * 4  # Ensure positions are multiples of 4
 
@@ -1042,9 +933,7 @@ class TestCudaKernels:
             assert result.shape == expected_shape
             assert result.dtype == cp.float32
 
-    def test_experimental_vs_original_int8_kernel_equivalence(
-        self, large_mixed_sparse_tensor_aligned
-    ):
+    def test_experimental_vs_original_int8_kernel_equivalence(self, large_mixed_sparse_tensor_aligned):
         """Test that experimental int8 kernel produces equivalent
         results to the original int8 kernel."""
         # Use aligned tensor for experimental kernel
@@ -1056,39 +945,27 @@ class TestCudaKernels:
         test_image_int8 = cp.asarray((test_image * 255).astype(np.uint8))
 
         # Get sparse data and positions (subset)
-        sparse_values_fp32 = aligned_tensor.sparse_values[
-            :, :test_led_count, :, :
-        ]  # (3, 50, 64, 64)
-        sparse_values_aligned = (sparse_values_fp32 * 255).astype(
-            cp.uint8
-        )  # Convert to uint8
-        block_positions_aligned = aligned_tensor.block_positions[
-            :, :test_led_count, :
-        ]  # (3, 50, 2)
+        sparse_values_fp32 = aligned_tensor.sparse_values[:, :test_led_count, :, :]  # (3, 50, 64, 64)
+        sparse_values_aligned = (sparse_values_fp32 * 255).astype(cp.uint8)  # Convert to uint8
+        block_positions_aligned = aligned_tensor.block_positions[:, :test_led_count, :]  # (3, 50, 2)
 
         # Verify that all x-positions are aligned to multiples of 4
-        x_positions = block_positions_aligned[
-            :, :, 1
-        ].get()  # Get x-positions (columns)
-        assert np.all(
-            x_positions % 4 == 0
-        ), f"Not all x-positions are aligned to 4: {x_positions[x_positions % 4 != 0]}"
-
-        logger.info(
-            f"Testing experimental kernel equivalence with {test_led_count} LEDs"
+        x_positions = block_positions_aligned[:, :, 1].get()  # Get x-positions (columns)
+        assert np.all(x_positions % 4 == 0), (
+            f"Not all x-positions are aligned to 4: {x_positions[x_positions % 4 != 0]}"
         )
-        logger.info(f"Verified all x-positions are aligned to multiples of 4")
+
+        logger.info(f"Testing experimental kernel equivalence with {test_led_count} LEDs")
+        logger.info("Verified all x-positions are aligned to multiples of 4")
 
         # Run experimental kernel with aligned data
-        result_experimental = (
-            cuda_transpose_dot_product_3d_compute_optimized_int8_experimental(
-                sparse_values=sparse_values_aligned,
-                block_positions=block_positions_aligned,
-                target_3d=test_image_int8,
-                batch_size=test_led_count,
-                channels=3,
-                block_size=64,
-            )
+        result_experimental = cuda_transpose_dot_product_3d_compute_optimized_int8_experimental(
+            sparse_values=sparse_values_aligned,
+            block_positions=block_positions_aligned,
+            target_3d=test_image_int8,
+            batch_size=test_led_count,
+            channels=3,
+            block_size=64,
         )
 
         # Run original int8 kernel with same aligned data for comparison
@@ -1112,18 +989,12 @@ class TestCudaKernels:
             result_original,
             rtol=1e-6,
             atol=1e-8,
-            err_msg="Experimental and original int8 kernel results should "
-            "be equivalent for aligned data",
+            err_msg="Experimental and original int8 kernel results should be equivalent for aligned data",
         )
 
-        logger.info(
-            "✓ Experimental kernel produces equivalent results to original kernel"
-        )
+        logger.info("✓ Experimental kernel produces equivalent results to original kernel")
         logger.info(f"✓ Result shape: {result_experimental.shape}")
-        logger.info(
-            "✓ Max absolute difference: "
-            f"{cp.max(cp.abs(result_experimental - result_original)).get():.2e}"
-        )
+        logger.info(f"✓ Max absolute difference: {cp.max(cp.abs(result_experimental - result_original)).get():.2e}")
 
     def test_experimental_kernel_availability(self):
         """Test that experimental int8 CUDA kernel can be imported and compiled."""
@@ -1146,21 +1017,15 @@ class TestCudaKernels:
         2. Experimental int8 kernel with x-positions aligned to multiples of 4
         """
         # Initialize performance timing
-        perf_timer = PerformanceTiming(
-            "Int8ExperimentalComparison", enable_gpu_timing=True
-        )
+        perf_timer = PerformanceTiming("Int8ExperimentalComparison", enable_gpu_timing=True)
 
         # Get data from both tensors
         # Regular tensor (random positions)
-        sparse_values_regular = (large_mixed_sparse_tensor.sparse_values * 255).astype(
-            cp.uint8
-        )
+        sparse_values_regular = (large_mixed_sparse_tensor.sparse_values * 255).astype(cp.uint8)
         block_positions_regular = large_mixed_sparse_tensor.block_positions
 
         # Aligned tensor (x-positions are multiples of 4)
-        sparse_values_aligned = (
-            large_mixed_sparse_tensor_aligned.sparse_values * 255
-        ).astype(cp.uint8)
+        sparse_values_aligned = (large_mixed_sparse_tensor_aligned.sparse_values * 255).astype(cp.uint8)
         block_positions_aligned = large_mixed_sparse_tensor_aligned.block_positions
 
         # Verify alignment
@@ -1171,21 +1036,19 @@ class TestCudaKernels:
         aligned_count = np.sum(x_positions_aligned % 4 == 0)
         total_positions = x_positions_regular.size
 
-        logger.info(f"\n" + "=" * 60)
+        logger.info("\n" + "=" * 60)
         logger.info("INT8 vs EXPERIMENTAL KERNEL ALIGNMENT EXPERIMENT")
         logger.info("=" * 60)
         logger.info(
             f"Regular tensor - x-positions aligned to 4: "
             f"{regular_aligned_count}/{total_positions} "
-            f"({100*regular_aligned_count/total_positions:.1f}%)"
+            f"({100 * regular_aligned_count / total_positions:.1f}%)"
         )
         logger.info(
             f"Aligned tensor - x-positions aligned to 4: "
-            f"{aligned_count}/{total_positions} ({100*aligned_count/total_positions:.1f}%)"
+            f"{aligned_count}/{total_positions} ({100 * aligned_count / total_positions:.1f}%)"
         )
-        assert (
-            aligned_count == total_positions
-        ), "Aligned tensor should have all x-positions as multiples of 4"
+        assert aligned_count == total_positions, "Aligned tensor should have all x-positions as multiples of 4"
 
         # Test parameters
         warmup_runs = 3
@@ -1194,11 +1057,9 @@ class TestCudaKernels:
         int8_regular_times = []
         int8_experimental_times = []
 
-        logger.info(f"\nBenchmark parameters:")
+        logger.info("\nBenchmark parameters:")
         logger.info(f"  LED count: {large_mixed_sparse_tensor.batch_size}")
-        logger.info(
-            f"  Image size: {large_mixed_sparse_tensor.height}x{large_mixed_sparse_tensor.width}"
-        )
+        logger.info(f"  Image size: {large_mixed_sparse_tensor.height}x{large_mixed_sparse_tensor.width}")
         logger.info(f"  Block size: {large_mixed_sparse_tensor.block_size}")
         logger.info(f"  Warmup runs: {warmup_runs}")
         logger.info(f"  Benchmark runs: {benchmark_runs}")
@@ -1208,7 +1069,7 @@ class TestCudaKernels:
         test_image_int8 = cp.asarray((test_image * 255).astype(np.uint8))
 
         # ====== INT8 REGULAR KERNEL (Random positions) ======
-        logger.info(f"\nINT8 REGULAR kernel (random positions) - Cache warming...")
+        logger.info("\nINT8 REGULAR kernel (random positions) - Cache warming...")
 
         # Cache warming
         for warmup in range(warmup_runs):
@@ -1223,12 +1084,10 @@ class TestCudaKernels:
             )
 
         # Benchmark
-        logger.info(f"INT8 REGULAR kernel - Benchmarking...")
+        logger.info("INT8 REGULAR kernel - Benchmarking...")
         for run in range(benchmark_runs):
             target_gpu_fresh = cp.asarray(test_image_int8.copy())
-            with perf_timer.section(
-                f"int8_regular_{run}", use_gpu_events=True
-            ) as timer:
+            with perf_timer.section(f"int8_regular_{run}", use_gpu_events=True) as timer:
                 result_regular = cuda_transpose_dot_product_3d_compute_optimized_int8(
                     sparse_values=sparse_values_aligned,
                     block_positions=block_positions_aligned,
@@ -1239,7 +1098,7 @@ class TestCudaKernels:
                 )
 
         # ====== INT8 EXPERIMENTAL KERNEL (Aligned positions) ======
-        logger.info(f"INT8 EXPERIMENTAL kernel (aligned positions) - Cache warming...")
+        logger.info("INT8 EXPERIMENTAL kernel (aligned positions) - Cache warming...")
 
         # Cache warming
         for warmup in range(warmup_runs):
@@ -1254,21 +1113,17 @@ class TestCudaKernels:
             )
 
         # Benchmark
-        logger.info(f"INT8 EXPERIMENTAL kernel - Benchmarking...")
+        logger.info("INT8 EXPERIMENTAL kernel - Benchmarking...")
         for run in range(benchmark_runs):
             target_gpu_fresh = cp.asarray(test_image_int8.copy())
-            with perf_timer.section(
-                f"int8_experimental_{run}", use_gpu_events=True
-            ) as timer:
-                result_experimental = (
-                    cuda_transpose_dot_product_3d_compute_optimized_int8_experimental(
-                        sparse_values=sparse_values_aligned,
-                        block_positions=block_positions_aligned,
-                        target_3d=target_gpu_fresh,
-                        batch_size=large_mixed_sparse_tensor_aligned.batch_size,
-                        channels=large_mixed_sparse_tensor_aligned.channels,
-                        block_size=large_mixed_sparse_tensor_aligned.block_size,
-                    )
+            with perf_timer.section(f"int8_experimental_{run}", use_gpu_events=True) as timer:
+                result_experimental = cuda_transpose_dot_product_3d_compute_optimized_int8_experimental(
+                    sparse_values=sparse_values_aligned,
+                    block_positions=block_positions_aligned,
+                    target_3d=target_gpu_fresh,
+                    batch_size=large_mixed_sparse_tensor_aligned.batch_size,
+                    channels=large_mixed_sparse_tensor_aligned.channels,
+                    block_size=large_mixed_sparse_tensor_aligned.block_size,
                 )
 
         # Extract timing data
@@ -1296,31 +1151,26 @@ class TestCudaKernels:
         logger.info("\n" + "=" * 60)
         logger.info("ALIGNMENT EXPERIMENT RESULTS")
         logger.info("=" * 60)
-        logger.info(f"INT8 REGULAR (random positions):")
-        logger.info(f"  Mean time: {regular_mean*1000:.3f} ms")
-        logger.info(f"  Std dev: {regular_std*1000:.3f} ms")
-        logger.info(f"  Min time: {min(int8_regular_times)*1000:.3f} ms")
-        logger.info(f"  Max time: {max(int8_regular_times)*1000:.3f} ms")
-        logger.info(f"")
-        logger.info(f"INT8 EXPERIMENTAL (4-aligned positions):")
-        logger.info(f"  Mean time: {experimental_mean*1000:.3f} ms")
-        logger.info(f"  Std dev: {experimental_std*1000:.3f} ms")
-        logger.info(f"  Min time: {min(int8_experimental_times)*1000:.3f} ms")
-        logger.info(f"  Max time: {max(int8_experimental_times)*1000:.3f} ms")
-        logger.info(f"")
-        logger.info(f"ALIGNMENT PERFORMANCE IMPACT:")
-        logger.info(
-            f"  Speedup from 4-byte alignment: {speedup:.3f}x "
-            f"{'(faster)' if speedup > 1 else '(slower)'}"
-        )
+        logger.info("INT8 REGULAR (random positions):")
+        logger.info(f"  Mean time: {regular_mean * 1000:.3f} ms")
+        logger.info(f"  Std dev: {regular_std * 1000:.3f} ms")
+        logger.info(f"  Min time: {min(int8_regular_times) * 1000:.3f} ms")
+        logger.info(f"  Max time: {max(int8_regular_times) * 1000:.3f} ms")
+        logger.info("")
+        logger.info("INT8 EXPERIMENTAL (4-aligned positions):")
+        logger.info(f"  Mean time: {experimental_mean * 1000:.3f} ms")
+        logger.info(f"  Std dev: {experimental_std * 1000:.3f} ms")
+        logger.info(f"  Min time: {min(int8_experimental_times) * 1000:.3f} ms")
+        logger.info(f"  Max time: {max(int8_experimental_times) * 1000:.3f} ms")
+        logger.info("")
+        logger.info("ALIGNMENT PERFORMANCE IMPACT:")
+        logger.info(f"  Speedup from 4-byte alignment: {speedup:.3f}x {'(faster)' if speedup > 1 else '(slower)'}")
         logger.info(f"  Performance change: {((speedup - 1) * 100):+.1f}%")
 
         if speedup > 1:
-            logger.info(f"  ✓ Aligned uchar4 loads provide performance benefit")
+            logger.info("  ✓ Aligned uchar4 loads provide performance benefit")
         else:
-            logger.info(
-                f"  ⚠ Aligned loads did not improve performance (may be memory bandwidth limited)"
-            )
+            logger.info("  ⚠ Aligned loads did not improve performance (may be memory bandwidth limited)")
 
         logger.info("=" * 60)
 
@@ -1331,7 +1181,7 @@ class TestCudaKernels:
         assert all(t > 0 for t in int8_regular_times)
         assert all(t > 0 for t in int8_experimental_times)
 
-        logger.info(f"Alignment experiment completed successfully!")
+        logger.info("Alignment experiment completed successfully!")
         logger.info(f"Regular kernel: {len(int8_regular_times)} measurements")
         logger.info(f"Experimental kernel: {len(int8_experimental_times)} measurements")
 

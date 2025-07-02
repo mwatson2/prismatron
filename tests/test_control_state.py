@@ -23,9 +23,7 @@ from src.core.control_state import (
 )
 
 
-@unittest.skipUnless(
-    SHARED_MEMORY_AVAILABLE, "Shared memory not available (requires Python 3.8+)"
-)
+@unittest.skipUnless(SHARED_MEMORY_AVAILABLE, "Shared memory not available (requires Python 3.8+)")
 class TestControlState(unittest.TestCase):
     """Test cases for ControlState class."""
 
@@ -46,9 +44,7 @@ class TestControlState(unittest.TestCase):
 
         # Verify we can read status
         status = self.control_state.get_status()
-        self.assertIsNotNone(
-            status, "Should be able to read status after initialization"
-        )
+        self.assertIsNotNone(status, "Should be able to read status after initialization")
         self.assertEqual(status.play_state, PlayState.STOPPED)
         self.assertEqual(status.system_state, SystemState.INITIALIZING)
 
@@ -106,14 +102,10 @@ class TestControlState(unittest.TestCase):
 
         for filepath in test_files:
             result = self.control_state.set_current_file(filepath)
-            self.assertTrue(
-                result, f"Should successfully set current file to {filepath}"
-            )
+            self.assertTrue(result, f"Should successfully set current file to {filepath}")
 
             status = self.control_state.get_status()
-            self.assertEqual(
-                status.current_file, filepath, f"Current file should be {filepath}"
-            )
+            self.assertEqual(status.current_file, filepath, f"Current file should be {filepath}")
 
     def test_brightness_operations(self):
         """Test brightness control."""
@@ -127,9 +119,7 @@ class TestControlState(unittest.TestCase):
             self.assertTrue(result, f"Should successfully set brightness to {value}")
 
             status = self.control_state.get_status()
-            self.assertAlmostEqual(
-                status.brightness, value, places=3, msg=f"Brightness should be {value}"
-            )
+            self.assertAlmostEqual(status.brightness, value, places=3, msg=f"Brightness should be {value}")
 
     def test_brightness_clamping(self):
         """Test that brightness values are clamped to valid range."""
@@ -145,9 +135,7 @@ class TestControlState(unittest.TestCase):
 
         for input_value, expected_value in test_cases:
             result = self.control_state.set_brightness(input_value)
-            self.assertTrue(
-                result, f"Should successfully clamp brightness {input_value}"
-            )
+            self.assertTrue(result, f"Should successfully clamp brightness {input_value}")
 
             status = self.control_state.get_status()
             self.assertAlmostEqual(
@@ -170,7 +158,7 @@ class TestControlState(unittest.TestCase):
 
         for producer_fps, consumer_fps in test_cases:
             result = self.control_state.set_frame_rates(producer_fps, consumer_fps)
-            self.assertTrue(result, f"Should successfully set frame rates")
+            self.assertTrue(result, "Should successfully set frame rates")
 
             status = self.control_state.get_status()
             self.assertAlmostEqual(status.producer_fps, producer_fps, places=2)
@@ -333,9 +321,7 @@ def producer_process(control_name: str, num_updates: int):
 
         # Make updates
         for i in range(num_updates):
-            control.set_play_state(
-                PlayState.PLAYING if i % 2 == 0 else PlayState.PAUSED
-            )
+            control.set_play_state(PlayState.PLAYING if i % 2 == 0 else PlayState.PAUSED)
             control.set_brightness(i / num_updates)
             control.set_current_file(f"/test/file_{i}.mp4")
             time.sleep(0.01)
@@ -372,9 +358,7 @@ def consumer_process(control_name: str, expected_updates: int):
         return False
 
 
-@unittest.skipUnless(
-    SHARED_MEMORY_AVAILABLE, "Shared memory not available (requires Python 3.8+)"
-)
+@unittest.skipUnless(SHARED_MEMORY_AVAILABLE, "Shared memory not available (requires Python 3.8+)")
 class TestMultiprocessControlState(unittest.TestCase):
     """Test multiprocess coordination through control state."""
 
@@ -390,15 +374,11 @@ class TestMultiprocessControlState(unittest.TestCase):
             num_updates = 5
 
             # Start consumer process
-            consumer = mp.Process(
-                target=consumer_process, args=(control_name, num_updates)
-            )
+            consumer = mp.Process(target=consumer_process, args=(control_name, num_updates))
             consumer.start()
 
             # Start producer process
-            producer = mp.Process(
-                target=producer_process, args=(control_name, num_updates)
-            )
+            producer = mp.Process(target=producer_process, args=(control_name, num_updates))
             producer.start()
 
             # Wait for completion
@@ -406,12 +386,8 @@ class TestMultiprocessControlState(unittest.TestCase):
             consumer.join(timeout=10)
 
             # Verify both processes completed successfully
-            self.assertEqual(
-                producer.exitcode, 0, "Producer should complete successfully"
-            )
-            self.assertEqual(
-                consumer.exitcode, 0, "Consumer should complete successfully"
-            )
+            self.assertEqual(producer.exitcode, 0, "Producer should complete successfully")
+            self.assertEqual(consumer.exitcode, 0, "Consumer should complete successfully")
 
         finally:
             control_state.cleanup()
@@ -447,12 +423,8 @@ class TestMultiprocessControlState(unittest.TestCase):
             signaler.join(timeout=5)
 
             # Both should complete successfully
-            self.assertEqual(
-                waiter.exitcode, 0, "Waiter should receive shutdown signal"
-            )
-            self.assertEqual(
-                signaler.exitcode, 0, "Signaler should complete successfully"
-            )
+            self.assertEqual(waiter.exitcode, 0, "Waiter should receive shutdown signal")
+            self.assertEqual(signaler.exitcode, 0, "Signaler should complete successfully")
 
         finally:
             control_state.cleanup()

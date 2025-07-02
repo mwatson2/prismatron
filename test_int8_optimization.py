@@ -41,9 +41,7 @@ def convert_to_int8_tensor(
     int8_tensor.sparse_values = int8_values
     int8_tensor.block_positions = float32_tensor.block_positions.copy()
 
-    print(
-        f"Converted tensor: values range [{int(cp.min(int8_values))}, {int(cp.max(int8_values))}]"
-    )
+    print(f"Converted tensor: values range [{int(cp.min(int8_values))}, {int(cp.max(int8_values))}]")
     return int8_tensor
 
 
@@ -63,17 +61,13 @@ def optimize_frame_int8(
     the int8 kernels with proper scaling.
     """
 
-    print(f"=== Int8 Optimization ===")
-    print(
-        f"Target frame shape: {target_frame_uint8.shape}, dtype: {target_frame_uint8.dtype}"
-    )
+    print("=== Int8 Optimization ===")
+    print(f"Target frame shape: {target_frame_uint8.shape}, dtype: {target_frame_uint8.dtype}")
     print(f"AT matrix dtype: {AT_matrix.dtype}")
 
     # Keep target as uint8 and convert to planar format
     if target_frame_uint8.shape == (480, 800, 3):
-        target_planar_uint8 = target_frame_uint8.transpose(
-            2, 0, 1
-        )  # (H, W, 3) -> (3, H, W)
+        target_planar_uint8 = target_frame_uint8.transpose(2, 0, 1)  # (H, W, 3) -> (3, H, W)
     else:
         target_planar_uint8 = target_frame_uint8
 
@@ -81,11 +75,9 @@ def optimize_frame_int8(
     print(f"Target range: [{target_planar_uint8.min()}, {target_planar_uint8.max()}]")
 
     # Step 1: Calculate A^T @ b using int8 kernel
-    print(f"\n--- Step 1: A^T @ b calculation ---")
+    print("\n--- Step 1: A^T @ b calculation ---")
     target_gpu = cp.asarray(target_planar_uint8)
-    ATb = AT_matrix.transpose_dot_product_3d(
-        target_gpu
-    )  # Uses int8 kernel with normalization
+    ATb = AT_matrix.transpose_dot_product_3d(target_gpu)  # Uses int8 kernel with normalization
     ATb = cp.asnumpy(ATb)  # Shape: (led_count, 3)
 
     print(f"A^T @ b shape: {ATb.shape}")
@@ -100,15 +92,13 @@ def optimize_frame_int8(
     led_count = ATb.shape[1]
 
     # Step 2: Initialize LED values in range [0,1] (will be scaled to [0,255] for output)
-    print(f"\n--- Step 2: Initialize LED values ---")
+    print("\n--- Step 2: Initialize LED values ---")
     led_values_normalized = np.full((3, led_count), 0.5, dtype=np.float32)
     print(f"Initial LED values shape: {led_values_normalized.shape}")
-    print(
-        f"Initial LED values range: [{led_values_normalized.min():.3f}, {led_values_normalized.max():.3f}]"
-    )
+    print(f"Initial LED values range: [{led_values_normalized.min():.3f}, {led_values_normalized.max():.3f}]")
 
     # Step 3: Convert to RCM order for DIA matrix
-    print(f"\n--- Step 3: RCM ordering ---")
+    print("\n--- Step 3: RCM ordering ---")
     ATb_rcm = ATA_matrix.reorder_led_values_to_rcm(ATb)
     led_values_rcm = ATA_matrix.reorder_led_values_to_rcm(led_values_normalized)
 
@@ -117,12 +107,12 @@ def optimize_frame_int8(
     led_values_gpu = cp.asarray(led_values_rcm)
 
     # Step 5: Optimization loop
-    print(f"\n--- Step 4: Optimization loop ---")
+    print("\n--- Step 4: Optimization loop ---")
     step_sizes = []
 
     for iteration in range(max_iterations):
         if debug:
-            print(f"\nIteration {iteration+1}")
+            print(f"\nIteration {iteration + 1}")
 
         # Compute A^T A @ x
         ATA_x = ATA_matrix.multiply_3d(led_values_gpu)
@@ -143,14 +133,12 @@ def optimize_frame_int8(
             step_size = float(step_size_scaling * g_dot_g / g_dot_ATA_g)
         else:
             step_size = 0.01
-            print(f"WARNING: g^T @ A^T A @ g <= 0, using fallback step size")
+            print("WARNING: g^T @ A^T A @ g <= 0, using fallback step size")
 
         step_sizes.append(step_size)
 
         if debug:
-            print(
-                f"  Gradient range: [{float(cp.min(gradient)):.6f}, {float(cp.max(gradient)):.6f}]"
-            )
+            print(f"  Gradient range: [{float(cp.min(gradient)):.6f}, {float(cp.max(gradient)):.6f}]")
             print(f"  g^T @ g: {float(g_dot_g):.6f}")
             print(f"  g^T @ A^T A @ g: {float(g_dot_ATA_g):.6f}")
             print(f"  Step size: {step_size:.6f}")
@@ -159,19 +147,15 @@ def optimize_frame_int8(
         led_values_new = cp.clip(led_values_gpu - step_size * gradient, 0, 1)
 
         if debug:
-            print(
-                f"  LED values range: [{float(cp.min(led_values_new)):.3f}, {float(cp.max(led_values_new)):.3f}]"
-            )
+            print(f"  LED values range: [{float(cp.min(led_values_new)):.3f}, {float(cp.max(led_values_new)):.3f}]")
 
         # Check convergence
         delta = cp.linalg.norm(led_values_new - led_values_gpu)
         if debug:
-            print(
-                f"  Delta: {float(delta):.6f} (threshold: {convergence_threshold:.6f})"
-            )
+            print(f"  Delta: {float(delta):.6f} (threshold: {convergence_threshold:.6f})")
 
         if delta < convergence_threshold:
-            print(f"*** CONVERGED after {iteration+1} iterations ***")
+            print(f"*** CONVERGED after {iteration + 1} iterations ***")
             led_values_gpu = led_values_new
             converged = True
             break
@@ -183,16 +167,12 @@ def optimize_frame_int8(
         converged = False
 
     # Step 6: Convert back to spatial order and scale to [0,255]
-    print(f"\n--- Step 5: Final conversion ---")
-    led_values_spatial = ATA_matrix.reorder_led_values_from_rcm(
-        cp.asnumpy(led_values_gpu)
-    )
+    print("\n--- Step 5: Final conversion ---")
+    led_values_spatial = ATA_matrix.reorder_led_values_from_rcm(cp.asnumpy(led_values_gpu))
     led_values_final = (led_values_spatial * 255.0).astype(np.uint8)
 
     print(f"Final LED values spatial shape: {led_values_spatial.shape}")
-    print(
-        f"Final LED values range: [{led_values_final.min()}, {led_values_final.max()}]"
-    )
+    print(f"Final LED values range: [{led_values_final.min()}, {led_values_final.max()}]")
 
     return {
         "converged": converged,
@@ -252,17 +232,13 @@ def test_int8_convergence():
         debug=True,
     )
 
-    print(f"\n=== RESULTS ===")
+    print("\n=== RESULTS ===")
     print(f"Converged: {result['converged']}")
     print(f"Iterations: {result['iterations']}")
     print(f"Final delta: {result['final_delta']:.6f}")
-    print(
-        f"LED values range: [{result['led_values'].min()}, {result['led_values'].max()}]"
-    )
+    print(f"LED values range: [{result['led_values'].min()}, {result['led_values'].max()}]")
     print(f"Step sizes: {result['step_sizes']}")
-    print(
-        f"Step size range: [{np.min(result['step_sizes']):.6f}, {np.max(result['step_sizes']):.6f}]"
-    )
+    print(f"Step size range: [{np.min(result['step_sizes']):.6f}, {np.max(result['step_sizes']):.6f}]")
     print(f"Step size mean: {np.mean(result['step_sizes']):.6f}")
 
 

@@ -84,25 +84,17 @@ class StandaloneOptimizer:
         if "mixed_tensor" in patterns_data:
             logger.info("Loading mixed tensor from patterns...")
             mixed_tensor_dict = patterns_data["mixed_tensor"].item()
-            self.mixed_tensor = SingleBlockMixedSparseTensor.from_dict(
-                mixed_tensor_dict
-            )
-            logger.info(
-                f"Mixed tensor loaded: {self.mixed_tensor.batch_size} LEDs, dtype={self.mixed_tensor.dtype}"
-            )
+            self.mixed_tensor = SingleBlockMixedSparseTensor.from_dict(mixed_tensor_dict)
+            logger.info(f"Mixed tensor loaded: {self.mixed_tensor.batch_size} LEDs, dtype={self.mixed_tensor.dtype}")
         elif self.optimizer_type == "mixed":
-            logger.warning(
-                "Mixed tensor not found in patterns file, falling back to sparse mode"
-            )
+            logger.warning("Mixed tensor not found in patterns file, falling back to sparse mode")
             self.optimizer_type = "sparse"
 
         # Load CSC matrix for DIA creation and sparse fallback
         if "diffusion_matrix" in patterns_data:
             csc_data_dict = patterns_data["diffusion_matrix"].item()
             self.diffusion_csc = LEDDiffusionCSCMatrix.from_dict(csc_data_dict)
-            logger.info(
-                f"CSC diffusion matrix loaded: {self.diffusion_csc.led_count} LEDs"
-            )
+            logger.info(f"CSC diffusion matrix loaded: {self.diffusion_csc.led_count} LEDs")
         else:
             logger.error("No diffusion matrix found in patterns file")
             raise ValueError("Patterns file must contain diffusion_matrix")
@@ -128,9 +120,7 @@ class StandaloneOptimizer:
         logger.info("DIA matrix built successfully")
 
         self.led_count = self.diffusion_csc.led_count
-        logger.info(
-            f"Initialized {self.optimizer_type} optimizer with {self.led_count} LEDs"
-        )
+        logger.info(f"Initialized {self.optimizer_type} optimizer with {self.led_count} LEDs")
 
     def show_preview(self, rendered_result: np.ndarray, target_image: np.ndarray):
         """Show side-by-side comparison."""
@@ -238,9 +228,7 @@ class StandaloneOptimizer:
         }
 
         # DEBUG: Save LED values for comparison
-        np.savez(
-            f"debug_{self.optimizer_type}_led_values.npz", led_values=result.led_values
-        )
+        np.savez(f"debug_{self.optimizer_type}_led_values.npz", led_values=result.led_values)
         logger.info(
             f"LED values stats: min={result.led_values.min()}, "
             f"max={result.led_values.max()}, mean={result.led_values.mean():.3f}"
@@ -275,9 +263,7 @@ class StandaloneOptimizer:
         image = cv2.resize(image, (FRAME_WIDTH, FRAME_HEIGHT))
         return image.astype(np.uint8)
 
-    def _render_result(
-        self, result: FrameOptimizationResult, target_image: np.ndarray
-    ) -> np.ndarray:
+    def _render_result(self, result: FrameOptimizationResult, target_image: np.ndarray) -> np.ndarray:
         """Render optimization result using CSC matrices."""
         logger.info("Rendering result using CSC forward pass...")
 
@@ -286,9 +272,7 @@ class StandaloneOptimizer:
         led_count = result.led_values.shape[1]
 
         # Convert LED values from uint8 [0,255] to float32 [0,1]
-        led_values_normalized = (
-            result.led_values.astype(np.float32) / 255.0
-        )  # Shape: (3, led_count)
+        led_values_normalized = result.led_values.astype(np.float32) / 255.0  # Shape: (3, led_count)
 
         logger.info(f"LED values shape: {result.led_values.shape}")
         logger.info(f"CSC matrix shape: {csc_A.shape}")
@@ -312,9 +296,7 @@ class StandaloneOptimizer:
             rendered_channel = A_channel @ led_channel  # Shape: (pixels,)
 
             # Reshape to spatial dimensions
-            rendered_image[:, :, channel] = rendered_channel.reshape(
-                FRAME_HEIGHT, FRAME_WIDTH
-            )
+            rendered_image[:, :, channel] = rendered_channel.reshape(FRAME_HEIGHT, FRAME_WIDTH)
 
         # Convert back to uint8 [0, 255] and clip
         rendered_image = np.clip(rendered_image * 255.0, 0, 255).astype(np.uint8)
@@ -346,19 +328,12 @@ def main():
         "--synthetic",
         "-s",
         action="store_true",
-        help="[DEPRECATED] Use pre-generated synthetic patterns from "
-        "generate_synthetic_patterns.py instead",
+        help="[DEPRECATED] Use pre-generated synthetic patterns from generate_synthetic_patterns.py instead",
     )
     parser.add_argument("--output", "-o", help="Output image path")
-    parser.add_argument(
-        "--preview", action="store_true", help="Show preview comparison"
-    )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose logging"
-    )
-    parser.add_argument(
-        "--test", action="store_true", help="Use fewer LEDs for faster testing"
-    )
+    parser.add_argument("--preview", action="store_true", help="Show preview comparison")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
+    parser.add_argument("--test", action="store_true", help="Use fewer LEDs for faster testing")
     parser.add_argument(
         "--sparse",
         action="store_true",
@@ -380,9 +355,7 @@ def main():
 
     # Setup logging
     level = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(
-        level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
+    logging.basicConfig(level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
     # Validate inputs
     if not Path(args.input).exists():
@@ -390,20 +363,14 @@ def main():
         return 1
 
     if args.patterns:
-        patterns_file = (
-            f"{args.patterns}.npz"
-            if not args.patterns.endswith(".npz")
-            else args.patterns
-        )
+        patterns_file = f"{args.patterns}.npz" if not args.patterns.endswith(".npz") else args.patterns
         if not Path(patterns_file).exists():
             logger.error(f"Patterns file not found: {patterns_file}")
             return 1
 
     if not args.patterns:
         logger.error("Must specify --patterns with path to diffusion patterns file")
-        logger.error(
-            "Generate synthetic patterns first with: python tools/generate_synthetic_patterns.py"
-        )
+        logger.error("Generate synthetic patterns first with: python tools/generate_synthetic_patterns.py")
         return 1
 
     try:
@@ -417,19 +384,13 @@ def main():
         elif args.sparse:
             optimizer_type = "sparse"
         else:
-            optimizer_type = (
-                args.optimizer
-            )  # Use the --optimizer argument (default: mixed)
+            optimizer_type = args.optimizer  # Use the --optimizer argument (default: mixed)
 
         logger.info(f"Using {optimizer_type} frame optimizer")
-        optimizer = StandaloneOptimizer(
-            diffusion_patterns_path=args.patterns, optimizer_type=optimizer_type
-        )
+        optimizer = StandaloneOptimizer(diffusion_patterns_path=args.patterns, optimizer_type=optimizer_type)
 
         # Run optimization
-        result, target_image = optimizer.run(
-            input_path=args.input, output_path=args.output, show_preview=args.preview
-        )
+        result, target_image = optimizer.run(input_path=args.input, output_path=args.output, show_preview=args.preview)
 
         # Print summary
         logger.info("=== Optimization Summary ===")
@@ -445,20 +406,12 @@ def main():
             opt_pct = timing["optimize_time"] / timing["total_time"] * 100
             render_pct = timing["render_time"] / timing["total_time"] * 100
 
-            logger.info(
-                f"Image loading:     {timing['load_time']:.3f}s ({load_pct:.1f}%)"
-            )
-            logger.info(
-                f"LED optimization:  {timing['optimize_time']:.3f}s ({opt_pct:.1f}%)"
-            )
-            logger.info(
-                f"Result rendering:  {timing['render_time']:.3f}s ({render_pct:.1f}%)"
-            )
+            logger.info(f"Image loading:     {timing['load_time']:.3f}s ({load_pct:.1f}%)")
+            logger.info(f"LED optimization:  {timing['optimize_time']:.3f}s ({opt_pct:.1f}%)")
+            logger.info(f"Result rendering:  {timing['render_time']:.3f}s ({render_pct:.1f}%)")
             if timing["save_time"] > 0:
                 save_pct = timing["save_time"] / timing["total_time"] * 100
-                logger.info(
-                    f"Image saving:      {timing['save_time']:.3f}s ({save_pct:.1f}%)"
-                )
+                logger.info(f"Image saving:      {timing['save_time']:.3f}s ({save_pct:.1f}%)")
             logger.info(f"Total time:        {timing['total_time']:.3f}s")
 
             # Estimate FPS from optimization time
@@ -485,9 +438,7 @@ def main():
                 else:
                     logger.info(f"{metric.upper()}: {value}")
 
-        logger.info(
-            f"LED values range: [{result.led_values.min()}, {result.led_values.max()}]"
-        )
+        logger.info(f"LED values range: [{result.led_values.min()}, {result.led_values.max()}]")
 
         if args.output:
             logger.info(f"Output saved: {args.output}")

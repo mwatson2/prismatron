@@ -37,15 +37,13 @@ def debug_gtg_calculation():
 
     for case_name, gradient_cpu in test_cases:
         print(f"\n--- {case_name} ---")
-        print(
-            f"CPU gradient range: [{gradient_cpu.min():.6f}, {gradient_cpu.max():.6f}]"
-        )
+        print(f"CPU gradient range: [{gradient_cpu.min():.6f}, {gradient_cpu.max():.6f}]")
 
         # Transfer to GPU
         transfer_start = time.time()
         gradient_gpu = cp.asarray(gradient_cpu)
         transfer_time = time.time() - transfer_start
-        print(f"CPU->GPU transfer: {transfer_time*1000:.3f}ms")
+        print(f"CPU->GPU transfer: {transfer_time * 1000:.3f}ms")
 
         # Test different g^T @ g calculation methods
         methods = [
@@ -74,12 +72,10 @@ def debug_gtg_calculation():
 
             avg_time = np.mean(times) * 1000
             std_time = np.std(times) * 1000
-            print(
-                f"  {method_name:30}: {avg_time:7.3f} ± {std_time:5.3f} ms, result: {float(result):.3e}"
-            )
+            print(f"  {method_name:30}: {avg_time:7.3f} ± {std_time:5.3f} ms, result: {float(result):.3e}")
 
     # Test memory access patterns
-    print(f"\n--- Memory Access Pattern Analysis ---")
+    print("\n--- Memory Access Pattern Analysis ---")
 
     gradient_gpu = cp.asarray(np.random.randn(*gradient_shape).astype(np.float32))
 
@@ -105,7 +101,7 @@ def debug_gtg_calculation():
         print(f"  {name:15}: {avg_time:7.3f}ms")
 
     # Test GPU memory allocation overhead
-    print(f"\n--- GPU Memory Allocation Test ---")
+    print("\n--- GPU Memory Allocation Test ---")
 
     times_with_alloc = []
     times_without_alloc = []
@@ -128,11 +124,11 @@ def debug_gtg_calculation():
         cp.cuda.Device().synchronize()
         times_without_alloc.append(time.time() - start)
 
-    print(f"  With allocation:    {np.mean(times_with_alloc)*1000:.3f}ms")
-    print(f"  Without allocation: {np.mean(times_without_alloc)*1000:.3f}ms")
+    print(f"  With allocation:    {np.mean(times_with_alloc) * 1000:.3f}ms")
+    print(f"  Without allocation: {np.mean(times_without_alloc) * 1000:.3f}ms")
 
     # Test reduction algorithm scaling
-    print(f"\n--- Scaling Analysis ---")
+    print("\n--- Scaling Analysis ---")
 
     sizes = [100, 500, 1000, 2000, 5000]
 

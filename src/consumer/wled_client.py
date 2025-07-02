@@ -135,9 +135,7 @@ class WLEDClient:
         """Calculate how to fragment LED data into DDP packets."""
         data_size = self.config.led_count * 3  # RGB data
 
-        self.packets_per_frame = (
-            data_size + DDP_MAX_DATA_PER_PACKET - 1
-        ) // DDP_MAX_DATA_PER_PACKET
+        self.packets_per_frame = (data_size + DDP_MAX_DATA_PER_PACKET - 1) // DDP_MAX_DATA_PER_PACKET
         self.data_per_packet = DDP_MAX_DATA_PER_PACKET
         self.last_packet_size = data_size % DDP_MAX_DATA_PER_PACKET
         if self.last_packet_size == 0:
@@ -185,17 +183,11 @@ class WLEDClient:
 
                         # Validate LED count if available
                         wled_led_count = (
-                            status.get("leds", {}).get("count", 0)
-                            if isinstance(status.get("leds"), dict)
-                            else 0
+                            status.get("leds", {}).get("count", 0) if isinstance(status.get("leds"), dict) else 0
                         )
-                        if (
-                            wled_led_count > 0
-                            and wled_led_count != self.config.led_count
-                        ):
+                        if wled_led_count > 0 and wled_led_count != self.config.led_count:
                             logger.warning(
-                                f"LED count mismatch: configured {self.config.led_count}, "
-                                f"WLED reports {wled_led_count}"
+                                f"LED count mismatch: configured {self.config.led_count}, WLED reports {wled_led_count}"
                             )
                     else:
                         logger.info(
@@ -210,10 +202,7 @@ class WLEDClient:
                     return True
                 else:
                     if not self.config.persistent_retry:
-                        logger.error(
-                            f"Failed to connect to WLED controller at"
-                            f" {self.config.host}:{self.config.port}"
-                        )
+                        logger.error(f"Failed to connect to WLED controller at {self.config.host}:{self.config.port}")
                         self.disconnect()
                         return False
 
@@ -247,8 +236,7 @@ class WLEDClient:
                 # Persistent retry mode
                 elapsed = time.time() - start_time
                 logger.warning(
-                    f"Connection error after {elapsed:.1f}s: {e}, "
-                    f"retrying in {self.config.retry_interval}s..."
+                    f"Connection error after {elapsed:.1f}s: {e}, retrying in {self.config.retry_interval}s..."
                 )
                 self.disconnect()
                 time.sleep(self.config.retry_interval)
@@ -317,15 +305,12 @@ class WLEDClient:
                         # (without expecting a response since WLED doesn't reply to DDP queries)
                         udp_success = self._test_udp_connectivity()
                         if not udp_success:
-                            logger.warning(
-                                "UDP connectivity test failed, but HTTP works"
-                            )
+                            logger.warning("UDP connectivity test failed, but HTTP works")
 
                         return True, status
                     else:
                         logger.warning(
-                            f"Device at {base_url} responded but is not WLED "
-                            f"(brand: {status.get('brand', 'Unknown')})"
+                            f"Device at {base_url} responded but is not WLED (brand: {status.get('brand', 'Unknown')})"
                         )
                         return False, None
 
@@ -334,15 +319,11 @@ class WLEDClient:
                     return False, None
 
             else:
-                logger.warning(
-                    f"HTTP request to {info_url} failed with status {response.status_code}"
-                )
+                logger.warning(f"HTTP request to {info_url} failed with status {response.status_code}")
                 return False, None
 
         except requests.exceptions.Timeout:
-            logger.warning(
-                f"HTTP request to WLED timed out after {self.config.timeout}s"
-            )
+            logger.warning(f"HTTP request to WLED timed out after {self.config.timeout}s")
             return False, None
         except requests.exceptions.ConnectionError:
             logger.warning(f"Failed to connect to WLED at {self.config.host}")
@@ -412,10 +393,7 @@ class WLEDClient:
         # Convert numpy array to bytes if needed
         if isinstance(led_data, np.ndarray):
             if led_data.shape != (self.config.led_count, 3):
-                error_msg = (
-                    f"Invalid LED data shape: expected {(self.config.led_count, 3)}, "
-                    f"got {led_data.shape}"
-                )
+                error_msg = f"Invalid LED data shape: expected {(self.config.led_count, 3)}, got {led_data.shape}"
                 logger.error(error_msg)
                 return TransmissionResult(
                     success=False,
@@ -424,15 +402,10 @@ class WLEDClient:
                     transmission_time=time.time() - start_time,
                     errors=[error_msg],
                 )
-            led_data_bytes = (
-                np.clip(led_data, 0, 255).astype(np.uint8).flatten().tobytes()
-            )
+            led_data_bytes = np.clip(led_data, 0, 255).astype(np.uint8).flatten().tobytes()
         else:
             if len(led_data) != self.config.led_count * 3:
-                error_msg = (
-                    f"Invalid LED data size: expected {self.config.led_count * 3}, "
-                    f"got {len(led_data)}"
-                )
+                error_msg = f"Invalid LED data size: expected {self.config.led_count * 3}, got {len(led_data)}"
                 logger.error(error_msg)
                 return TransmissionResult(
                     success=False,
@@ -551,9 +524,7 @@ class WLEDClient:
                 errors=[error_msg],
             )
 
-    def _send_ddp_packet(
-        self, data: bytes, data_offset: int, is_last_packet: bool = False
-    ) -> bool:
+    def _send_ddp_packet(self, data: bytes, data_offset: int, is_last_packet: bool = False) -> bool:
         """
         Send a single DDP packet.
 
@@ -598,20 +569,14 @@ class WLEDClient:
                     self.socket.sendto(packet, (self.config.host, self.config.port))
                     return True
                 except socket.timeout:
-                    logger.warning(
-                        f"Packet send timeout, attempt {attempt + 1}/{self.config.retry_count}"
-                    )
+                    logger.warning(f"Packet send timeout, attempt {attempt + 1}/{self.config.retry_count}")
                 except Exception as e:
-                    logger.warning(
-                        f"Packet send error: {e}, attempt {attempt + 1}/{self.config.retry_count}"
-                    )
+                    logger.warning(f"Packet send error: {e}, attempt {attempt + 1}/{self.config.retry_count}")
 
                 if attempt < self.config.retry_count - 1:
                     time.sleep(0.01)  # Brief delay before retry
 
-            logger.error(
-                f"Failed to send packet after {self.config.retry_count} attempts"
-            )
+            logger.error(f"Failed to send packet after {self.config.retry_count} attempts")
             return False
 
         except Exception as e:
@@ -732,14 +697,8 @@ class WLEDClient:
             # Calculate throughput if we have transmission data
             total_bytes = self.packets_sent * DDP_HEADER_SIZE  # Approximate
             if self.last_frame_time > 0 and self.frames_sent > 0:
-                total_time = time.time() - (
-                    self.last_frame_time - (self.frames_sent / self.config.max_fps)
-                )
-                throughput_mbps = (
-                    (total_bytes * 8) / (total_time * 1_000_000)
-                    if total_time > 0
-                    else 0.0
-                )
+                total_time = time.time() - (self.last_frame_time - (self.frames_sent / self.config.max_fps))
+                throughput_mbps = (total_bytes * 8) / (total_time * 1_000_000) if total_time > 0 else 0.0
                 avg_fps = self.frames_sent / total_time if total_time > 0 else 0.0
             else:
                 throughput_mbps = 0.0
@@ -759,8 +718,7 @@ class WLEDClient:
                 "estimated_throughput_mbps": throughput_mbps,
                 "average_fps": avg_fps,
                 "keepalive_enabled": self._enable_keepalive,
-                "keepalive_active": self._keepalive_thread is not None
-                and self._keepalive_thread.is_alive(),
+                "keepalive_active": self._keepalive_thread is not None and self._keepalive_thread.is_alive(),
                 "keepalive_interval": self._keepalive_interval,
                 "last_data_time": self._last_data_time,
             }
@@ -807,9 +765,7 @@ class WLEDClient:
             return  # Thread already running
 
         self._keepalive_stop_event.clear()
-        self._keepalive_thread = threading.Thread(
-            target=self._keepalive_worker, name="WLEDKeepalive", daemon=True
-        )
+        self._keepalive_thread = threading.Thread(target=self._keepalive_worker, name="WLEDKeepalive", daemon=True)
         self._keepalive_thread.start()
         logger.info("Started WLED keepalive thread")
 
@@ -855,10 +811,7 @@ class WLEDClient:
                 # Only send keepalive if:
                 # 1. We have LED data to repeat
                 # 2. It's been more than keepalive_interval since last data
-                if (
-                    last_data is not None
-                    and current_time - last_time >= self._keepalive_interval
-                ):
+                if last_data is not None and current_time - last_time >= self._keepalive_interval:
                     try:
                         # Send the same data again (bypass flow control for keepalive)
                         result = self._send_fragmented_data(last_data)
@@ -916,9 +869,7 @@ class WLEDClient:
         if self.connect():
             return self
         else:
-            raise ConnectionError(
-                f"Failed to connect to WLED at {self.config.host}:{self.config.port}"
-            )
+            raise ConnectionError(f"Failed to connect to WLED at {self.config.host}:{self.config.port}")
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""

@@ -43,11 +43,7 @@ class TestFrameOptimizer:
         from pathlib import Path
 
         # Load the latest 2600 LED patterns (v7.0 with optimized sparsity)
-        pattern_path = (
-            Path(__file__).parent.parent
-            / "diffusion_patterns"
-            / "synthetic_2600_64x64_v7.npz"
-        )
+        pattern_path = Path(__file__).parent.parent / "diffusion_patterns" / "synthetic_2600_64x64_v7.npz"
         if not pattern_path.exists():
             raise FileNotFoundError(f"Pattern file not found: {pattern_path}")
 
@@ -62,8 +58,7 @@ class TestFrameOptimizer:
         dia_dict = data["dia_matrix"].item()
         dia_matrix = DiagonalATAMatrix.from_dict(dia_dict)
         print(
-            f"  DIA matrix: {dia_matrix.led_count} LEDs, "
-            f"bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
+            f"  DIA matrix: {dia_matrix.led_count} LEDs, bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
         )
 
         print(
@@ -114,7 +109,9 @@ class TestFrameOptimizer:
 
         # Create matrices - note: LEDDiffusionCSCMatrix expects the A matrix, not A^T
         csc_matrix = LEDDiffusionCSCMatrix(
-            csc_matrix=diffusion_matrix, height=480, width=800  # Pass A matrix directly
+            csc_matrix=diffusion_matrix,
+            height=480,
+            width=800,  # Pass A matrix directly
         )
 
         dia_matrix = DiagonalATAMatrix(led_count, crop_size=32)
@@ -141,12 +138,10 @@ class TestFrameOptimizer:
         mixed_tensor, dia_matrix = self.load_real_diffusion_patterns()
         led_count = mixed_tensor.batch_size
 
-        print(f"\nTesting optimization with real patterns and DIA matrix:")
+        print("\nTesting optimization with real patterns and DIA matrix:")
         print(f"  LED count: {led_count}")
         print(f"  Mixed tensor format: {mixed_tensor.dtype}")
-        print(
-            f"  DIA matrix: bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
-        )
+        print(f"  DIA matrix: bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals")
 
         # Test frame
         target_frame = self.create_test_frame("planar")
@@ -156,7 +151,7 @@ class TestFrameOptimizer:
 
         from src.utils.frame_optimizer import _calculate_ATb
 
-        print(f"\n  === WARMUP PHASE ====")
+        print("\n  === WARMUP PHASE ====")
 
         # Warmup runs to eliminate initialization costs (3 runs)
         for i in range(3):
@@ -169,12 +164,12 @@ class TestFrameOptimizer:
                 debug=False,
             )
 
-        print(f"  Warmup complete (3 iterations)")
+        print("  Warmup complete (3 iterations)")
 
-        print(f"\n  === DETAILED PERFORMANCE PROFILING ====")
+        print("\n  === DETAILED PERFORMANCE PROFILING ====")
 
         # Step 1: Time A^T b calculation separately
-        print(f"\n  [Step 1] A^T b calculation:")
+        print("\n  [Step 1] A^T b calculation:")
         target_frame_uint8 = target_frame.astype(np.uint8)
 
         # Time multiple A^T b calculations
@@ -190,7 +185,7 @@ class TestFrameOptimizer:
         print(f"    A^T b shape: {ATb.shape}")
 
         # Step 2: Run optimization with detailed timing breakdown
-        print(f"\n  [Step 2] Full optimization with timing breakdown:")
+        print("\n  [Step 2] Full optimization with timing breakdown:")
 
         result = optimize_frame_led_values(
             target_frame=target_frame,
@@ -202,26 +197,22 @@ class TestFrameOptimizer:
             enable_timing=True,  # Enable detailed timing breakdown
         )
 
-        print(f"    Optimization completed:")
+        print("    Optimization completed:")
         print(f"      Converged: {result.converged}")
         print(f"      Iterations: {result.iterations}")
         print(f"      LED values shape: {result.led_values.shape}")
-        print(
-            f"      LED values range: [{result.led_values.min()}, {result.led_values.max()}]"
-        )
+        print(f"      LED values range: [{result.led_values.min()}, {result.led_values.max()}]")
 
         if result.timing_data:
-            print(f"\n    Timing breakdown:")
+            print("\n    Timing breakdown:")
             for step, duration in result.timing_data.items():
                 print(f"      {step}: {duration:.4f}s")
 
         if hasattr(result, "step_sizes") and result.step_sizes is not None:
-            print(
-                f"    Step sizes: {[f'{s:.6f}' for s in result.step_sizes[:5]]} (first 5)"
-            )
+            print(f"    Step sizes: {[f'{s:.6f}' for s in result.step_sizes[:5]]} (first 5)")
 
         # Step 3: Run multiple trials for statistical accuracy
-        print(f"\n  [Step 3] Multiple trials for performance statistics (10 runs):")
+        print("\n  [Step 3] Multiple trials for performance statistics (10 runs):")
 
         trial_times = []
         trial_iterations = []
@@ -258,11 +249,11 @@ class TestFrameOptimizer:
 
         # Step 4: Average timing breakdown across trials with detailed step size analysis
         if trial_timings:
-            print(f"\n  [Step 4] Average timing breakdown across trials:")
+            print("\n  [Step 4] Average timing breakdown across trials:")
 
             # Calculate average for each timing section
             avg_timings = {}
-            for section in trial_timings[0].keys():
+            for section in trial_timings[0]:
                 section_times = [t[section] for t in trial_timings if section in t]
                 if section_times:
                     avg_timings[section] = np.mean(section_times)
@@ -270,7 +261,7 @@ class TestFrameOptimizer:
             total_tracked = sum(avg_timings.values())
 
             # Group and display timing sections
-            print(f"    === Core Optimization Sections ===")
+            print("    === Core Optimization Sections ===")
             core_sections = [
                 "ata_multiply",
                 "gradient_calculation",
@@ -281,12 +272,10 @@ class TestFrameOptimizer:
             for section in core_sections:
                 if section in avg_timings:
                     avg_duration = avg_timings[section]
-                    percentage = (
-                        (avg_duration / total_tracked * 100) if total_tracked > 0 else 0
-                    )
+                    percentage = (avg_duration / total_tracked * 100) if total_tracked > 0 else 0
                     print(f"    {section}: {avg_duration:.4f}s ({percentage:.1f}%)")
 
-            print(f"    === Step Size Calculation Breakdown ===")
+            print("    === Step Size Calculation Breakdown ===")
             step_size_sections = [
                 "step_size_g_dot_g",
                 "step_size_g_ata_g",
@@ -296,38 +285,18 @@ class TestFrameOptimizer:
             for section in step_size_sections:
                 if section in avg_timings:
                     avg_duration = avg_timings[section]
-                    percentage = (
-                        (avg_duration / total_tracked * 100) if total_tracked > 0 else 0
-                    )
-                    step_pct = (
-                        (avg_duration / step_size_total * 100)
-                        if step_size_total > 0
-                        else 0
-                    )
-                    print(
-                        f"    {section}: {avg_duration:.4f}s "
-                        f"({percentage:.1f}% total, {step_pct:.1f}% of step size)"
-                    )
+                    percentage = (avg_duration / total_tracked * 100) if total_tracked > 0 else 0
+                    step_pct = (avg_duration / step_size_total * 100) if step_size_total > 0 else 0
+                    print(f"    {section}: {avg_duration:.4f}s ({percentage:.1f}% total, {step_pct:.1f}% of step size)")
 
-            step_size_pct = (
-                (step_size_total / total_tracked * 100) if total_tracked > 0 else 0
-            )
-            print(
-                f"    Total step size calculation: {step_size_total:.4f}s "
-                f"({step_size_pct:.1f}%)"
-            )
+            step_size_pct = (step_size_total / total_tracked * 100) if total_tracked > 0 else 0
+            print(f"    Total step size calculation: {step_size_total:.4f}s ({step_size_pct:.1f}%)")
 
-            print(f"    === Other Sections ===")
-            other_sections = [
-                s
-                for s in avg_timings.keys()
-                if s not in core_sections + step_size_sections
-            ]
+            print("    === Other Sections ===")
+            other_sections = [s for s in avg_timings if s not in core_sections + step_size_sections]
             for section in sorted(other_sections):
                 avg_duration = avg_timings[section]
-                percentage = (
-                    (avg_duration / total_tracked * 100) if total_tracked > 0 else 0
-                )
+                percentage = (avg_duration / total_tracked * 100) if total_tracked > 0 else 0
                 print(f"    {section}: {avg_duration:.4f}s ({percentage:.1f}%)")
 
             # Check for missing time in optimization loop
@@ -346,48 +315,44 @@ class TestFrameOptimizer:
             missing_time = optimization_loop_time - per_iter_total
             if optimization_loop_time > 0:
                 missing_pct = (missing_time / optimization_loop_time) * 100
-                print(f"    \n    === Missing Time Analysis ===")
+                print("    \n    === Missing Time Analysis ===")
                 print(f"    Optimization loop total: {optimization_loop_time:.4f}s")
                 print(f"    Per-iteration sections total: {per_iter_total:.4f}s")
                 print(f"    Missing time: {missing_time:.4f}s ({missing_pct:.1f}%)")
                 if missing_pct < 10:
-                    print(f"    ✅ Good timing coverage!")
+                    print("    ✅ Good timing coverage!")
                 else:
-                    print(f"    ⚠️  Significant missing time")
+                    print("    ⚠️  Significant missing time")
 
         # Final validation
-        print(f"\n  === VALIDATION ===")
+        print("\n  === VALIDATION ===")
         assert result.led_values.shape == (3, led_count)
         assert result.led_values.dtype == np.uint8
         assert np.all(result.led_values >= 0) and np.all(result.led_values <= 255)
         assert result.iterations > 0
-        print(f"    ✅ All validations passed")
+        print("    ✅ All validations passed")
 
         # Summary
-        print(f"\n  === PERFORMANCE SUMMARY ====")
-        print(f"    Configuration: Mixed tensor (A^T b) + DIA matrix (A^T A)")
+        print("\n  === PERFORMANCE SUMMARY ====")
+        print("    Configuration: Mixed tensor (A^T b) + DIA matrix (A^T A)")
         print(f"    LED count: {led_count}")
-        print(f"    Frame size: 480x800")
-        print(
-            f"    DIA matrix: bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
-        )
+        print("    Frame size: 480x800")
+        print(f"    DIA matrix: bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals")
         print(f"    Average optimization time: {avg_time:.4f}s")
         print(f"    Time per iteration: {avg_time_per_iter:.4f}s")
-        print(f"    Target performance: <5ms per iteration")
+        print("    Target performance: <5ms per iteration")
 
     def test_optimization_with_mixed_tensor(self):
         """Test frame optimization using mixed tensor format."""
         led_count = 50  # Smaller for mixed tensor test
         diffusion_matrix, led_positions = self.create_test_diffusion_matrices(led_count)
 
-        print(f"\nTesting mixed tensor optimization:")
+        print("\nTesting mixed tensor optimization:")
         print(f"  LED count: {led_count}")
 
         # Create mixed tensor (this is a simplified test version)
         try:
-            mixed_tensor = SingleBlockMixedSparseTensor(
-                led_count=led_count, height=480, width=800
-            )
+            mixed_tensor = SingleBlockMixedSparseTensor(led_count=led_count, height=480, width=800)
 
             # Build from diffusion matrix (simplified)
             mixed_tensor.build_from_diffusion_matrix(diffusion_matrix, led_positions)
@@ -418,7 +383,7 @@ class TestFrameOptimizer:
                 debug=True,
             )
 
-            print(f"  Optimization result:")
+            print("  Optimization result:")
             print(f"    Converged: {result.converged}")
             print(f"    Iterations: {result.iterations}")
             print(f"    LED values shape: {result.led_values.shape}")
@@ -439,9 +404,7 @@ class TestFrameOptimizer:
         diffusion_matrix, led_positions = self.create_test_diffusion_matrices(led_count)
 
         # Create matrices
-        csc_matrix = LEDDiffusionCSCMatrix(
-            csc_matrix=diffusion_matrix, height=480, width=800
-        )
+        csc_matrix = LEDDiffusionCSCMatrix(csc_matrix=diffusion_matrix, height=480, width=800)
 
         dia_matrix = DiagonalATAMatrix(led_count, crop_size=32)
         dia_matrix.build_from_diffusion_matrix(diffusion_matrix, led_positions)
@@ -469,9 +432,7 @@ class TestFrameOptimizer:
         diffusion_matrix, led_positions = self.create_test_diffusion_matrices(led_count)
 
         # Create matrices
-        csc_matrix = LEDDiffusionCSCMatrix(
-            csc_matrix=diffusion_matrix, height=480, width=800
-        )
+        csc_matrix = LEDDiffusionCSCMatrix(csc_matrix=diffusion_matrix, height=480, width=800)
 
         dia_matrix = DiagonalATAMatrix(led_count, crop_size=32)
         dia_matrix.build_from_diffusion_matrix(diffusion_matrix, led_positions)
@@ -514,9 +475,7 @@ class TestFrameOptimizer:
         diffusion_matrix, led_positions = self.create_test_diffusion_matrices(led_count)
 
         # Create matrices
-        csc_matrix = LEDDiffusionCSCMatrix(
-            csc_matrix=diffusion_matrix, height=480, width=800
-        )
+        csc_matrix = LEDDiffusionCSCMatrix(csc_matrix=diffusion_matrix, height=480, width=800)
 
         dia_matrix = DiagonalATAMatrix(led_count, crop_size=32)
         dia_matrix.build_from_diffusion_matrix(diffusion_matrix, led_positions)
@@ -544,9 +503,7 @@ class TestFrameOptimizer:
         diffusion_matrix, led_positions = self.create_test_diffusion_matrices(led_count)
 
         # Create matrices
-        csc_matrix = LEDDiffusionCSCMatrix(
-            csc_matrix=diffusion_matrix, height=480, width=800
-        )
+        csc_matrix = LEDDiffusionCSCMatrix(csc_matrix=diffusion_matrix, height=480, width=800)
 
         dia_matrix = DiagonalATAMatrix(led_count, crop_size=32)
         dia_matrix.build_from_diffusion_matrix(diffusion_matrix, led_positions)
@@ -578,9 +535,7 @@ class TestFrameOptimizer:
         diffusion_matrix, led_positions = self.create_test_diffusion_matrices(led_count)
 
         # Test with CSC + DIA combination
-        csc_matrix = LEDDiffusionCSCMatrix(
-            csc_matrix=diffusion_matrix, height=480, width=800
-        )
+        csc_matrix = LEDDiffusionCSCMatrix(csc_matrix=diffusion_matrix, height=480, width=800)
 
         dia_matrix = DiagonalATAMatrix(led_count, crop_size=32)
         dia_matrix.build_from_diffusion_matrix(diffusion_matrix, led_positions)
@@ -623,21 +578,15 @@ class TestFrameOptimizerEdgeCases:
         target_frame = np.zeros((3, 480, 800), dtype=np.uint8)
 
         with pytest.raises(ValueError, match="Unsupported AT_matrix type"):
-            optimize_frame_led_values(
-                target_frame=target_frame, AT_matrix="invalid", ATA_matrix=np.eye(10)
-            )
+            optimize_frame_led_values(target_frame=target_frame, AT_matrix="invalid", ATA_matrix=np.eye(10))
 
     def test_mismatched_dimensions(self):
         """Test handling of mismatched matrix dimensions."""
         led_count = 10
-        diffusion_matrix = sp.random(
-            480 * 800 * 3, led_count * 3, density=0.01, format="csc"
-        )
+        diffusion_matrix = sp.random(480 * 800 * 3, led_count * 3, density=0.01, format="csc")
         led_positions = np.random.rand(led_count, 2) * 100
 
-        csc_matrix = LEDDiffusionCSCMatrix(
-            csc_matrix=diffusion_matrix, height=480, width=800
-        )
+        csc_matrix = LEDDiffusionCSCMatrix(csc_matrix=diffusion_matrix, height=480, width=800)
 
         # Mismatched DIA matrix
         dia_matrix = DiagonalATAMatrix(led_count + 5, crop_size=32)  # Wrong size
@@ -656,13 +605,9 @@ class TestFrameOptimizerEdgeCases:
     def test_zero_iterations(self):
         """Test behavior with zero iterations."""
         led_count = 10
-        diffusion_matrix = sp.random(
-            480 * 800 * 3, led_count * 3, density=0.01, format="csc"
-        )
+        diffusion_matrix = sp.random(480 * 800 * 3, led_count * 3, density=0.01, format="csc")
 
-        csc_matrix = LEDDiffusionCSCMatrix(
-            csc_matrix=diffusion_matrix, height=480, width=800
-        )
+        csc_matrix = LEDDiffusionCSCMatrix(csc_matrix=diffusion_matrix, height=480, width=800)
 
         ATA_dense = np.random.rand(led_count, led_count, 3).astype(np.float32)
         for c in range(3):

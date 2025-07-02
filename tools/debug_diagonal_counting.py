@@ -37,21 +37,17 @@ def debug_led_positions_and_rounding():
     print()
 
     # Generate LED positions using same parameters as pattern generation
-    led_positions = generate_random_led_positions(
-        1000, frame_width=800, frame_height=640, seed=42
-    )
+    led_positions = generate_random_led_positions(1000, frame_width=800, frame_height=640, seed=42)
 
-    print(f"1. Raw LED positions (first 10):")
+    print("1. Raw LED positions (first 10):")
     for i in range(10):
         print(f"   LED {i}: ({led_positions[i][0]}, {led_positions[i][1]})")
     print()
 
     # Calculate block positions with rounding
-    block_positions = calculate_block_positions(
-        led_positions, block_size=64, frame_width=800, frame_height=640
-    )
+    block_positions = calculate_block_positions(led_positions, block_size=64, frame_width=800, frame_height=640)
 
-    print(f"2. Block positions after rounding (first 10):")
+    print("2. Block positions after rounding (first 10):")
     for i in range(10):
         led_x, led_y = led_positions[i]
         block_x, block_y = block_positions[i]
@@ -73,7 +69,7 @@ def debug_led_positions_and_rounding():
     # Check x-coordinate alignment
     x_coords = block_positions[:, 0]
     unaligned_count = np.sum(x_coords % 4 != 0)
-    print(f"\n3. X-coordinate alignment check:")
+    print("\n3. X-coordinate alignment check:")
     print(f"   Total LEDs: {len(block_positions)}")
     print(f"   Unaligned x-coordinates: {unaligned_count}")
     print(f"   All aligned to multiple of 4: {'✅' if unaligned_count == 0 else '❌'}")
@@ -83,7 +79,7 @@ def debug_led_positions_and_rounding():
 
 def debug_adjacency_calculation(block_positions, block_size=64):
     """Debug adjacency matrix calculation in detail."""
-    print(f"\n=== Debugging Adjacency Matrix Calculation ===")
+    print("\n=== Debugging Adjacency Matrix Calculation ===")
     print(f"Block size: {block_size}x{block_size}")
     print()
 
@@ -130,7 +126,7 @@ def debug_adjacency_calculation(block_positions, block_size=64):
                 )
 
     # Analyze overlap details
-    print(f"1. Overlap analysis:")
+    print("1. Overlap analysis:")
     print(f"   Total LED pairs: {n_leds * (n_leds - 1) // 2}")
     print(f"   Overlapping pairs: {len(overlap_details)}")
 
@@ -139,7 +135,7 @@ def debug_adjacency_calculation(block_positions, block_size=64):
         x_overlaps = [detail["x_overlap"] for detail in overlap_details]
         y_overlaps = [detail["y_overlap"] for detail in overlap_details]
 
-        print(f"   Overlap area stats:")
+        print("   Overlap area stats:")
         print(f"     Min: {np.min(areas):.1f} pixels")
         print(f"     Max: {np.max(areas):.1f} pixels")
         print(f"     Mean: {np.mean(areas):.1f} pixels")
@@ -149,7 +145,7 @@ def debug_adjacency_calculation(block_positions, block_size=64):
 
         # Show smallest overlaps
         smallest_overlaps = sorted(overlap_details, key=lambda x: x["area"])[:5]
-        print(f"   Smallest 5 overlaps:")
+        print("   Smallest 5 overlaps:")
         for detail in smallest_overlaps:
             print(
                 f"     LEDs {detail['led_i']}-{detail['led_j']}: "
@@ -159,7 +155,7 @@ def debug_adjacency_calculation(block_positions, block_size=64):
     # Analyze adjacency matrix structure
     bandwidth_stats = analyze_matrix_bandwidth(adjacency)
 
-    print(f"\n2. Adjacency matrix structure:")
+    print("\n2. Adjacency matrix structure:")
     print(f"   Size: {adjacency.shape}")
     print(f"   Non-zeros: {bandwidth_stats['nnz']:,}")
     print(f"   Sparsity: {bandwidth_stats['sparsity']:.2f}%")
@@ -174,7 +170,7 @@ def debug_adjacency_calculation(block_positions, block_size=64):
 
 def debug_ata_per_plane(mixed_tensor):
     """Debug A^T A calculation per RGB plane."""
-    print(f"\n=== Debugging A^T A Per RGB Plane ===")
+    print("\n=== Debugging A^T A Per RGB Plane ===")
     print()
 
     # Compute A^T A
@@ -195,7 +191,7 @@ def debug_ata_per_plane(mixed_tensor):
         bandwidth_stats = analyze_matrix_bandwidth(ata_binary)
         plane_stats.append(bandwidth_stats)
 
-        print(f"{channel+1}. {plane_name} plane:")
+        print(f"{channel + 1}. {plane_name} plane:")
         print(f"   Non-zeros: {bandwidth_stats['nnz']:,}")
         print(f"   Sparsity: {bandwidth_stats['sparsity']:.2f}%")
         print(f"   Bandwidth: {bandwidth_stats['bandwidth']}")
@@ -212,7 +208,7 @@ def debug_ata_per_plane(mixed_tensor):
 
 def compare_adjacency_vs_ata_exact(adjacency, ata_tensor):
     """Compare adjacency vs A^T A with exact position matching."""
-    print(f"\n=== Exact Comparison: Adjacency vs A^T A ===")
+    print("\n=== Exact Comparison: Adjacency vs A^T A ===")
     print()
 
     # Compare each plane
@@ -221,15 +217,11 @@ def compare_adjacency_vs_ata_exact(adjacency, ata_tensor):
         ata_plane = ata_tensor[:, :, channel]
         ata_binary = (ata_plane != 0).astype(int)
 
-        print(f"{channel+1}. {plane_name} plane comparison:")
+        print(f"{channel + 1}. {plane_name} plane comparison:")
 
         # Check if A^T A binary pattern is subset of adjacency
-        ata_not_in_adj = ata_binary & (
-            ~adjacency
-        )  # Elements in A^T A but not in adjacency
-        adj_not_in_ata = adjacency & (
-            ~ata_binary
-        )  # Elements in adjacency but not in A^T A
+        ata_not_in_adj = ata_binary & (~adjacency)  # Elements in A^T A but not in adjacency
+        adj_not_in_ata = adjacency & (~ata_binary)  # Elements in adjacency but not in A^T A
 
         violations = np.sum(ata_not_in_adj)
         missing = np.sum(adj_not_in_ata)
@@ -238,55 +230,43 @@ def compare_adjacency_vs_ata_exact(adjacency, ata_tensor):
         print(f"   Adjacency non-zeros NOT in A^T A: {missing}")
 
         if violations > 0:
-            print(f"   ❌ VIOLATION: A^T A has connections where blocks don't overlap!")
+            print("   ❌ VIOLATION: A^T A has connections where blocks don't overlap!")
             # Show first few violations
             violation_positions = np.where(ata_not_in_adj)
             for i in range(min(5, len(violation_positions[0]))):
                 row, col = violation_positions[0][i], violation_positions[1][i]
                 value = ata_plane[row, col]
-                print(
-                    f"     Position ({row}, {col}): A^T A = {value:.6f}, Adjacency = 0"
-                )
+                print(f"     Position ({row}, {col}): A^T A = {value:.6f}, Adjacency = 0")
 
         if missing > 0:
-            print(
-                f"   ⚠️  Missing: Some overlapping blocks have zero A^T A (possible with pattern generation)"
-            )
+            print("   ⚠️  Missing: Some overlapping blocks have zero A^T A (possible with pattern generation)")
 
         if violations == 0 and missing == 0:
-            print(f"   ✅ PERFECT: A^T A pattern exactly matches adjacency")
+            print("   ✅ PERFECT: A^T A pattern exactly matches adjacency")
         elif violations == 0:
-            print(f"   ✅ VALID: A^T A is proper subset of adjacency")
+            print("   ✅ VALID: A^T A is proper subset of adjacency")
 
     return violations == 0
 
 
 def test_exact_led_positions():
     """Test that we're using exactly the same LED positions for both calculations."""
-    print(f"\n=== Testing Exact LED Position Matching ===")
+    print("\n=== Testing Exact LED Position Matching ===")
 
     # Get LED positions used in adjacency calculation
     led_positions_adj, block_positions_adj = debug_led_positions_and_rounding()
 
     # Load mixed tensor and check if it uses the same positions
     try:
-        pattern_path = (
-            Path(__file__).parent.parent
-            / "diffusion_patterns"
-            / "synthetic_1000_64x64_fixed2.npz"
-        )
+        pattern_path = Path(__file__).parent.parent / "diffusion_patterns" / "synthetic_1000_64x64_fixed2.npz"
         data = np.load(str(pattern_path), allow_pickle=True)
         mixed_tensor_dict = data["mixed_tensor"].item()
 
-        mixed_tensor = SingleBlockMixedSparseTensor.from_dict(
-            mixed_tensor_dict, device="cpu"
-        )
+        mixed_tensor = SingleBlockMixedSparseTensor.from_dict(mixed_tensor_dict, device="cpu")
 
         # Extract block positions from mixed tensor
         if hasattr(mixed_tensor.block_positions, "cpu"):
-            block_positions_tensor = (
-                mixed_tensor.block_positions.cpu().numpy()
-            )  # Shape: (channels, leds, 2)
+            block_positions_tensor = mixed_tensor.block_positions.cpu().numpy()  # Shape: (channels, leds, 2)
         else:
             block_positions_tensor = mixed_tensor.block_positions  # Already numpy array
 
@@ -298,17 +278,11 @@ def test_exact_led_positions():
             # Ensure we have numpy arrays for comparison
             try:
                 if hasattr(block_positions_tensor[channel], "get"):
-                    channel_positions = block_positions_tensor[
-                        channel
-                    ].get()  # CuPy array
+                    channel_positions = block_positions_tensor[channel].get()  # CuPy array
                 elif hasattr(block_positions_tensor[channel], "numpy"):
-                    channel_positions = block_positions_tensor[
-                        channel
-                    ].numpy()  # PyTorch tensor
+                    channel_positions = block_positions_tensor[channel].numpy()  # PyTorch tensor
                 else:
-                    channel_positions = np.asarray(
-                        block_positions_tensor[channel]
-                    )  # Numpy array
+                    channel_positions = np.asarray(block_positions_tensor[channel])  # Numpy array
             except Exception as e:
                 print(f"   ❌ Failed to convert positions to numpy: {e}")
                 positions_match = False
@@ -326,10 +300,10 @@ def test_exact_led_positions():
                 print(f"   Channel {channel}: Positions match exactly ✅")
 
         if positions_match:
-            print(f"   ✅ All channels use identical block positions")
-            print(f"   ✅ Mixed tensor positions match adjacency calculation")
+            print("   ✅ All channels use identical block positions")
+            print("   ✅ Mixed tensor positions match adjacency calculation")
         else:
-            print(f"   ❌ Position mismatch detected!")
+            print("   ❌ Position mismatch detected!")
 
         return mixed_tensor, positions_match
 
@@ -363,37 +337,35 @@ def main():
     is_valid = compare_adjacency_vs_ata_exact(adjacency, ata_tensor)
 
     # Step 6: Summary
-    print(f"\n" + "=" * 80)
-    print(f"SUMMARY")
-    print(f"=" * 80)
+    print("\n" + "=" * 80)
+    print("SUMMARY")
+    print("=" * 80)
 
     print(f"Position matching: {'✅' if positions_match else '❌'}")
     print(f"A^T A validation: {'✅' if is_valid else '❌'}")
     print()
 
-    print(f"Diagonal counts:")
+    print("Diagonal counts:")
     print(f"  Adjacency matrix:     {adj_stats['num_diagonals']:4d} diagonals")
     for channel in range(3):
         plane_name = ["Red", "Green", "Blue"][channel]
-        print(
-            f"  A^T A {plane_name:5s} plane:    {ata_stats[channel]['num_diagonals']:4d} diagonals"
-        )
+        print(f"  A^T A {plane_name:5s} plane:    {ata_stats[channel]['num_diagonals']:4d} diagonals")
 
     # Check if diagonal counts are reasonable
     max_ata_diagonals = max(stats["num_diagonals"] for stats in ata_stats)
     diagonal_ratio = max_ata_diagonals / adj_stats["num_diagonals"]
 
-    print(f"\nDiagonal count analysis:")
+    print("\nDiagonal count analysis:")
     print(f"  Expected (adjacency): {adj_stats['num_diagonals']}")
     print(f"  Actual (max A^T A):   {max_ata_diagonals}")
     print(f"  Ratio:                {diagonal_ratio:.2f}x")
 
     if diagonal_ratio <= 1.0:
-        print(f"  ✅ PERFECT: A^T A has ≤ adjacency diagonals (as expected)")
+        print("  ✅ PERFECT: A^T A has ≤ adjacency diagonals (as expected)")
     elif diagonal_ratio <= 1.2:
-        print(f"  ✅ GOOD: A^T A has reasonable diagonal count")
+        print("  ✅ GOOD: A^T A has reasonable diagonal count")
     else:
-        print(f"  ❌ ISSUE: A^T A has significantly more diagonals than expected")
+        print("  ❌ ISSUE: A^T A has significantly more diagonals than expected")
 
     return is_valid and positions_match and diagonal_ratio <= 1.2
 
@@ -402,6 +374,6 @@ if __name__ == "__main__":
     success = main()
 
     if success:
-        print(f"\n🎉 DEBUGGING COMPLETE - ALL CHECKS PASSED!")
+        print("\n🎉 DEBUGGING COMPLETE - ALL CHECKS PASSED!")
     else:
-        print(f"\n❌ DEBUGGING REVEALED ISSUES - FURTHER INVESTIGATION NEEDED!")
+        print("\n❌ DEBUGGING REVEALED ISSUES - FURTHER INVESTIGATION NEEDED!")

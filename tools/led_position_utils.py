@@ -75,9 +75,7 @@ def calculate_block_positions(
     return np.array(block_positions)
 
 
-def generate_adjacency_matrix(
-    block_positions: np.ndarray, block_size: int
-) -> np.ndarray:
+def generate_adjacency_matrix(block_positions: np.ndarray, block_size: int) -> np.ndarray:
     """
     Generate adjacency matrix showing which LEDs have overlapping blocks.
 
@@ -164,9 +162,7 @@ def analyze_matrix_bandwidth(matrix: np.ndarray) -> dict:
         "nnz": nnz,
         "sparsity": sparsity,
         "bandwidth": bandwidth,
-        "max_diagonal_offset": int(
-            max(abs(diagonal_offsets.min()), abs(diagonal_offsets.max()))
-        ),
+        "max_diagonal_offset": int(max(abs(diagonal_offsets.min()), abs(diagonal_offsets.max()))),
         "num_diagonals": len(unique_offsets),
         "diagonal_offsets": sorted(unique_offsets.tolist()),
         "matrix_size": n,

@@ -133,7 +133,7 @@ class MatrixPerformanceComparison:
                 compute_error_metrics=False,
                 debug=False,
             )
-            logger.info(f"  Warmup {i+1}/{warmup_runs} completed")
+            logger.info(f"  Warmup {i + 1}/{warmup_runs} completed")
 
         # Timed runs
         logger.info(f"Running {timing_runs} timed iterations...")
@@ -156,7 +156,7 @@ class MatrixPerformanceComparison:
             timing_results.append(end_time - start_time)
             final_result = result
 
-            logger.info(f"  Timed run {i+1}/{timing_runs}: {timing_results[-1]:.3f}s")
+            logger.info(f"  Timed run {i + 1}/{timing_runs}: {timing_results[-1]:.3f}s")
 
         # Calculate timing statistics
         timing_stats = {
@@ -167,9 +167,7 @@ class MatrixPerformanceComparison:
             "all_times": timing_results,
         }
 
-        logger.info(
-            f"Average time: {timing_stats['mean_time']:.3f}s ± {timing_stats['std_time']:.3f}s"
-        )
+        logger.info(f"Average time: {timing_stats['mean_time']:.3f}s ± {timing_stats['std_time']:.3f}s")
 
         return final_result, timing_stats
 
@@ -240,22 +238,18 @@ class MatrixPerformanceComparison:
         logger.info("MATRIX PERFORMANCE COMPARISON REPORT")
         logger.info("=" * 80)
 
-        successful_results = {
-            k: v for k, v in results.items() if v.get("success", False)
-        }
+        successful_results = {k: v for k, v in results.items() if v.get("success", False)}
 
         if not successful_results:
             logger.error("No successful runs to compare!")
             return
 
-        logger.info(f"Test Configuration:")
+        logger.info("Test Configuration:")
         logger.info(f"  LED Count: {self.led_count}")
-        logger.info(
-            f"  Successful combinations: {len(successful_results)}/{len(results)}"
-        )
+        logger.info(f"  Successful combinations: {len(successful_results)}/{len(results)}")
 
         # Performance comparison table
-        logger.info(f"\nPerformance Results:")
+        logger.info("\nPerformance Results:")
         logger.info(
             f"{'Combination':<25} {'Mean Time (s)':<15} {'Std (s)':<10} {'FPS':<8} {'MSE':<12} {'Converged':<10}"
         )
@@ -290,12 +284,12 @@ class MatrixPerformanceComparison:
             )
 
         # Summary
-        logger.info(f"\nSummary:")
+        logger.info("\nSummary:")
         logger.info(f"  Fastest: {fastest_combo} ({fastest_time:.3f}s)")
         logger.info(f"  Best MSE: {best_mse_combo} (MSE: {best_mse:.6f})")
 
         # Detailed timing breakdown
-        logger.info(f"\nDetailed Timing (all runs):")
+        logger.info("\nDetailed Timing (all runs):")
         for combo_key, data in successful_results.items():
             if "timing" in data:
                 times = data["timing"]["all_times"]
@@ -307,28 +301,18 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Matrix Performance Comparison Tool")
-    parser.add_argument(
-        "--patterns", required=True, help="Path to diffusion patterns file"
-    )
+    parser.add_argument("--patterns", required=True, help="Path to diffusion patterns file")
     parser.add_argument("--image", required=True, help="Path to test image")
-    parser.add_argument(
-        "--iterations", type=int, default=10, help="Optimization iterations per run"
-    )
+    parser.add_argument("--iterations", type=int, default=10, help="Optimization iterations per run")
     parser.add_argument("--warmup", type=int, default=2, help="Warmup runs (not timed)")
-    parser.add_argument(
-        "--timing-runs", type=int, default=3, help="Timed runs for averaging"
-    )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose logging"
-    )
+    parser.add_argument("--timing-runs", type=int, default=3, help="Timed runs for averaging")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
 
     # Setup logging
     level = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(
-        level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
+    logging.basicConfig(level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
     try:
         # Run comparison

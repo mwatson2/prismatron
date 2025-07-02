@@ -37,12 +37,10 @@ def time_operation(name, func, *args, **kwargs):
 
     # Synchronize and get GPU time
     cp.cuda.runtime.deviceSynchronize()
-    gpu_time = (
-        cp.cuda.get_elapsed_time(start_event, end_event) / 1000.0
-    )  # Convert to seconds
+    gpu_time = cp.cuda.get_elapsed_time(start_event, end_event) / 1000.0  # Convert to seconds
     cpu_time = end_cpu - start_cpu
 
-    print(f"{name:30s}: CPU {cpu_time*1000:6.2f}ms | GPU {gpu_time*1000:6.2f}ms")
+    print(f"{name:30s}: CPU {cpu_time * 1000:6.2f}ms | GPU {gpu_time * 1000:6.2f}ms")
 
     return result, gpu_time, cpu_time
 
@@ -56,7 +54,7 @@ def analyze_mixed_dia_timing():
     patterns_path = "diffusion_patterns/synthetic_1000.npz"
     image_path = "flower_test.png"
 
-    print(f"\nLoading test data...")
+    print("\nLoading test data...")
     patterns_data = np.load(patterns_path, allow_pickle=True)
 
     # Load mixed tensor
@@ -84,7 +82,7 @@ def analyze_mixed_dia_timing():
     print(f"Target image: shape {target_image.shape}")
 
     # Warmup
-    print(f"\n=== Warmup Phase ===")
+    print("\n=== Warmup Phase ===")
     for i in range(3):
         _ = optimize_frame_led_values(
             target_frame=target_image,
@@ -97,14 +95,14 @@ def analyze_mixed_dia_timing():
     print("Warmup completed")
 
     # Detailed timing analysis
-    print(f"\n=== Detailed Timing Analysis ===")
+    print("\n=== Detailed Timing Analysis ===")
 
     # Run multiple iterations and average
     num_runs = 5
     all_timings = {"total": [], "iterations": []}
 
     for run in range(num_runs):
-        print(f"\nRun {run+1}/{num_runs}:")
+        print(f"\nRun {run + 1}/{num_runs}:")
 
         # Time the full optimization
         result, gpu_time, cpu_time = time_operation(
@@ -126,36 +124,32 @@ def analyze_mixed_dia_timing():
             print(f"  MSE: {result.error_metrics.get('mse', 'N/A'):.6f}")
 
     # Calculate statistics
-    print(f"\n=== Results Summary ===")
+    print("\n=== Results Summary ===")
 
     total_times = np.array(all_timings["total"]) * 1000  # Convert to ms
     iterations = np.array(all_timings["iterations"])
 
-    print(f"Total optimization time:")
+    print("Total optimization time:")
     print(f"  Mean: {np.mean(total_times):.1f}ms ± {np.std(total_times):.1f}ms")
     print(f"  Range: {np.min(total_times):.1f}ms - {np.max(total_times):.1f}ms")
 
-    print(f"Iterations:")
+    print("Iterations:")
     print(f"  Mean: {np.mean(iterations):.1f} ± {np.std(iterations):.1f}")
     print(f"  Range: {np.min(iterations)} - {np.max(iterations)}")
 
     # Time per iteration
     time_per_iteration = total_times / iterations
-    print(f"Time per iteration:")
-    print(
-        f"  Mean: {np.mean(time_per_iteration):.1f}ms ± {np.std(time_per_iteration):.1f}ms"
-    )
+    print("Time per iteration:")
+    print(f"  Mean: {np.mean(time_per_iteration):.1f}ms ± {np.std(time_per_iteration):.1f}ms")
 
     # Performance analysis
-    print(f"\n=== Performance Analysis ===")
+    print("\n=== Performance Analysis ===")
 
     mean_total_time = np.mean(total_times)
     mean_iterations = np.mean(iterations)
 
-    print(
-        f"Current performance: {mean_total_time:.1f}ms ({1000/mean_total_time:.1f} FPS)"
-    )
-    print(f"Target for 15 FPS: {1000/15:.1f}ms")
+    print(f"Current performance: {mean_total_time:.1f}ms ({1000 / mean_total_time:.1f} FPS)")
+    print(f"Target for 15 FPS: {1000 / 15:.1f}ms")
 
     if mean_total_time > 1000 / 15:
         speedup_needed = mean_total_time / (1000 / 15)
@@ -164,7 +158,7 @@ def analyze_mixed_dia_timing():
         print("✓ Target performance achieved!")
 
     # Break down by component (rough estimates)
-    print(f"\n=== Component Breakdown (Estimates) ===")
+    print("\n=== Component Breakdown (Estimates) ===")
 
     # These are rough estimates based on typical optimization patterns
     setup_overhead = 5  # ms - target preparation, initialization
@@ -183,28 +177,28 @@ def analyze_mixed_dia_timing():
     print(f"  LED update & convergence: ~{per_iteration_time * 0.2:.1f}ms (20%)")
 
     # Optimization opportunities
-    print(f"\n=== Optimization Opportunities ===")
+    print("\n=== Optimization Opportunities ===")
 
-    print(f"1. Reduce iterations:")
+    print("1. Reduce iterations:")
     target_iterations = 5
     if mean_iterations > target_iterations:
         time_saved = (mean_iterations - target_iterations) * per_iteration_time
         print(f"   If reduced to {target_iterations}: save {time_saved:.1f}ms")
 
-    print(f"2. Optimize per-iteration time:")
+    print("2. Optimize per-iteration time:")
     target_per_iter = 5  # ms
     if per_iteration_time > target_per_iter:
         time_saved = (per_iteration_time - target_per_iter) * mean_iterations
         print(f"   If reduced to {target_per_iter:.1f}ms/iter: save {time_saved:.1f}ms")
 
-    print(f"3. Potential optimizations:")
-    print(f"   - Pre-compute repeated calculations")
-    print(f"   - Optimize GPU memory transfers")
-    print(f"   - Use more efficient convergence criteria")
-    print(f"   - Reduce floating point precision if acceptable")
+    print("3. Potential optimizations:")
+    print("   - Pre-compute repeated calculations")
+    print("   - Optimize GPU memory transfers")
+    print("   - Use more efficient convergence criteria")
+    print("   - Reduce floating point precision if acceptable")
 
     # Theoretical performance limits
-    print(f"\n=== Theoretical Limits ===")
+    print("\n=== Theoretical Limits ===")
 
     # Estimate based on raw kernel performance from earlier tests
     raw_3d_kernel_time = 2.87  # ms from standalone test
@@ -216,7 +210,7 @@ def analyze_mixed_dia_timing():
     )
 
     overhead = mean_total_time - theoretical_min
-    print(f"Current overhead: {overhead:.1f}ms ({overhead/mean_total_time*100:.1f}%)")
+    print(f"Current overhead: {overhead:.1f}ms ({overhead / mean_total_time * 100:.1f}%)")
 
 
 if __name__ == "__main__":

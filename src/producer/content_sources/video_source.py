@@ -23,6 +23,8 @@ except ImportError:
     FFMPEG_AVAILABLE = False
     ffmpeg = None  # type: ignore
 
+import contextlib
+
 from .base import (
     ContentSource,
     ContentSourceRegistry,
@@ -111,9 +113,7 @@ class VideoSource(ContentSource):
             logger.info(f"Resolution: {self._frame_width}x{self._frame_height}")
             logger.info(f"Frame rate: {self._frame_rate} fps")
             logger.info(f"Duration: {self.content_info.duration:.2f}s")
-            logger.info(
-                f"Hardware acceleration: {self._hardware_acceleration or 'None'}"
-            )
+            logger.info(f"Hardware acceleration: {self._hardware_acceleration or 'None'}")
 
             return True
 
@@ -247,9 +247,7 @@ class VideoSource(ContentSource):
             )
 
             # Create process
-            self._ffmpeg_process = ffmpeg.run_async(
-                output_stream, pipe_stdout=True, pipe_stderr=True, quiet=True
-            )
+            self._ffmpeg_process = ffmpeg.run_async(output_stream, pipe_stdout=True, pipe_stderr=True, quiet=True)
 
             logger.debug(f"FFmpeg process started with PID: {self._ffmpeg_process.pid}")
             return True
@@ -260,9 +258,7 @@ class VideoSource(ContentSource):
 
     def _start_frame_reader_thread(self) -> None:
         """Start background thread to read frames from FFmpeg."""
-        self._frame_reader_thread = threading.Thread(
-            target=self._frame_reader_worker, daemon=True
-        )
+        self._frame_reader_thread = threading.Thread(target=self._frame_reader_worker, daemon=True)
         self._frame_reader_thread.start()
 
     def _frame_reader_worker(self) -> None:
@@ -283,19 +279,13 @@ class VideoSource(ContentSource):
 
                 # Convert to numpy array in interleaved format
                 frame_array = np.frombuffer(frame_bytes, dtype=np.uint8)
-                frame_array_interleaved = frame_array.reshape(
-                    (self._frame_height, self._frame_width, 3)
-                )
+                frame_array_interleaved = frame_array.reshape((self._frame_height, self._frame_width, 3))
 
                 # Convert to planar format (3, H, W) for system consistency
-                frame_array_planar = FrameData.convert_interleaved_to_planar(
-                    frame_array_interleaved
-                )
+                frame_array_planar = FrameData.convert_interleaved_to_planar(frame_array_interleaved)
 
                 # Calculate presentation timestamp
-                presentation_timestamp = (
-                    frame_number / self._frame_rate if self._frame_rate > 0 else 0
-                )
+                presentation_timestamp = frame_number / self._frame_rate if self._frame_rate > 0 else 0
 
                 # Create frame data with planar format
                 frame_data = FrameData(
@@ -425,10 +415,8 @@ class VideoSource(ContentSource):
                 self._ffmpeg_process.wait(timeout=2.0)
             except (subprocess.TimeoutExpired, ProcessLookupError):
                 # Force kill if needed
-                try:
+                with contextlib.suppress(ProcessLookupError, OSError):
                     self._ffmpeg_process.kill()
-                except (ProcessLookupError, OSError):
-                    pass
             self._ffmpeg_process = None
 
         # Clear queue
@@ -458,13 +446,9 @@ class VideoSource(ContentSource):
 
             # Apply hardware acceleration if available
             if self._hardware_acceleration == "cuda":
-                input_stream = ffmpeg.input(
-                    self.filepath, ss=start_time, hwaccel="cuda"
-                )
+                input_stream = ffmpeg.input(self.filepath, ss=start_time, hwaccel="cuda")
             elif self._hardware_acceleration == "nvdec":
-                input_stream = ffmpeg.input(
-                    self.filepath, ss=start_time, hwaccel="nvdec"
-                )
+                input_stream = ffmpeg.input(self.filepath, ss=start_time, hwaccel="nvdec")
 
             # Configure output
             output_stream = ffmpeg.output(
@@ -477,9 +461,7 @@ class VideoSource(ContentSource):
             )
 
             # Create process
-            self._ffmpeg_process = ffmpeg.run_async(
-                output_stream, pipe_stdout=True, pipe_stderr=True, quiet=True
-            )
+            self._ffmpeg_process = ffmpeg.run_async(output_stream, pipe_stdout=True, pipe_stderr=True, quiet=True)
 
             # Restart frame reader
             self._start_frame_reader_thread()

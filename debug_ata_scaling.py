@@ -38,9 +38,7 @@ def analyze_ata_scaling():
     csc_matrix = diffusion_csc.to_csc_matrix()
 
     print(f"CSC matrix (A) shape: {csc_matrix.shape}")
-    print(
-        f"CSC matrix (A) values range: [{csc_matrix.data.min():.6f}, {csc_matrix.data.max():.6f}]"
-    )
+    print(f"CSC matrix (A) values range: [{csc_matrix.data.min():.6f}, {csc_matrix.data.max():.6f}]")
     print(f"CSC matrix (A) nnz: {csc_matrix.nnz}")
 
     # Build DIA matrix and examine A^T A values
@@ -52,19 +50,13 @@ def analyze_ata_scaling():
     dia_matrix.build_from_diffusion_matrix(csc_matrix, led_positions)
 
     print(f"DIA matrix shape: {dia_matrix.dia_data_cpu.shape}")
-    print(
-        f"DIA matrix values range: [{dia_matrix.dia_data_cpu.min():.6f}, {dia_matrix.dia_data_cpu.max():.6f}]"
-    )
+    print(f"DIA matrix values range: [{dia_matrix.dia_data_cpu.min():.6f}, {dia_matrix.dia_data_cpu.max():.6f}]")
     print(f"DIA matrix nnz: {np.count_nonzero(dia_matrix.dia_data_cpu)}")
 
     # Check diagonal values (should be largest)
-    main_diagonal_band = (
-        dia_matrix.dia_data_cpu.shape[1] // 2
-    )  # Middle band is main diagonal
+    main_diagonal_band = dia_matrix.dia_data_cpu.shape[1] // 2  # Middle band is main diagonal
     main_diagonal_values = dia_matrix.dia_data_cpu[:, main_diagonal_band, :]
-    print(
-        f"Main diagonal range: [{main_diagonal_values.min():.6f}, {main_diagonal_values.max():.6f}]"
-    )
+    print(f"Main diagonal range: [{main_diagonal_values.min():.6f}, {main_diagonal_values.max():.6f}]")
     print(f"Main diagonal mean: {main_diagonal_values.mean():.6f}")
 
     # Load mixed tensor and test image
@@ -105,9 +97,7 @@ def analyze_ata_scaling():
             ATA_x = cp.asarray(ATA_x)
 
         print(f"A^T A @ x shape: {ATA_x.shape}")
-        print(
-            f"A^T A @ x range: [{float(cp.min(ATA_x)):.6f}, {float(cp.max(ATA_x)):.6f}]"
-        )
+        print(f"A^T A @ x range: [{float(cp.min(ATA_x)):.6f}, {float(cp.max(ATA_x)):.6f}]")
         print(f"A^T A @ x mean: {float(cp.mean(ATA_x)):.6f}")
 
         # Test gradient calculation
@@ -115,9 +105,7 @@ def analyze_ata_scaling():
         ATb_rcm_gpu = cp.asarray(ATb_rcm)
 
         gradient = ATA_x - ATb_rcm_gpu
-        print(
-            f"Gradient range: [{float(cp.min(gradient)):.6f}, {float(cp.max(gradient)):.6f}]"
-        )
+        print(f"Gradient range: [{float(cp.min(gradient)):.6f}, {float(cp.max(gradient)):.6f}]")
 
         # Test step size calculation
         g_dot_g = cp.sum(gradient * gradient)
@@ -129,9 +117,7 @@ def analyze_ata_scaling():
             g_dot_ATA_g_per_channel = cp.asarray(g_dot_ATA_g_per_channel)
         g_dot_ATA_g = cp.sum(g_dot_ATA_g_per_channel)
 
-        print(
-            f"g^T @ A^T A @ g per channel: {[float(x) for x in g_dot_ATA_g_per_channel]}"
-        )
+        print(f"g^T @ A^T A @ g per channel: {[float(x) for x in g_dot_ATA_g_per_channel]}")
         print(f"g^T @ A^T A @ g total: {float(g_dot_ATA_g):.6f}")
 
         # Calculate step size
@@ -141,9 +127,7 @@ def analyze_ata_scaling():
             step_size = 0.01
 
         print(f"Step size: {step_size:.6f}")
-        print(
-            f"Step size ratio (g^T g / g^T A^T A g): {float(g_dot_g / g_dot_ATA_g):.6f}"
-        )
+        print(f"Step size ratio (g^T g / g^T A^T A g): {float(g_dot_g / g_dot_ATA_g):.6f}")
 
         # Check if step size makes sense
         gradient_norm = float(cp.linalg.norm(gradient))
@@ -158,9 +142,7 @@ def test_manual_ata_calculation():
 
     print("\n=== MANUAL A^T A VERIFICATION ===")
 
-    patterns_data = np.load(
-        "diffusion_patterns/baseline_realistic.npz", allow_pickle=True
-    )
+    patterns_data = np.load("diffusion_patterns/baseline_realistic.npz", allow_pickle=True)
 
     # Load CSC matrix
     csc_data_dict = patterns_data["diffusion_matrix"].item()
@@ -170,7 +152,7 @@ def test_manual_ata_calculation():
     led_count = csc_matrix.shape[1] // 3
 
     # Manual calculation of A^T A for first few LEDs
-    print(f"Manual A^T A calculation for first 3 LEDs...")
+    print("Manual A^T A calculation for first 3 LEDs...")
 
     for led_i in range(3):
         for led_j in range(3):
@@ -187,7 +169,7 @@ def test_manual_ata_calculation():
             print(f"A^T A[{led_i},{led_j}] = {ata_ij_total:.2f}")
 
     # Compare with DIA matrix calculation
-    print(f"\nBuilding DIA matrix for comparison...")
+    print("\nBuilding DIA matrix for comparison...")
     led_positions = patterns_data["led_positions"]
     dia_matrix = DiagonalATAMatrix(led_count=led_count)
 
@@ -209,7 +191,7 @@ def test_manual_ata_calculation():
     result = dia_matrix.multiply_3d(test_vector_rcm_gpu)
     result_spatial = dia_matrix.reorder_led_values_from_rcm(cp.asnumpy(result))
 
-    print(f"DIA matrix test - first column of A^T A:")
+    print("DIA matrix test - first column of A^T A:")
     for i in range(min(5, led_count)):
         print(f"  A^T A[{i},0] = {result_spatial[0, i]:.2f}")
 

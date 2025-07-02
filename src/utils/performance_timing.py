@@ -72,9 +72,7 @@ class OperationShapeInfo:
 class TimingSectionContext:
     """Context manager for timing sections."""
 
-    def __init__(
-        self, timing_instance: "PerformanceTiming", section_name: str, **kwargs
-    ):
+    def __init__(self, timing_instance: "PerformanceTiming", section_name: str, **kwargs):
         self.timing = timing_instance
         self.section_name = section_name
         self.kwargs = kwargs
@@ -171,9 +169,7 @@ class PerformanceTiming:
                 return None, None  # nosec B110 Graceful fallback if GPU operations fail
         return None, None
 
-    def _calculate_automatic_flops(
-        self, operation_type: str, shape_info: Dict[str, Tuple[int, ...]]
-    ) -> int:
+    def _calculate_automatic_flops(self, operation_type: str, shape_info: Dict[str, Tuple[int, ...]]) -> int:
         """Calculate FLOPS automatically based on operation type and shapes."""
         try:
             if operation_type == "einsum":
@@ -279,9 +275,7 @@ class PerformanceTiming:
 
         return self._safe_execute(_start_impl) is not False
 
-    def stop(
-        self, section_name: str, read: int = 0, written: int = 0, flops: int = 0
-    ) -> bool:
+    def stop(self, section_name: str, read: int = 0, written: int = 0, flops: int = 0) -> bool:
         """
         Stop timing a section.
 
@@ -305,16 +299,12 @@ class PerformanceTiming:
             if section.name != section_name:
                 # Handle nested section mismatch
                 self._error_count += 1
-                self._last_error = (
-                    f"Section mismatch: expected {section.name}, got {section_name}"
-                )
+                self._last_error = f"Section mismatch: expected {section.name}, got {section_name}"
                 return False
 
             # Stop CPU timing
             section.end_time = time.time()
-            section.duration = section.end_time - (
-                section.start_time or section.end_time
-            )
+            section.duration = section.end_time - (section.start_time or section.end_time)
 
             # Add additional metrics
             section.read_bytes += read
@@ -327,15 +317,10 @@ class PerformanceTiming:
                     section.gpu_end_event.record()
                     cp.cuda.runtime.deviceSynchronize()
                     section.gpu_duration = (
-                        cp.cuda.get_elapsed_time(
-                            section.gpu_start_event, section.gpu_end_event
-                        )
-                        / 1000.0
+                        cp.cuda.get_elapsed_time(section.gpu_start_event, section.gpu_end_event) / 1000.0
                     )  # Convert ms to seconds
                 except Exception:
-                    section.gpu_duration = (
-                        None  # nosec B110 Graceful fallback if GPU operations fail
-                    )
+                    section.gpu_duration = None  # nosec B110 Graceful fallback if GPU operations fail
 
             # Update occurrence tracking
             section.occurrence_count += 1
@@ -364,9 +349,7 @@ class PerformanceTiming:
 
             # Update stack state
             self._section_stack.pop()
-            self._current_section = (
-                self._section_stack[-1] if self._section_stack else None
-            )
+            self._current_section = self._section_stack[-1] if self._section_stack else None
 
             return True
 
@@ -425,26 +408,18 @@ class PerformanceTiming:
             total_bytes = section.read_bytes + section.written_bytes
             if total_bytes > 0:
                 # Computational memory bandwidth (GB/s)
-                metrics["memory_bandwidth_gbps"] = (total_bytes / section.duration) / (
-                    1024**3
-                )
+                metrics["memory_bandwidth_gbps"] = (total_bytes / section.duration) / (1024**3)
 
             # Individual read/write bandwidths
             if section.read_bytes > 0:
-                metrics["read_bandwidth_gbps"] = (
-                    section.read_bytes / section.duration
-                ) / (1024**3)
+                metrics["read_bandwidth_gbps"] = (section.read_bytes / section.duration) / (1024**3)
             if section.written_bytes > 0:
-                metrics["write_bandwidth_gbps"] = (
-                    section.written_bytes / section.duration
-                ) / (1024**3)
+                metrics["write_bandwidth_gbps"] = (section.written_bytes / section.duration) / (1024**3)
 
         # Memory transfer bandwidth
         total_transfer_mb = sum(t["size_mb"] for t in section.memory_transfers)
         if total_transfer_mb > 0 and section.duration > 0:
-            metrics["transfer_bandwidth_gbps"] = (
-                total_transfer_mb / section.duration
-            ) / 1024
+            metrics["transfer_bandwidth_gbps"] = (total_transfer_mb / section.duration) / 1024
 
         return metrics
 
@@ -513,9 +488,7 @@ class PerformanceTiming:
         # Memory transfer summary
         if section.memory_transfers:
             total_mb = sum(t["size_mb"] for t in section.memory_transfers)
-            lines.append(
-                f"{indent}  Memory transfers: {len(section.memory_transfers)} ({total_mb:.1f}MB)"
-            )
+            lines.append(f"{indent}  Memory transfers: {len(section.memory_transfers)} ({total_mb:.1f}MB)")
 
         return lines
 
@@ -559,12 +532,8 @@ class PerformanceTiming:
 
             # Report each section
             for section in sections:
-                if (
-                    section.depth == 0
-                ):  # Only report top-level sections, children are handled recursively
-                    report_lines = self._format_section_report(
-                        section, include_percentages, total_time
-                    )
+                if section.depth == 0:  # Only report top-level sections, children are handled recursively
+                    report_lines = self._format_section_report(section, include_percentages, total_time)
                     for line in report_lines:
                         logger.info(line)
 
@@ -582,9 +551,7 @@ class PerformanceTiming:
     ):
         """Recursively log child sections."""
         for child in parent.children:
-            report_lines = self._format_section_report(
-                child, include_percentages, total_time
-            )
+            report_lines = self._format_section_report(child, include_percentages, total_time)
             for line in report_lines:
                 logger.info(line)
             self._log_children(logger, child, include_percentages, total_time)
@@ -678,9 +645,7 @@ class PerformanceTiming:
                     bandwidth_metrics = section_data.get("bandwidth_metrics", {})
                     flops_metrics = section_data.get("flops_metrics", {})
 
-                    row["memory_bandwidth_gbps"] = bandwidth_metrics.get(
-                        "memory_bandwidth_gbps", 0
-                    )
+                    row["memory_bandwidth_gbps"] = bandwidth_metrics.get("memory_bandwidth_gbps", 0)
                     row["gflops_per_second"] = flops_metrics.get("gflops_per_second", 0)
 
                     writer.writerow(row)

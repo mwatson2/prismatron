@@ -65,14 +65,10 @@ class PlaylistItem:
         """
         if self._content_source is None:
             # Detect content type
-            self._detected_type = ContentSourceRegistry.detect_content_type(
-                self.filepath
-            )
+            self._detected_type = ContentSourceRegistry.detect_content_type(self.filepath)
 
             # Create content source
-            self._content_source = ContentSourceRegistry.create_source(
-                self.filepath, self._detected_type
-            )
+            self._content_source = ContentSourceRegistry.create_source(self.filepath, self._detected_type)
 
         return self._content_source
 
@@ -265,9 +261,7 @@ class ContentPlaylist:
                         "filepath": item.filepath,
                         "duration": item.get_effective_duration(),
                         "repeat": item.repeat_count,
-                        "type": item._detected_type.value
-                        if item._detected_type
-                        else "unknown",
+                        "type": (item._detected_type.value if item._detected_type else "unknown"),
                     }
                     for item in self._items
                 ],
@@ -354,9 +348,7 @@ class ProducerProcess:
             logger.error(f"Producer initialization failed: {e}")
             return False
 
-    def add_content(
-        self, filepath: str, duration: Optional[float] = None, repeat: int = 1
-    ) -> bool:
+    def add_content(self, filepath: str, duration: Optional[float] = None, repeat: int = 1) -> bool:
         """
         Add content to playlist.
 
@@ -407,10 +399,7 @@ class ProducerProcess:
 
             # Scan directory
             for file_path in directory_path.rglob("*"):
-                if (
-                    file_path.is_file()
-                    and file_path.suffix.lower() in supported_extensions
-                ):
+                if file_path.is_file() and file_path.suffix.lower() in supported_extensions:
                     if self._playlist.add_item(str(file_path)):
                         added_count += 1
 
@@ -434,9 +423,7 @@ class ProducerProcess:
 
         try:
             # Start producer thread
-            self._producer_thread = threading.Thread(
-                target=self._producer_main_loop, daemon=True
-            )
+            self._producer_thread = threading.Thread(target=self._producer_main_loop, daemon=True)
 
             self._running = True
             self._start_time = time.time()
@@ -562,10 +549,7 @@ class ProducerProcess:
         Returns:
             True if content is available, False otherwise
         """
-        if (
-            self._current_source
-            and self._current_source.status == ContentStatus.PLAYING
-        ):
+        if self._current_source and self._current_source.status == ContentStatus.PLAYING:
             return True
 
         # Try to load current playlist item
@@ -585,9 +569,7 @@ class ProducerProcess:
             self._current_item = current_item
 
             if not self._current_source:
-                logger.error(
-                    f"Failed to create content source: {current_item.filepath}"
-                )
+                logger.error(f"Failed to create content source: {current_item.filepath}")
                 return False
 
             # Setup content source
@@ -605,9 +587,7 @@ class ProducerProcess:
                     self._target_fps = min(content_fps, 60.0)  # Cap at 60 FPS
                     self._frame_interval = 1.0 / self._target_fps
 
-            logger.info(
-                f"Loaded content: {current_item.filepath} (fps: {self._target_fps})"
-            )
+            logger.info(f"Loaded content: {current_item.filepath} (fps: {self._target_fps})")
 
         return True
 
@@ -649,9 +629,7 @@ class ProducerProcess:
                 return False
 
             # Get buffer array in planar format (3, H, W)
-            buffer_array = buffer_info.get_array(
-                FRAME_WIDTH, FRAME_HEIGHT, FRAME_CHANNELS
-            )
+            buffer_array = buffer_info.get_array(FRAME_WIDTH, FRAME_HEIGHT, FRAME_CHANNELS)
 
             # Scale and copy frame data to buffer (both in planar format)
             self._copy_frame_to_buffer(frame_data, buffer_array)
@@ -733,9 +711,7 @@ class ProducerProcess:
                 crop_y = (src_h - crop_h) // 2
 
             # Extract cropped region
-            cropped = frame_data.array[
-                crop_y : crop_y + crop_h, crop_x : crop_x + crop_w
-            ]
+            cropped = frame_data.array[crop_y : crop_y + crop_h, crop_x : crop_x + crop_w]
 
             # Scale to target buffer dimensions
             resized = cv2.resize(
@@ -804,27 +780,23 @@ class ProducerProcess:
 
             # Copy the cropped region
             if frame_data.channels == FRAME_CHANNELS:
-                buffer_array[
-                    dst_y : dst_y + copy_h, dst_x : dst_x + copy_w
-                ] = frame_data.array[crop_y : crop_y + copy_h, crop_x : crop_x + copy_w]
+                buffer_array[dst_y : dst_y + copy_h, dst_x : dst_x + copy_w] = frame_data.array[
+                    crop_y : crop_y + copy_h, crop_x : crop_x + copy_w
+                ]
             elif frame_data.channels == 3 and FRAME_CHANNELS == 4:
-                buffer_array[
-                    dst_y : dst_y + copy_h, dst_x : dst_x + copy_w, :3
-                ] = frame_data.array[crop_y : crop_y + copy_h, crop_x : crop_x + copy_w]
+                buffer_array[dst_y : dst_y + copy_h, dst_x : dst_x + copy_w, :3] = frame_data.array[
+                    crop_y : crop_y + copy_h, crop_x : crop_x + copy_w
+                ]
                 buffer_array[:, :, 3] = 255
             elif frame_data.channels == 4 and FRAME_CHANNELS == 3:
-                buffer_array[
-                    dst_y : dst_y + copy_h, dst_x : dst_x + copy_w
-                ] = frame_data.array[
+                buffer_array[dst_y : dst_y + copy_h, dst_x : dst_x + copy_w] = frame_data.array[
                     crop_y : crop_y + copy_h, crop_x : crop_x + copy_w, :3
                 ]
 
         except Exception as e:
             logger.error(f"Failed to crop frame: {e}")
 
-    def _scale_frame_to_buffer_planar(
-        self, frame_data: FrameData, buffer_array
-    ) -> None:
+    def _scale_frame_to_buffer_planar(self, frame_data: FrameData, buffer_array) -> None:
         """
         Scale frame data to fit buffer with 5:3 aspect ratio cropping (planar format).
 
@@ -859,9 +831,7 @@ class ProducerProcess:
             # Process each channel separately in planar format
             for c in range(frame_data.channels):
                 # Extract cropped region for this channel
-                cropped_channel = frame_data.array[
-                    c, crop_y : crop_y + crop_h, crop_x : crop_x + crop_w
-                ]
+                cropped_channel = frame_data.array[c, crop_y : crop_y + crop_h, crop_x : crop_x + crop_w]
 
                 # Scale to target buffer dimensions
                 resized_channel = cv2.resize(
@@ -929,9 +899,7 @@ class ProducerProcess:
 
             # Copy the cropped region for each channel in planar format
             for c in range(min(frame_data.channels, FRAME_CHANNELS)):
-                buffer_array[
-                    c, dst_y : dst_y + copy_h, dst_x : dst_x + copy_w
-                ] = frame_data.array[
+                buffer_array[c, dst_y : dst_y + copy_h, dst_x : dst_x + copy_w] = frame_data.array[
                     c, crop_y : crop_y + copy_h, crop_x : crop_x + copy_w
                 ]
 
@@ -952,9 +920,7 @@ class ProducerProcess:
                 producer_fps = self._frames_produced / elapsed
 
                 # Update control state with frame rate
-                self._control_state.set_frame_rates(
-                    producer_fps, 0.0
-                )  # Consumer FPS unknown
+                self._control_state.set_frame_rates(producer_fps, 0.0)  # Consumer FPS unknown
 
         except Exception as e:
             logger.error(f"Failed to update statistics: {e}")
@@ -976,9 +942,7 @@ class ProducerProcess:
             "producer_fps": self._frames_produced / elapsed if elapsed > 0 else 0.0,
             "target_fps": self._target_fps,
             "playlist_info": self._playlist.get_playlist_info(),
-            "current_content": self._current_item.filepath
-            if self._current_item
-            else None,
+            "current_content": (self._current_item.filepath if self._current_item else None),
         }
 
         # Add buffer stats

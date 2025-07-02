@@ -535,9 +535,7 @@ def get_high_parallelism_kernel():
         logger.info("Compiling high-parallelism CUDA kernel...")
 
         # Compile the kernel
-        kernel = cp.RawKernel(
-            HIGH_PARALLELISM_KERNEL, "high_parallelism_transpose_dot_product_kernel"
-        )
+        kernel = cp.RawKernel(HIGH_PARALLELISM_KERNEL, "high_parallelism_transpose_dot_product_kernel")
         _kernel_cache["high_parallelism"] = kernel
 
         logger.info("High-parallelism CUDA kernel compiled successfully")
@@ -571,9 +569,7 @@ def get_compute_optimized_kernel():
         logger.info("Compiling compute-optimized CUDA kernel...")
 
         # Compile the kernel
-        kernel = cp.RawKernel(
-            COMPUTE_OPTIMIZED_KERNEL, "compute_optimized_transpose_dot_product_kernel"
-        )
+        kernel = cp.RawKernel(COMPUTE_OPTIMIZED_KERNEL, "compute_optimized_transpose_dot_product_kernel")
         _kernel_cache["compute_optimized"] = kernel
 
         logger.info("Compute-optimized CUDA kernel compiled successfully")
@@ -622,12 +618,8 @@ def cuda_transpose_dot_product_corrected(
     grid_size = (total_led_channels,)
     block_size_1d = (threads_per_block,)
 
-    logger.debug(
-        f"Corrected CUDA kernel launch: grid={grid_size}, block={block_size_1d}"
-    )
-    logger.debug(
-        f"Total blocks: {total_led_channels}, Threads per block: {threads_per_block}"
-    )
+    logger.debug(f"Corrected CUDA kernel launch: grid={grid_size}, block={block_size_1d}")
+    logger.debug(f"Total blocks: {total_led_channels}, Threads per block: {threads_per_block}")
 
     # Launch kernel
     kernel(
@@ -764,9 +756,7 @@ void high_performance_transpose_dot_product_kernel(
 def get_high_performance_kernel():
     """Get the compiled high-performance CUDA kernel targeting 20+ GFLOPS."""
     if "high_performance_transpose_dot_product" not in _kernel_cache:
-        logger.info(
-            "Compiling high-performance CUDA kernel for transpose_dot_product..."
-        )
+        logger.info("Compiling high-performance CUDA kernel for transpose_dot_product...")
 
         # Compile the kernel
         kernel = cp.RawKernel(
@@ -824,14 +814,12 @@ def cuda_transpose_dot_product_high_performance(
 
     # Calculate shared memory size
     # 1 target block (96x96) + 1 reduction array (512)
-    shared_mem_size = (
-        block_size * block_size + threads_per_block
-    ) * 4  # 4 bytes per float
+    shared_mem_size = (block_size * block_size + threads_per_block) * 4  # 4 bytes per float
 
     logger.debug(f"High-performance CUDA kernel launch:")
     logger.debug(f"  Grid: {grid_size}, Block: {block_size_1d}")
     logger.debug(f"  Processing {total_pairs} (LED, channel) pairs")
-    logger.debug(f"  Shared memory: {shared_mem_size/1024:.1f}KB")
+    logger.debug(f"  Shared memory: {shared_mem_size / 1024:.1f}KB")
 
     # Launch kernel (shared memory is statically allocated in kernel)
     kernel(
@@ -869,9 +857,7 @@ def cuda_transpose_dot_product(
 
     This function uses a flawed kernel with race conditions and requires blocks_set parameter.
     """
-    logger.warning(
-        "cuda_transpose_dot_product is DEPRECATED - use cuda_transpose_dot_product_3d_compute_optimized"
-    )
+    logger.warning("cuda_transpose_dot_product is DEPRECATED - use cuda_transpose_dot_product_3d_compute_optimized")
     # Fall back to corrected version
     return cuda_transpose_dot_product_corrected(
         sparse_values,
@@ -927,9 +913,7 @@ def cuda_transpose_dot_product_high_parallelism(
     grid_size = (num_blocks,)
     block_size_1d = (threads_per_block,)
 
-    logger.debug(
-        f"High-parallelism CUDA kernel launch: grid={grid_size}, block={block_size_1d}"
-    )
+    logger.debug(f"High-parallelism CUDA kernel launch: grid={grid_size}, block={block_size_1d}")
     logger.debug(f"Total threads: {num_blocks * threads_per_block:,}")
 
     # Launch kernel
@@ -996,9 +980,7 @@ def cuda_transpose_dot_product_3d_compute_optimized(
 
     # Calculate number of iterations needed to process all blocks
     blocks_per_iteration = sms_count  # 8 blocks processed in parallel
-    num_iterations = (
-        total_led_channels + blocks_per_iteration - 1
-    ) // blocks_per_iteration
+    num_iterations = (total_led_channels + blocks_per_iteration - 1) // blocks_per_iteration
 
     grid_size = (sms_count,)  # 8 blocks, one per SM
     block_size_1d = (cores_per_sm,)  # 32 threads, one per core
@@ -1008,17 +990,13 @@ def cuda_transpose_dot_product_3d_compute_optimized(
     logger.debug(f"  Iterations: {num_iterations}")
     logger.debug(f"  Target shape: {target_3d.shape} (planar)")
     logger.debug(f"  Total threads per iteration: {sms_count * cores_per_sm}")
-    logger.debug(
-        f"  Total compute threads: {num_iterations * sms_count * cores_per_sm:,}"
-    )
+    logger.debug(f"  Total compute threads: {num_iterations * sms_count * cores_per_sm:,}")
 
     # Calculate shared memory size needed
     # 1 sparse block + 32 reduction values (target accessed directly for better L2 cache usage)
     shared_mem_size = (block_size * block_size + 32) * 4  # 4 bytes per float
 
-    logger.debug(
-        f"  Shared memory per block: {shared_mem_size} bytes ({shared_mem_size/1024:.1f}KB)"
-    )
+    logger.debug(f"  Shared memory per block: {shared_mem_size} bytes ({shared_mem_size / 1024:.1f}KB)")
 
     # Launch kernel for each iteration
     for iteration in range(num_iterations):
@@ -1096,9 +1074,7 @@ def cuda_transpose_dot_product_compute_optimized(
 
     # Calculate number of iterations needed to process all blocks
     blocks_per_iteration = sms_count  # 8 blocks processed in parallel
-    num_iterations = (
-        total_led_channels + blocks_per_iteration - 1
-    ) // blocks_per_iteration
+    num_iterations = (total_led_channels + blocks_per_iteration - 1) // blocks_per_iteration
 
     grid_size = (sms_count,)  # 8 blocks, one per SM
     block_size_1d = (cores_per_sm,)  # 32 threads, one per core
@@ -1107,17 +1083,13 @@ def cuda_transpose_dot_product_compute_optimized(
     logger.debug(f"  Grid: {grid_size}, Block: {block_size_1d}")
     logger.debug(f"  Iterations: {num_iterations}")
     logger.debug(f"  Total threads per iteration: {sms_count * cores_per_sm}")
-    logger.debug(
-        f"  Total compute threads: {num_iterations * sms_count * cores_per_sm:,}"
-    )
+    logger.debug(f"  Total compute threads: {num_iterations * sms_count * cores_per_sm:,}")
 
     # Calculate shared memory size needed
     # 1 sparse block + 32 reduction values (target accessed directly for better L2 cache usage)
     shared_mem_size = (block_size * block_size + 32) * 4  # 4 bytes per float
 
-    logger.debug(
-        f"  Shared memory per block: {shared_mem_size} bytes ({shared_mem_size/1024:.1f}KB)"
-    )
+    logger.debug(f"  Shared memory per block: {shared_mem_size} bytes ({shared_mem_size / 1024:.1f}KB)")
 
     # Launch kernel for each iteration
     for iteration in range(num_iterations):

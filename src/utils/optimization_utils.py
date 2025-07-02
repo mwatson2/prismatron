@@ -50,9 +50,7 @@ class ImageComparison:
             PSNR value in dB (higher is better)
         """
         if original.shape != comparison.shape:
-            raise ValueError(
-                f"Image shapes don't match: {original.shape} vs {comparison.shape}"
-            )
+            raise ValueError(f"Image shapes don't match: {original.shape} vs {comparison.shape}")
 
         # Convert to float32 for precision
         img1 = original.astype(np.float32)
@@ -127,9 +125,7 @@ class OptimizationPipeline:
             use_dense: If True, use dense tensor optimizer; if False, use sparse optimizer
                 (default: True)
         """
-        self.diffusion_patterns_path = self._normalize_patterns_path(
-            diffusion_patterns_path
-        )
+        self.diffusion_patterns_path = self._normalize_patterns_path(diffusion_patterns_path)
         self.use_dense = use_dense
 
         # Initialize the appropriate optimizer
@@ -141,9 +137,7 @@ class OptimizationPipeline:
                 enable_performance_timing=True,
             )
         else:
-            self.optimizer = LEDOptimizer(
-                diffusion_patterns_path=self.diffusion_patterns_path
-            )
+            self.optimizer = LEDOptimizer(diffusion_patterns_path=self.diffusion_patterns_path)
 
         self.initialized = False
 
@@ -179,9 +173,7 @@ class OptimizationPipeline:
                 if self.use_dense:
                     if "ata_tensor_shape" in stats:
                         logger.info(f"ATA tensor shape: {stats['ata_tensor_shape']}")
-                        logger.info(
-                            f"ATA memory: {stats.get('ata_memory_mb', 'N/A'):.1f}MB"
-                        )
+                        logger.info(f"ATA memory: {stats.get('ata_memory_mb', 'N/A'):.1f}MB")
                 else:
                     if "matrix_shape" in stats:
                         logger.info(f"Matrix shape: {stats['matrix_shape']}")
@@ -227,9 +219,7 @@ class OptimizationPipeline:
         image = cv2.resize(image, (FRAME_WIDTH, FRAME_HEIGHT))
         return image.astype(np.uint8)
 
-    def optimize_image(
-        self, target_image: np.ndarray, max_iterations: Optional[int] = None
-    ) -> OptimizationResult:
+    def optimize_image(self, target_image: np.ndarray, max_iterations: Optional[int] = None) -> OptimizationResult:
         """
         Optimize LED values for target image.
 
@@ -247,13 +237,9 @@ class OptimizationPipeline:
 
         # Use debug version for testing/analysis tools to get error metrics
         if self.use_dense:
-            result = self.optimizer.optimize_frame(
-                target_frame=target_image, debug=True, max_iterations=max_iterations
-            )
+            result = self.optimizer.optimize_frame(target_frame=target_image, debug=True, max_iterations=max_iterations)
         else:
-            result = self.optimizer.optimize_frame(
-                target_frame=target_image, max_iterations=max_iterations
-            )
+            result = self.optimizer.optimize_frame(target_frame=target_image, max_iterations=max_iterations)
 
         logger.info(f"Optimization completed in {result.optimization_time:.3f}s")
         if result.error_metrics:
@@ -318,15 +304,9 @@ class OptimizationPipeline:
             reconstructed_g = A_g_cpu @ led_values_normalized[:, 1]
             reconstructed_b = A_b_cpu @ led_values_normalized[:, 2]
 
-            reconstructed_rgb[:, :, 0] = reconstructed_r.reshape(
-                (FRAME_HEIGHT, FRAME_WIDTH)
-            )
-            reconstructed_rgb[:, :, 1] = reconstructed_g.reshape(
-                (FRAME_HEIGHT, FRAME_WIDTH)
-            )
-            reconstructed_rgb[:, :, 2] = reconstructed_b.reshape(
-                (FRAME_HEIGHT, FRAME_WIDTH)
-            )
+            reconstructed_rgb[:, :, 0] = reconstructed_r.reshape((FRAME_HEIGHT, FRAME_WIDTH))
+            reconstructed_rgb[:, :, 1] = reconstructed_g.reshape((FRAME_HEIGHT, FRAME_WIDTH))
+            reconstructed_rgb[:, :, 2] = reconstructed_b.reshape((FRAME_HEIGHT, FRAME_WIDTH))
         else:
             # Sparse optimizer: use combined block diagonal matrix
             logger.info(f"Sparse reconstruction - Matrix shape: {A_csr.shape}")
@@ -345,15 +325,9 @@ class OptimizationPipeline:
 
             # Reshape back to (height, width, 3)
             pixels = FRAME_HEIGHT * FRAME_WIDTH
-            reconstructed_rgb[:, :, 0] = reconstructed_flat[:pixels].reshape(
-                (FRAME_HEIGHT, FRAME_WIDTH)
-            )
-            reconstructed_rgb[:, :, 1] = reconstructed_flat[
-                pixels : 2 * pixels
-            ].reshape((FRAME_HEIGHT, FRAME_WIDTH))
-            reconstructed_rgb[:, :, 2] = reconstructed_flat[2 * pixels :].reshape(
-                (FRAME_HEIGHT, FRAME_WIDTH)
-            )
+            reconstructed_rgb[:, :, 0] = reconstructed_flat[:pixels].reshape((FRAME_HEIGHT, FRAME_WIDTH))
+            reconstructed_rgb[:, :, 1] = reconstructed_flat[pixels : 2 * pixels].reshape((FRAME_HEIGHT, FRAME_WIDTH))
+            reconstructed_rgb[:, :, 2] = reconstructed_flat[2 * pixels :].reshape((FRAME_HEIGHT, FRAME_WIDTH))
 
         # Convert to uint8 and clamp to valid range
         result_image = np.clip(reconstructed_rgb * 255, 0, 255).astype(np.uint8)

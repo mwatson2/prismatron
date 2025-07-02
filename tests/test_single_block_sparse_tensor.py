@@ -21,9 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 
 # Set up logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -32,9 +30,7 @@ def test_basic_functionality():
     logger.info("=== Testing Basic Functionality ===")
 
     # Create a small tensor for testing
-    tensor = SingleBlockMixedSparseTensor(
-        batch_size=5, channels=3, height=100, width=80, block_size=8
-    )
+    tensor = SingleBlockMixedSparseTensor(batch_size=5, channels=3, height=100, width=80, block_size=8)
 
     logger.info(f"Created tensor: {tensor}")
 
@@ -42,9 +38,7 @@ def test_basic_functionality():
     for batch_idx in range(5):
         for channel_idx in range(3):
             # Create a simple test pattern
-            values = cp.ones((8, 8), dtype=cp.float32) * (
-                batch_idx * 3 + channel_idx + 1
-            )
+            values = cp.ones((8, 8), dtype=cp.float32) * (batch_idx * 3 + channel_idx + 1)
 
             # Position blocks at different locations
             row = batch_idx * 15
@@ -75,15 +69,11 @@ def test_batch_operations():
     height, width = 64, 64
     block_size = 16
 
-    tensor = SingleBlockMixedSparseTensor(
-        batch_size, channels, height, width, block_size
-    )
+    tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size)
 
     # Create batch data (note: positions should be channels-first for new layout)
     positions = cp.random.randint(0, height - block_size, (channels, batch_size, 2))
-    values = cp.random.rand(channels, batch_size, block_size, block_size).astype(
-        cp.float32
-    )
+    values = cp.random.rand(channels, batch_size, block_size, block_size).astype(cp.float32)
 
     # Set blocks in batch
     start_time = time.time()
@@ -115,16 +105,12 @@ def test_memory_efficiency():
     width = 800  # Frame width
     block_size = 64  # 64x64 blocks
 
-    tensor = SingleBlockMixedSparseTensor(
-        batch_size, channels, height, width, block_size
-    )
+    tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size)
 
     # Get initial memory info
     initial_memory = tensor.memory_info()
     logger.info(f"Initial memory usage: {initial_memory['total_mb']:.1f}MB")
-    logger.info(
-        f"Equivalent dense would be: {initial_memory['equivalent_dense_mb']:.1f}MB"
-    )
+    logger.info(f"Equivalent dense would be: {initial_memory['equivalent_dense_mb']:.1f}MB")
     logger.info(f"Compression ratio: {initial_memory['compression_ratio']:.1%}")
 
     # Set some blocks with random data
@@ -145,9 +131,9 @@ def test_memory_efficiency():
     logger.info(f"Blocks stored: {final_memory['blocks_stored']}")
 
     # Memory should still be much smaller than dense
-    assert (
-        final_memory["compression_ratio"] < 0.1
-    ), f"Compression ratio {final_memory['compression_ratio']:.1%} should be < 10%"
+    assert final_memory["compression_ratio"] < 0.1, (
+        f"Compression ratio {final_memory['compression_ratio']:.1%} should be < 10%"
+    )
 
     logger.info("✓ Memory efficiency test passed")
 
@@ -163,15 +149,11 @@ def test_performance_comparison():
     width = 200
     block_size = 32
 
-    tensor = SingleBlockMixedSparseTensor(
-        batch_size, channels, height, width, block_size
-    )
+    tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size)
 
     # Set all blocks with random data (note: positions should be channels-first for new layout)
     positions = cp.random.randint(0, height - block_size, (channels, batch_size, 2))
-    values = cp.random.rand(channels, batch_size, block_size, block_size).astype(
-        cp.float32
-    )
+    values = cp.random.rand(channels, batch_size, block_size, block_size).astype(cp.float32)
     tensor.set_blocks_batch(positions, values)
 
     # Create multiple target matrices (3D format)
@@ -198,9 +180,7 @@ def test_performance_comparison():
     dense_sample = tensor.to_array(0, 0)
     dense_conversion_time = time.time() - dense_conversion_start
 
-    logger.info(
-        f"Dense conversion for one sub-tensor: {dense_conversion_time * 1000:.2f}ms"
-    )
+    logger.info(f"Dense conversion for one sub-tensor: {dense_conversion_time * 1000:.2f}ms")
 
     # Estimate dense approach would take much longer
     estimated_dense_time = dense_conversion_time * batch_size * channels * num_targets
@@ -246,9 +226,7 @@ def test_save_load():
         "block_size",
         "device",
     }
-    assert (
-        set(data_dict.keys()) == expected_keys
-    ), f"Missing keys: {expected_keys - set(data_dict.keys())}"
+    assert set(data_dict.keys()) == expected_keys, f"Missing keys: {expected_keys - set(data_dict.keys())}"
 
     # Verify data types are numpy arrays
     for key, value in data_dict.items():
@@ -274,9 +252,7 @@ def test_save_load():
     original_result = original.transpose_dot_product_3d(target_3d)
     loaded_result = loaded.transpose_dot_product_3d(target_3d)
 
-    assert cp.allclose(
-        original_result, loaded_result
-    ), "Loaded tensor produces different results"
+    assert cp.allclose(original_result, loaded_result), "Loaded tensor produces different results"
 
     # Test edge case: empty tensor
     empty_tensor = SingleBlockMixedSparseTensor(3, 2, 20, 30, 4)
@@ -299,17 +275,13 @@ def test_error_handling():
     # Test out-of-bounds indices
     try:
         tensor.set_block(10, 0, 0, 0, cp.ones((8, 8)))
-        raise AssertionError(
-            "Should have raised ValueError for batch_idx out of bounds"
-        )
+        raise AssertionError("Should have raised ValueError for batch_idx out of bounds")
     except ValueError:
         pass
 
     try:
         tensor.set_block(0, 5, 0, 0, cp.ones((8, 8)))
-        raise AssertionError(
-            "Should have raised ValueError for channel_idx out of bounds"
-        )
+        raise AssertionError("Should have raised ValueError for channel_idx out of bounds")
     except ValueError:
         pass
 
@@ -345,9 +317,7 @@ def test_to_dense_patterns():
     height, width = 50, 60
     block_size = 8
 
-    tensor = SingleBlockMixedSparseTensor(
-        batch_size, channels, height, width, block_size
-    )
+    tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size)
 
     # Set blocks with known values and positions
     test_cases = [
@@ -372,12 +342,8 @@ def test_to_dense_patterns():
     # Verify specific patterns
     for batch_idx, channel_idx, row, col, expected_value in test_cases:
         # Check that the block region has the expected value
-        block_region = dense_patterns[
-            batch_idx, row : row + block_size, col : col + block_size, channel_idx
-        ]
-        assert np.allclose(
-            block_region, expected_value
-        ), f"LED {batch_idx}, channel {channel_idx} block mismatch"
+        block_region = dense_patterns[batch_idx, row : row + block_size, col : col + block_size, channel_idx]
+        assert np.allclose(block_region, expected_value), f"LED {batch_idx}, channel {channel_idx} block mismatch"
 
         # Check that individual extraction matches
         individual_pattern = tensor.extract_pattern(batch_idx, channel_idx)
@@ -401,9 +367,7 @@ def test_get_block_summary():
     height, width = 64, 64
     block_size = 8
 
-    tensor = SingleBlockMixedSparseTensor(
-        batch_size, channels, height, width, block_size
-    )
+    tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size)
 
     # Set blocks with known values at different positions
     test_data = [
@@ -479,9 +443,7 @@ def test_extract_pattern():
     height, width = 40, 50
     block_size = 8
 
-    tensor = SingleBlockMixedSparseTensor(
-        batch_size, channels, height, width, block_size
-    )
+    tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size)
 
     # Set specific patterns
     test_cases = [
@@ -504,16 +466,14 @@ def test_extract_pattern():
 
         # Check that block region has expected value
         block_region = pattern[row : row + block_size, col : col + block_size]
-        assert np.allclose(
-            block_region, expected_value
-        ), f"LED {batch_idx}, channel {channel_idx} value mismatch"
+        assert np.allclose(block_region, expected_value), f"LED {batch_idx}, channel {channel_idx} value mismatch"
 
         # Check that areas outside block are zero
         outside_mask = np.ones((height, width), dtype=bool)
         outside_mask[row : row + block_size, col : col + block_size] = False
-        assert np.allclose(
-            pattern[outside_mask], 0
-        ), f"LED {batch_idx}, channel {channel_idx} has non-zero values outside block"
+        assert np.allclose(pattern[outside_mask], 0), (
+            f"LED {batch_idx}, channel {channel_idx} has non-zero values outside block"
+        )
 
     # Test error handling
     try:
@@ -540,9 +500,7 @@ def test_enhancement_methods_consistency():
     height, width = 80, 100
     block_size = 16
 
-    tensor = SingleBlockMixedSparseTensor(
-        batch_size, channels, height, width, block_size
-    )
+    tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size)
 
     # Set various blocks with different intensities
     np.random.seed(42)  # For reproducible test
@@ -579,9 +537,7 @@ def test_enhancement_methods_consistency():
     max_intensities = summary["coverage_stats"]["led_max_intensities"]
     for batch_idx in range(batch_size):
         led_max_actual = np.max(dense_patterns[batch_idx])
-        assert np.isclose(
-            max_intensities[batch_idx], led_max_actual
-        ), f"Max intensity mismatch for LED {batch_idx}"
+        assert np.isclose(max_intensities[batch_idx], led_max_actual), f"Max intensity mismatch for LED {batch_idx}"
 
     logger.info("✓ Enhancement methods consistency test passed")
 
@@ -592,9 +548,7 @@ def test_dtype_support(dtype):
     logger.info(f"=== Testing dtype support: {dtype} ===")
 
     # Create tensor with specified dtype
-    tensor = SingleBlockMixedSparseTensor(
-        batch_size=3, channels=2, height=40, width=50, block_size=8, dtype=dtype
-    )
+    tensor = SingleBlockMixedSparseTensor(batch_size=3, channels=2, height=40, width=50, block_size=8, dtype=dtype)
 
     # Verify dtype is set correctly
     assert tensor.dtype == dtype
@@ -709,15 +663,9 @@ def test_int8_fp32_equivalence():
 
     # Create test data in int8 range [0, 255]
     np.random.seed(42)  # For reproducibility
-    int8_sparse_data = np.random.randint(
-        0, 256, (channels, batch_size, block_size, block_size), dtype=np.uint8
-    )
-    int8_target_data = np.random.randint(
-        0, 256, (channels, height, width), dtype=np.uint8
-    )
-    positions = np.random.randint(
-        0, min(height, width) - block_size, (channels, batch_size, 2), dtype=np.int32
-    )
+    int8_sparse_data = np.random.randint(0, 256, (channels, batch_size, block_size, block_size), dtype=np.uint8)
+    int8_target_data = np.random.randint(0, 256, (channels, height, width), dtype=np.uint8)
+    positions = np.random.randint(0, min(height, width) - block_size, (channels, batch_size, 2), dtype=np.int32)
 
     # Convert to CuPy arrays
     int8_sparse_cupy = cp.asarray(int8_sparse_data)
@@ -725,9 +673,7 @@ def test_int8_fp32_equivalence():
     positions_cupy = cp.asarray(positions)
 
     # 1. Create int8 tensor and compute result
-    int8_tensor = SingleBlockMixedSparseTensor(
-        batch_size, channels, height, width, block_size, dtype=cp.uint8
-    )
+    int8_tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size, dtype=cp.uint8)
     int8_tensor.set_blocks_batch(positions_cupy, int8_sparse_cupy)
 
     int8_result = int8_tensor.transpose_dot_product_3d(int8_target_cupy)
@@ -739,9 +685,7 @@ def test_int8_fp32_equivalence():
     fp32_sparse_cupy = cp.asarray(fp32_sparse_data)
     fp32_target_cupy = cp.asarray(fp32_target_data)
 
-    fp32_tensor = SingleBlockMixedSparseTensor(
-        batch_size, channels, height, width, block_size, dtype=cp.float32
-    )
+    fp32_tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size, dtype=cp.float32)
     fp32_tensor.set_blocks_batch(positions_cupy, fp32_sparse_cupy)
 
     fp32_result = fp32_tensor.transpose_dot_product_3d(fp32_target_cupy)
@@ -752,9 +696,7 @@ def test_int8_fp32_equivalence():
     # 4. Compare results - should be identical (or very close due to floating point precision)
     logger.info(f"int8 result sample: {int8_result[0, :3]}")
     logger.info(f"fp32 scaled result sample: {fp32_result_scaled[0, :3]}")
-    logger.info(
-        f"Max absolute difference: {cp.max(cp.abs(int8_result - fp32_result_scaled))}"
-    )
+    logger.info(f"Max absolute difference: {cp.max(cp.abs(int8_result - fp32_result_scaled))}")
 
     # Allow small tolerance for floating point precision differences
     cp.testing.assert_allclose(
@@ -765,9 +707,7 @@ def test_int8_fp32_equivalence():
         err_msg="int8 and fp32 (scaled) results should be equivalent",
     )
 
-    logger.info(
-        "✓ int8/fp32 equivalence test passed - results are mathematically equivalent!"
-    )
+    logger.info("✓ int8/fp32 equivalence test passed - results are mathematically equivalent!")
 
 
 def test_memory_efficiency_comparison():
@@ -779,13 +719,9 @@ def test_memory_efficiency_comparison():
     height, width = 200, 300
     block_size = 64
 
-    fp32_tensor = SingleBlockMixedSparseTensor(
-        batch_size, channels, height, width, block_size, dtype=cp.float32
-    )
+    fp32_tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size, dtype=cp.float32)
 
-    int8_tensor = SingleBlockMixedSparseTensor(
-        batch_size, channels, height, width, block_size, dtype=cp.uint8
-    )
+    int8_tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size, dtype=cp.uint8)
 
     # Get memory info
     fp32_memory = fp32_tensor.memory_info()
@@ -813,36 +749,26 @@ def test_transpose_dot_product_3d_dtypes(dtype):
     height, width = 48, 64
     block_size = 16
 
-    tensor = SingleBlockMixedSparseTensor(
-        batch_size, channels, height, width, block_size, dtype=dtype
-    )
+    tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size, dtype=dtype)
 
     # Create test data of appropriate dtype and range
     if dtype == cp.float32:
         # Use [0, 1] range for fp32
-        sparse_data = cp.random.rand(
-            channels, batch_size, block_size, block_size
-        ).astype(dtype)
+        sparse_data = cp.random.rand(channels, batch_size, block_size, block_size).astype(dtype)
         target_data = cp.random.rand(channels, height, width).astype(dtype)
     else:  # uint8
         # Use [0, 255] range for int8
-        sparse_data = cp.random.randint(
-            0, 256, (channels, batch_size, block_size, block_size), dtype=dtype
-        )
+        sparse_data = cp.random.randint(0, 256, (channels, batch_size, block_size, block_size), dtype=dtype)
         target_data = cp.random.randint(0, 256, (channels, height, width), dtype=dtype)
 
-    positions = cp.random.randint(
-        0, min(height, width) - block_size, (channels, batch_size, 2)
-    )
+    positions = cp.random.randint(0, min(height, width) - block_size, (channels, batch_size, 2))
 
     # Set data
     tensor.set_blocks_batch(positions, sparse_data)
 
     # Test dtype mismatch error
     if dtype == cp.float32:
-        wrong_target = cp.random.randint(
-            0, 256, (channels, height, width), dtype=cp.uint8
-        )
+        wrong_target = cp.random.randint(0, 256, (channels, height, width), dtype=cp.uint8)
     else:
         wrong_target = cp.random.rand(channels, height, width).astype(cp.float32)
 

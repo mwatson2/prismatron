@@ -223,9 +223,7 @@ class TestPerformanceTiming(unittest.TestCase):
     def test_bandwidth_calculation(self):
         """Test memory bandwidth calculations."""
         # Create section with memory operations
-        self.timing.start(
-            "bandwidth_test", read=1024 * 1024 * 100, written=1024 * 1024 * 50
-        )  # 100MB read, 50MB write
+        self.timing.start("bandwidth_test", read=1024 * 1024 * 100, written=1024 * 1024 * 50)  # 100MB read, 50MB write
         time.sleep(0.1)  # 100ms duration
         self.timing.stop("bandwidth_test")
 
@@ -364,7 +362,7 @@ class TestPerformanceTiming(unittest.TestCase):
             self.assertTrue(result)
 
             # Verify CSV content
-            with open(temp_filename, "r") as f:
+            with open(temp_filename) as f:
                 reader = csv.DictReader(f)
                 rows = list(reader)
 

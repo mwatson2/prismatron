@@ -34,8 +34,8 @@ class DiagonalATAMatrix:
 
     Stores A^T A matrices for each RGB channel in true 3D DIA format with shared
     diagonal structure for efficient matrix-vector multiplication.
-    
-    Note: Expects diffusion matrix A to already be in optimal ordering (RCM) 
+
+    Note: Expects diffusion matrix A to already be in optimal ordering (RCM)
     from pattern generation tool.
 
     3D DIA Format:
@@ -56,13 +56,9 @@ class DiagonalATAMatrix:
         self.channels = 3  # RGB
 
         # Storage for unified 3D DIA format - shape (channels, k, leds)
-        self.dia_data_cpu = (
-            None  # Shape: (channels, k, leds) - unified diagonal band data
-        )
+        self.dia_data_cpu = None  # Shape: (channels, k, leds) - unified diagonal band data
         self.dia_data_gpu = None  # CuPy version of above
-        self.dia_offsets = (
-            None  # Shape: (k,) - unified diagonal offsets for non-empty diagonals only
-        )
+        self.dia_offsets = None  # Shape: (k,) - unified diagonal offsets for non-empty diagonals only
         self.k = None  # Number of non-empty diagonal bands (max across all channels)
 
         # Note: RCM ordering handled by pattern generation, not stored here
@@ -89,29 +85,27 @@ class DiagonalATAMatrix:
     def build_from_diffusion_matrix(self, A: sp.spmatrix) -> None:
         """
         Build diagonal A^T A matrices from diffusion matrix A.
-        
-        Note: Expects diffusion matrix A to already be in optimal ordering 
+
+        Note: Expects diffusion matrix A to already be in optimal ordering
         (RCM) from pattern generation tool.
 
         Args:
             A: Diffusion matrix (pixels, leds*3) in optimal ordering
         """
-        print(f"Building diagonal A^T A matrices...")
+        print("Building diagonal A^T A matrices...")
         print(f"  Input A: shape {A.shape}, nnz {A.nnz}")
         print(f"  LEDs: {self.led_count}, channels: {self.channels}")
 
         # Validate input
         expected_cols = self.led_count * self.channels
         if A.shape[1] != expected_cols:
-            raise ValueError(
-                f"A matrix should have {expected_cols} columns, got {A.shape[1]}"
-            )
+            raise ValueError(f"A matrix should have {expected_cols} columns, got {A.shape[1]}")
 
-        print(f"  Using diffusion matrix A in pre-optimized ordering (RCM from pattern generation)")
+        print("  Using diffusion matrix A in pre-optimized ordering (RCM from pattern generation)")
         A_ordered = A
 
         # Build unified 3D DIA format - shape (channels, k, leds) where k = max non-empty diagonals
-        print(f"  Building unified 3D DIA format...")
+        print("  Building unified 3D DIA format...")
 
         # First pass: compute A^T A for each channel and collect all diagonal info
         channel_matrices = []
@@ -145,31 +139,25 @@ class DiagonalATAMatrix:
             total_nnz += ATA_dia.nnz
 
             print(f"    A^T A shape: {ATA_dia.shape}, nnz: {ATA_dia.nnz}")
-            print(
-                f"    Channel sparsity: {ATA_dia.nnz / (self.led_count * self.led_count) * 100:.3f}%"
-            )
+            print(f"    Channel sparsity: {ATA_dia.nnz / (self.led_count * self.led_count) * 100:.3f}%")
             print(f"    Total DIA bands: {len(ATA_dia.offsets)}")
 
         # Create unified diagonal structure - only non-empty diagonals across ALL channels
         if all_offsets:
-            self.dia_offsets = np.array(
-                sorted(all_offsets), dtype=np.int32
-            )  # Shape: (k,)
+            self.dia_offsets = np.array(sorted(all_offsets), dtype=np.int32)  # Shape: (k,)
             self.k = len(self.dia_offsets)
         else:
             self.dia_offsets = np.array([], dtype=np.int32)
             self.k = 0
 
-        print(f"  Unified diagonal structure:")
+        print("  Unified diagonal structure:")
         print(f"    Non-empty diagonal bands (k): {self.k}")
         if self.k > 0:
             print(f"    Offset range: [{self.dia_offsets[0]}, {self.dia_offsets[-1]}]")
 
         # Create unified 3D DIA data structure: (channels, k, leds)
         if self.k > 0:
-            self.dia_data_cpu = np.zeros(
-                (self.channels, self.k, self.led_count), dtype=np.float32
-            )
+            self.dia_data_cpu = np.zeros((self.channels, self.k, self.led_count), dtype=np.float32)
 
             # Create mapping from offset to index in unified structure
             offset_to_idx = {offset: i for i, offset in enumerate(self.dia_offsets)}
@@ -184,25 +172,17 @@ class DiagonalATAMatrix:
                     # Only store if this diagonal has non-zero elements
                     if np.any(np.abs(diagonal_data) > 1e-10):
                         unified_idx = offset_to_idx[offset]
-                        self.dia_data_cpu[
-                            channel, unified_idx, :
-                        ] = diagonal_data.astype(np.float32)
+                        self.dia_data_cpu[channel, unified_idx, :] = diagonal_data.astype(np.float32)
 
             # Create GPU version
-            self.dia_data_gpu = cupy.asarray(
-                self.dia_data_cpu
-            )  # Shape: (channels, k, leds)
+            self.dia_data_gpu = cupy.asarray(self.dia_data_cpu)  # Shape: (channels, k, leds)
 
             # Calculate storage efficiency
             naive_elements = (
-                len(set().union(*[dia.offsets for dia in channel_dia_matrices]))
-                * self.channels
-                * self.led_count
+                len(set().union(*[dia.offsets for dia in channel_dia_matrices])) * self.channels * self.led_count
             )
             actual_elements = self.k * self.channels * self.led_count
-            storage_efficiency = (
-                actual_elements / naive_elements * 100 if naive_elements > 0 else 100
-            )
+            storage_efficiency = actual_elements / naive_elements * 100 if naive_elements > 0 else 100
 
             print(f"  Unified 3D DIA storage: shape {self.dia_data_cpu.shape}")
             print(
@@ -213,9 +193,7 @@ class DiagonalATAMatrix:
             )
 
         else:
-            self.dia_data_cpu = np.zeros(
-                (self.channels, 0, self.led_count), dtype=np.float32
-            )
+            self.dia_data_cpu = np.zeros((self.channels, 0, self.led_count), dtype=np.float32)
             self.dia_data_gpu = cupy.asarray(self.dia_data_cpu)
 
         # Store overall metadata
@@ -236,7 +214,7 @@ class DiagonalATAMatrix:
         print(f"  Total nnz: {self.nnz}, overall sparsity: {self.sparsity:.3f}%")
         print(f"  Estimated bandwidth: {self.bandwidth}")
 
-        print(f"  True 3D DIA matrices built successfully!")
+        print("  True 3D DIA matrices built successfully!")
 
     def multiply_3d(
         self,
@@ -262,10 +240,7 @@ class DiagonalATAMatrix:
             Result array (3, leds) in RCM order
         """
         if led_values.shape != (self.channels, self.led_count):
-            raise ValueError(
-                f"LED values should be shape ({self.channels}, {self.led_count}), "
-                f"got {led_values.shape}"
-            )
+            raise ValueError(f"LED values should be shape ({self.channels}, {self.led_count}), got {led_values.shape}")
 
         # Check if unified 3D matrix is built
         if self.dia_data_gpu is None or self.dia_data_gpu.shape != (
@@ -273,9 +248,7 @@ class DiagonalATAMatrix:
             self.k,
             self.led_count,
         ):
-            raise RuntimeError(
-                "Unified 3D DIA matrix not built. Call build_from_diffusion_matrix() first."
-            )
+            raise RuntimeError("Unified 3D DIA matrix not built. Call build_from_diffusion_matrix() first.")
 
         # Convert to GPU arrays - avoid unnecessary copies
         if not isinstance(led_values, cupy.ndarray):
@@ -292,9 +265,7 @@ class DiagonalATAMatrix:
             # Use custom 3D CUDA kernel
             if optimized_kernel:
                 if self.custom_3d_kernel_optimized is None:
-                    self.custom_3d_kernel_optimized = CustomDIA3DMatVec(
-                        use_optimized=True
-                    )
+                    self.custom_3d_kernel_optimized = CustomDIA3DMatVec(use_optimized=True)
                 result_gpu = self.custom_3d_kernel_optimized(
                     self.dia_data_gpu,  # Shape: (channels, k, leds)
                     cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
@@ -310,9 +281,7 @@ class DiagonalATAMatrix:
                 )
         else:
             # NO FALLBACK - custom kernel required for performance measurement
-            raise RuntimeError(
-                "Custom 3D DIA kernel not available - required for performance measurement"
-            )
+            raise RuntimeError("Custom 3D DIA kernel not available - required for performance measurement")
 
         # Convert back to numpy if input was numpy
         if isinstance(led_values, np.ndarray):
@@ -343,9 +312,7 @@ class DiagonalATAMatrix:
             offset = int(self.dia_offsets[band_idx])  # Diagonal offset
 
             # Get diagonal data for all channels: shape (channels, leds)
-            band_data_all_channels = self.dia_data_gpu[
-                :, band_idx, :
-            ]  # Shape: (channels, leds)
+            band_data_all_channels = self.dia_data_gpu[:, band_idx, :]  # Shape: (channels, leds)
 
             # DIA format: band_data[c,i] contains A[c,i,i+offset] for valid indices
             # Matrix multiplication: result[c,i] += A[c,i,i+offset] * led_values[c,i+offset]
@@ -356,9 +323,7 @@ class DiagonalATAMatrix:
                     # Vectorized across all channels: result[c,i] += band_data[c,i] * led_values[c,i+offset]
                     i_slice = slice(0, valid_i_range)
                     j_slice = slice(offset, offset + valid_i_range)
-                    result_gpu[:, i_slice] += (
-                        band_data_all_channels[:, i_slice] * led_values_gpu[:, j_slice]
-                    )
+                    result_gpu[:, i_slice] += band_data_all_channels[:, i_slice] * led_values_gpu[:, j_slice]
             else:
                 # Lower diagonal: A[c,i,i+offset] for i in [-offset, leds) where i+offset >= 0
                 start_i = -offset
@@ -367,9 +332,7 @@ class DiagonalATAMatrix:
                     # Vectorized across all channels: result[c,i] += band_data[c,i] * led_values[c,i+offset]
                     i_slice = slice(start_i, self.led_count)
                     j_slice = slice(0, valid_i_range)
-                    result_gpu[:, i_slice] += (
-                        band_data_all_channels[:, i_slice] * led_values_gpu[:, j_slice]
-                    )
+                    result_gpu[:, i_slice] += band_data_all_channels[:, i_slice] * led_values_gpu[:, j_slice]
 
         return result_gpu
 
@@ -397,19 +360,14 @@ class DiagonalATAMatrix:
             Result array (3,) - g^T (A^T A) g for each channel
         """
         if gradient.shape != (self.channels, self.led_count):
-            raise ValueError(
-                f"Gradient should be shape ({self.channels}, {self.led_count}), "
-                f"got {gradient.shape}"
-            )
+            raise ValueError(f"Gradient should be shape ({self.channels}, {self.led_count}), got {gradient.shape}")
 
         if self.dia_data_gpu is None or self.dia_data_gpu.shape != (
             self.channels,
             self.k,
             self.led_count,
         ):
-            raise RuntimeError(
-                "Unified 3D DIA matrix not built. Call build_from_diffusion_matrix() first."
-            )
+            raise RuntimeError("Unified 3D DIA matrix not built. Call build_from_diffusion_matrix() first.")
 
         # Convert to GPU arrays - avoid unnecessary copies
         if not isinstance(gradient, cupy.ndarray):
@@ -426,9 +384,7 @@ class DiagonalATAMatrix:
             # Use custom 3D CUDA kernel
             if optimized_kernel:
                 if self.custom_3d_kernel_optimized is None:
-                    self.custom_3d_kernel_optimized = CustomDIA3DMatVec(
-                        use_optimized=True
-                    )
+                    self.custom_3d_kernel_optimized = CustomDIA3DMatVec(use_optimized=True)
                 ata_g_gpu = self.custom_3d_kernel_optimized(
                     self.dia_data_gpu,  # Shape: (channels, k, leds)
                     cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
@@ -444,9 +400,7 @@ class DiagonalATAMatrix:
                 )
         else:
             # NO FALLBACK - custom kernel required for performance measurement
-            raise RuntimeError(
-                "Custom 3D DIA kernel not available - required for performance measurement"
-            )
+            raise RuntimeError("Custom 3D DIA kernel not available - required for performance measurement")
 
         # Compute g^T @ (A^T A @ g) for each channel using vectorized operation: (channels,leds) * (channels,leds) -> (channels,)
         result_gpu = cupy.sum(gradient_gpu * ata_g_gpu, axis=1)  # Shape: (channels,)
@@ -518,7 +472,7 @@ class DiagonalATAMatrix:
                 instance.dia_data_gpu = cupy.asarray(instance.dia_data_cpu)
             else:
                 instance.dia_data_gpu = None
-                
+
         elif version == "6.0":
             # Legacy version with RCM ordering stored (still supported)
             instance.dia_data_cpu = data["dia_data_3d"]
@@ -531,9 +485,9 @@ class DiagonalATAMatrix:
                 instance.dia_data_gpu = cupy.asarray(instance.dia_data_cpu)
             else:
                 instance.dia_data_gpu = None
-            
+
             print("Warning: Loading legacy DIA matrix with RCM ordering. Consider regenerating patterns.")
-            
+
         else:
             # Legacy formats no longer supported
             raise ValueError(
@@ -568,10 +522,7 @@ class DiagonalATAMatrix:
             raise FileNotFoundError(f"File not found: {filepath}")
 
         data_npz = np.load(filepath, allow_pickle=True)
-        data = {
-            key: data_npz[key].item() if data_npz[key].ndim == 0 else data_npz[key]
-            for key in data_npz.keys()
-        }
+        data = {key: data_npz[key].item() if data_npz[key].ndim == 0 else data_npz[key] for key in data_npz}
 
         instance = cls.from_dict(data)
         print(f"Diagonal A^T A matrices loaded from {filepath}")
@@ -599,15 +550,11 @@ class DiagonalATAMatrix:
             "custom_kernel_available": CUSTOM_KERNEL_AVAILABLE,
             "unified_storage_built": unified_storage_built,
             "unified_k": self.k,
-            "unified_storage_shape": self.dia_data_cpu.shape
-            if self.dia_data_cpu is not None
-            else None,
+            "unified_storage_shape": (self.dia_data_cpu.shape if self.dia_data_cpu is not None else None),
             "storage_format": "unified_3d_dia_v7",
         }
 
-    def benchmark_3d(
-        self, num_trials: int = 50, num_warmup: int = 10
-    ) -> Dict[str, float]:
+    def benchmark_3d(self, num_trials: int = 50, num_warmup: int = 10) -> Dict[str, float]:
         """
         Benchmark 3D DIA multiplication performance.
 
@@ -623,8 +570,7 @@ class DiagonalATAMatrix:
 
         # Create test LED values
         test_values_cpu = [
-            np.random.randn(self.channels, self.led_count).astype(np.float32)
-            for _ in range(num_trials + num_warmup)
+            np.random.randn(self.channels, self.led_count).astype(np.float32) for _ in range(num_trials + num_warmup)
         ]
         test_values_gpu = [cupy.asarray(x) for x in test_values_cpu]
 

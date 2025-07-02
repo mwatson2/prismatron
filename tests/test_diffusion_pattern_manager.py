@@ -86,9 +86,7 @@ class TestDiffusionPatternManager:
             self.manager.add_led_pattern(self.led_count, pattern)
 
         # Test invalid pattern shape
-        wrong_shape_pattern = np.random.rand(
-            self.frame_height, self.frame_width, 3
-        )  # Wrong format
+        wrong_shape_pattern = np.random.rand(self.frame_height, self.frame_width, 3)  # Wrong format
         with pytest.raises(AssertionError):
             self.manager.add_led_pattern(0, wrong_shape_pattern)
 
@@ -171,9 +169,7 @@ class TestDiffusionPatternManager:
                 original_matrix = original_sparse[name]
                 loaded_matrix = loaded_sparse[name]
                 assert original_matrix.shape == loaded_matrix.shape
-                np.testing.assert_allclose(
-                    original_matrix.toarray(), loaded_matrix.toarray(), rtol=1e-6
-                )
+                np.testing.assert_allclose(original_matrix.toarray(), loaded_matrix.toarray(), rtol=1e-6)
 
             # Compare dense A^T @ A
             original_ata = self.manager.get_dense_ata()
@@ -203,9 +199,8 @@ class TestDiffusionPatternManager:
             self.manager.finalize_pattern_generation()
 
         # Test saving without data
-        with tempfile.NamedTemporaryFile(suffix=".npz") as tmp_file:
-            with pytest.raises(ValueError):
-                self.manager.save_patterns(tmp_file.name)
+        with tempfile.NamedTemporaryFile(suffix=".npz") as tmp_file, pytest.raises(ValueError):
+            self.manager.save_patterns(tmp_file.name)
 
         # Test loading non-existent file
         with pytest.raises(FileNotFoundError):
@@ -216,9 +211,7 @@ class TestDiffusionPatternManager:
         self._generate_patterns_for_format_test()
 
         for sparse_format in ["csc", "csr", "coo"]:
-            stats = self.manager.finalize_pattern_generation(
-                sparse_format=sparse_format
-            )
+            stats = self.manager.finalize_pattern_generation(sparse_format=sparse_format)
             assert stats["sparse_stats"]["format"] == sparse_format
 
             sparse_matrices = self.manager.get_sparse_matrices()
@@ -260,12 +253,8 @@ class TestDiffusionPatternManager:
 
         default_positions = new_manager.get_led_positions()
         assert default_positions.shape == (self.led_count, 2)
-        assert np.all(default_positions[:, 0] >= 0) and np.all(
-            default_positions[:, 0] <= self.frame_width
-        )
-        assert np.all(default_positions[:, 1] >= 0) and np.all(
-            default_positions[:, 1] <= self.frame_height
-        )
+        assert np.all(default_positions[:, 0] >= 0) and np.all(default_positions[:, 0] <= self.frame_width)
+        assert np.all(default_positions[:, 1] >= 0) and np.all(default_positions[:, 1] <= self.frame_height)
 
     def _create_synthetic_pattern(self, led_id: int) -> np.ndarray:
         """Create synthetic diffusion pattern for testing."""
@@ -280,9 +269,7 @@ class TestDiffusionPatternManager:
             for y in range(self.frame_height):
                 for x in range(self.frame_width):
                     dist_sq = (x - center_x) ** 2 + (y - center_y) ** 2
-                    pattern[c, y, x] = np.exp(
-                        -dist_sq / (2 * 3.0**2)
-                    )  # Gaussian-like
+                    pattern[c, y, x] = np.exp(-dist_sq / (2 * 3.0**2))  # Gaussian-like
 
         # Add some channel-specific variation
         pattern[0] *= 1.2  # Red slightly brighter
@@ -322,9 +309,7 @@ class TestDiffusionPatternManagerIntegration:
         frame_height = 64
         frame_width = 80
 
-        manager = DiffusionPatternManager(
-            led_count=led_count, frame_height=frame_height, frame_width=frame_width
-        )
+        manager = DiffusionPatternManager(led_count=led_count, frame_height=frame_height, frame_width=frame_width)
 
         manager.start_pattern_generation()
 
@@ -332,9 +317,7 @@ class TestDiffusionPatternManagerIntegration:
         test_leds = [0, 10, 25, 50, 75, 99]
         for led_id in test_leds:
             # Create more realistic pattern
-            pattern = np.random.exponential(0.1, (3, frame_height, frame_width)).astype(
-                np.float32
-            )
+            pattern = np.random.exponential(0.1, (3, frame_height, frame_width)).astype(np.float32)
             pattern = np.clip(pattern, 0, 1)  # Ensure valid range
             manager.add_led_pattern(led_id, pattern)
 
@@ -368,9 +351,7 @@ class TestDiffusionPatternManagerIntegration:
         # Add patterns
         for led_id in range(led_count):
             # Create sparse-ish pattern (more sparse than before)
-            pattern = np.random.exponential(
-                0.01, (3, frame_height, frame_width)
-            ).astype(np.float32)
+            pattern = np.random.exponential(0.01, (3, frame_height, frame_width)).astype(np.float32)
             # Apply threshold to make it very sparse
             pattern = np.where(pattern > 0.1, pattern, 0)
             pattern = np.clip(pattern, 0, 1)

@@ -115,8 +115,7 @@ class ControlState:
             # Create test status with reasonable content sizes
             test_status = SystemStatus(
                 current_file="/very/long/path/to/some/content/file/with/long/name.mp4",
-                error_message="This is a reasonably long error message "
-                "that might occur during operation",
+                error_message="This is a reasonably long error message that might occur during operation",
                 uptime=999999.99,
                 last_update=time.time(),
             )
@@ -152,17 +151,13 @@ class ControlState:
 
         try:
             # Create shared memory for control data
-            self._shared_memory = shared_memory.SharedMemory(
-                name=self.name, create=True, size=self._buffer_size
-            )
+            self._shared_memory = shared_memory.SharedMemory(name=self.name, create=True, size=self._buffer_size)
 
             # Initialize with default status
             self._write_status(self._default_status)
 
             self._initialized = True
-            logger.info(
-                f"Initialized control state '{self.name}' with {self._buffer_size} bytes"
-            )
+            logger.info(f"Initialized control state '{self.name}' with {self._buffer_size} bytes")
             return True
 
         except Exception as e:
@@ -226,15 +221,9 @@ class ControlState:
                 json_bytes = json_data.encode("utf-8")
 
                 # Check if data fits in buffer
-                if (
-                    self._shared_memory is not None
-                    and len(json_bytes) >= self._shared_memory.size
-                ):
+                if self._shared_memory is not None and len(json_bytes) >= self._shared_memory.size:
                     buffer_size = self._shared_memory.size if self._shared_memory else 0
-                    logger.error(
-                        f"Status data too large: {len(json_bytes)} bytes, "
-                        f"buffer size: {buffer_size} bytes"
-                    )
+                    logger.error(f"Status data too large: {len(json_bytes)} bytes, buffer size: {buffer_size} bytes")
                     return False
 
                 # Clear entire buffer first (prevents old data remnants)
@@ -527,11 +516,7 @@ class ControlState:
         Returns:
             True if any shutdown condition is active, False otherwise
         """
-        return (
-            self._shutdown_event.is_set()
-            or self._restart_event.is_set()
-            or self._reboot_event.is_set()
-        )
+        return self._shutdown_event.is_set() or self._restart_event.is_set() or self._reboot_event.is_set()
 
     def wait_for_shutdown(self, timeout: Optional[float] = None) -> bool:
         """

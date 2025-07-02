@@ -21,7 +21,7 @@ from tools.led_position_utils import analyze_matrix_bandwidth
 
 def analyze_ata_structure(pattern_file="synthetic_1000_64x64_fixed2.npz"):
     """Analyze A^T A matrix structure in detail."""
-    print(f"=== Analyzing A^T A Matrix Structure ===")
+    print("=== Analyzing A^T A Matrix Structure ===")
     print(f"Pattern file: {pattern_file}")
     print()
 
@@ -45,7 +45,7 @@ def analyze_ata_structure(pattern_file="synthetic_1000_64x64_fixed2.npz"):
             shape=diffusion_dict["csc_shape"],
         )
 
-        print(f"1. Diffusion matrix A analysis:")
+        print("1. Diffusion matrix A analysis:")
         print(f"   Shape: {A.shape}")
         print(f"   NNZ: {A.nnz:,}")
         print(f"   Sparsity: {A.nnz / (A.shape[0] * A.shape[1]) * 100:.2f}%")
@@ -53,26 +53,22 @@ def analyze_ata_structure(pattern_file="synthetic_1000_64x64_fixed2.npz"):
         print()
 
         # Compute A^T A
-        print(f"2. Computing A^T A...")
+        print("2. Computing A^T A...")
         ata_matrix = A.T @ A
         print(f"   A^T A shape: {ata_matrix.shape}")
         print(f"   A^T A NNZ: {ata_matrix.nnz:,}")
-        print(
-            f"   A^T A sparsity: {ata_matrix.nnz / (ata_matrix.shape[0] * ata_matrix.shape[1]) * 100:.2f}%"
-        )
+        print(f"   A^T A sparsity: {ata_matrix.nnz / (ata_matrix.shape[0] * ata_matrix.shape[1]) * 100:.2f}%")
         print()
 
         # Analyze A^T A bandwidth
-        print(f"3. A^T A bandwidth analysis (before reordering)...")
+        print("3. A^T A bandwidth analysis (before reordering)...")
         # Convert to dense for analysis (use subset if too large)
         subset_size = min(1000, ata_matrix.shape[0])
         ata_subset = ata_matrix[:subset_size, :subset_size]
         ata_dense = ata_subset.toarray()
 
         bandwidth_stats = analyze_matrix_bandwidth(ata_dense)
-        print(
-            f"   Matrix size: {bandwidth_stats['matrix_size']}x{bandwidth_stats['matrix_size']}"
-        )
+        print(f"   Matrix size: {bandwidth_stats['matrix_size']}x{bandwidth_stats['matrix_size']}")
         print(f"   Non-zeros: {bandwidth_stats['nnz']:,}")
         print(f"   Sparsity: {bandwidth_stats['sparsity']:.2f}%")
         print(f"   Bandwidth: {bandwidth_stats['bandwidth']}")
@@ -81,15 +77,13 @@ def analyze_ata_structure(pattern_file="synthetic_1000_64x64_fixed2.npz"):
         print()
 
         # Check if A^T A has expected structure
-        print(f"4. Checking A^T A structure...")
+        print("4. Checking A^T A structure...")
 
         # A^T A should be block diagonal with 3x3 blocks for each LED pair
         # Let's analyze the pattern for first few LEDs
         led_count = A.shape[1] // 3
         print(f"   LED count: {led_count}")
-        print(
-            f"   Expected block structure: {led_count} LEDs × 3 channels = {led_count * 3} rows/cols"
-        )
+        print(f"   Expected block structure: {led_count} LEDs × 3 channels = {led_count * 3} rows/cols")
 
         # Check if there are unexpected long-range connections
         rows, cols = ata_matrix.nonzero()
@@ -99,7 +93,7 @@ def analyze_ata_structure(pattern_file="synthetic_1000_64x64_fixed2.npz"):
         led_cols = cols // 3
         led_distances = np.abs(led_rows - led_cols)
 
-        print(f"   LED distance statistics:")
+        print("   LED distance statistics:")
         print(f"     Min LED distance: {led_distances.min()}")
         print(f"     Max LED distance: {led_distances.max()}")
         print(f"     Mean LED distance: {led_distances.mean():.1f}")
@@ -109,7 +103,7 @@ def analyze_ata_structure(pattern_file="synthetic_1000_64x64_fixed2.npz"):
 
         # Count connections by distance
         distance_counts = np.bincount(led_distances)
-        print(f"   Connection counts by LED distance:")
+        print("   Connection counts by LED distance:")
         for dist in range(min(20, len(distance_counts))):
             if distance_counts[dist] > 0:
                 print(f"     Distance {dist}: {distance_counts[dist]:,} connections")
@@ -120,7 +114,7 @@ def analyze_ata_structure(pattern_file="synthetic_1000_64x64_fixed2.npz"):
         print()
 
         # Check if RCM reordering is being applied to A^T A
-        print(f"5. Testing RCM reordering on A^T A...")
+        print("5. Testing RCM reordering on A^T A...")
         try:
             # Convert to adjacency (just structure, not values)
             ata_adj = (ata_matrix != 0).astype(int)
@@ -134,24 +128,15 @@ def analyze_ata_structure(pattern_file="synthetic_1000_64x64_fixed2.npz"):
             ata_rcm_dense = subset_rcm.toarray()
             bandwidth_stats_rcm = analyze_matrix_bandwidth(ata_rcm_dense)
 
-            print(f"   After RCM reordering:")
-            print(
-                f"     Bandwidth: {bandwidth_stats_rcm['bandwidth']} (was {bandwidth_stats['bandwidth']})"
-            )
-            print(
-                f"     Diagonals: {bandwidth_stats_rcm['num_diagonals']} (was {bandwidth_stats['num_diagonals']})"
-            )
+            print("   After RCM reordering:")
+            print(f"     Bandwidth: {bandwidth_stats_rcm['bandwidth']} (was {bandwidth_stats['bandwidth']})")
+            print(f"     Diagonals: {bandwidth_stats_rcm['num_diagonals']} (was {bandwidth_stats['num_diagonals']})")
 
             bandwidth_reduction = (
-                (bandwidth_stats["bandwidth"] - bandwidth_stats_rcm["bandwidth"])
-                / bandwidth_stats["bandwidth"]
-                * 100
+                (bandwidth_stats["bandwidth"] - bandwidth_stats_rcm["bandwidth"]) / bandwidth_stats["bandwidth"] * 100
             )
             diagonal_reduction = (
-                (
-                    bandwidth_stats["num_diagonals"]
-                    - bandwidth_stats_rcm["num_diagonals"]
-                )
+                (bandwidth_stats["num_diagonals"] - bandwidth_stats_rcm["num_diagonals"])
                 / bandwidth_stats["num_diagonals"]
                 * 100
             )
@@ -164,39 +149,29 @@ def analyze_ata_structure(pattern_file="synthetic_1000_64x64_fixed2.npz"):
         print()
 
         # Summary and diagnosis
-        print(f"6. Diagnosis:")
+        print("6. Diagnosis:")
         expected_diagonals = int(1.5 * led_count)
         actual_diagonals = bandwidth_stats.get("num_diagonals", 0)
 
         if actual_diagonals > expected_diagonals * 2:
-            print(
-                f"   ❌ Too many diagonals: {actual_diagonals} >> {expected_diagonals} (expected)"
-            )
-            print(f"   Issue likely in diffusion pattern generation:")
+            print(f"   ❌ Too many diagonals: {actual_diagonals} >> {expected_diagonals} (expected)")
+            print("   Issue likely in diffusion pattern generation:")
 
             # Check if patterns are too spread out
             max_distance = led_distances.max()
             if max_distance > led_count * 0.5:
-                print(
-                    f"     - Patterns create connections across {max_distance} LEDs (too wide)"
-                )
+                print(f"     - Patterns create connections across {max_distance} LEDs (too wide)")
 
             # Check if most connections are local
-            local_connections = (
-                np.sum(distance_counts[:10])
-                if len(distance_counts) > 10
-                else np.sum(distance_counts)
-            )
+            local_connections = np.sum(distance_counts[:10]) if len(distance_counts) > 10 else np.sum(distance_counts)
             total_connections = np.sum(distance_counts)
             local_ratio = local_connections / total_connections * 100
 
             print(f"     - Local connections (≤9 LEDs): {local_ratio:.1f}%")
             if local_ratio < 80:
-                print(f"     - Too many long-range connections! Should be >80% local")
+                print("     - Too many long-range connections! Should be >80% local")
         else:
-            print(
-                f"   ✅ Diagonal count reasonable: {actual_diagonals} ≈ {expected_diagonals} (expected)"
-            )
+            print(f"   ✅ Diagonal count reasonable: {actual_diagonals} ≈ {expected_diagonals} (expected)")
 
     except Exception as e:
         print(f"❌ Analysis failed: {e}")
@@ -207,9 +182,9 @@ def analyze_ata_structure(pattern_file="synthetic_1000_64x64_fixed2.npz"):
 
 def compare_adjacency_vs_ata():
     """Compare adjacency matrix (expected) vs actual A^T A structure."""
-    print(f"\n{'='*80}")
-    print(f"COMPARING ADJACENCY MATRIX vs A^T A MATRIX")
-    print(f"{'='*80}")
+    print(f"\n{'=' * 80}")
+    print("COMPARING ADJACENCY MATRIX vs A^T A MATRIX")
+    print(f"{'=' * 80}")
 
     # Import adjacency generation
     from src.utils.spatial_ordering import compute_rcm_ordering
@@ -227,26 +202,20 @@ def compare_adjacency_vs_ata():
     adjacency = generate_adjacency_matrix(block_positions, 64)
 
     # Apply RCM to adjacency
-    rcm_order, _, expected_adjacency_diagonals = compute_rcm_ordering(
-        block_positions, 64
-    )
+    rcm_order, _, expected_adjacency_diagonals = compute_rcm_ordering(block_positions, 64)
     adjacency_rcm = adjacency[rcm_order][:, rcm_order]
 
     # Analyze adjacency bandwidth
     adjacency_stats = analyze_matrix_bandwidth(adjacency_rcm)
 
-    print(f"Expected (Adjacency Matrix):")
+    print("Expected (Adjacency Matrix):")
     print(f"  Sparsity: {adjacency_stats['sparsity']:.2f}%")
     print(f"  Bandwidth: {adjacency_stats['bandwidth']}")
     print(f"  Diagonals: {adjacency_stats['num_diagonals']}")
 
     # Analyze actual A^T A
     try:
-        pattern_path = (
-            Path(__file__).parent.parent
-            / "diffusion_patterns"
-            / "synthetic_1000_64x64_fixed2.npz"
-        )
+        pattern_path = Path(__file__).parent.parent / "diffusion_patterns" / "synthetic_1000_64x64_fixed2.npz"
         data = np.load(str(pattern_path), allow_pickle=True)
         diffusion_dict = data["diffusion_matrix"].item()
 
@@ -274,31 +243,23 @@ def compare_adjacency_vs_ata():
 
         ata_stats = analyze_matrix_bandwidth(ata_led_adjacency)
 
-        print(f"Actual (A^T A derived):")
+        print("Actual (A^T A derived):")
         print(f"  Sparsity: {ata_stats['sparsity']:.2f}%")
         print(f"  Bandwidth: {ata_stats['bandwidth']}")
         print(f"  Diagonals: {ata_stats['num_diagonals']}")
 
-        print(f"\nComparison:")
-        print(
-            f"  Sparsity ratio: {ata_stats['sparsity'] / adjacency_stats['sparsity']:.1f}x"
-        )
-        print(
-            f"  Bandwidth ratio: {ata_stats['bandwidth'] / adjacency_stats['bandwidth']:.1f}x"
-        )
-        print(
-            f"  Diagonal ratio: {ata_stats['num_diagonals'] / adjacency_stats['num_diagonals']:.1f}x"
-        )
+        print("\nComparison:")
+        print(f"  Sparsity ratio: {ata_stats['sparsity'] / adjacency_stats['sparsity']:.1f}x")
+        print(f"  Bandwidth ratio: {ata_stats['bandwidth'] / adjacency_stats['bandwidth']:.1f}x")
+        print(f"  Diagonal ratio: {ata_stats['num_diagonals'] / adjacency_stats['num_diagonals']:.1f}x")
 
         if ata_stats["num_diagonals"] > adjacency_stats["num_diagonals"] * 2:
             print(
                 f"  ❌ A^T A has {ata_stats['num_diagonals'] / adjacency_stats['num_diagonals']:.1f}x more diagonals than expected!"
             )
-            print(
-                f"     This suggests diffusion patterns are creating unexpected long-range connections"
-            )
+            print("     This suggests diffusion patterns are creating unexpected long-range connections")
         else:
-            print(f"  ✅ A^T A structure matches adjacency expectations")
+            print("  ✅ A^T A structure matches adjacency expectations")
 
     except Exception as e:
         print(f"Failed to analyze actual A^T A: {e}")
@@ -311,6 +272,6 @@ if __name__ == "__main__":
     # Compare with expected adjacency
     compare_adjacency_vs_ata()
 
-    print(f"\n{'='*80}")
-    print(f"ANALYSIS COMPLETE")
-    print(f"{'='*80}")
+    print(f"\n{'=' * 80}")
+    print("ANALYSIS COMPLETE")
+    print(f"{'=' * 80}")

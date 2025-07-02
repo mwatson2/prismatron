@@ -21,9 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.const import FRAME_HEIGHT, FRAME_WIDTH
 from src.consumer.led_optimizer_pytorch import PyTorchLEDOptimizer
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -57,15 +55,9 @@ class ProfiledPyTorchOptimizer(PyTorchLEDOptimizer):
             torch.cuda.synchronize()  # Ensure accurate timing
             start_time = time.time()
 
-            residual_r = torch.sparse.mm(
-                self._A_r_sparse, w["x_r"].unsqueeze(1)
-            ).squeeze(1)
-            residual_g = torch.sparse.mm(
-                self._A_g_sparse, w["x_g"].unsqueeze(1)
-            ).squeeze(1)
-            residual_b = torch.sparse.mm(
-                self._A_b_sparse, w["x_b"].unsqueeze(1)
-            ).squeeze(1)
+            residual_r = torch.sparse.mm(self._A_r_sparse, w["x_r"].unsqueeze(1)).squeeze(1)
+            residual_g = torch.sparse.mm(self._A_g_sparse, w["x_g"].unsqueeze(1)).squeeze(1)
+            residual_b = torch.sparse.mm(self._A_b_sparse, w["x_b"].unsqueeze(1)).squeeze(1)
 
             torch.cuda.synchronize()
             times["forward_spmv"].append(time.time() - start_time)
@@ -80,15 +72,9 @@ class ProfiledPyTorchOptimizer(PyTorchLEDOptimizer):
 
             # Profile transpose sparse matrix vector multiplication
             start_time = time.time()
-            w["gradient_r"][:] = torch.sparse.mm(
-                self._A_r_sparse.t(), w["residual_r"].unsqueeze(1)
-            ).squeeze(1)
-            w["gradient_g"][:] = torch.sparse.mm(
-                self._A_g_sparse.t(), w["residual_g"].unsqueeze(1)
-            ).squeeze(1)
-            w["gradient_b"][:] = torch.sparse.mm(
-                self._A_b_sparse.t(), w["residual_b"].unsqueeze(1)
-            ).squeeze(1)
+            w["gradient_r"][:] = torch.sparse.mm(self._A_r_sparse.t(), w["residual_r"].unsqueeze(1)).squeeze(1)
+            w["gradient_g"][:] = torch.sparse.mm(self._A_g_sparse.t(), w["residual_g"].unsqueeze(1)).squeeze(1)
+            w["gradient_b"][:] = torch.sparse.mm(self._A_b_sparse.t(), w["residual_b"].unsqueeze(1)).squeeze(1)
             torch.cuda.synchronize()
             times["transpose_spmv"].append(time.time() - start_time)
 
@@ -118,7 +104,7 @@ class ProfiledPyTorchOptimizer(PyTorchLEDOptimizer):
             times["convergence_check"].append(time.time() - start_time)
 
             if total_delta < self.convergence_threshold:
-                logger.info(f"Converged after {iteration+1} iterations")
+                logger.info(f"Converged after {iteration + 1} iterations")
                 break
 
             # Profile tensor updates (reference swapping)
@@ -153,15 +139,9 @@ class ProfiledPyTorchOptimizer(PyTorchLEDOptimizer):
         target_rgb_normalized = target_frame.astype(np.float32) / 255.0
 
         # Copy to workspace tensors
-        self._workspace["target_r"][:] = torch.from_numpy(
-            target_rgb_normalized[:, :, 0].ravel()
-        ).to(self.device)
-        self._workspace["target_g"][:] = torch.from_numpy(
-            target_rgb_normalized[:, :, 1].ravel()
-        ).to(self.device)
-        self._workspace["target_b"][:] = torch.from_numpy(
-            target_rgb_normalized[:, :, 2].ravel()
-        ).to(self.device)
+        self._workspace["target_r"][:] = torch.from_numpy(target_rgb_normalized[:, :, 0].ravel()).to(self.device)
+        self._workspace["target_g"][:] = torch.from_numpy(target_rgb_normalized[:, :, 1].ravel()).to(self.device)
+        self._workspace["target_b"][:] = torch.from_numpy(target_rgb_normalized[:, :, 2].ravel()).to(self.device)
 
         torch.cuda.synchronize()
         preprocess_time = time.time() - preprocess_start
@@ -191,9 +171,7 @@ class ProfiledPyTorchOptimizer(PyTorchLEDOptimizer):
         return led_values_output
 
 
-def analyze_operation_times(
-    times_dict: Dict[str, List[float]], total_optimization_time: float
-):
+def analyze_operation_times(times_dict: Dict[str, List[float]], total_optimization_time: float):
     """Analyze and report timing breakdown of operations."""
 
     logger.info("=== PyTorch Operation Timing Analysis ===")
@@ -211,16 +189,12 @@ def analyze_operation_times(
 
         total_accounted += total_time
 
-        logger.info(
-            f"{operation:20s}: {total_time:.3f}s ({percentage:5.1f}%) - avg: {avg_time:.4f}s/iter"
-        )
+        logger.info(f"{operation:20s}: {total_time:.3f}s ({percentage:5.1f}%) - avg: {avg_time:.4f}s/iter")
 
     unaccounted = total_optimization_time - total_accounted
     unaccounted_pct = (unaccounted / total_optimization_time) * 100
 
-    logger.info(
-        f"{'Unaccounted time':20s}: {unaccounted:.3f}s ({unaccounted_pct:5.1f}%)"
-    )
+    logger.info(f"{'Unaccounted time':20s}: {unaccounted:.3f}s ({unaccounted_pct:5.1f}%)")
     logger.info("")
 
     # Identify bottlenecks
@@ -231,7 +205,7 @@ def analyze_operation_times(
         if times:
             total_time = sum(times)
             percentage = (total_time / total_optimization_time) * 100
-            logger.info(f"{i+1}. {operation}: {total_time:.3f}s ({percentage:.1f}%)")
+            logger.info(f"{i + 1}. {operation}: {total_time:.3f}s ({percentage:.1f}%)")
 
 
 def compare_tensor_formats():
@@ -255,9 +229,7 @@ def compare_tensor_formats():
     # COO format (current)
     indices_coo = torch.from_numpy(np.vstack([rows, cols])).long().cuda()
     values_tensor = torch.from_numpy(values).cuda()
-    sparse_coo = torch.sparse_coo_tensor(
-        indices_coo, values_tensor, (size, size)
-    ).coalesce()
+    sparse_coo = torch.sparse_coo_tensor(indices_coo, values_tensor, (size, size)).coalesce()
 
     # CSR format
     from scipy.sparse import coo_matrix
@@ -291,13 +263,9 @@ def compare_tensor_formats():
     torch.cuda.synchronize()
     csr_time = time.time() - start_time
 
-    logger.info(
-        f"COO SpMV time: {coo_time:.3f}s ({coo_time/num_iterations*1000:.2f}ms per op)"
-    )
-    logger.info(
-        f"CSR SpMV time: {csr_time:.3f}s ({csr_time/num_iterations*1000:.2f}ms per op)"
-    )
-    logger.info(f"CSR speedup: {coo_time/csr_time:.2f}x")
+    logger.info(f"COO SpMV time: {coo_time:.3f}s ({coo_time / num_iterations * 1000:.2f}ms per op)")
+    logger.info(f"CSR SpMV time: {csr_time:.3f}s ({csr_time / num_iterations * 1000:.2f}ms per op)")
+    logger.info(f"CSR speedup: {coo_time / csr_time:.2f}x")
 
 
 def main():
@@ -313,15 +281,11 @@ def main():
 
     # Create test image
     np.random.seed(42)
-    test_image = np.random.randint(
-        0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8
-    )
+    test_image = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
 
     # Create profiled optimizer
     logger.info("Initializing profiled PyTorch optimizer...")
-    optimizer = ProfiledPyTorchOptimizer(
-        diffusion_patterns_path=patterns_path, device="cuda"
-    )
+    optimizer = ProfiledPyTorchOptimizer(diffusion_patterns_path=patterns_path, device="cuda")
 
     if not optimizer.initialize():
         logger.error("Failed to initialize optimizer")
@@ -332,26 +296,17 @@ def main():
     led_values = optimizer.optimize_frame_profiled(test_image, max_iterations=5)
 
     # Analyze results
-    analyze_operation_times(
-        optimizer.profile_data, optimizer.timing_breakdown["optimization_time"]
-    )
+    analyze_operation_times(optimizer.profile_data, optimizer.timing_breakdown["optimization_time"])
 
     logger.info("=== Overall Timing Breakdown ===")
     timing = optimizer.timing_breakdown
     total = timing["total_time"]
 
+    logger.info(f"Preprocessing:  {timing['preprocess_time']:.3f}s ({timing['preprocess_time'] / total * 100:.1f}%)")
     logger.info(
-        f"Preprocessing:  {timing['preprocess_time']:.3f}s "
-        f"({timing['preprocess_time']/total*100:.1f}%)"
+        f"Optimization:   {timing['optimization_time']:.3f}s ({timing['optimization_time'] / total * 100:.1f}%)"
     )
-    logger.info(
-        f"Optimization:   {timing['optimization_time']:.3f}s "
-        f"({timing['optimization_time']/total*100:.1f}%)"
-    )
-    logger.info(
-        f"Postprocessing: {timing['postprocess_time']:.3f}s "
-        f"({timing['postprocess_time']/total*100:.1f}%)"
-    )
+    logger.info(f"Postprocessing: {timing['postprocess_time']:.3f}s ({timing['postprocess_time'] / total * 100:.1f}%)")
     logger.info(f"Total:          {total:.3f}s")
 
     return 0

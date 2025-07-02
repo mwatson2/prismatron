@@ -67,9 +67,7 @@ class PyTorchLEDOptimizer:
             diffusion_patterns_path: Path to sparse diffusion matrix files
             device: PyTorch device ('cuda' or 'cpu')
         """
-        self.diffusion_patterns_path = (
-            diffusion_patterns_path or "config/diffusion_patterns"
-        )
+        self.diffusion_patterns_path = diffusion_patterns_path or "config/diffusion_patterns"
         self.device = torch.device(device)
 
         # Optimization parameters for LSQR (tuned for real-time performance)
@@ -169,9 +167,7 @@ class PyTorchLEDOptimizer:
 
             # Log tensor information
             nnz = self._diffusion_tensor._nnz()
-            logger.info(
-                f"Diffusion tensor: {self._diffusion_tensor.shape}, nnz: {nnz:,}"
-            )
+            logger.info(f"Diffusion tensor: {self._diffusion_tensor.shape}, nnz: {nnz:,}")
             logger.info(f"Tensor format: COO (coordinates + values)")
 
             return True
@@ -180,9 +176,7 @@ class PyTorchLEDOptimizer:
             logger.error(f"Failed to load and convert sparse matrix: {e}")
             return False
 
-    def _create_4d_coo_tensor(
-        self, sparse_matrix_csc: sp.csc_matrix
-    ) -> torch.sparse.FloatTensor:
+    def _create_4d_coo_tensor(self, sparse_matrix_csc: sp.csc_matrix) -> torch.sparse.FloatTensor:
         """
         Convert 2D sparse matrix to 4D COO tensor (HEIGHT, WIDTH, LED_COUNT, 3).
 
@@ -229,9 +223,7 @@ class PyTorchLEDOptimizer:
             device=self.device,
         ).coalesce()
 
-        logger.info(
-            f"Created 4D COO tensor: {tensor_shape}, nnz: {diffusion_tensor._nnz():,}"
-        )
+        logger.info(f"Created 4D COO tensor: {tensor_shape}, nnz: {diffusion_tensor._nnz():,}")
         return diffusion_tensor
 
     def _calculate_flops_per_iteration(self) -> None:
@@ -269,32 +261,18 @@ class PyTorchLEDOptimizer:
         # Pre-allocate workspace tensors for 4D tensor operations
         self._workspace = {
             # Target frame (HEIGHT, WIDTH, 3)
-            "target_frame": torch.zeros(
-                (FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=torch.float32, device=self.device
-            ),
+            "target_frame": torch.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=torch.float32, device=self.device),
             # LED values (LED_COUNT, 3)
-            "led_values": torch.full(
-                (leds, 3), 0.5, dtype=torch.float32, device=self.device
-            ),
+            "led_values": torch.full((leds, 3), 0.5, dtype=torch.float32, device=self.device),
             # Workspace for optimization
-            "residual_frame": torch.zeros(
-                (FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=torch.float32, device=self.device
-            ),
-            "gradient_leds": torch.zeros(
-                (leds, 3), dtype=torch.float32, device=self.device
-            ),
-            "led_values_new": torch.zeros(
-                (leds, 3), dtype=torch.float32, device=self.device
-            ),
+            "residual_frame": torch.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=torch.float32, device=self.device),
+            "gradient_leds": torch.zeros((leds, 3), dtype=torch.float32, device=self.device),
+            "led_values_new": torch.zeros((leds, 3), dtype=torch.float32, device=self.device),
             # For step size computation
-            "temp_frame": torch.zeros(
-                (FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=torch.float32, device=self.device
-            ),
+            "temp_frame": torch.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=torch.float32, device=self.device),
         }
 
-        workspace_mb = sum(t.numel() * 4 for t in self._workspace.values()) / (
-            1024 * 1024
-        )
+        workspace_mb = sum(t.numel() * 4 for t in self._workspace.values()) / (1024 * 1024)
         logger.info(f"PyTorch workspace memory: {workspace_mb:.1f}MB")
 
     def optimize_frame(
@@ -328,21 +306,15 @@ class PyTorchLEDOptimizer:
             target_rgb_normalized = target_frame.astype(np.float32) / 255.0
 
             # Copy to workspace tensor (efficient GPU transfer)
-            self._workspace["target_frame"][:] = torch.from_numpy(
-                target_rgb_normalized
-            ).to(self.device)
+            self._workspace["target_frame"][:] = torch.from_numpy(target_rgb_normalized).to(self.device)
 
             # Initialize LED values
             if initial_values is not None:
-                initial_normalized = (
-                    initial_values / 255.0
-                    if initial_values.max() > 1.0
-                    else initial_values
-                ).astype(np.float32)
+                initial_normalized = (initial_values / 255.0 if initial_values.max() > 1.0 else initial_values).astype(
+                    np.float32
+                )
 
-                self._workspace["led_values"][:] = torch.from_numpy(
-                    initial_normalized
-                ).to(self.device)
+                self._workspace["led_values"][:] = torch.from_numpy(initial_normalized).to(self.device)
             else:
                 # Use pre-initialized 0.5 values (already in workspace)
                 pass
@@ -393,9 +365,7 @@ class PyTorchLEDOptimizer:
 
         except Exception as e:
             optimization_time = time.time() - start_time
-            logger.error(
-                f"PyTorch optimization failed after {optimization_time:.3f}s: {e}"
-            )
+            logger.error(f"PyTorch optimization failed after {optimization_time:.3f}s: {e}")
 
             # Return error result
             return PyTorchOptimizationResult(
@@ -427,33 +397,25 @@ class PyTorchLEDOptimizer:
             # diffusion_tensor: (H, W, LED_COUNT, 3)
             # led_values: (LED_COUNT, 3)
             # result: (H, W, 3) = einsum('hwlc,lc->hwc', diffusion_tensor, led_values)
-            rendered_frame = torch.einsum(
-                "hwlc,lc->hwc", self._diffusion_tensor, w["led_values"]
-            )
+            rendered_frame = torch.einsum("hwlc,lc->hwc", self._diffusion_tensor, w["led_values"])
 
             # Compute residual: rendered - target
             w["residual_frame"][:] = rendered_frame - w["target_frame"]
 
             # Compute gradient: transpose einsum for gradient
             # gradient: (LED_COUNT, 3) = einsum('hwlc,hwc->lc', diffusion_tensor, residual)
-            w["gradient_leds"][:] = torch.einsum(
-                "hwlc,hwc->lc", self._diffusion_tensor, w["residual_frame"]
-            )
+            w["gradient_leds"][:] = torch.einsum("hwlc,hwc->lc", self._diffusion_tensor, w["residual_frame"])
 
             # Compute step size using the natural 4D operations
             step_size = self._compute_step_size_4d(w["gradient_leds"])
 
             # Gradient descent step with projection
-            w["led_values_new"][:] = torch.clamp(
-                w["led_values"] - step_size * w["gradient_leds"], 0, 1
-            )
+            w["led_values_new"][:] = torch.clamp(w["led_values"] - step_size * w["gradient_leds"], 0, 1)
 
             # Check convergence
             delta = torch.norm(w["led_values_new"] - w["led_values"])
             if delta < self.convergence_threshold:
-                logger.debug(
-                    f"Converged after {iteration+1} iterations, delta: {delta:.6f}"
-                )
+                logger.debug(f"Converged after {iteration + 1} iterations, delta: {delta:.6f}")
                 break
 
             # Update LED values (swap references for efficiency)
@@ -485,16 +447,12 @@ class PyTorchLEDOptimizer:
         else:
             return 0.01  # Fallback step size
 
-    def _compute_error_metrics(
-        self, led_values_tensor: torch.Tensor
-    ) -> Dict[str, float]:
+    def _compute_error_metrics(self, led_values_tensor: torch.Tensor) -> Dict[str, float]:
         """Compute error metrics for the optimization result using 4D tensor operations."""
         w = self._workspace
 
         # Compute rendered frame from final LED values
-        rendered_frame = torch.einsum(
-            "hwlc,lc->hwc", self._diffusion_tensor, led_values_tensor
-        )
+        rendered_frame = torch.einsum("hwlc,lc->hwc", self._diffusion_tensor, led_values_tensor)
 
         # Compute residual
         residual_frame = rendered_frame - w["target_frame"]
@@ -529,9 +487,7 @@ class PyTorchLEDOptimizer:
         if self._matrix_loaded:
             avg_gflops_per_second = 0.0
             if avg_time > 0 and self._flops_per_iteration > 0:
-                avg_gflops_per_second = (
-                    self.max_iterations * self._flops_per_iteration
-                ) / (avg_time * 1e9)
+                avg_gflops_per_second = (self.max_iterations * self._flops_per_iteration) / (avg_time * 1e9)
 
             stats.update(
                 {
@@ -541,10 +497,7 @@ class PyTorchLEDOptimizer:
                     "flop_analysis": {
                         "flops_per_iteration": int(self._flops_per_iteration),
                         "total_flops_computed": int(self._total_flops),
-                        "average_gflops_per_frame": (
-                            self.max_iterations * self._flops_per_iteration
-                        )
-                        / 1e9,
+                        "average_gflops_per_frame": (self.max_iterations * self._flops_per_iteration) / 1e9,
                         "average_gflops_per_second": avg_gflops_per_second,
                     },
                 }

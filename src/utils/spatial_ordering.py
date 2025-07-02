@@ -14,9 +14,7 @@ from scipy.sparse.csgraph import reverse_cuthill_mckee
 from scipy.spatial import cKDTree
 
 
-def compute_rcm_ordering(
-    block_positions: np.ndarray, block_size: int
-) -> Tuple[np.ndarray, np.ndarray, int]:
+def compute_rcm_ordering(block_positions: np.ndarray, block_size: int) -> Tuple[np.ndarray, np.ndarray, int]:
     """
     Compute Reverse Cuthill-McKee (RCM) ordering for spatial blocks.
 
@@ -50,9 +48,7 @@ def compute_rcm_ordering(
     max_distance = block_size * np.sqrt(2)  # Diagonal distance
     pairs = tree.query_pairs(max_distance)
 
-    print(
-        f"  Found {len(pairs)} potential block pairs within distance {max_distance:.1f}"
-    )
+    print(f"  Found {len(pairs)} potential block pairs within distance {max_distance:.1f}")
 
     # Build sparse adjacency matrix
     adjacency = sp.lil_matrix((n_blocks, n_blocks), dtype=bool)
@@ -93,9 +89,7 @@ def compute_rcm_ordering(
         adjacency_diagonals = 1  # Only main diagonal
     else:
         print("  Applying RCM algorithm...")
-        rcm_order = reverse_cuthill_mckee(adjacency_csr, symmetric_mode=True).astype(
-            np.int32
-        )
+        rcm_order = reverse_cuthill_mckee(adjacency_csr, symmetric_mode=True).astype(np.int32)
 
         # Compute diagonal count after RCM reordering
         adjacency_rcm = adjacency[rcm_order][:, rcm_order]
@@ -104,35 +98,29 @@ def compute_rcm_ordering(
             diagonal_offsets = cols - rows
             unique_diagonals = np.unique(diagonal_offsets)
             adjacency_diagonals = len(unique_diagonals)
-            print(
-                f"  Adjacency matrix diagonal range: [{diagonal_offsets.min()}, {diagonal_offsets.max()}]"
-            )
+            print(f"  Adjacency matrix diagonal range: [{diagonal_offsets.min()}, {diagonal_offsets.max()}]")
             print(f"  Adjacency matrix nnz: {len(rows):,}")
-            print(
-                f"  Adjacency matrix diagonals present: {sorted(unique_diagonals.tolist())}"
-            )
+            print(f"  Adjacency matrix diagonals present: {sorted(unique_diagonals.tolist())}")
             # Check if main diagonal (0) is present
             if 0 in unique_diagonals:
-                print(f"  Main diagonal (0) is present in adjacency matrix")
+                print("  Main diagonal (0) is present in adjacency matrix")
             else:
-                print(f"  Main diagonal (0) is MISSING from adjacency matrix")
+                print("  Main diagonal (0) is MISSING from adjacency matrix")
         else:
             adjacency_diagonals = 0
 
     # Compute inverse permutation: inverse_order[rcm_order[i]] = i
     inverse_order = np.argsort(rcm_order).astype(np.int32)
 
-    print(f"  RCM ordering computed successfully")
-    print(f"  Original order range: [0, {n_blocks-1}]")
+    print("  RCM ordering computed successfully")
+    print(f"  Original order range: [0, {n_blocks - 1}]")
     print(f"  RCM order range: [{rcm_order.min()}, {rcm_order.max()}]")
     print(f"  RCM-ordered adjacency diagonals: {adjacency_diagonals}")
 
     return rcm_order, inverse_order, adjacency_diagonals
 
 
-def reorder_matrix_columns(
-    matrix: sp.spmatrix, block_order: np.ndarray, channels_per_block: int = 3
-) -> sp.spmatrix:
+def reorder_matrix_columns(matrix: sp.spmatrix, block_order: np.ndarray, channels_per_block: int = 3) -> sp.spmatrix:
     """
     Reorder matrix columns according to block ordering.
 
@@ -174,9 +162,7 @@ def reorder_matrix_columns(
     return matrix[:, col_permutation]
 
 
-def reorder_block_values(
-    values: np.ndarray, block_order: np.ndarray, from_ordered: bool = False
-) -> np.ndarray:
+def reorder_block_values(values: np.ndarray, block_order: np.ndarray, from_ordered: bool = False) -> np.ndarray:
     """
     Reorder block values according to spatial ordering.
 

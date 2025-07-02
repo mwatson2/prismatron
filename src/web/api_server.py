@@ -69,14 +69,10 @@ class PlaylistState(BaseModel):
 class SystemSettings(BaseModel):
     """System settings model."""
 
-    brightness: float = Field(
-        1.0, ge=0.0, le=1.0, description="Global brightness (0-1)"
-    )
+    brightness: float = Field(1.0, ge=0.0, le=1.0, description="Global brightness (0-1)")
     frame_rate: float = Field(30.0, ge=1.0, le=60.0, description="Target frame rate")
     led_count: int = Field(LED_COUNT, description="Number of LEDs")
-    display_resolution: Dict[str, int] = Field(
-        default_factory=lambda: {"width": FRAME_WIDTH, "height": FRAME_HEIGHT}
-    )
+    display_resolution: Dict[str, int] = Field(default_factory=lambda: {"width": FRAME_WIDTH, "height": FRAME_HEIGHT})
     auto_start_playlist: bool = Field(True, description="Auto-start playlist on boot")
     preview_enabled: bool = Field(True, description="Enable live preview")
 
@@ -200,16 +196,12 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
-        logger.info(
-            f"WebSocket connected: {len(self.active_connections)} total connections"
-        )
+        logger.info(f"WebSocket connected: {len(self.active_connections)} total connections")
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
-        logger.info(
-            f"WebSocket disconnected: {len(self.active_connections)} total connections"
-        )
+        logger.info(f"WebSocket disconnected: {len(self.active_connections)} total connections")
 
     async def broadcast(self, message: dict):
         """Broadcast message to all connected clients."""
@@ -263,10 +255,11 @@ async def get_system_status():
     # TODO: Integrate with actual system monitoring
     return SystemStatus(
         is_online=True,
-        current_file=playlist_state.items[playlist_state.current_index].file_path
-        if playlist_state.items
-        and 0 <= playlist_state.current_index < len(playlist_state.items)
-        else None,
+        current_file=(
+            playlist_state.items[playlist_state.current_index].file_path
+            if playlist_state.items and 0 <= playlist_state.current_index < len(playlist_state.items)
+            else None
+        ),
         playlist_position=playlist_state.current_index,
         brightness=system_settings.brightness,
         frame_rate=30.0,  # TODO: Get actual frame rate
@@ -308,12 +301,8 @@ async def pause_content():
 async def next_item():
     """Skip to next playlist item."""
     if playlist_state.items:
-        playlist_state.current_index = (playlist_state.current_index + 1) % len(
-            playlist_state.items
-        )
-        await manager.broadcast(
-            {"type": "playlist_position", "current_index": playlist_state.current_index}
-        )
+        playlist_state.current_index = (playlist_state.current_index + 1) % len(playlist_state.items)
+        await manager.broadcast({"type": "playlist_position", "current_index": playlist_state.current_index})
     return {"current_index": playlist_state.current_index}
 
 
@@ -321,12 +310,8 @@ async def next_item():
 async def previous_item():
     """Skip to previous playlist item."""
     if playlist_state.items:
-        playlist_state.current_index = (playlist_state.current_index - 1) % len(
-            playlist_state.items
-        )
-        await manager.broadcast(
-            {"type": "playlist_position", "current_index": playlist_state.current_index}
-        )
+        playlist_state.current_index = (playlist_state.current_index - 1) % len(playlist_state.items)
+        await manager.broadcast({"type": "playlist_position", "current_index": playlist_state.current_index})
     return {"current_index": playlist_state.current_index}
 
 
@@ -354,9 +339,7 @@ async def upload_file(
                 break
 
         if not content_type:
-            raise HTTPException(
-                status_code=400, detail=f"Unsupported file type: {file_ext}"
-            )
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_ext}")
 
         # Generate unique filename
         file_id = str(uuid.uuid4())
@@ -567,9 +550,7 @@ async def update_settings(settings: SystemSettings):
 async def set_brightness(brightness: float):
     """Set global brightness."""
     if not 0.0 <= brightness <= 1.0:
-        raise HTTPException(
-            status_code=400, detail="Brightness must be between 0.0 and 1.0"
-        )
+        raise HTTPException(status_code=400, detail="Brightness must be between 0.0 and 1.0")
 
     system_settings.brightness = brightness
 
@@ -617,7 +598,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # Serve static files (for production)
 @app.mount("/static", StaticFiles(directory="static"), name="static")
-
 # System control endpoints
 @app.post("/api/system/restart")
 async def restart_system():

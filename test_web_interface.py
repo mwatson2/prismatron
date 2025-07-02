@@ -60,9 +60,7 @@ class SystemSettings(BaseModel):
     brightness: float = 1.0
     frame_rate: float = 30.0
     led_count: int = LED_COUNT
-    display_resolution: Dict[str, int] = Field(
-        default_factory=lambda: {"width": FRAME_WIDTH, "height": FRAME_HEIGHT}
-    )
+    display_resolution: Dict[str, int] = Field(default_factory=lambda: {"width": FRAME_WIDTH, "height": FRAME_HEIGHT})
     auto_start_playlist: bool = True
     preview_enabled: bool = True
 
@@ -202,10 +200,11 @@ async def root():
 async def get_system_status():
     """Get current system status."""
     return SystemStatus(
-        current_file=playlist_state.items[playlist_state.current_index].file_path
-        if playlist_state.items
-        and 0 <= playlist_state.current_index < len(playlist_state.items)
-        else None,
+        current_file=(
+            playlist_state.items[playlist_state.current_index].file_path
+            if playlist_state.items and 0 <= playlist_state.current_index < len(playlist_state.items)
+            else None
+        ),
         playlist_position=playlist_state.current_index,
         brightness=system_settings.brightness,
         uptime=time.time(),
@@ -244,12 +243,8 @@ async def pause_content():
 async def next_item():
     """Skip to next playlist item."""
     if playlist_state.items:
-        playlist_state.current_index = (playlist_state.current_index + 1) % len(
-            playlist_state.items
-        )
-        await manager.broadcast(
-            {"type": "playlist_position", "current_index": playlist_state.current_index}
-        )
+        playlist_state.current_index = (playlist_state.current_index + 1) % len(playlist_state.items)
+        await manager.broadcast({"type": "playlist_position", "current_index": playlist_state.current_index})
     return {"current_index": playlist_state.current_index}
 
 
@@ -257,12 +252,8 @@ async def next_item():
 async def previous_item():
     """Skip to previous playlist item."""
     if playlist_state.items:
-        playlist_state.current_index = (playlist_state.current_index - 1) % len(
-            playlist_state.items
-        )
-        await manager.broadcast(
-            {"type": "playlist_position", "current_index": playlist_state.current_index}
-        )
+        playlist_state.current_index = (playlist_state.current_index - 1) % len(playlist_state.items)
+        await manager.broadcast({"type": "playlist_position", "current_index": playlist_state.current_index})
     return {"current_index": playlist_state.current_index}
 
 
@@ -279,9 +270,7 @@ async def upload_file(
         file_ext = file.filename.split(".")[-1].lower() if file.filename else ""
 
         if file_ext not in allowed_exts:
-            raise HTTPException(
-                status_code=400, detail=f"Unsupported file type: {file_ext}"
-            )
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_ext}")
 
         # Save file (mock)
         file_path = UPLOAD_DIR / file.filename
@@ -320,9 +309,7 @@ async def get_effects():
 
 
 @app.post("/api/effects/{effect_id}/add")
-async def add_effect_to_playlist(
-    effect_id: str, name: Optional[str] = None, duration: Optional[float] = None
-):
+async def add_effect_to_playlist(effect_id: str, name: Optional[str] = None, duration: Optional[float] = None):
     """Add an effect to the playlist."""
     effect_preset = next((e for e in EFFECT_PRESETS if e.id == effect_id), None)
     if not effect_preset:
@@ -398,9 +385,7 @@ async def update_settings(settings: SystemSettings):
 async def set_brightness(brightness: float):
     """Set global brightness."""
     if not 0.0 <= brightness <= 1.0:
-        raise HTTPException(
-            status_code=400, detail="Brightness must be between 0.0 and 1.0"
-        )
+        raise HTTPException(status_code=400, detail="Brightness must be between 0.0 and 1.0")
 
     system_settings.brightness = brightness
 

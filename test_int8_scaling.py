@@ -39,9 +39,7 @@ def convert_to_int8_tensor(
     )
 
     # Convert values: [0,1] -> [0,255]
-    float32_values = (
-        float32_tensor.sparse_values
-    )  # Shape: (channels, batch_size, block_size, block_size)
+    float32_values = float32_tensor.sparse_values  # Shape: (channels, batch_size, block_size, block_size)
     int8_values = (float32_values * 255.0).astype(cp.uint8)
 
     # Copy converted data
@@ -99,7 +97,7 @@ def test_with_int8_scaling():
     image = Image.open(image_path).convert("RGB").resize((800, 480))
     target_image_uint8 = np.array(image, dtype=np.uint8)  # Keep as uint8 [0,255]
 
-    print(f"\n=== Testing with Int8 Data and Kernels ===")
+    print("\n=== Testing with Int8 Data and Kernels ===")
     print(
         f"Target image dtype: {target_image_uint8.dtype}, range: [{target_image_uint8.min()}, {target_image_uint8.max()}]"
     )
@@ -125,12 +123,10 @@ def test_with_int8_scaling():
         debug=True,
     )
 
-    print(f"\n=== Results with Int8 Scaling ===")
+    print("\n=== Results with Int8 Scaling ===")
     print(f"Converged: {result.converged}")
     print(f"Iterations: {result.iterations}")
-    print(
-        f"LED values range: [{result.led_values.min():.3f}, {result.led_values.max():.3f}]"
-    )
+    print(f"LED values range: [{result.led_values.min():.3f}, {result.led_values.max():.3f}]")
 
     if result.error_metrics:
         print(f"MSE: {result.error_metrics.get('mse', 'N/A'):.6f}")
@@ -139,9 +135,7 @@ def test_with_int8_scaling():
 
     if result.step_sizes is not None:
         print(f"Step sizes: {result.step_sizes}")
-        print(
-            f"Step size range: [{np.min(result.step_sizes):.6f}, {np.max(result.step_sizes):.6f}]"
-        )
+        print(f"Step size range: [{np.min(result.step_sizes):.6f}, {np.max(result.step_sizes):.6f}]")
         print(f"Step size mean: {np.mean(result.step_sizes):.6f}")
 
 

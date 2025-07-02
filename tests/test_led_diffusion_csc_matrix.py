@@ -39,9 +39,7 @@ class TestLEDDiffusionCSCMatrix:
 
         # Create test data with distinct patterns for each LED/channel
         self.test_matrix = self._create_test_matrix()
-        self.wrapper = LEDDiffusionCSCMatrix.from_csc_matrix(
-            self.test_matrix, self.height, self.width, self.channels
-        )
+        self.wrapper = LEDDiffusionCSCMatrix.from_csc_matrix(self.test_matrix, self.height, self.width, self.channels)
 
     def _create_test_matrix(self) -> sp.csc_matrix:
         """Create a test CSC matrix with known patterns."""
@@ -102,9 +100,7 @@ class TestLEDDiffusionCSCMatrix:
             dtype=np.float32,  # 10 not divisible by 3
         )
         with pytest.raises(ValueError, match="not divisible by channels"):
-            LEDDiffusionCSCMatrix(
-                csc_matrix=bad_matrix2, height=10, width=8, channels=3
-            )
+            LEDDiffusionCSCMatrix(csc_matrix=bad_matrix2, height=10, width=8, channels=3)
 
     def test_to_csc_matrix(self):
         """Test conversion back to scipy CSC matrix."""
@@ -117,9 +113,7 @@ class TestLEDDiffusionCSCMatrix:
 
         # Check data equality
         np.testing.assert_array_equal(recovered_matrix.data, self.test_matrix.data)
-        np.testing.assert_array_equal(
-            recovered_matrix.indices, self.test_matrix.indices
-        )
+        np.testing.assert_array_equal(recovered_matrix.indices, self.test_matrix.indices)
         np.testing.assert_array_equal(recovered_matrix.indptr, self.test_matrix.indptr)
 
     def test_to_dict_from_dict(self):
@@ -310,9 +304,7 @@ class TestLEDDiffusionCSCMatrix:
         matrix2[10, 0] = 7.0  # LED 0, Channel 0
         matrix2[20, 3] = 8.0  # LED 1, Channel 0
 
-        wrapper2 = LEDDiffusionCSCMatrix.from_csc_matrix(
-            matrix2.tocsc(), self.height, self.width, self.channels
-        )
+        wrapper2 = LEDDiffusionCSCMatrix.from_csc_matrix(matrix2.tocsc(), self.height, self.width, self.channels)
 
         # Stack the matrices
         stacked = LEDDiffusionCSCMatrix.hstack([self.wrapper, wrapper2])
@@ -333,9 +325,7 @@ class TestLEDDiffusionCSCMatrix:
         np.testing.assert_array_equal(dense_original, dense_stacked)
 
         # Verify data from second matrix is in correct position
-        dense_second = stacked.materialize_dense(
-            self.led_count, 0
-        )  # First LED from second matrix
+        dense_second = stacked.materialize_dense(self.led_count, 0)  # First LED from second matrix
         expected = np.zeros((self.height, self.width))
         expected.flat[10] = 7.0
         np.testing.assert_array_equal(dense_second, expected)
@@ -348,7 +338,10 @@ class TestLEDDiffusionCSCMatrix:
 
         # Test mismatched dimensions
         different_height = LEDDiffusionCSCMatrix.from_csc_matrix(
-            sp.csc_matrix((50, 3)), height=5, width=10, channels=3  # Different height
+            sp.csc_matrix((50, 3)),
+            height=5,
+            width=10,
+            channels=3,  # Different height
         )
 
         with pytest.raises(ValueError, match="spatial dims.*!= first matrix"):
@@ -439,9 +432,7 @@ class TestLEDDiffusionCSCMatrix:
                 )
 
         # Check that we have some non-zero values (based on test data)
-        assert np.any(
-            dense_patterns > 0
-        ), "Dense patterns should have some non-zero values"
+        assert np.any(dense_patterns > 0), "Dense patterns should have some non-zero values"
 
     def test_get_pattern_summary(self):
         """Test pattern summary statistics."""
@@ -540,12 +531,8 @@ class TestLEDDiffusionCSCMatrix:
 
     def test_enhancement_methods_empty_matrix(self):
         """Test enhancement methods with empty matrix."""
-        empty_matrix = sp.csc_matrix(
-            (self.pixels, self.led_count * self.channels), dtype=np.float32
-        )
-        empty_wrapper = LEDDiffusionCSCMatrix.from_csc_matrix(
-            empty_matrix, self.height, self.width, self.channels
-        )
+        empty_matrix = sp.csc_matrix((self.pixels, self.led_count * self.channels), dtype=np.float32)
+        empty_wrapper = LEDDiffusionCSCMatrix.from_csc_matrix(empty_matrix, self.height, self.width, self.channels)
 
         # Test to_dense_patterns
         dense_patterns = empty_wrapper.to_dense_patterns()
@@ -574,9 +561,7 @@ class TestLEDDiffusionCSCMatrix:
 def test_empty_matrix():
     """Test handling of empty matrix."""
     empty_matrix = sp.csc_matrix((80, 12), dtype=np.float32)  # 4 LEDs, 3 channels
-    wrapper = LEDDiffusionCSCMatrix.from_csc_matrix(
-        empty_matrix, height=10, width=8, channels=3
-    )
+    wrapper = LEDDiffusionCSCMatrix.from_csc_matrix(empty_matrix, height=10, width=8, channels=3)
 
     # All patterns should be zero
     for led_idx in range(4):
@@ -593,9 +578,7 @@ def test_single_pixel_patterns():
     matrix = sp.lil_matrix((80, 3), dtype=np.float32)  # 1 LED, 3 channels
     matrix[25, 0] = 1.0  # Single pixel in red channel
 
-    wrapper = LEDDiffusionCSCMatrix.from_csc_matrix(
-        matrix.tocsc(), height=10, width=8, channels=3
-    )
+    wrapper = LEDDiffusionCSCMatrix.from_csc_matrix(matrix.tocsc(), height=10, width=8, channels=3)
 
     # Check red channel has single pixel
     dense = wrapper.materialize_dense(0, 0)

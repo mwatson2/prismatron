@@ -142,7 +142,7 @@ class CameraCalibration:
         h = min(h, self.camera_height - y)
 
         self.crop_region = (x, y, w, h)
-        logger.info(f"Crop region set: {self.crop_region} (aspect ratio: {w/h:.3f})")
+        logger.info(f"Crop region set: {self.crop_region} (aspect ratio: {w / h:.3f})")
 
     def _draw_guides(self, frame: np.ndarray) -> np.ndarray:
         """Draw guides and overlays on the frame."""
@@ -265,16 +265,12 @@ class CameraCalibration:
 
         for corner_x, corner_y in corners:
             cv2.circle(frame, (corner_x, corner_y), corner_size // 2, (0, 0, 255), -1)
-            cv2.circle(
-                frame, (corner_x, corner_y), corner_size // 2, (255, 255, 255), 2
-            )
+            cv2.circle(frame, (corner_x, corner_y), corner_size // 2, (255, 255, 255), 2)
 
         # Add crop region info
         aspect = w / h
         info_text = f"Crop: {w}x{h} (aspect: {aspect:.3f})"
-        cv2.putText(
-            frame, info_text, (x, y - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2
-        )
+        cv2.putText(frame, info_text, (x, y - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
         # Show preview of cropped region in corner
         self._draw_crop_preview(frame)
@@ -318,9 +314,7 @@ class CameraCalibration:
             2,
         )
 
-        frame[
-            preview_y : preview_y + preview_h, preview_x : preview_x + preview_w
-        ] = preview
+        frame[preview_y : preview_y + preview_h, preview_x : preview_x + preview_w] = preview
 
         # Add label
         cv2.putText(
@@ -361,9 +355,7 @@ class CameraCalibration:
             color = (0, 255, 255) if i == 0 else (255, 255, 255)
             thickness = 2 if i == 0 else 1
 
-            cv2.putText(
-                frame, line, (20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, thickness
-            )
+            cv2.putText(frame, line, (20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, thickness)
 
     def run_calibration(self) -> Optional[Dict]:
         """Run the interactive calibration process."""
@@ -402,9 +394,7 @@ class CameraCalibration:
 
                 elif key == ord("a"):
                     self.show_guides = not self.show_guides
-                    logger.info(
-                        f"Aspect guides {'enabled' if self.show_guides else 'disabled'}"
-                    )
+                    logger.info(f"Aspect guides {'enabled' if self.show_guides else 'disabled'}")
 
                 elif key == ord("r"):
                     self.crop_region = None
@@ -458,13 +448,9 @@ class CameraCalibration:
 
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Camera calibration for diffusion pattern capture"
-    )
+    parser = argparse.ArgumentParser(description="Camera calibration for diffusion pattern capture")
     parser.add_argument("--camera-device", type=int, default=0, help="Camera device ID")
-    parser.add_argument(
-        "--output-config", help="Output configuration file path (.json)"
-    )
+    parser.add_argument("--output-config", help="Output configuration file path (.json)")
     parser.add_argument(
         "--log-level",
         default="INFO",

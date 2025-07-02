@@ -163,9 +163,7 @@ def cuda_transpose_dot_product_3d_compute_optimized(
     grid_size = (batch_size, channels)  # 2D grid: (batch_size, channels)
     block_size_1d = (32,)  # 32 threads per block for optimal warp utilization
 
-    logger.debug(
-        f"3D Compute-optimized CUDA kernel launch (2D Grid - banked 12.8x improvement):"
-    )
+    logger.debug("3D Compute-optimized CUDA kernel launch (2D Grid - banked 12.8x improvement):")
     logger.debug(f"  Grid: {grid_size} (batch_size={batch_size}, channels={channels})")
     logger.debug(f"  Block: {block_size_1d} (32 threads per block)")
     logger.debug(f"  Target shape: {target_3d.shape} (planar)")
@@ -176,9 +174,7 @@ def cuda_transpose_dot_product_3d_compute_optimized(
     # Only reduction workspace (32 floats) - no sparse block caching
     shared_mem_size = 32 * 4  # 4 bytes per float = 128 bytes
 
-    logger.debug(
-        f"  Shared memory per block: {shared_mem_size} bytes ({shared_mem_size/1024:.3f}KB)"
-    )
+    logger.debug(f"  Shared memory per block: {shared_mem_size} bytes ({shared_mem_size / 1024:.3f}KB)")
 
     # Single kernel launch with 2D grid - let GPU scheduler handle work distribution
     kernel(
@@ -406,9 +402,7 @@ def get_compute_optimized_3d_int8_kernel():
         )
         _kernel_cache["compute_optimized_3d_int8_aligned"] = kernel
 
-        logger.info(
-            "Aligned compute-optimized 3D int8 CUDA kernel compiled successfully"
-        )
+        logger.info("Aligned compute-optimized 3D int8 CUDA kernel compiled successfully")
 
     return _kernel_cache["compute_optimized_3d_int8_aligned"]
 
@@ -425,9 +419,7 @@ def get_compute_optimized_3d_int8_experimental_kernel():
         )
         _kernel_cache["compute_optimized_3d_int8_experimental"] = kernel
 
-        logger.info(
-            "Experimental compute-optimized 3D int8 CUDA kernel compiled successfully"
-        )
+        logger.info("Experimental compute-optimized 3D int8 CUDA kernel compiled successfully")
 
     return _kernel_cache["compute_optimized_3d_int8_experimental"]
 
@@ -471,9 +463,7 @@ def cuda_transpose_dot_product_3d_compute_optimized_int8(
         raise ValueError(f"target_3d must be uint8, got {target_3d.dtype}")
 
     if block_size % 4 != 0:
-        raise ValueError(
-            f"block_size {block_size} must be multiple of 4 for vectorization"
-        )
+        raise ValueError(f"block_size {block_size} must be multiple of 4 for vectorization")
 
     # Prepare output array
     result = cp.zeros((batch_size, channels), dtype=cp.float32)
@@ -485,7 +475,7 @@ def cuda_transpose_dot_product_3d_compute_optimized_int8(
     grid_size = (batch_size, channels)  # 2D grid: (batch_size, channels)
     block_size_1d = (32,)  # 32 threads per block for optimal warp utilization
 
-    logger.debug(f"3D Compute-optimized int8 CUDA kernel launch (2D Grid):")
+    logger.debug("3D Compute-optimized int8 CUDA kernel launch (2D Grid):")
     logger.debug(f"  Grid: {grid_size} (batch_size={batch_size}, channels={channels})")
     logger.debug(f"  Block: {block_size_1d} (32 threads per block)")
     logger.debug(f"  Target shape: {target_3d.shape} (planar int8)")
@@ -496,9 +486,7 @@ def cuda_transpose_dot_product_3d_compute_optimized_int8(
     # Only reduction workspace (32 floats) - no sparse block caching
     shared_mem_size = 32 * 4  # 4 bytes per float = 128 bytes
 
-    logger.debug(
-        f"  Shared memory per block: {shared_mem_size} bytes ({shared_mem_size/1024:.3f}KB)"
-    )
+    logger.debug(f"  Shared memory per block: {shared_mem_size} bytes ({shared_mem_size / 1024:.3f}KB)")
 
     # Single kernel launch with 2D grid - let GPU scheduler handle work distribution
     kernel(
@@ -559,9 +547,7 @@ def cuda_transpose_dot_product_3d_compute_optimized_int8_experimental(
         raise ValueError(f"target_3d must be uint8, got {target_3d.dtype}")
 
     if block_size % 4 != 0:
-        raise ValueError(
-            f"block_size {block_size} must be multiple of 4 for vectorization"
-        )
+        raise ValueError(f"block_size {block_size} must be multiple of 4 for vectorization")
 
     # Prepare output array
     result = cp.zeros((batch_size, channels), dtype=cp.float32)
@@ -573,9 +559,7 @@ def cuda_transpose_dot_product_3d_compute_optimized_int8_experimental(
     grid_size = (batch_size, channels)  # 2D grid: (batch_size, channels)
     block_size_1d = (32,)  # 32 threads per block for optimal warp utilization
 
-    logger.debug(
-        f"Experimental 3D Compute-optimized int8 CUDA kernel launch (2D Grid):"
-    )
+    logger.debug("Experimental 3D Compute-optimized int8 CUDA kernel launch (2D Grid):")
     logger.debug(f"  Grid: {grid_size} (batch_size={batch_size}, channels={channels})")
     logger.debug(f"  Block: {block_size_1d} (32 threads per block)")
     logger.debug(f"  Target shape: {target_3d.shape} (planar int8)")
@@ -586,9 +570,7 @@ def cuda_transpose_dot_product_3d_compute_optimized_int8_experimental(
     # Only reduction workspace (32 floats) - no sparse block caching
     shared_mem_size = 32 * 4  # 4 bytes per float = 128 bytes
 
-    logger.debug(
-        f"  Shared memory per block: {shared_mem_size} bytes ({shared_mem_size/1024:.3f}KB)"
-    )
+    logger.debug(f"  Shared memory per block: {shared_mem_size} bytes ({shared_mem_size / 1024:.3f}KB)")
 
     # Single kernel launch with 2D grid - let GPU scheduler handle work distribution
     kernel(

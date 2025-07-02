@@ -50,9 +50,7 @@ def analyze_coo_tensor_memory():
     for num_tensors in [2, 3]:
         multi_gb = total_gb * num_tensors
         multi_percentage = (multi_gb / system_memory_gb) * 100
-        logger.info(
-            f"{num_tensors} tensors: {multi_gb:.2f} GB ({multi_percentage:.1f}% of system)"
-        )
+        logger.info(f"{num_tensors} tensors: {multi_gb:.2f} GB ({multi_percentage:.1f}% of system)")
 
     # Compare with sparse CSC matrix (for reference)
     logger.info("\n=== Comparison with CuPy/SciPy Sparse CSC ===")

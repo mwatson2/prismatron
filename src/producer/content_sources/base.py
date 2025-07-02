@@ -24,9 +24,7 @@ class FrameData:
     width: int  # Actual frame width
     height: int  # Actual frame height
     channels: int  # Number of channels (typically 3 for RGB)
-    presentation_timestamp: Optional[
-        float
-    ] = None  # When this frame should be displayed
+    presentation_timestamp: Optional[float] = None  # When this frame should be displayed
 
     def __post_init__(self):
         """Validate that frame data is in correct planar format."""
@@ -41,18 +39,14 @@ class FrameData:
     def convert_interleaved_to_planar(interleaved_array: np.ndarray) -> np.ndarray:
         """Convert interleaved (H, W, C) array to planar (C, H, W) format."""
         if len(interleaved_array.shape) != 3:
-            raise ValueError(
-                f"Expected 3D array (H, W, C), got shape {interleaved_array.shape}"
-            )
+            raise ValueError(f"Expected 3D array (H, W, C), got shape {interleaved_array.shape}")
         return np.transpose(interleaved_array, (2, 0, 1))  # (H, W, C) -> (C, H, W)
 
     @staticmethod
     def convert_planar_to_interleaved(planar_array: np.ndarray) -> np.ndarray:
         """Convert planar (C, H, W) array to interleaved (H, W, C) format."""
         if len(planar_array.shape) != 3:
-            raise ValueError(
-                f"Expected 3D array (C, H, W), got shape {planar_array.shape}"
-            )
+            raise ValueError(f"Expected 3D array (C, H, W), got shape {planar_array.shape}")
         return np.transpose(planar_array, (1, 2, 0))  # (C, H, W) -> (H, W, C)
 
 
@@ -137,7 +131,6 @@ class ContentSource(ABC):
         Returns:
             True if setup successful, False otherwise
         """
-        pass
 
     @abstractmethod
     def get_next_frame(self) -> Optional[FrameData]:
@@ -147,7 +140,6 @@ class ContentSource(ABC):
         Returns:
             FrameData object with frame information, or None if end/error
         """
-        pass
 
     @abstractmethod
     def get_duration(self) -> float:
@@ -157,7 +149,6 @@ class ContentSource(ABC):
         Returns:
             Duration in seconds, or 0.0 if unknown/infinite
         """
-        pass
 
     @abstractmethod
     def seek(self, timestamp: float) -> bool:
@@ -170,12 +161,10 @@ class ContentSource(ABC):
         Returns:
             True if seek successful, False otherwise
         """
-        pass
 
     @abstractmethod
     def cleanup(self) -> None:
         """Clean up resources and close content source."""
-        pass
 
     def get_content_info(self) -> ContentInfo:
         """
@@ -367,9 +356,7 @@ class ContentSourceRegistry:
             source_class: ContentSource subclass
         """
         cls._sources[content_type] = source_class
-        logger.info(
-            f"Registered content source: {content_type.value} -> {source_class.__name__}"
-        )
+        logger.info(f"Registered content source: {content_type.value} -> {source_class.__name__}")
 
     @classmethod
     def get_source_class(cls, content_type: ContentType) -> Optional[type]:
@@ -385,9 +372,7 @@ class ContentSourceRegistry:
         return cls._sources.get(content_type)
 
     @classmethod
-    def create_source(
-        cls, filepath: str, content_type: Optional[ContentType] = None
-    ) -> Optional[ContentSource]:
+    def create_source(cls, filepath: str, content_type: Optional[ContentType] = None) -> Optional[ContentSource]:
         """
         Create appropriate content source for file.
 

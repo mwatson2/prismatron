@@ -65,9 +65,7 @@ class PerformanceTimer:
         if self.use_gpu_timing and self.start_event and self.end_event:
             self.end_event.record()
             cp.cuda.runtime.deviceSynchronize()
-            gpu_time = (
-                cp.cuda.get_elapsed_time(self.start_event, self.end_event) / 1000.0
-            )
+            gpu_time = cp.cuda.get_elapsed_time(self.start_event, self.end_event) / 1000.0
             return cpu_time, gpu_time
         else:
             return cpu_time, cpu_time
@@ -120,17 +118,13 @@ class OptimizerBenchmark:
         results = []
 
         optimizer_name = "dense" if hasattr(optimizer, "_ATA_gpu") else "sparse"
-        logger.info(
-            f"Benchmarking {optimizer_name} optimizer: {runs} runs × {iterations} iterations"
-        )
+        logger.info(f"Benchmarking {optimizer_name} optimizer: {runs} runs × {iterations} iterations")
 
         # Warm-up run
         logger.info("Warm-up run...")
         # Use debug version for benchmarking to get error metrics
         if hasattr(optimizer, "optimize_frame_with_debug"):
-            _ = optimizer.optimize_frame_with_debug(
-                self.test_image, max_iterations=iterations
-            )
+            _ = optimizer.optimize_frame_with_debug(self.test_image, max_iterations=iterations)
         else:
             _ = optimizer.optimize_frame(self.test_image, max_iterations=iterations)
 
@@ -143,13 +137,9 @@ class OptimizerBenchmark:
 
             # Use debug version for benchmarking to get error metrics
             if hasattr(optimizer, "optimize_frame_with_debug"):
-                result = optimizer.optimize_frame_with_debug(
-                    self.test_image, max_iterations=iterations
-                )
+                result = optimizer.optimize_frame_with_debug(self.test_image, max_iterations=iterations)
             else:
-                result = optimizer.optimize_frame(
-                    self.test_image, max_iterations=iterations
-                )
+                result = optimizer.optimize_frame(self.test_image, max_iterations=iterations)
 
             cpu_time, gpu_time = timer.stop()
 
@@ -204,9 +194,7 @@ class OptimizerBenchmark:
 
             # Recalculate based on our accurate timing
             actual_time = timing_stats["avg_gpu_time"]
-            flop_info["actual_gflops_per_second"] = flop_info["total_flops"] / (
-                actual_time * 1e9
-            )
+            flop_info["actual_gflops_per_second"] = flop_info["total_flops"] / (actual_time * 1e9)
             flop_info["timing_source"] = "gpu_synchronized"
 
         else:
@@ -214,10 +202,7 @@ class OptimizerBenchmark:
             optimizer_stats = optimizer.get_optimizer_stats()
 
             # Get matrix information
-            if (
-                hasattr(optimizer, "_A_combined_csr_cpu")
-                and optimizer._A_combined_csr_cpu is not None
-            ):
+            if hasattr(optimizer, "_A_combined_csr_cpu") and optimizer._A_combined_csr_cpu is not None:
                 matrix = optimizer._A_combined_csr_cpu
                 nnz = matrix.nnz
                 led_count = optimizer._actual_led_count
@@ -242,8 +227,7 @@ class OptimizerBenchmark:
                     "gflops": total_flops / 1e9,
                     "actual_gflops_per_second": total_flops / (actual_time * 1e9),
                     "matrix_nnz": nnz,
-                    "sparsity_percent": (1 - nnz / (matrix.shape[0] * matrix.shape[1]))
-                    * 100,
+                    "sparsity_percent": (1 - nnz / (matrix.shape[0] * matrix.shape[1])) * 100,
                     "timing_source": "gpu_synchronized",
                     "estimation_method": "sparse_matrix_analysis",
                 }
@@ -280,23 +264,15 @@ class OptimizerBenchmark:
         logger.info("\n" + "=" * 40)
         logger.info("SPARSE OPTIMIZER BENCHMARK")
         logger.info("=" * 40)
-        sparse_timing = self._measure_optimization_time(
-            self.sparse_optimizer, iterations, runs
-        )
-        sparse_flops = self._analyze_flops(
-            self.sparse_optimizer, sparse_timing["result"], sparse_timing
-        )
+        sparse_timing = self._measure_optimization_time(self.sparse_optimizer, iterations, runs)
+        sparse_flops = self._analyze_flops(self.sparse_optimizer, sparse_timing["result"], sparse_timing)
 
         # Benchmark dense optimizer
         logger.info("\n" + "=" * 40)
         logger.info("DENSE OPTIMIZER BENCHMARK")
         logger.info("=" * 40)
-        dense_timing = self._measure_optimization_time(
-            self.dense_optimizer, iterations, runs
-        )
-        dense_flops = self._analyze_flops(
-            self.dense_optimizer, dense_timing["result"], dense_timing
-        )
+        dense_timing = self._measure_optimization_time(self.dense_optimizer, iterations, runs)
+        dense_flops = self._analyze_flops(self.dense_optimizer, dense_timing["result"], dense_timing)
 
         return {
             "sparse": {
@@ -327,59 +303,45 @@ class OptimizerBenchmark:
         print("COMPREHENSIVE PERFORMANCE REPORT")
         print("=" * 80)
 
-        print(f"Test Configuration:")
+        print("Test Configuration:")
         print(f"  • Patterns: {config['patterns_path']}")
         print(f"  • Image size: {config['test_image_shape']}")
         print(f"  • Iterations per run: {config['iterations']}")
         print(f"  • Number of runs: {config['runs']}")
 
         # Timing comparison
-        print(f"\n📊 TIMING RESULTS (GPU-synchronized):")
-        print(f"  Sparse Optimizer:")
-        print(
-            f"    • Average time: {sparse['timing']['avg_gpu_time']:.3f}s ± "
-            f"{sparse['timing']['std_gpu_time']:.3f}s"
-        )
-        print(
-            f"    • Range: {sparse['timing']['min_gpu_time']:.3f}s - "
-            f"{sparse['timing']['max_gpu_time']:.3f}s"
-        )
+        print("\n📊 TIMING RESULTS (GPU-synchronized):")
+        print("  Sparse Optimizer:")
+        print(f"    • Average time: {sparse['timing']['avg_gpu_time']:.3f}s ± {sparse['timing']['std_gpu_time']:.3f}s")
+        print(f"    • Range: {sparse['timing']['min_gpu_time']:.3f}s - {sparse['timing']['max_gpu_time']:.3f}s")
         print(f"    • Estimated FPS: {sparse['timing']['fps_gpu']:.1f}")
 
-        print(f"  Dense Optimizer:")
-        print(
-            f"    • Average time: {dense['timing']['avg_gpu_time']:.3f}s ± "
-            f"{dense['timing']['std_gpu_time']:.3f}s"
-        )
-        print(
-            f"    • Range: {dense['timing']['min_gpu_time']:.3f}s - "
-            f"{dense['timing']['max_gpu_time']:.3f}s"
-        )
+        print("  Dense Optimizer:")
+        print(f"    • Average time: {dense['timing']['avg_gpu_time']:.3f}s ± {dense['timing']['std_gpu_time']:.3f}s")
+        print(f"    • Range: {dense['timing']['min_gpu_time']:.3f}s - {dense['timing']['max_gpu_time']:.3f}s")
         print(f"    • Estimated FPS: {dense['timing']['fps_gpu']:.1f}")
 
         # Performance comparison
         speedup = sparse["timing"]["avg_gpu_time"] / dense["timing"]["avg_gpu_time"]
         fps_improvement = dense["timing"]["fps_gpu"] / sparse["timing"]["fps_gpu"]
 
-        print(f"\n🚀 PERFORMANCE COMPARISON:")
+        print("\n🚀 PERFORMANCE COMPARISON:")
         print(f"    • Dense speedup: {speedup:.2f}x faster")
         print(f"    • FPS improvement: {fps_improvement:.2f}x")
-        print(f"    • Time reduction: {(1 - 1/speedup) * 100:.1f}%")
+        print(f"    • Time reduction: {(1 - 1 / speedup) * 100:.1f}%")
 
         # FLOPS analysis
-        print(f"\n⚡ FLOPS ANALYSIS:")
-        print(f"  Sparse Optimizer:")
+        print("\n⚡ FLOPS ANALYSIS:")
+        print("  Sparse Optimizer:")
         print(f"    • Total FLOPs: {sparse['flops']['total_flops']:,}")
         print(f"    • FLOPs/iteration: {sparse['flops']['flops_per_iteration']:,}")
         print(f"    • GFLOPS/second: {sparse['flops']['actual_gflops_per_second']:.1f}")
         if "sparsity_percent" in sparse["flops"]:
             print(f"    • Matrix sparsity: {sparse['flops']['sparsity_percent']:.1f}%")
 
-        print(f"  Dense Optimizer:")
+        print("  Dense Optimizer:")
         print(f"    • Total FLOPs: {dense['flops']['total_flops']:,}")
-        print(
-            f"    • FLOPs/iteration (dense loop): {dense['flops']['flops_per_iteration']:,}"
-        )
+        print(f"    • FLOPs/iteration (dense loop): {dense['flops']['flops_per_iteration']:,}")
         if "atb_flops_per_frame" in dense["flops"]:
             print(f"    • A^T*b FLOPs/frame: {dense['flops']['atb_flops_per_frame']:,}")
             print(f"    • Dense loop FLOPs: {dense['flops']['dense_loop_flops']:,}")
@@ -388,63 +350,41 @@ class OptimizerBenchmark:
         # Detailed timing breakdown for dense optimizer
         if "detailed_timing" in dense["flops"]:
             timing = dense["flops"]["detailed_timing"]
-            print(f"    • Detailed timing breakdown:")
+            print("    • Detailed timing breakdown:")
             atb_time = timing.get("atb_time", 0)
             total_time = timing.get("total_optimization_time", 1)
-            print(
-                f"      - A^T*b calculation: {atb_time:.4f}s "
-                f"({atb_time/total_time*100:.1f}%)"
-            )
+            print(f"      - A^T*b calculation: {atb_time:.4f}s ({atb_time / total_time * 100:.1f}%)")
             loop_time = timing.get("loop_time", 0)
-            print(
-                f"      - Optimization loop: {loop_time:.4f}s "
-                f"({loop_time/total_time*100:.1f}%)"
-            )
+            print(f"      - Optimization loop: {loop_time:.4f}s ({loop_time / total_time * 100:.1f}%)")
             einsum_time = timing.get("einsum_time", 0)
-            print(
-                f"        • Gradient einsum (ATA@x): {einsum_time:.4f}s "
-                f"({einsum_time/total_time*100:.1f}%)"
-            )
+            print(f"        • Gradient einsum (ATA@x): {einsum_time:.4f}s ({einsum_time / total_time * 100:.1f}%)")
             step_size_time = timing.get("step_size_time", 0)
-            print(
-                f"        • Step size total: {step_size_time:.4f}s "
-                f"({step_size_time/total_time*100:.1f}%)"
-            )
+            print(f"        • Step size total: {step_size_time:.4f}s ({step_size_time / total_time * 100:.1f}%)")
             if "step_einsum_time" in timing:
                 step_einsum_time = timing.get("step_einsum_time", 0)
                 print(
                     f"          - Step einsum (g^T@ATA@g): {step_einsum_time:.4f}s "
-                    f"({step_einsum_time/total_time*100:.1f}%)"
+                    f"({step_einsum_time / total_time * 100:.1f}%)"
                 )
-                step_overhead = timing.get("step_size_time", 0) - timing.get(
-                    "step_einsum_time", 0
-                )
-                print(
-                    f"          - Step overhead: {step_overhead:.4f}s "
-                    f"({step_overhead/total_time*100:.1f}%)"
-                )
+                step_overhead = timing.get("step_size_time", 0) - timing.get("step_einsum_time", 0)
+                print(f"          - Step overhead: {step_overhead:.4f}s ({step_overhead / total_time * 100:.1f}%)")
             print(f"      - Iterations: {timing.get('iterations_completed', 'N/A')}")
 
         # Efficiency comparison
-        flops_efficiency = (
-            dense["flops"]["actual_gflops_per_second"]
-            / sparse["flops"]["actual_gflops_per_second"]
-        )
+        flops_efficiency = dense["flops"]["actual_gflops_per_second"] / sparse["flops"]["actual_gflops_per_second"]
         print(f"\n    • FLOPS efficiency improvement: {flops_efficiency:.2f}x")
 
         # Quality comparison
-        print(f"\n🎯 OPTIMIZATION QUALITY:")
+        print("\n🎯 OPTIMIZATION QUALITY:")
         sparse_mse = sparse["timing"]["result"].error_metrics.get("mse", 0)
         dense_mse = dense["timing"]["result"].error_metrics.get("mse", 0)
 
         print(f"  Sparse MSE: {sparse_mse:.6f}")
         print(f"  Dense MSE: {dense_mse:.6f}")
-        print(
-            f"  Quality difference: {abs(sparse_mse - dense_mse):.2e} (lower is better)"
-        )
+        print(f"  Quality difference: {abs(sparse_mse - dense_mse):.2e} (lower is better)")
 
         # Hardware utilization
-        print(f"\n💻 HARDWARE INFORMATION:")
+        print("\n💻 HARDWARE INFORMATION:")
         device_info_sparse = sparse["optimizer_stats"].get("device_info", {})
         device_info_dense = dense["optimizer_stats"].get("device_info", {})
 
@@ -456,33 +396,23 @@ class OptimizerBenchmark:
 
         # Memory usage comparison
         if "ata_memory_mb" in dense["optimizer_stats"]:
-            print(
-                f"  Dense ATA memory: {dense['optimizer_stats']['ata_memory_mb']:.1f}MB"
-            )
+            print(f"  Dense ATA memory: {dense['optimizer_stats']['ata_memory_mb']:.1f}MB")
 
         # Real-time performance assessment
-        print(f"\n🎮 REAL-TIME PERFORMANCE ASSESSMENT:")
+        print("\n🎮 REAL-TIME PERFORMANCE ASSESSMENT:")
         target_fps = 15
-        sparse_realtime = (
-            "✅ YES" if sparse["timing"]["fps_gpu"] >= target_fps else "❌ NO"
-        )
+        sparse_realtime = "✅ YES" if sparse["timing"]["fps_gpu"] >= target_fps else "❌ NO"
         dense_realtime = "✅ YES" if dense["timing"]["fps_gpu"] >= target_fps else "❌ NO"
 
         print(f"  Target: {target_fps} FPS for real-time operation")
-        print(
-            f"  Sparse achieves target: {sparse_realtime} ({sparse['timing']['fps_gpu']:.1f} FPS)"
-        )
-        print(
-            f"  Dense achieves target: {dense_realtime} ({dense['timing']['fps_gpu']:.1f} FPS)"
-        )
+        print(f"  Sparse achieves target: {sparse_realtime} ({sparse['timing']['fps_gpu']:.1f} FPS)")
+        print(f"  Dense achieves target: {dense_realtime} ({dense['timing']['fps_gpu']:.1f} FPS)")
 
         print("=" * 80)
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="LED Optimization Performance Comparison"
-    )
+    parser = argparse.ArgumentParser(description="LED Optimization Performance Comparison")
     parser.add_argument(
         "--patterns",
         "-p",
@@ -503,17 +433,13 @@ def main():
         default=3,
         help="Number of benchmark runs (default: 3)",
     )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose logging"
-    )
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
 
     # Setup logging
     level = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(
-        level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
+    logging.basicConfig(level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
     # Validate patterns file
     patterns_file = f"{args.patterns}.npz"

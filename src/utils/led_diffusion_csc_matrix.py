@@ -107,14 +107,10 @@ class LEDDiffusionCSCMatrix:
     def _validate_inputs(self) -> None:
         """Validate constructor inputs for consistency."""
         if self.matrix.shape[0] != self.height * self.width:
-            raise ValueError(
-                f"Matrix rows {self.matrix.shape[0]} != height * width {self.height * self.width}"
-            )
+            raise ValueError(f"Matrix rows {self.matrix.shape[0]} != height * width {self.height * self.width}")
 
         if self.matrix.shape[1] % self.channels != 0:
-            raise ValueError(
-                f"Matrix columns {self.matrix.shape[1]} not divisible by channels {self.channels}"
-            )
+            raise ValueError(f"Matrix columns {self.matrix.shape[1]} not divisible by channels {self.channels}")
 
         if not sp.isspmatrix_csc(self.matrix):
             raise ValueError("Matrix must be in CSC format")
@@ -173,9 +169,7 @@ class LEDDiffusionCSCMatrix:
             New LEDDiffusionCSCMatrix instance
         """
         # Create CSC matrix from component arrays
-        csc_matrix = sp.csc_matrix(
-            (data, indices, indptr), shape=shape, dtype=np.float32
-        )
+        csc_matrix = sp.csc_matrix((data, indices, indptr), shape=shape, dtype=np.float32)
 
         return cls(
             csc_matrix=csc_matrix,
@@ -329,13 +323,9 @@ class LEDDiffusionCSCMatrix:
         """
         # Validate region bounds
         if not (0 <= min_row <= max_row < self.height):
-            raise ValueError(
-                f"Invalid row range [{min_row}, {max_row}] for height {self.height}"
-            )
+            raise ValueError(f"Invalid row range [{min_row}, {max_row}] for height {self.height}")
         if not (0 <= min_col <= max_col < self.width):
-            raise ValueError(
-                f"Invalid col range [{min_col}, {max_col}] for width {self.width}"
-            )
+            raise ValueError(f"Invalid col range [{min_col}, {max_col}] for width {self.width}")
 
         # Get full dense pattern
         dense = self.materialize_dense(led_idx, channel)
@@ -365,9 +355,7 @@ class LEDDiffusionCSCMatrix:
             raise ValueError(f"Channel {channel} out of range [0, {self.channels})")
 
         if dense_image.shape != (self.height, self.width):
-            raise ValueError(
-                f"Dense image shape {dense_image.shape} != expected ({self.height}, {self.width})"
-            )
+            raise ValueError(f"Dense image shape {dense_image.shape} != expected ({self.height}, {self.width})")
 
         # Calculate column index
         col_idx = led_idx * self.channels + channel
@@ -438,9 +426,7 @@ class LEDDiffusionCSCMatrix:
                     f"first matrix ({first.height}, {first.width})"
                 )
             if matrix.channels != first.channels:
-                raise ValueError(
-                    f"Matrix {i} channels {matrix.channels} != first matrix {first.channels}"
-                )
+                raise ValueError(f"Matrix {i} channels {matrix.channels} != first matrix {first.channels}")
 
         # Use scipy hstack directly on the stored matrices
         csc_matrices = [matrix.matrix for matrix in matrices]
@@ -467,9 +453,7 @@ class LEDDiffusionCSCMatrix:
         total_mb = data_mb + indices_mb + indptr_mb
 
         # Calculate equivalent dense storage
-        dense_mb = (self.matrix.shape[0] * self.matrix.shape[1] * 4) / (
-            1024 * 1024
-        )  # float32
+        dense_mb = (self.matrix.shape[0] * self.matrix.shape[1] * 4) / (1024 * 1024)  # float32
 
         sparsity_ratio = self.matrix.nnz / (self.matrix.shape[0] * self.matrix.shape[1])
 
@@ -497,18 +481,14 @@ class LEDDiffusionCSCMatrix:
             Dense patterns array of shape (led_count, height, width, channels)
             with dtype float32 and values in range [0, 1]
         """
-        patterns = np.zeros(
-            (self.led_count, self.height, self.width, self.channels), dtype=np.float32
-        )
+        patterns = np.zeros((self.led_count, self.height, self.width, self.channels), dtype=np.float32)
 
         logger.debug(f"Converting {self.led_count} LED patterns to dense format...")
 
         for led_idx in range(self.led_count):
             for channel in range(self.channels):
                 # Use existing materialize_dense method for each LED/channel
-                patterns[led_idx, :, :, channel] = self.materialize_dense(
-                    led_idx, channel
-                )
+                patterns[led_idx, :, :, channel] = self.materialize_dense(led_idx, channel)
 
         logger.debug(f"Converted to dense patterns: {patterns.shape}")
         return patterns
@@ -541,16 +521,13 @@ class LEDDiffusionCSCMatrix:
             "channels": self.channels,
             "matrix_shape": list(self.matrix.shape),
             "nnz_total": self.matrix.nnz,
-            "sparsity_ratio": self.matrix.nnz
-            / (self.matrix.shape[0] * self.matrix.shape[1]),
+            "sparsity_ratio": self.matrix.nnz / (self.matrix.shape[0] * self.matrix.shape[1]),
         }
 
         # Per-LED statistics
         max_intensities = np.zeros(self.led_count, dtype=np.float32)
         mean_intensities = np.zeros(self.led_count, dtype=np.float32)
-        pattern_extents = np.zeros(
-            self.led_count, dtype=np.float32
-        )  # Bounding box areas
+        pattern_extents = np.zeros(self.led_count, dtype=np.float32)  # Bounding box areas
 
         # Per-channel statistics
         channel_nnz = np.zeros(self.channels, dtype=int)
@@ -684,9 +661,7 @@ class LEDDiffusionCSCMatrix:
 
         block_diagonal = block_diag([R_matrix, G_matrix, B_matrix], format="csc")
 
-        logger.debug(
-            f"Created block diagonal matrix with shape: {block_diagonal.shape}"
-        )
+        logger.debug(f"Created block diagonal matrix with shape: {block_diagonal.shape}")
         return block_diagonal
 
     def to_gpu_matrices(self):

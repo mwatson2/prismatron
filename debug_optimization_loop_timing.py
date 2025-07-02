@@ -64,7 +64,7 @@ def detailed_optimization_timing():
     print(f"Target: {target_planar_uint8.shape}, dtype={target_planar_uint8.dtype}")
 
     # === SETUP PHASE ===
-    print(f"\n--- Setup Phase ---")
+    print("\n--- Setup Phase ---")
 
     setup_start = time.time()
 
@@ -77,7 +77,7 @@ def detailed_optimization_timing():
         ATb = ATb.T  # Convert to (3, led_count)
     atb_time = time.time() - atb_start
 
-    print(f"A^T @ b calculation: {atb_time*1000:.2f}ms")
+    print(f"A^T @ b calculation: {atb_time * 1000:.2f}ms")
     print(f"A^T @ b shape: {ATb.shape}, range: [{ATb.min():.6f}, {ATb.max():.6f}]")
 
     # Initialize LED values
@@ -90,7 +90,7 @@ def detailed_optimization_timing():
     led_values_rcm = dia_matrix.reorder_led_values_to_rcm(led_values_normalized)
     rcm_time = time.time() - rcm_start
 
-    print(f"RCM reordering: {rcm_time*1000:.2f}ms")
+    print(f"RCM reordering: {rcm_time * 1000:.2f}ms")
 
     # GPU transfer
     gpu_start = time.time()
@@ -98,13 +98,13 @@ def detailed_optimization_timing():
     led_values_gpu = cp.asarray(led_values_rcm)
     gpu_time = time.time() - gpu_start
 
-    print(f"GPU transfer: {gpu_time*1000:.2f}ms")
+    print(f"GPU transfer: {gpu_time * 1000:.2f}ms")
 
     setup_time = time.time() - setup_start
-    print(f"Total setup: {setup_time*1000:.2f}ms")
+    print(f"Total setup: {setup_time * 1000:.2f}ms")
 
     # === OPTIMIZATION LOOP ===
-    print(f"\n--- Optimization Loop Detailed Timing ---")
+    print("\n--- Optimization Loop Detailed Timing ---")
 
     max_iterations = 5  # Test with fewer iterations for detailed analysis
     step_size_scaling = 0.8
@@ -124,7 +124,7 @@ def detailed_optimization_timing():
     for iteration in range(max_iterations):
         iter_start = time.time()
 
-        print(f"\n  Iteration {iteration+1}:")
+        print(f"\n  Iteration {iteration + 1}:")
 
         # 1. Compute A^T A @ x
         atax_start = time.time()
@@ -134,14 +134,14 @@ def detailed_optimization_timing():
         cp.cuda.Device().synchronize()  # Ensure GPU computation completes
         atax_time = time.time() - atax_start
         operation_times["ATAx"].append(atax_time)
-        print(f"    A^T A @ x: {atax_time*1000:.3f}ms")
+        print(f"    A^T A @ x: {atax_time * 1000:.3f}ms")
 
         # 2. Compute gradient
         grad_start = time.time()
         gradient = ATA_x - ATb_gpu
         grad_time = time.time() - grad_start
         operation_times["gradient_calc"].append(grad_time)
-        print(f"    Gradient calc: {grad_time*1000:.3f}ms")
+        print(f"    Gradient calc: {grad_time * 1000:.3f}ms")
 
         # 3. Compute g^T @ g
         gtg_start = time.time()
@@ -149,7 +149,7 @@ def detailed_optimization_timing():
         cp.cuda.Device().synchronize()
         gtg_time = time.time() - gtg_start
         operation_times["g_dot_g"].append(gtg_time)
-        print(f"    g^T @ g: {gtg_time*1000:.3f}ms")
+        print(f"    g^T @ g: {gtg_time * 1000:.3f}ms")
 
         # 4. Compute g^T @ A^T A @ g
         gatag_start = time.time()
@@ -160,7 +160,7 @@ def detailed_optimization_timing():
         cp.cuda.Device().synchronize()
         gatag_time = time.time() - gatag_start
         operation_times["g_ATA_g"].append(gatag_time)
-        print(f"    g^T @ A^T A @ g: {gatag_time*1000:.3f}ms")
+        print(f"    g^T @ A^T A @ g: {gatag_time * 1000:.3f}ms")
 
         # 5. Calculate step size
         step_start = time.time()
@@ -170,14 +170,14 @@ def detailed_optimization_timing():
             step_size = 0.01
         step_time = time.time() - step_start
         operation_times["step_calc"].append(step_time)
-        print(f"    Step size calc: {step_time*1000:.3f}ms")
+        print(f"    Step size calc: {step_time * 1000:.3f}ms")
 
         # 6. Update LED values
         update_start = time.time()
         led_values_new = cp.clip(led_values_gpu - step_size * gradient, 0, 1)
         update_time = time.time() - update_start
         operation_times["led_update"].append(update_time)
-        print(f"    LED update: {update_time*1000:.3f}ms")
+        print(f"    LED update: {update_time * 1000:.3f}ms")
 
         # 7. Check convergence
         conv_start = time.time()
@@ -185,37 +185,35 @@ def detailed_optimization_timing():
         cp.cuda.Device().synchronize()
         conv_time = time.time() - conv_start
         operation_times["convergence_check"].append(conv_time)
-        print(f"    Convergence check: {conv_time*1000:.3f}ms")
+        print(f"    Convergence check: {conv_time * 1000:.3f}ms")
 
         iter_time = time.time() - iter_start
         iteration_times.append(iter_time)
-        print(f"    Total iteration: {iter_time*1000:.2f}ms")
+        print(f"    Total iteration: {iter_time * 1000:.2f}ms")
         print(f"    Step size: {step_size:.6f}, Delta: {float(delta):.6f}")
 
         led_values_gpu = led_values_new
 
         if delta < convergence_threshold:
-            print(f"    Converged after {iteration+1} iterations")
+            print(f"    Converged after {iteration + 1} iterations")
             break
 
     # === SUMMARY ===
-    print(f"\n--- Timing Summary ---")
+    print("\n--- Timing Summary ---")
 
     avg_iter_time = np.mean(iteration_times) * 1000
     print(f"Average iteration time: {avg_iter_time:.2f}ms")
 
-    print(f"\nOperation breakdown (average ± std):")
+    print("\nOperation breakdown (average ± std):")
     for op, times in operation_times.items():
         if times:
             avg_time = np.mean(times) * 1000
             std_time = np.std(times) * 1000
             percentage = (np.mean(times) / np.mean(iteration_times)) * 100
-            print(
-                f"  {op:15}: {avg_time:7.3f} ± {std_time:5.3f} ms ({percentage:5.1f}%)"
-            )
+            print(f"  {op:15}: {avg_time:7.3f} ± {std_time:5.3f} ms ({percentage:5.1f}%)")
 
     # Check for performance issues
-    print(f"\n--- Performance Analysis ---")
+    print("\n--- Performance Analysis ---")
     atax_avg = np.mean(operation_times["ATAx"]) * 1000
     gatag_avg = np.mean(operation_times["g_ATA_g"]) * 1000
 
@@ -225,24 +223,20 @@ def detailed_optimization_timing():
     if atax_avg > 1.0:
         print(f"⚠️  A^T A @ x is {atax_avg:.1f}x slower than target")
     else:
-        print(f"✅ A^T A @ x meets performance target")
+        print("✅ A^T A @ x meets performance target")
 
     if gatag_avg > 1.0:
         print(f"⚠️  g^T @ A^T A @ g is {gatag_avg:.1f}x slower than target")
     else:
-        print(f"✅ g^T @ A^T A @ g meets performance target")
+        print("✅ g^T @ A^T A @ g meets performance target")
 
     total_critical = atax_avg + gatag_avg
     print(f"Combined critical operations: {total_critical:.3f}ms per iteration")
 
     if avg_iter_time > 10.0:
-        print(
-            f"⚠️  Total iteration time is {avg_iter_time/10:.1f}x slower than reasonable (>10ms)"
-        )
+        print(f"⚠️  Total iteration time is {avg_iter_time / 10:.1f}x slower than reasonable (>10ms)")
         overhead = avg_iter_time - total_critical
-        print(
-            f"Non-critical overhead: {overhead:.3f}ms ({overhead/avg_iter_time*100:.1f}%)"
-        )
+        print(f"Non-critical overhead: {overhead:.3f}ms ({overhead / avg_iter_time * 100:.1f}%)")
 
 
 if __name__ == "__main__":

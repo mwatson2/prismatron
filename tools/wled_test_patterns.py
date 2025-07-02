@@ -120,9 +120,7 @@ class LEDPatternGenerator:
         for led_index in range(self.led_count):
             # Calculate wave position
             position = (led_index / self.led_count) * frequency * 2 * math.pi
-            wave_value = (
-                math.sin(position + self.time_offset * speed * 2 * math.pi) + 1
-            ) / 2
+            wave_value = (math.sin(position + self.time_offset * speed * 2 * math.pi) + 1) / 2
 
             # Convert to brightness
             brightness = int(wave_value * 255)
@@ -250,10 +248,7 @@ class WLEDTestRunner:
                     stats = self.client.get_statistics()
                     elapsed = current_time - self.start_time
                     fps = frame_count / elapsed if elapsed > 0 else 0
-                    print(
-                        f"Status: {frame_count} frames, {fps:.1f} FPS, "
-                        f"{stats['transmission_errors']} errors"
-                    )
+                    print(f"Status: {frame_count} frames, {fps:.1f} FPS, {stats['transmission_errors']} errors")
 
                 # Target ~30 FPS
                 time.sleep(1.0 / 30.0)
@@ -263,7 +258,7 @@ class WLEDTestRunner:
             stats = self.client.get_statistics()
             avg_fps = frame_count / elapsed if elapsed > 0 else 0
 
-            print(f"\nPattern completed:")
+            print("\nPattern completed:")
             print(f"  Duration: {elapsed:.1f} seconds")
             print(f"  Frames sent: {frame_count}")
             print(f"  Average FPS: {avg_fps:.1f}")
@@ -316,9 +311,7 @@ Examples:
         default=None,
         help="Pattern duration in seconds (default: run until interrupted)",
     )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose output"
-    )
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     parser.add_argument(
         "--persistent-retry",
         action="store_true",
@@ -346,20 +339,12 @@ Examples:
     )
 
     # Rainbow cycle pattern
-    rainbow_parser = subparsers.add_parser(
-        "rainbow-cycle", help="Rainbow cycle pattern"
-    )
-    rainbow_parser.add_argument(
-        "--speed", type=float, default=1.0, help="Cycle speed in Hz (default: 1.0)"
-    )
+    rainbow_parser = subparsers.add_parser("rainbow-cycle", help="Rainbow cycle pattern")
+    rainbow_parser.add_argument("--speed", type=float, default=1.0, help="Cycle speed in Hz (default: 1.0)")
 
     # Animated rainbow pattern
-    animated_parser = subparsers.add_parser(
-        "animated-rainbow", help="Animated rainbow pattern"
-    )
-    animated_parser.add_argument(
-        "--speed", type=float, default=1.0, help="Animation speed in Hz (default: 1.0)"
-    )
+    animated_parser = subparsers.add_parser("animated-rainbow", help="Animated rainbow pattern")
+    animated_parser.add_argument("--speed", type=float, default=1.0, help="Animation speed in Hz (default: 1.0)")
     animated_parser.add_argument(
         "--width",
         type=float,
@@ -369,9 +354,7 @@ Examples:
 
     # Wave pattern
     wave_parser = subparsers.add_parser("wave", help="Sine wave pattern")
-    wave_parser.add_argument(
-        "--speed", type=float, default=1.0, help="Wave speed in Hz (default: 1.0)"
-    )
+    wave_parser.add_argument("--speed", type=float, default=1.0, help="Wave speed in Hz (default: 1.0)")
     wave_parser.add_argument(
         "--frequency",
         type=float,
@@ -390,9 +373,7 @@ Examples:
 
     # Setup logging
     level = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(
-        level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
+    logging.basicConfig(level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
     # Create WLED configuration
     config = WLEDConfig(
@@ -407,7 +388,7 @@ Examples:
     )
 
     if args.verbose:
-        print(f"WLED Configuration:")
+        print("WLED Configuration:")
         print(f"  Host: {config.host}")
         print(f"  Port: {config.port}")
         print(f"  LED Count: {config.led_count}")
@@ -421,9 +402,7 @@ Examples:
     try:
         if args.pattern == "test":
             # Test connection only
-            print(
-                f"Testing connection to WLED controller at {config.host}:{config.port}..."
-            )
+            print(f"Testing connection to WLED controller at {config.host}:{config.port}...")
             if runner.client.connect():
                 print("✓ Connection successful")
                 stats = runner.client.get_statistics()
@@ -432,16 +411,10 @@ Examples:
                 # Show WLED status if available
                 wled_status = runner.client.get_wled_status()
                 if wled_status:
-                    print(
-                        f"✓ WLED '{wled_status.get('name', 'Unknown')}' "
-                        f"v{wled_status.get('ver', 'Unknown')}"
-                    )
+                    print(f"✓ WLED '{wled_status.get('name', 'Unknown')}' v{wled_status.get('ver', 'Unknown')}")
                     if "leds" in wled_status and isinstance(wled_status["leds"], dict):
                         led_info = wled_status["leds"]
-                        print(
-                            f"✓ Hardware: {led_info.get('count', 0)} "
-                            f"LEDs, {led_info.get('fps', 0)} FPS"
-                        )
+                        print(f"✓ Hardware: {led_info.get('count', 0)} LEDs, {led_info.get('fps', 0)} FPS")
 
                 runner.client.disconnect()
                 return 0
@@ -457,9 +430,7 @@ Examples:
             success = runner.run_solid_color(r, g, b, args.duration)
 
         elif args.pattern == "rainbow-cycle":
-            success = runner.run_animated_pattern(
-                "rainbow_cycle", speed=args.speed, duration=args.duration
-            )
+            success = runner.run_animated_pattern("rainbow_cycle", speed=args.speed, duration=args.duration)
 
         elif args.pattern == "animated-rainbow":
             success = runner.run_animated_pattern(

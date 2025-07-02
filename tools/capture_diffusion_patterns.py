@@ -141,9 +141,7 @@ class CameraCapture:
                 frame = frame[y : y + h, x : x + w]
 
             # Scale to target resolution (800x480)
-            frame = cv2.resize(
-                frame, (FRAME_WIDTH, FRAME_HEIGHT), interpolation=cv2.INTER_LINEAR
-            )
+            frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT), interpolation=cv2.INTER_LINEAR)
 
             return frame
 
@@ -185,9 +183,7 @@ class DiffusionPatternCapture:
         self.capture_interval = 1.0 / capture_fps
 
         # Initialize WLED client
-        wled_config = WLEDConfig(
-            host=wled_host, port=wled_port, led_count=LED_COUNT, max_fps=60.0
-        )
+        wled_config = WLEDConfig(host=wled_host, port=wled_port, led_count=LED_COUNT, max_fps=60.0)
         self.wled_client = WLEDClient(wled_config)
 
         # Initialize camera
@@ -196,9 +192,7 @@ class DiffusionPatternCapture:
         # Storage for diffusion patterns
         # Shape: (LED_COUNT, 3 channels, FRAME_HEIGHT, FRAME_WIDTH)
         # Using uint8 to save memory: 3200×3×480×800×1 = ~3.5GB vs 14GB for float32
-        self.diffusion_patterns = np.zeros(
-            (LED_COUNT, 3, FRAME_HEIGHT, FRAME_WIDTH), dtype=np.uint8
-        )
+        self.diffusion_patterns = np.zeros((LED_COUNT, 3, FRAME_HEIGHT, FRAME_WIDTH), dtype=np.uint8)
 
     def initialize(self) -> bool:
         """Initialize WLED and camera connections."""
@@ -238,15 +232,11 @@ class DiffusionPatternCapture:
                 for channel_idx in range(3):  # R, G, B channels
                     capture_num = led_idx * 3 + channel_idx + 1
 
-                    logger.info(
-                        f"Capturing LED {led_idx}, Channel {channel_idx} ({capture_num}/{total_captures})"
-                    )
+                    logger.info(f"Capturing LED {led_idx}, Channel {channel_idx} ({capture_num}/{total_captures})")
 
                     # Create LED data array (all off except current LED/channel)
                     led_data = np.zeros((LED_COUNT, 3), dtype=np.uint8)
-                    led_data[
-                        led_idx, channel_idx
-                    ] = 255  # Full brightness for this LED/channel
+                    led_data[led_idx, channel_idx] = 255  # Full brightness for this LED/channel
 
                     # Send to WLED
                     result = self.wled_client.send_led_data(led_data)
@@ -260,28 +250,20 @@ class DiffusionPatternCapture:
                     # Capture frame
                     frame = self.camera.capture_frame()
                     if frame is None:
-                        logger.warning(
-                            f"Failed to capture frame for LED {led_idx}, channel {channel_idx}"
-                        )
+                        logger.warning(f"Failed to capture frame for LED {led_idx}, channel {channel_idx}")
                         continue
 
                     # Store diffusion pattern (keep as uint8 to save memory)
-                    self.diffusion_patterns[led_idx, channel_idx] = frame.astype(
-                        np.uint8
-                    )
+                    self.diffusion_patterns[led_idx, channel_idx] = frame.astype(np.uint8)
 
                     # Show preview if requested
                     if preview:
-                        self._show_preview(
-                            frame, led_idx, channel_idx, capture_num, total_captures
-                        )
+                        self._show_preview(frame, led_idx, channel_idx, capture_num, total_captures)
 
                     # Progress update
                     if capture_num % 100 == 0:
                         progress = (capture_num / total_captures) * 100
-                        logger.info(
-                            f"Progress: {progress:.1f}% ({capture_num}/{total_captures})"
-                        )
+                        logger.info(f"Progress: {progress:.1f}% ({capture_num}/{total_captures})")
 
             # Turn off all LEDs
             self.wled_client.set_solid_color(0, 0, 0)
@@ -371,9 +353,7 @@ class DiffusionPatternCapture:
             )
 
             file_size_mb = Path(output_path).stat().st_size / (1024 * 1024)
-            logger.info(
-                f"Diffusion patterns saved to {output_path} ({file_size_mb:.1f} MB)"
-            )
+            logger.info(f"Diffusion patterns saved to {output_path} ({file_size_mb:.1f} MB)")
             return True
 
         except Exception as e:
@@ -462,9 +442,7 @@ class DiffusionPatternCapture:
         led_list.sort(key=lambda item: item[3])
 
         # Create mapping: physical_led_id -> spatially_ordered_matrix_index
-        spatial_mapping = {
-            led_id: matrix_idx for matrix_idx, (led_id, _, _, _) in enumerate(led_list)
-        }
+        spatial_mapping = {led_id: matrix_idx for matrix_idx, (led_id, _, _, _) in enumerate(led_list)}
 
         logger.info(f"Created spatial ordering for {len(spatial_mapping)} LEDs")
         return spatial_mapping
@@ -512,9 +490,7 @@ class DiffusionPatternCapture:
                 for idx in range(len(pixel_rows)):
                     pixel_row = pixel_rows[idx]
                     pixel_col = pixel_cols[idx]
-                    intensity = (
-                        float(pattern[pixel_row, pixel_col]) / 255.0
-                    )  # Normalize to [0,1]
+                    intensity = float(pattern[pixel_row, pixel_col]) / 255.0  # Normalize to [0,1]
 
                     # Calculate flattened pixel index (single channel format)
                     pixel_idx = pixel_row * FRAME_WIDTH + pixel_col
@@ -528,13 +504,8 @@ class DiffusionPatternCapture:
 
             # Progress reporting
             if (physical_led_id + 1) % 500 == 0:
-                sparsity = (
-                    len(values) / ((physical_led_id + 1) * pixels_per_channel * 3) * 100
-                )
-                logger.info(
-                    f"Processed {physical_led_id + 1}/{LED_COUNT} LEDs... "
-                    f"Sparsity: {sparsity:.2f}%"
-                )
+                sparsity = len(values) / ((physical_led_id + 1) * pixels_per_channel * 3) * 100
+                logger.info(f"Processed {physical_led_id + 1}/{LED_COUNT} LEDs... Sparsity: {sparsity:.2f}%")
 
         # Create CSC matrix (optimal for A^T operations in LSQR)
         logger.info(f"Creating CSC matrix from {len(values)} non-zero entries...")
@@ -548,12 +519,10 @@ class DiffusionPatternCapture:
         A_sparse_csc.eliminate_zeros()
         A_sparse_csc = A_sparse_csc.tocsc()  # Ensure proper CSC format
 
-        actual_sparsity = (
-            A_sparse_csc.nnz / (A_sparse_csc.shape[0] * A_sparse_csc.shape[1]) * 100
-        )
+        actual_sparsity = A_sparse_csc.nnz / (A_sparse_csc.shape[0] * A_sparse_csc.shape[1]) * 100
         memory_mb = A_sparse_csc.data.nbytes / (1024 * 1024)
 
-        logger.info(f"Generated sparse CSC matrix")
+        logger.info("Generated sparse CSC matrix")
         logger.info(f"Matrix shape: {A_sparse_csc.shape}")
         logger.info(f"Non-zero entries: {A_sparse_csc.nnz:,}")
         logger.info(f"Actual sparsity: {actual_sparsity:.3f}%")
@@ -596,9 +565,7 @@ class DiffusionPatternCapture:
                 "frame_height": FRAME_HEIGHT,
                 "matrix_shape": list(sparse_matrix.shape),
                 "nnz": sparse_matrix.nnz,
-                "sparsity_percent": sparse_matrix.nnz
-                / (sparse_matrix.shape[0] * sparse_matrix.shape[1])
-                * 100,
+                "sparsity_percent": sparse_matrix.nnz / (sparse_matrix.shape[0] * sparse_matrix.shape[1]) * 100,
                 "sparsity_threshold": sparsity_threshold,
                 "capture_timestamp": time.time(),
                 "wled_host": self.wled_host,
@@ -648,17 +615,11 @@ class DiffusionPatternCapture:
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Capture LED diffusion patterns")
-    parser.add_argument(
-        "--wled-host", required=True, help="WLED controller hostname/IP"
-    )
-    parser.add_argument(
-        "--wled-port", type=int, default=21324, help="WLED controller port"
-    )
+    parser.add_argument("--wled-host", required=True, help="WLED controller hostname/IP")
+    parser.add_argument("--wled-port", type=int, default=21324, help="WLED controller port")
     parser.add_argument("--camera-device", type=int, default=0, help="Camera device ID")
     parser.add_argument("--output", required=True, help="Output file path (.npz)")
-    parser.add_argument(
-        "--capture-fps", type=float, default=10.0, help="Capture rate (fps)"
-    )
+    parser.add_argument("--capture-fps", type=float, default=10.0, help="Capture rate (fps)")
     parser.add_argument("--preview", action="store_true", help="Show live preview")
     parser.add_argument(
         "--crop-region",
@@ -667,9 +628,7 @@ def main():
         metavar=("X", "Y", "W", "H"),
         help="Camera crop region (x y width height)",
     )
-    parser.add_argument(
-        "--sparse", "-s", action="store_true", help="Generate sparse CSC matrix format"
-    )
+    parser.add_argument("--sparse", "-s", action="store_true", help="Generate sparse CSC matrix format")
     parser.add_argument(
         "--sparsity-threshold",
         type=float,
@@ -746,9 +705,7 @@ def main():
             led_positions = capture_tool.estimate_led_positions()
 
             # Create spatial ordering
-            led_spatial_mapping = capture_tool.create_led_spatial_ordering(
-                led_positions
-            )
+            led_spatial_mapping = capture_tool.create_led_spatial_ordering(led_positions)
 
             # Generate sparse CSC matrix
             sparse_matrix = capture_tool.generate_sparse_csc_matrix(

@@ -74,16 +74,10 @@ def optimize_frame_led_values(
     """
 
     # Initialize performance timing if requested
-    timing = (
-        PerformanceTiming("frame_optimizer", enable_gpu_timing=True)
-        if enable_timing
-        else None
-    )
+    timing = PerformanceTiming("frame_optimizer", enable_gpu_timing=True) if enable_timing else None
     # Validate input frame format and convert to planar int8 if needed
     if target_frame.dtype != np.int8 and target_frame.dtype != np.uint8:
-        raise ValueError(
-            f"Target frame must be int8 or uint8, got {target_frame.dtype}"
-        )
+        raise ValueError(f"Target frame must be int8 or uint8, got {target_frame.dtype}")
 
     # Handle both planar (3, H, W) and standard (H, W, 3) formats
     # Keep target as uint8 for int8 mixed tensors, convert to float32 for CSC matrices
@@ -92,13 +86,9 @@ def optimize_frame_led_values(
         target_planar_uint8 = target_frame.astype(np.uint8)
     elif target_frame.shape == (480, 800, 3):
         # Convert from HWC to CHW planar format - keep as uint8
-        target_planar_uint8 = target_frame.astype(np.uint8).transpose(
-            2, 0, 1
-        )  # (H, W, 3) -> (3, H, W)
+        target_planar_uint8 = target_frame.astype(np.uint8).transpose(2, 0, 1)  # (H, W, 3) -> (3, H, W)
     else:
-        raise ValueError(
-            f"Unsupported frame shape {target_frame.shape}, expected (3, 480, 800) or (480, 800, 3)"
-        )
+        raise ValueError(f"Unsupported frame shape {target_frame.shape}, expected (3, 480, 800) or (480, 800, 3)")
 
     debug and logger.info(f"Target frame shape: {target_planar_uint8.shape}")
 
@@ -107,13 +97,9 @@ def optimize_frame_led_values(
 
     if timing:
         with timing.section("atb_calculation", use_gpu_events=True):
-            ATb = _calculate_ATb(
-                target_planar_uint8, AT_matrix, debug=debug
-            )  # Shape: (3, led_count) or (led_count, 3)
+            ATb = _calculate_ATb(target_planar_uint8, AT_matrix, debug=debug)  # Shape: (3, led_count) or (led_count, 3)
     else:
-        ATb = _calculate_ATb(
-            target_planar_uint8, AT_matrix, debug=debug
-        )  # Shape: (3, led_count) or (led_count, 3)
+        ATb = _calculate_ATb(target_planar_uint8, AT_matrix, debug=debug)  # Shape: (3, led_count) or (led_count, 3)
 
     # Ensure ATb is in (3, led_count) format for consistency
     if ATb.shape[0] != 3:
@@ -125,13 +111,11 @@ def optimize_frame_led_values(
     led_count = ATb.shape[1]
     if initial_values is not None:
         if initial_values.shape != (3, led_count):
-            raise ValueError(
-                f"Initial values shape {initial_values.shape} != (3, {led_count})"
-            )
+            raise ValueError(f"Initial values shape {initial_values.shape} != (3, {led_count})")
         # Normalize to [0,1] if needed
-        led_values_normalized = (
-            initial_values / 255.0 if initial_values.max() > 1.0 else initial_values
-        ).astype(np.float32)
+        led_values_normalized = (initial_values / 255.0 if initial_values.max() > 1.0 else initial_values).astype(
+            np.float32
+        )
     else:
         # Default initialization
         led_values_normalized = np.full((3, led_count), 0.5, dtype=np.float32)
@@ -143,9 +127,7 @@ def optimize_frame_led_values(
         # DIA matrix expects values in same order as pattern generation (pre-optimized)
         ATb_opt_order = ATb
         led_values_opt_order = led_values_normalized
-        debug and logger.info(
-            "Using DIA matrix with pre-optimized ordering from pattern generation"
-        )
+        debug and logger.info("Using DIA matrix with pre-optimized ordering from pattern generation")
     else:
         # Dense ATA matrix uses same order
         ATb_opt_order = ATb
@@ -215,9 +197,7 @@ def optimize_frame_led_values(
                     # Use DIA matrix for g^T @ A^T A @ g
                     g_dot_ATA_g_per_channel = ATA_matrix.g_ata_g_3d(gradient)
                     # g_ata_g_3d returns cupy array, no conversion needed
-                    g_dot_ATA_g = cp.sum(
-                        g_dot_ATA_g_per_channel
-                    )  # Shape: scalar, stays on GPU
+                    g_dot_ATA_g = cp.sum(g_dot_ATA_g_per_channel)  # Shape: scalar, stays on GPU
                 else:
                     # Dense matrix computation - use optimized matrix multiply per channel
                     # gradient: (3, led_count), ATA: (led_count, led_count, 3)
@@ -242,9 +222,7 @@ def optimize_frame_led_values(
                 # Use DIA matrix for g^T @ A^T A @ g
                 g_dot_ATA_g_per_channel = ATA_matrix.g_ata_g_3d(gradient)
                 # g_ata_g_3d returns cupy array, no conversion needed
-                g_dot_ATA_g = cp.sum(
-                    g_dot_ATA_g_per_channel
-                )  # Shape: scalar, stays on GPU
+                g_dot_ATA_g = cp.sum(g_dot_ATA_g_per_channel)  # Shape: scalar, stays on GPU
             else:
                 # Dense matrix computation - use optimized matrix multiply per channel
                 # gradient: (3, led_count), ATA: (led_count, led_count, 3)
@@ -287,32 +265,24 @@ def optimize_frame_led_values(
         if timing:
             with timing.section("convergence_and_updates", use_gpu_events=True):
                 if delta < convergence_threshold:
-                    debug and logger.info(
-                        f"Converged after {iteration+1} iterations, delta: {delta:.6f}"
-                    )
+                    debug and logger.info(f"Converged after {iteration + 1} iterations, delta: {delta:.6f}")
                     led_values_gpu = led_values_new
                     break
 
                 led_values_gpu = led_values_new
 
                 if debug and (iteration + 1) % 5 == 0:
-                    logger.info(
-                        f"Iteration {iteration+1}: delta={delta:.6f}, step_size={step_size:.6f}"
-                    )
+                    logger.info(f"Iteration {iteration + 1}: delta={delta:.6f}, step_size={step_size:.6f}")
         else:
             if delta < convergence_threshold:
-                debug and logger.info(
-                    f"Converged after {iteration+1} iterations, delta: {delta:.6f}"
-                )
+                debug and logger.info(f"Converged after {iteration + 1} iterations, delta: {delta:.6f}")
                 led_values_gpu = led_values_new
                 break
 
             led_values_gpu = led_values_new
 
             if debug and (iteration + 1) % 5 == 0:
-                logger.info(
-                    f"Iteration {iteration+1}: delta={delta:.6f}, step_size={step_size:.6f}"
-                )
+                logger.info(f"Iteration {iteration + 1}: delta={delta:.6f}, step_size={step_size:.6f}")
 
     if timing:
         timing.stop("optimization_loop")
@@ -339,22 +309,15 @@ def optimize_frame_led_values(
     if compute_error_metrics:
         if timing:
             with timing.section("error_metrics", use_gpu_events=True):
-                error_metrics = _compute_error_metrics(
-                    led_values_spatial, target_planar_uint8, AT_matrix, debug=debug
-                )
+                error_metrics = _compute_error_metrics(led_values_spatial, target_planar_uint8, AT_matrix, debug=debug)
         else:
-            error_metrics = _compute_error_metrics(
-                led_values_spatial, target_planar_uint8, AT_matrix, debug=debug
-            )
+            error_metrics = _compute_error_metrics(led_values_spatial, target_planar_uint8, AT_matrix, debug=debug)
 
     # Extract timing data if available
     timing_data = None
     if timing:
         timing_stats = timing.get_timing_data()
-        timing_data = {
-            section: data["duration"]
-            for section, data in timing_stats["sections"].items()
-        }
+        timing_data = {section: data["duration"] for section, data in timing_stats["sections"].items()}
 
     # Create result
     result = FrameOptimizationResult(
@@ -399,9 +362,7 @@ def _calculate_ATb(
             target_float32 = target_planar.astype(np.float32) / 255.0
             target_gpu = cp.asarray(target_float32)
 
-        result = AT_matrix.transpose_dot_product_3d(
-            target_gpu
-        )  # Shape: (led_count, 3), dtype: float32
+        result = AT_matrix.transpose_dot_product_3d(target_gpu)  # Shape: (led_count, 3), dtype: float32
         return cp.asnumpy(result)
 
     elif isinstance(AT_matrix, LEDDiffusionCSCMatrix):
@@ -465,9 +426,7 @@ def _compute_error_metrics(
         if isinstance(AT_matrix, SingleBlockMixedSparseTensor):
             # Use mixed tensor forward pass
             led_values_gpu = cp.asarray(led_values.T)  # Convert to (led_count, 3)
-            rendered_gpu = AT_matrix.forward_pass_3d(
-                led_values_gpu
-            )  # Shape: (3, height, width)
+            rendered_gpu = AT_matrix.forward_pass_3d(led_values_gpu)  # Shape: (3, height, width)
             rendered_planar = cp.asnumpy(rendered_gpu)
 
         elif isinstance(AT_matrix, LEDDiffusionCSCMatrix):

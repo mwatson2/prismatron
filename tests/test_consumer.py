@@ -59,11 +59,9 @@ class TestConsumerProcess(unittest.TestCase):
         self.temp_dir = tempfile.mkdtemp()
 
         # Create consumer with mocked dependencies
-        with patch("src.consumer.consumer.FrameConsumer"), patch(
-            "src.consumer.consumer.ControlState"
-        ), patch("src.consumer.consumer.DenseLEDOptimizer"), patch(
-            "src.consumer.consumer.WLEDClient"
-        ):
+        with patch("src.consumer.consumer.FrameConsumer"), patch("src.consumer.consumer.ControlState"), patch(
+            "src.consumer.consumer.DenseLEDOptimizer"
+        ), patch("src.consumer.consumer.WLEDClient"):
             self.consumer = ConsumerProcess(
                 buffer_name="test_buffer",
                 control_name="test_control",
@@ -119,9 +117,7 @@ class TestConsumerProcess(unittest.TestCase):
 
     def test_performance_settings_update(self):
         """Test updating performance settings."""
-        self.consumer.set_performance_settings(
-            target_fps=30.0, use_optimization=False, brightness_scale=0.8
-        )
+        self.consumer.set_performance_settings(target_fps=30.0, use_optimization=False, brightness_scale=0.8)
 
         self.assertEqual(self.consumer.target_fps, 30.0)
         self.assertFalse(self.consumer.use_optimization)
@@ -149,18 +145,14 @@ class TestConsumerProcess(unittest.TestCase):
         """Test processing a valid frame."""
         # Setup mock frame buffer
         mock_buffer_info = Mock()
-        test_frame = np.random.randint(
-            0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 4), dtype=np.uint8
-        )
+        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 4), dtype=np.uint8)
         mock_buffer_info.get_array.return_value = test_frame
 
         # Setup mock optimizer result
         mock_optimizer_result = Mock()
         mock_optimizer_result.converged = True
         mock_optimizer_result.iterations = 25
-        mock_optimizer_result.led_values = (
-            np.random.random((LED_COUNT, 3)) * 255
-        ).astype(np.float32)
+        mock_optimizer_result.led_values = (np.random.random((LED_COUNT, 3)) * 255).astype(np.float32)
 
         self.consumer._led_optimizer.optimize_frame.return_value = mock_optimizer_result
 
@@ -199,9 +191,7 @@ class TestConsumerProcess(unittest.TestCase):
     def test_process_frame_optimization_failure(self):
         """Test handling optimization failures."""
         mock_buffer_info = Mock()
-        test_frame = np.random.randint(
-            0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 4), dtype=np.uint8
-        )
+        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 4), dtype=np.uint8)
         mock_buffer_info.get_array.return_value = test_frame
 
         # Setup optimizer to not converge
@@ -227,17 +217,13 @@ class TestConsumerProcess(unittest.TestCase):
     def test_process_frame_transmission_failure(self):
         """Test handling transmission failures."""
         mock_buffer_info = Mock()
-        test_frame = np.random.randint(
-            0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 4), dtype=np.uint8
-        )
+        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 4), dtype=np.uint8)
         mock_buffer_info.get_array.return_value = test_frame
 
         # Setup successful optimization
         mock_optimizer_result = Mock()
         mock_optimizer_result.converged = True
-        mock_optimizer_result.led_values = (
-            np.random.random((LED_COUNT, 3)) * 255
-        ).astype(np.float32)
+        mock_optimizer_result.led_values = (np.random.random((LED_COUNT, 3)) * 255).astype(np.float32)
         self.consumer._led_optimizer.optimize_frame.return_value = mock_optimizer_result
 
         # Setup transmission failure
@@ -256,17 +242,13 @@ class TestConsumerProcess(unittest.TestCase):
     def test_process_frame_with_brightness_scaling(self):
         """Test frame processing with brightness scaling."""
         mock_buffer_info = Mock()
-        test_frame = np.full(
-            (FRAME_HEIGHT, FRAME_WIDTH, 4), 255, dtype=np.uint8
-        )  # Bright frame
+        test_frame = np.full((FRAME_HEIGHT, FRAME_WIDTH, 4), 255, dtype=np.uint8)  # Bright frame
         mock_buffer_info.get_array.return_value = test_frame
 
         # Setup optimizer
         mock_optimizer_result = Mock()
         mock_optimizer_result.converged = True
-        mock_optimizer_result.led_values = (
-            np.random.random((LED_COUNT, 3)) * 255
-        ).astype(np.float32)
+        mock_optimizer_result.led_values = (np.random.random((LED_COUNT, 3)) * 255).astype(np.float32)
         self.consumer._led_optimizer.optimize_frame.return_value = mock_optimizer_result
 
         # Setup transmission
@@ -291,17 +273,13 @@ class TestConsumerProcess(unittest.TestCase):
     def test_optimization_vs_speed_mode(self):
         """Test switching between full optimization and speed modes."""
         mock_buffer_info = Mock()
-        test_frame = np.random.randint(
-            0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 4), dtype=np.uint8
-        )
+        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 4), dtype=np.uint8)
         mock_buffer_info.get_array.return_value = test_frame
 
         # Setup mock results
         mock_optimizer_result = Mock()
         mock_optimizer_result.converged = True
-        mock_optimizer_result.led_values = (
-            np.random.random((LED_COUNT, 3)) * 255
-        ).astype(np.float32)
+        mock_optimizer_result.led_values = (np.random.random((LED_COUNT, 3)) * 255).astype(np.float32)
 
         self.consumer._led_optimizer.optimize_frame.return_value = mock_optimizer_result
 
@@ -338,9 +316,7 @@ class TestConsumerProcess(unittest.TestCase):
 
         # Setup mock component stats
         self.consumer._wled_client.get_statistics.return_value = {"packets_sent": 100}
-        self.consumer._led_optimizer.get_optimizer_stats.return_value = {
-            "optimization_count": 50
-        }
+        self.consumer._led_optimizer.get_optimizer_stats.return_value = {"optimization_count": 50}
 
         stats = self.consumer.get_stats()
 
@@ -454,11 +430,9 @@ class TestConsumerProcess(unittest.TestCase):
         import signal
 
         # Create new consumer to trigger signal setup
-        with patch("src.consumer.consumer.FrameConsumer"), patch(
-            "src.consumer.consumer.ControlState"
-        ), patch("src.consumer.consumer.DenseLEDOptimizer"), patch(
-            "src.consumer.consumer.WLEDClient"
-        ):
+        with patch("src.consumer.consumer.FrameConsumer"), patch("src.consumer.consumer.ControlState"), patch(
+            "src.consumer.consumer.DenseLEDOptimizer"
+        ), patch("src.consumer.consumer.WLEDClient"):
             consumer = ConsumerProcess()
 
         # Verify signal handlers were registered
@@ -474,32 +448,24 @@ class TestConsumerProcessIntegration(unittest.TestCase):
     @patch("src.consumer.consumer.ControlState")
     @patch("src.consumer.consumer.DenseLEDOptimizer")
     @patch("src.consumer.consumer.WLEDClient")
-    def test_end_to_end_processing(
-        self, mock_wled, mock_optimizer, mock_control, mock_frame_consumer
-    ):
+    def test_end_to_end_processing(self, mock_wled, mock_optimizer, mock_control, mock_frame_consumer):
         """Test complete end-to-end frame processing."""
         # Setup all components to succeed
         mock_optimizer.return_value.initialize.return_value = True
         mock_wled.return_value.connect.return_value = True
 
         # Setup frame data
-        test_frame = np.random.randint(
-            0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 4), dtype=np.uint8
-        )
+        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 4), dtype=np.uint8)
         mock_buffer_info = Mock()
         mock_buffer_info.get_array.return_value = test_frame
 
-        mock_frame_consumer.return_value.wait_for_ready_buffer.return_value = (
-            mock_buffer_info
-        )
+        mock_frame_consumer.return_value.wait_for_ready_buffer.return_value = mock_buffer_info
         mock_control.return_value.should_shutdown.return_value = False
 
         # Setup optimization result
         optimization_result = Mock()
         optimization_result.converged = True
-        optimization_result.led_values = (
-            np.random.random((LED_COUNT, 3)) * 255
-        ).astype(np.float32)
+        optimization_result.led_values = (np.random.random((LED_COUNT, 3)) * 255).astype(np.float32)
         mock_optimizer.return_value.optimize_frame.return_value = optimization_result
 
         # Setup transmission result

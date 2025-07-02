@@ -77,15 +77,11 @@ class SingleBlockMixedSparseTensor:
 
         # Storage for dense blocks - only non-zero regions
         # Shape: (channels, batch_size, block_size, block_size) for planar layout
-        self.sparse_values = cp.zeros(
-            (channels, batch_size, block_size, block_size), dtype=self.dtype
-        )
+        self.sparse_values = cp.zeros((channels, batch_size, block_size, block_size), dtype=self.dtype)
 
         # For int8, alignment is less critical, but still check for fp32
         if self.dtype == cp.float32:
-            assert (
-                self.sparse_values.data.ptr % 16 == 0
-            ), "Sparse values array must be 16-byte aligned for fp32"
+            assert self.sparse_values.data.ptr % 16 == 0, "Sparse values array must be 16-byte aligned for fp32"
 
         # Storage for block positions (top-left coordinates)
         # Shape: (channels, batch_size, 2) for planar layout
@@ -123,9 +119,7 @@ class SingleBlockMixedSparseTensor:
         elif dtype == cp.uint8:
             return cp.uint8
         else:
-            raise ValueError(
-                f"Unsupported dtype {dtype}. Supported types: float32, uint8 (numpy or cupy)"
-            )
+            raise ValueError(f"Unsupported dtype {dtype}. Supported types: float32, uint8 (numpy or cupy)")
 
     def set_block(
         self,
@@ -147,28 +141,15 @@ class SingleBlockMixedSparseTensor:
         """
         # Validate inputs
         if not (0 <= batch_idx < self.batch_size):
-            raise ValueError(
-                f"batch_idx {batch_idx} out of range [0, {self.batch_size})"
-            )
+            raise ValueError(f"batch_idx {batch_idx} out of range [0, {self.batch_size})")
         if not (0 <= channel_idx < self.channels):
-            raise ValueError(
-                f"channel_idx {channel_idx} out of range [0, {self.channels})"
-            )
+            raise ValueError(f"channel_idx {channel_idx} out of range [0, {self.channels})")
         if not (0 <= top_left_row <= self.height - self.block_size):
-            raise ValueError(
-                f"top_left_row {top_left_row} out of range "
-                f"[0, {self.height - self.block_size}]"
-            )
+            raise ValueError(f"top_left_row {top_left_row} out of range [0, {self.height - self.block_size}]")
         if not (0 <= top_left_col <= self.width - self.block_size):
-            raise ValueError(
-                f"top_left_col {top_left_col} out of range "
-                f"[0, {self.width - self.block_size}]"
-            )
+            raise ValueError(f"top_left_col {top_left_col} out of range [0, {self.width - self.block_size}]")
         if values.shape != (self.block_size, self.block_size):
-            raise ValueError(
-                f"values shape {values.shape} != expected "
-                f"({self.block_size}, {self.block_size})"
-            )
+            raise ValueError(f"values shape {values.shape} != expected ({self.block_size}, {self.block_size})")
         if values.dtype != self.dtype:
             raise ValueError(f"values dtype {values.dtype} != expected {self.dtype}")
 
@@ -187,10 +168,7 @@ class SingleBlockMixedSparseTensor:
             values: Block values, shape (channels, batch_size, block_size, block_size)
         """
         if positions.shape != (self.channels, self.batch_size, 2):
-            raise ValueError(
-                f"positions shape {positions.shape} != expected "
-                f"({self.channels}, {self.batch_size}, 2)"
-            )
+            raise ValueError(f"positions shape {positions.shape} != expected ({self.channels}, {self.batch_size}, 2)")
         if values.shape != (
             self.channels,
             self.batch_size,
@@ -234,8 +212,7 @@ class SingleBlockMixedSparseTensor:
         """
         if target_3d.shape != (self.channels, self.height, self.width):
             raise ValueError(
-                f"target_3d shape {target_3d.shape} != expected "
-                f"({self.channels}, {self.height}, {self.width})"
+                f"target_3d shape {target_3d.shape} != expected ({self.channels}, {self.height}, {self.width})"
             )
 
         try:
@@ -247,9 +224,7 @@ class SingleBlockMixedSparseTensor:
 
                 # Validate target dtype matches tensor dtype
                 if target_3d.dtype != cp.float32:
-                    raise ValueError(
-                        f"target_3d dtype {target_3d.dtype} must match tensor dtype {self.dtype}"
-                    )
+                    raise ValueError(f"target_3d dtype {target_3d.dtype} must match tensor dtype {self.dtype}")
 
                 # Use fp32 compute-optimized CUDA kernel
                 result = cuda_transpose_dot_product_3d_compute_optimized(
@@ -268,9 +243,7 @@ class SingleBlockMixedSparseTensor:
 
                 # Validate target dtype matches tensor dtype
                 if target_3d.dtype != cp.uint8:
-                    raise ValueError(
-                        f"target_3d dtype {target_3d.dtype} must match tensor dtype {self.dtype}"
-                    )
+                    raise ValueError(f"target_3d dtype {target_3d.dtype} must match tensor dtype {self.dtype}")
 
                 # Use int8 compute-optimized CUDA kernel
                 result = cuda_transpose_dot_product_3d_compute_optimized_int8(
@@ -308,15 +281,10 @@ class SingleBlockMixedSparseTensor:
             Rendered frame in planar form, shape (channels, height, width)
         """
         if led_values.shape != (self.batch_size, self.channels):
-            raise ValueError(
-                f"led_values shape {led_values.shape} != expected "
-                f"({self.batch_size}, {self.channels})"
-            )
+            raise ValueError(f"led_values shape {led_values.shape} != expected ({self.batch_size}, {self.channels})")
 
         # Initialize output frame
-        output_frame = cp.zeros(
-            (self.channels, self.height, self.width), dtype=cp.float32
-        )
+        output_frame = cp.zeros((self.channels, self.height, self.width), dtype=cp.float32)
 
         # Process each LED and channel
         for led_idx in range(self.batch_size):
@@ -333,9 +301,7 @@ class SingleBlockMixedSparseTensor:
                 top_col = int(self.block_positions[channel, led_idx, 1])
 
                 # Get the diffusion pattern block
-                pattern_block = self.sparse_values[
-                    channel, led_idx
-                ]  # Shape: (block_size, block_size)
+                pattern_block = self.sparse_values[channel, led_idx]  # Shape: (block_size, block_size)
 
                 # Add weighted pattern to output frame
                 bottom_row = min(top_row + self.block_size, self.height)
@@ -374,24 +340,16 @@ class SingleBlockMixedSparseTensor:
         # Create dense array and place block (all blocks assumed to be set)
         dense = cp.zeros((self.height, self.width), dtype=cp.float32)
 
-        top_row = int(
-            self.block_positions[channel_idx, batch_idx, 0]
-        )  # Use channels-first indexing
-        top_col = int(
-            self.block_positions[channel_idx, batch_idx, 1]
-        )  # Use channels-first indexing
+        top_row = int(self.block_positions[channel_idx, batch_idx, 0])  # Use channels-first indexing
+        top_col = int(self.block_positions[channel_idx, batch_idx, 1])  # Use channels-first indexing
 
-        dense[
-            top_row : top_row + self.block_size, top_col : top_col + self.block_size
-        ] = self.sparse_values[
+        dense[top_row : top_row + self.block_size, top_col : top_col + self.block_size] = self.sparse_values[
             channel_idx, batch_idx
         ]  # Use channels-first indexing
 
         return dense
 
-    def get_block_info(
-        self, batch_idx: int, channel_idx: int
-    ) -> Dict[str, Union[Tuple[int, int], cp.ndarray, bool]]:
+    def get_block_info(self, batch_idx: int, channel_idx: int) -> Dict[str, Union[Tuple[int, int], cp.ndarray, bool]]:
         """
         Get information about a specific block.
 
@@ -404,20 +362,14 @@ class SingleBlockMixedSparseTensor:
         """
         # All blocks are assumed to be set
         position = (
-            int(
-                self.block_positions[channel_idx, batch_idx, 0]
-            ),  # Use channels-first indexing
-            int(
-                self.block_positions[channel_idx, batch_idx, 1]
-            ),  # Use channels-first indexing
+            int(self.block_positions[channel_idx, batch_idx, 0]),  # Use channels-first indexing
+            int(self.block_positions[channel_idx, batch_idx, 1]),  # Use channels-first indexing
         )
 
         return {
             "is_set": True,
             "position": position,
-            "values": self.sparse_values[
-                channel_idx, batch_idx
-            ].copy(),  # Use channels-first indexing
+            "values": self.sparse_values[channel_idx, batch_idx].copy(),  # Use channels-first indexing
         }
 
     def memory_info(self) -> Dict[str, Union[float, int]]:
@@ -433,9 +385,7 @@ class SingleBlockMixedSparseTensor:
         total_mb = sparse_values_mb + positions_mb
 
         # Calculate what equivalent dense storage would be
-        dense_mb = (self.batch_size * self.channels * self.height * self.width * 4) / (
-            1024 * 1024
-        )
+        dense_mb = (self.batch_size * self.channels * self.height * self.width * 4) / (1024 * 1024)
 
         compression_ratio = total_mb / dense_mb
         blocks_stored = self.batch_size * self.channels  # All blocks assumed to be set
@@ -493,18 +443,14 @@ class SingleBlockMixedSparseTensor:
             "width": np.array(self.width, dtype=np.int32),
             "block_size": np.array(self.block_size, dtype=np.int32),
             "device": np.array(self.device, dtype="U10"),  # Unicode string
-            "dtype": np.array(
-                self.dtype.__name__, dtype="U10"
-            ),  # Store dtype name as string
+            "dtype": np.array(self.dtype.__name__, dtype="U10"),  # Store dtype name as string
         }
 
         logger.debug(f"Exported tensor to dict with {len(data_dict)} arrays")
         return data_dict
 
     @classmethod
-    def from_dict(
-        cls, data_dict: Dict[str, np.ndarray], device: str = "cuda"
-    ) -> "SingleBlockMixedSparseTensor":
+    def from_dict(cls, data_dict: Dict[str, np.ndarray], device: str = "cuda") -> "SingleBlockMixedSparseTensor":
         """
         Create tensor from a dictionary of numpy arrays (loaded from npz files).
 
@@ -529,9 +475,7 @@ class SingleBlockMixedSparseTensor:
                 dtype = cp.float32
             elif dtype_str == "uint8":
                 dtype = cp.uint8
-            elif dtype_str.startswith(
-                "<class"
-            ):  # Truncated old format - infer from data
+            elif dtype_str.startswith("<class"):  # Truncated old format - infer from data
                 # Fallback to infer from data for truncated strings
                 dtype = cp.dtype(data_dict["sparse_values"].dtype)
             else:
@@ -555,9 +499,7 @@ class SingleBlockMixedSparseTensor:
         if not tensor.validate_consistency():
             raise ValueError("Loaded tensor data is inconsistent")
 
-        blocks_loaded = (
-            tensor.batch_size * tensor.channels
-        )  # All blocks assumed to be set
+        blocks_loaded = tensor.batch_size * tensor.channels  # All blocks assumed to be set
         logger.debug(f"Loaded tensor from dict with {blocks_loaded} blocks")
 
         return tensor
@@ -575,13 +517,9 @@ class SingleBlockMixedSparseTensor:
             with dtype float32 and values in range [0, 1]
         """
         # Initialize dense patterns array (HWC format for compatibility)
-        patterns = np.zeros(
-            (self.batch_size, self.height, self.width, self.channels), dtype=np.float32
-        )
+        patterns = np.zeros((self.batch_size, self.height, self.width, self.channels), dtype=np.float32)
 
-        logger.debug(
-            f"Converting {self.batch_size} LED patterns from mixed tensor to dense format..."
-        )
+        logger.debug(f"Converting {self.batch_size} LED patterns from mixed tensor to dense format...")
 
         # Convert each block to dense format
         for batch_idx in range(self.batch_size):
@@ -624,9 +562,7 @@ class SingleBlockMixedSparseTensor:
 
         # Convert to numpy for statistics computation
         positions = cp.asnumpy(self.block_positions)  # (channels, batch_size, 2)
-        values = cp.asnumpy(
-            self.sparse_values
-        )  # (channels, batch_size, block_size, block_size)
+        values = cp.asnumpy(self.sparse_values)  # (channels, batch_size, block_size, block_size)
 
         # Basic info
         summary = {
@@ -669,20 +605,14 @@ class SingleBlockMixedSparseTensor:
         for batch_idx in range(self.batch_size):
             led_values = values[:, batch_idx].flatten()  # All channels for this LED
             led_max_intensities[batch_idx] = np.max(led_values)
-            led_mean_intensities[batch_idx] = (
-                np.mean(led_values[led_values > 0]) if np.any(led_values > 0) else 0.0
-            )
+            led_mean_intensities[batch_idx] = np.mean(led_values[led_values > 0]) if np.any(led_values > 0) else 0.0
 
         # Coverage statistics (spatial distribution)
         coverage_stats = {
             "blocks_per_led": self.channels,
-            "spatial_coverage_x": (
-                position_stats["max_col"] - position_stats["min_col"] + self.block_size
-            )
+            "spatial_coverage_x": (position_stats["max_col"] - position_stats["min_col"] + self.block_size)
             / self.width,
-            "spatial_coverage_y": (
-                position_stats["max_row"] - position_stats["min_row"] + self.block_size
-            )
+            "spatial_coverage_y": (position_stats["max_row"] - position_stats["min_row"] + self.block_size)
             / self.height,
             "led_max_intensities": led_max_intensities,
             "led_mean_intensities": led_mean_intensities,
@@ -720,17 +650,12 @@ class SingleBlockMixedSparseTensor:
         if not (0 <= led_idx < self.batch_size):
             raise ValueError(f"led_idx {led_idx} out of range [0, {self.batch_size})")
         if not (0 <= channel_idx < self.channels):
-            raise ValueError(
-                f"channel_idx {channel_idx} out of range [0, {self.channels})"
-            )
+            raise ValueError(f"channel_idx {channel_idx} out of range [0, {self.channels})")
 
         # Use existing to_array method but convert to numpy
         dense_pattern = cp.asnumpy(self.to_array(led_idx, channel_idx))
 
-        logger.debug(
-            f"Extracted pattern for LED {led_idx}, channel {channel_idx}: "
-            f"shape {dense_pattern.shape}"
-        )
+        logger.debug(f"Extracted pattern for LED {led_idx}, channel {channel_idx}: shape {dense_pattern.shape}")
         return dense_pattern
 
     def compute_ata_dense(self) -> np.ndarray:
@@ -745,17 +670,13 @@ class SingleBlockMixedSparseTensor:
             Dense A^T A array of shape (led_count, led_count, channels) where
             ata[i, j, c] = dot(pattern_i_c, pattern_j_c) for overlapping regions
         """
-        logger.info(f"Computing A^T A directly from block data...")
+        logger.info("Computing A^T A directly from block data...")
 
         # Initialize A^T A matrix: (led_count, led_count, channels)
-        ata_matrix = np.zeros(
-            (self.batch_size, self.batch_size, self.channels), dtype=np.float32
-        )
+        ata_matrix = np.zeros((self.batch_size, self.batch_size, self.channels), dtype=np.float32)
 
         # Convert block data to numpy for computation
-        block_values = cp.asnumpy(
-            self.sparse_values
-        )  # (channels, batch_size, block_size, block_size)
+        block_values = cp.asnumpy(self.sparse_values)  # (channels, batch_size, block_size, block_size)
         block_positions = cp.asnumpy(self.block_positions)  # (channels, batch_size, 2)
 
         total_pairs = self.batch_size * (self.batch_size + 1) // 2
@@ -763,9 +684,7 @@ class SingleBlockMixedSparseTensor:
 
         # Compute A^T A for each pair of LEDs
         for led_i in range(self.batch_size):
-            for led_j in range(
-                led_i, self.batch_size
-            ):  # Only upper triangle + diagonal
+            for led_j in range(led_i, self.batch_size):  # Only upper triangle + diagonal
                 # For each RGB channel
                 for channel in range(self.channels):
                     # Get block positions and values for both LEDs
@@ -791,10 +710,7 @@ class SingleBlockMixedSparseTensor:
                     overlap_c_end = min(c1_end, c2_end)
 
                     # Check if blocks overlap
-                    if (
-                        overlap_r_start < overlap_r_end
-                        and overlap_c_start < overlap_c_end
-                    ):
+                    if overlap_r_start < overlap_r_end and overlap_c_start < overlap_c_end:
                         # Extract overlapping regions from both blocks
                         # Convert global coordinates to local block coordinates
                         local_r1_start = overlap_r_start - r1_start
@@ -808,12 +724,8 @@ class SingleBlockMixedSparseTensor:
                         local_c2_end = overlap_c_end - c2_start
 
                         # Extract overlapping regions
-                        overlap_i = values_i[
-                            local_r1_start:local_r1_end, local_c1_start:local_c1_end
-                        ]
-                        overlap_j = values_j[
-                            local_r2_start:local_r2_end, local_c2_start:local_c2_end
-                        ]
+                        overlap_i = values_i[local_r1_start:local_r1_end, local_c1_start:local_c1_end]
+                        overlap_j = values_j[local_r2_start:local_r2_end, local_c2_start:local_c2_end]
 
                         # Compute dot product: sum of element-wise multiplication
                         dot_product = np.sum(overlap_i * overlap_j)
@@ -826,17 +738,13 @@ class SingleBlockMixedSparseTensor:
                 computed_pairs += 1
                 if computed_pairs % 10000 == 0:
                     progress = computed_pairs / total_pairs * 100
-                    logger.info(
-                        f"  Computed {computed_pairs}/{total_pairs} LED pairs ({progress:.1f}%)"
-                    )
+                    logger.info(f"  Computed {computed_pairs}/{total_pairs} LED pairs ({progress:.1f}%)")
 
         # Count non-zeros per channel for validation
         for channel in range(self.channels):
             nnz = np.count_nonzero(ata_matrix[:, :, channel])
             sparsity = nnz / (self.batch_size**2) * 100
-            logger.info(
-                f"  Channel {channel+1}: {nnz} non-zeros ({sparsity:.2f}% dense)"
-            )
+            logger.info(f"  Channel {channel + 1}: {nnz} non-zeros ({sparsity:.2f}% dense)")
 
         logger.info(f"A^T A computation complete: shape {ata_matrix.shape}")
         return ata_matrix

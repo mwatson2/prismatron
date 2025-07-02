@@ -20,9 +20,7 @@ from src.const import FRAME_HEIGHT, FRAME_WIDTH
 from src.consumer.led_optimizer import LEDOptimizer as CuPyOptimizer
 from src.consumer.led_optimizer_pytorch import PyTorchLEDOptimizer
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -53,9 +51,7 @@ def create_test_image(seed: int = 42) -> np.ndarray:
     return image
 
 
-def run_cupy_optimization(
-    patterns_path: str, test_image: np.ndarray, num_runs: int = 3
-):
+def run_cupy_optimization(patterns_path: str, test_image: np.ndarray, num_runs: int = 3):
     """Run CuPy sparse optimization and return timing results."""
     logger.info("=== Testing CuPy Sparse Optimizer ===")
 
@@ -78,7 +74,7 @@ def run_cupy_optimization(
     results = []
 
     for i in range(num_runs):
-        logger.info(f"CuPy run {i+1}/{num_runs}")
+        logger.info(f"CuPy run {i + 1}/{num_runs}")
         start_time = time.time()
         result = optimizer.optimize_frame(test_image, max_iterations=10)
         end_time = time.time()
@@ -88,17 +84,13 @@ def run_cupy_optimization(
 
         logger.info(f"  Time: {times[-1]:.3f}s")
         logger.info(f"  MSE: {result.error_metrics.get('mse', 'N/A'):.6f}")
-        logger.info(
-            f"  GFLOPS/s: {result.flop_info.get('gflops_per_second', 'N/A'):.1f}"
-        )
+        logger.info(f"  GFLOPS/s: {result.flop_info.get('gflops_per_second', 'N/A'):.1f}")
 
     avg_time = np.mean(times)
     avg_gflops = np.mean([r.flop_info.get("gflops_per_second", 0) for r in results])
     avg_mse = np.mean([r.error_metrics.get("mse", float("inf")) for r in results])
 
-    logger.info(
-        f"CuPy Average: {avg_time:.3f}s, {avg_gflops:.1f} GFLOPS/s, MSE: {avg_mse:.6f}"
-    )
+    logger.info(f"CuPy Average: {avg_time:.3f}s, {avg_gflops:.1f} GFLOPS/s, MSE: {avg_mse:.6f}")
 
     return {
         "optimizer_type": "CuPy",
@@ -111,24 +103,18 @@ def run_cupy_optimization(
     }
 
 
-def run_pytorch_optimization(
-    patterns_path: str, test_image: np.ndarray, num_runs: int = 3
-):
+def run_pytorch_optimization(patterns_path: str, test_image: np.ndarray, num_runs: int = 3):
     """Run PyTorch sparse optimization and return timing results."""
     logger.info("=== Testing PyTorch Sparse Optimizer ===")
 
-    optimizer = PyTorchLEDOptimizer(
-        diffusion_patterns_path=patterns_path, device="cuda"
-    )
+    optimizer = PyTorchLEDOptimizer(diffusion_patterns_path=patterns_path, device="cuda")
 
     if not optimizer.initialize():
         logger.error("Failed to initialize PyTorch optimizer")
         return None
 
     stats = optimizer.get_optimizer_stats()
-    logger.info(
-        f"PyTorch tensor shape per channel: {stats.get('tensor_shape_per_channel', 'N/A')}"
-    )
+    logger.info(f"PyTorch tensor shape per channel: {stats.get('tensor_shape_per_channel', 'N/A')}")
     nnz_per_channel = stats.get("nnz_per_channel", "N/A")
     total_nnz = stats.get("total_nnz", "N/A")
     logger.info(
@@ -137,9 +123,7 @@ def run_pytorch_optimization(
         else f"PyTorch nnz per channel: {nnz_per_channel}"
     )
     logger.info(
-        f"PyTorch total nnz: {total_nnz:,}"
-        if isinstance(total_nnz, int)
-        else f"PyTorch total nnz: {total_nnz}"
+        f"PyTorch total nnz: {total_nnz:,}" if isinstance(total_nnz, int) else f"PyTorch total nnz: {total_nnz}"
     )
 
     # Warm up
@@ -151,7 +135,7 @@ def run_pytorch_optimization(
     results = []
 
     for i in range(num_runs):
-        logger.info(f"PyTorch run {i+1}/{num_runs}")
+        logger.info(f"PyTorch run {i + 1}/{num_runs}")
         start_time = time.time()
         result = optimizer.optimize_frame(test_image, max_iterations=10)
         end_time = time.time()
@@ -161,17 +145,13 @@ def run_pytorch_optimization(
 
         logger.info(f"  Time: {times[-1]:.3f}s")
         logger.info(f"  MSE: {result.error_metrics.get('mse', 'N/A'):.6f}")
-        logger.info(
-            f"  GFLOPS/s: {result.flop_info.get('gflops_per_second', 'N/A'):.1f}"
-        )
+        logger.info(f"  GFLOPS/s: {result.flop_info.get('gflops_per_second', 'N/A'):.1f}")
 
     avg_time = np.mean(times)
     avg_gflops = np.mean([r.flop_info.get("gflops_per_second", 0) for r in results])
     avg_mse = np.mean([r.error_metrics.get("mse", float("inf")) for r in results])
 
-    logger.info(
-        f"PyTorch Average: {avg_time:.3f}s, {avg_gflops:.1f} GFLOPS/s, MSE: {avg_mse:.6f}"
-    )
+    logger.info(f"PyTorch Average: {avg_time:.3f}s, {avg_gflops:.1f} GFLOPS/s, MSE: {avg_mse:.6f}")
 
     return {
         "optimizer_type": "PyTorch",
@@ -202,30 +182,25 @@ def compare_results(cupy_results, pytorch_results):
     pytorch_mse = pytorch_results["average_mse"]
 
     speedup = cupy_time / pytorch_time if pytorch_time > 0 else float("inf")
-    gflops_improvement = (
-        pytorch_gflops / cupy_gflops if cupy_gflops > 0 else float("inf")
-    )
+    gflops_improvement = pytorch_gflops / cupy_gflops if cupy_gflops > 0 else float("inf")
 
     logger.info(f"Timing Results:")
     logger.info(f"  CuPy:     {cupy_time:.3f}s")
     logger.info(f"  PyTorch:  {pytorch_time:.3f}s")
-    logger.info(
-        f"  Speedup:  {speedup:.2f}x {'(PyTorch faster)' if speedup > 1 else '(CuPy faster)'}"
-    )
+    logger.info(f"  Speedup:  {speedup:.2f}x {'(PyTorch faster)' if speedup > 1 else '(CuPy faster)'}")
 
     logger.info(f"GFLOPS Performance:")
     logger.info(f"  CuPy:     {cupy_gflops:.1f} GFLOPS/s")
     logger.info(f"  PyTorch:  {pytorch_gflops:.1f} GFLOPS/s")
     logger.info(
-        f"  Improvement: {gflops_improvement:.2f}x "
-        f"{'(PyTorch better)' if gflops_improvement > 1 else '(CuPy better)'}"
+        f"  Improvement: {gflops_improvement:.2f}x {'(PyTorch better)' if gflops_improvement > 1 else '(CuPy better)'}"
     )
 
     logger.info(f"Optimization Quality:")
     logger.info(f"  CuPy MSE:     {cupy_mse:.6f}")
     logger.info(f"  PyTorch MSE:  {pytorch_mse:.6f}")
     logger.info(
-        f"  Quality ratio: {cupy_mse/pytorch_mse:.3f} "
+        f"  Quality ratio: {cupy_mse / pytorch_mse:.3f} "
         f"{'(PyTorch better)' if pytorch_mse < cupy_mse else '(CuPy better)'}"
     )
 
@@ -244,9 +219,7 @@ def main():
 
     if not Path(f"{patterns_path}.npz").exists():
         logger.error(f"Patterns file not found: {patterns_path}.npz")
-        logger.error(
-            "Generate patterns first with: python tools/generate_synthetic_patterns.py"
-        )
+        logger.error("Generate patterns first with: python tools/generate_synthetic_patterns.py")
         return 1
 
     # Create test image

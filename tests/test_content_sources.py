@@ -322,7 +322,6 @@ class TestContentSourceRegistry(unittest.TestCase):
     def tearDown(self):
         """Clean up after tests."""
         # Don't clear registry here to allow other tests to use registrations
-        pass
 
     def test_registry_operations(self):
         """Test basic registry operations."""
@@ -369,9 +368,7 @@ class TestContentSourceRegistry(unittest.TestCase):
         ContentSourceRegistry.register(ContentType.VIDEO, MockContentSource)
 
         # Create source with explicit type
-        source = ContentSourceRegistry.create_source(
-            "/test/video.mp4", ContentType.VIDEO
-        )
+        source = ContentSourceRegistry.create_source("/test/video.mp4", ContentType.VIDEO)
         self.assertIsInstance(source, MockContentSource)
         self.assertEqual(source.filepath, "/test/video.mp4")
 
@@ -384,9 +381,7 @@ class TestContentSourceRegistry(unittest.TestCase):
         self.assertIsNone(source)
 
 
-@unittest.skipUnless(
-    PILLOW_AVAILABLE or OPENCV_AVAILABLE, "PIL or OpenCV required for image tests"
-)
+@unittest.skipUnless(PILLOW_AVAILABLE or OPENCV_AVAILABLE, "PIL or OpenCV required for image tests")
 class TestImageSource(unittest.TestCase):
     """Test cases for ImageSource plugin."""
 

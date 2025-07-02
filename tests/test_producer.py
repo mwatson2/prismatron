@@ -68,9 +68,7 @@ class TestPlaylistItem(unittest.TestCase):
         self.assertEqual(item.current_repeat, 0)
         self.assertTrue(item.should_repeat())
 
-    @patch(
-        "src.producer.content_sources.base.ContentSourceRegistry.detect_content_type"
-    )
+    @patch("src.producer.content_sources.base.ContentSourceRegistry.detect_content_type")
     @patch("src.producer.content_sources.base.ContentSourceRegistry.create_source")
     def test_get_content_source(self, mock_create_source, mock_detect_type):
         """Test content source creation."""
@@ -87,9 +85,7 @@ class TestPlaylistItem(unittest.TestCase):
         self.assertEqual(source, mock_source)
         self.assertEqual(item._detected_type, ContentType.VIDEO)
         mock_detect_type.assert_called_once_with(self.test_filepath)
-        mock_create_source.assert_called_once_with(
-            self.test_filepath, ContentType.VIDEO
-        )
+        mock_create_source.assert_called_once_with(self.test_filepath, ContentType.VIDEO)
 
         # Second call should return cached source
         source2 = item.get_content_source()
@@ -286,9 +282,7 @@ class TestProducerProcess(unittest.TestCase):
         self.control_name = f"test_control_{int(time.time() * 1000000)}"
 
         # Create producer with mocked components
-        with patch("src.producer.producer.FrameProducer"), patch(
-            "src.producer.producer.ControlState"
-        ):
+        with patch("src.producer.producer.FrameProducer"), patch("src.producer.producer.ControlState"):
             self.producer = ProducerProcess(self.buffer_name, self.control_name)
 
     def tearDown(self):
@@ -398,9 +392,7 @@ class TestProducerProcess(unittest.TestCase):
         mock_buffer_array = np.zeros((1080, 1920, 4), dtype=np.uint8)
         mock_buffer_info.get_array.return_value = mock_buffer_array
 
-        self.producer._frame_buffer.get_write_buffer = Mock(
-            return_value=mock_buffer_info
-        )
+        self.producer._frame_buffer.get_write_buffer = Mock(return_value=mock_buffer_info)
         self.producer._frame_buffer.advance_write = Mock(return_value=True)
 
         with patch.object(self.producer, "_copy_frame_to_buffer") as mock_copy:
@@ -420,12 +412,8 @@ class TestProducerProcess(unittest.TestCase):
         self.producer._target_fps = 30.0
 
         # Mock playlist and buffer stats
-        self.producer._playlist.get_playlist_info = Mock(
-            return_value={"total_items": 5}
-        )
-        self.producer._frame_buffer.get_producer_stats = Mock(
-            return_value={"buffer_stat": "value"}
-        )
+        self.producer._playlist.get_playlist_info = Mock(return_value={"total_items": 5})
+        self.producer._frame_buffer.get_producer_stats = Mock(return_value={"buffer_stat": "value"})
 
         stats = self.producer.get_producer_stats()
 

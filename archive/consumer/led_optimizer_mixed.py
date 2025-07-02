@@ -73,9 +73,7 @@ class MixedTensorLEDOptimizer:
         Args:
             diffusion_patterns_path: Path to patterns file with mixed tensor data
         """
-        self.diffusion_patterns_path = (
-            diffusion_patterns_path or "diffusion_patterns/synthetic_1000"
-        )
+        self.diffusion_patterns_path = diffusion_patterns_path or "diffusion_patterns/synthetic_1000"
 
         # Optimization parameters for gradient descent
         self.max_iterations = 10
@@ -154,9 +152,7 @@ class MixedTensorLEDOptimizer:
 
             logger.info("Mixed tensor LED optimizer initialized successfully")
             logger.info(f"LED count: {self._actual_led_count}")
-            logger.info(
-                f"Mixed tensor memory: {self._mixed_tensor.memory_info()['total_mb']:.1f}MB"
-            )
+            logger.info(f"Mixed tensor memory: {self._mixed_tensor.memory_info()['total_mb']:.1f}MB")
             logger.info(f"Device: {self.device_info['device']}")
             return True
 
@@ -190,9 +186,7 @@ class MixedTensorLEDOptimizer:
 
             if not all(key in data for key in required_keys):
                 logger.error("Mixed tensor data not found in patterns file")
-                logger.error(
-                    "Regenerate patterns with updated generate_synthetic_patterns.py"
-                )
+                logger.error("Regenerate patterns with updated generate_synthetic_patterns.py")
                 return False
 
             # Check if precomputed dense A^T @ A matrices are available
@@ -203,12 +197,8 @@ class MixedTensorLEDOptimizer:
             ]
 
             if not all(key in data for key in dense_ata_keys):
-                logger.error(
-                    "Precomputed dense A^T @ A matrices not found in patterns file"
-                )
-                logger.error(
-                    "Regenerate patterns with updated generate_synthetic_patterns.py"
-                )
+                logger.error("Precomputed dense A^T @ A matrices not found in patterns file")
+                logger.error("Regenerate patterns with updated generate_synthetic_patterns.py")
                 return False
 
             # Extract mixed tensor parameters
@@ -219,21 +209,15 @@ class MixedTensorLEDOptimizer:
             block_size = int(data["mixed_tensor_block_size"])
 
             # Create mixed tensor
-            self._mixed_tensor = SingleBlockMixedSparseTensor(
-                led_count, channels, height, width, block_size
-            )
+            self._mixed_tensor = SingleBlockMixedSparseTensor(led_count, channels, height, width, block_size)
 
             # Load the tensor data
             self._mixed_tensor.sparse_values = cp.asarray(data["mixed_tensor_values"])
-            self._mixed_tensor.block_positions = cp.asarray(
-                data["mixed_tensor_positions"]
-            )
+            self._mixed_tensor.block_positions = cp.asarray(data["mixed_tensor_positions"])
             self._mixed_tensor.blocks_set = cp.asarray(data["mixed_tensor_blocks_set"])
 
             # Load precomputed dense A^T @ A matrices
-            dense_ata_matrices = data[
-                "dense_ata_matrices"
-            ]  # Shape: (led_count, led_count, channels)
+            dense_ata_matrices = data["dense_ata_matrices"]  # Shape: (led_count, led_count, channels)
             dense_ata_led_count = int(data["dense_ata_led_count"])
             dense_ata_channels = int(data["dense_ata_channels"])
 
@@ -260,9 +244,7 @@ class MixedTensorLEDOptimizer:
 
             # Validate tensor dimensions
             if height != FRAME_HEIGHT or width != FRAME_WIDTH:
-                logger.warning(
-                    f"Frame dimensions mismatch: {(height, width)} != {(FRAME_HEIGHT, FRAME_WIDTH)}"
-                )
+                logger.warning(f"Frame dimensions mismatch: {(height, width)} != {(FRAME_HEIGHT, FRAME_WIDTH)}")
 
             logger.info(f"Mixed tensor loaded: {led_count} LEDs, {channels} channels")
             logger.info(f"Block size: {block_size}x{block_size}")
@@ -305,17 +287,11 @@ class MixedTensorLEDOptimizer:
         self._dense_flops_per_iteration = ata_dense_flops + step_size_flops
 
         # Total per iteration (amortizing A^T @ b over iterations)
-        self._flops_per_iteration = self._dense_flops_per_iteration + (
-            atb_flops / self.max_iterations
-        )
+        self._flops_per_iteration = self._dense_flops_per_iteration + (atb_flops / self.max_iterations)
 
         logger.debug(f"Mixed tensor A^T @ b FLOPs per frame: {atb_flops:,}")
-        logger.debug(
-            f"Dense optimization FLOPs per iteration: {self._dense_flops_per_iteration:,}"
-        )
-        logger.debug(
-            f"Total FLOPs per iteration (amortized): {self._flops_per_iteration:,}"
-        )
+        logger.debug(f"Dense optimization FLOPs per iteration: {self._dense_flops_per_iteration:,}")
+        logger.debug(f"Total FLOPs per iteration (amortized): {self._flops_per_iteration:,}")
 
     def _initialize_workspace(self) -> None:
         """Initialize GPU workspace arrays for optimization."""
@@ -337,9 +313,7 @@ class MixedTensorLEDOptimizer:
             "x_new": cp.zeros((led_count, 3), dtype=cp.float32),  # Updated x
         }
 
-        workspace_mb = sum(arr.nbytes for arr in self._gpu_workspace.values()) / (
-            1024 * 1024
-        )
+        workspace_mb = sum(arr.nbytes for arr in self._gpu_workspace.values()) / (1024 * 1024)
         logger.info(f"Mixed tensor workspace memory: {workspace_mb:.1f}MB")
 
     def _precompute_ata_if_needed(self) -> None:
@@ -349,9 +323,7 @@ class MixedTensorLEDOptimizer:
             # Fallback: create identity matrices if precomputed ones aren't available
             led_count = self._actual_led_count
             channels = 3
-            self._ATA_gpu = cp.eye(led_count, dtype=cp.float32)[:, :, None].repeat(
-                channels, axis=2
-            )
+            self._ATA_gpu = cp.eye(led_count, dtype=cp.float32)[:, :, None].repeat(channels, axis=2)
             self._ATA_computed = True
 
     def optimize_frame(
@@ -383,9 +355,7 @@ class MixedTensorLEDOptimizer:
             # Validate input
             validation_start = time.time()
             if target_frame.shape != (FRAME_HEIGHT, FRAME_WIDTH, 3):
-                raise ValueError(
-                    f"Target frame shape {target_frame.shape} != {(FRAME_HEIGHT, FRAME_WIDTH, 3)}"
-                )
+                raise ValueError(f"Target frame shape {target_frame.shape} != {(FRAME_HEIGHT, FRAME_WIDTH, 3)}")
             timing_breakdown["validation_time"] = time.time() - validation_start
 
             # KEY STEP 1: Calculate A^T*b using mixed tensor CUDA kernel
@@ -401,23 +371,17 @@ class MixedTensorLEDOptimizer:
             # Initialize LED values
             init_start = time.time()
             if initial_values is not None:
-                initial_normalized = (
-                    initial_values / 255.0
-                    if initial_values.max() > 1.0
-                    else initial_values
-                ).astype(np.float32)
+                initial_normalized = (initial_values / 255.0 if initial_values.max() > 1.0 else initial_values).astype(
+                    np.float32
+                )
                 self._led_values_gpu[:] = cp.asarray(initial_normalized)
             else:
                 self._led_values_gpu.fill(0.5)
             timing_breakdown["initialization_time"] = time.time() - init_start
 
             # Mixed tensor optimization loop
-            led_values_solved, loop_timing = self._solve_mixed_tensor_gradient_descent(
-                ATb, max_iterations
-            )
-            timing_breakdown["optimization_loop_time"] = loop_timing.get(
-                "total_loop_time", 0.0
-            )
+            led_values_solved, loop_timing = self._solve_mixed_tensor_gradient_descent(ATb, max_iterations)
+            timing_breakdown["optimization_loop_time"] = loop_timing.get("total_loop_time", 0.0)
 
             # Convert back to numpy
             convert_start = time.time()
@@ -430,9 +394,7 @@ class MixedTensorLEDOptimizer:
             debug_time = 0.0
             if debug:
                 debug_start = time.time()
-                error_metrics = self._compute_error_metrics(
-                    led_values_solved, target_frame
-                )
+                error_metrics = self._compute_error_metrics(led_values_solved, target_frame)
                 debug_time = time.time() - debug_start
                 timing_breakdown["debug_time"] = debug_time
 
@@ -444,11 +406,7 @@ class MixedTensorLEDOptimizer:
 
             # Calculate FLOPs for this optimization
             iterations_used = max_iterations or self.max_iterations
-            atb_flops = (
-                self._atb_flops_per_frame
-                if hasattr(self, "_atb_flops_per_frame")
-                else 0
-            )
+            atb_flops = self._atb_flops_per_frame if hasattr(self, "_atb_flops_per_frame") else 0
             dense_loop_flops = iterations_used * (
                 self._dense_flops_per_iteration
                 if hasattr(self, "_dense_flops_per_iteration")
@@ -474,13 +432,15 @@ class MixedTensorLEDOptimizer:
                 iterations=iterations_used,
                 converged=True,
                 target_frame=target_frame.copy() if debug else None,
-                tensor_info={
-                    "tensor_shape": self._mixed_tensor.sparse_values.shape,
-                    "tensor_memory_mb": self._mixed_tensor.memory_info()["total_mb"],
-                    "approach": "mixed_tensor_sparse_blocks",
-                }
-                if debug
-                else None,
+                tensor_info=(
+                    {
+                        "tensor_shape": self._mixed_tensor.sparse_values.shape,
+                        "tensor_memory_mb": self._mixed_tensor.memory_info()["total_mb"],
+                        "approach": "mixed_tensor_sparse_blocks",
+                    }
+                    if debug
+                    else None
+                ),
                 flop_info=flop_info,
                 timing_breakdown=timing_breakdown,
             )
@@ -490,31 +450,23 @@ class MixedTensorLEDOptimizer:
             self._optimization_count += 1
             self._total_optimization_time += core_optimization_time
 
-            logger.debug(
-                f"Mixed tensor optimization completed in {core_optimization_time:.3f}s"
-            )
+            logger.debug(f"Mixed tensor optimization completed in {core_optimization_time:.3f}s")
             return result
 
         except Exception as e:
             optimization_time = time.time() - start_time
-            logger.error(
-                f"Mixed tensor optimization failed after {optimization_time:.3f}s: {e}"
-            )
+            logger.error(f"Mixed tensor optimization failed after {optimization_time:.3f}s: {e}")
 
             # Return error result
             return MixedTensorOptimizationResult(
                 led_values=np.zeros((self._actual_led_count, 3), dtype=np.uint8),
-                error_metrics={"mse": float("inf"), "mae": float("inf")}
-                if debug
-                else {},
+                error_metrics=({"mse": float("inf"), "mae": float("inf")} if debug else {}),
                 optimization_time=optimization_time,
                 iterations=0,
                 converged=False,
                 flop_info={
                     "total_flops": 0,
-                    "flops_per_iteration": int(self._flops_per_iteration)
-                    if self._flops_per_iteration > 0
-                    else 0,
+                    "flops_per_iteration": (int(self._flops_per_iteration) if self._flops_per_iteration > 0 else 0),
                     "gflops": 0.0,
                     "gflops_per_second": 0.0,
                 },
@@ -581,12 +533,8 @@ class MixedTensorLEDOptimizer:
             # Step size (simplified for now)
             g_dot_g = cp.sum(w["gradient"] * w["gradient"])
             if self._ATA_computed:
-                g_dot_ATA_g = cp.einsum(
-                    "ik,ijk,jk->", w["gradient"], self._ATA_gpu, w["gradient"]
-                )
-                step_size = float(
-                    self.step_size_scaling * g_dot_g / (g_dot_ATA_g + 1e-8)
-                )
+                g_dot_ATA_g = cp.einsum("ik,ijk,jk->", w["gradient"], self._ATA_gpu, w["gradient"])
+                step_size = float(self.step_size_scaling * g_dot_g / (g_dot_ATA_g + 1e-8))
             else:
                 step_size = 0.01  # Fixed step size for identity approximation
 
@@ -596,9 +544,7 @@ class MixedTensorLEDOptimizer:
             # Check convergence
             delta = cp.linalg.norm(w["x_new"] - x)
             if delta < self.convergence_threshold:
-                logger.debug(
-                    f"Converged after {iteration+1} iterations, delta: {delta:.6f}"
-                )
+                logger.debug(f"Converged after {iteration + 1} iterations, delta: {delta:.6f}")
                 break
 
             # Update
@@ -613,9 +559,7 @@ class MixedTensorLEDOptimizer:
 
         return x, timing_info
 
-    def _compute_error_metrics(
-        self, led_values: cp.ndarray, target_frame: np.ndarray
-    ) -> Dict[str, float]:
+    def _compute_error_metrics(self, led_values: cp.ndarray, target_frame: np.ndarray) -> Dict[str, float]:
         """Compute error metrics using mixed tensor rendering."""
         # For now, return basic metrics
         # In a full implementation, this would render using the mixed tensor
@@ -646,9 +590,7 @@ class MixedTensorLEDOptimizer:
             memory_info = self._mixed_tensor.memory_info()
             avg_gflops_per_second = 0.0
             if avg_time > 0 and self._flops_per_iteration > 0:
-                avg_gflops_per_second = (
-                    self.max_iterations * self._flops_per_iteration
-                ) / (avg_time * 1e9)
+                avg_gflops_per_second = (self.max_iterations * self._flops_per_iteration) / (avg_time * 1e9)
 
             stats.update(
                 {
@@ -658,10 +600,7 @@ class MixedTensorLEDOptimizer:
                     "flop_analysis": {
                         "flops_per_iteration": int(self._flops_per_iteration),
                         "total_flops_computed": int(self._total_flops),
-                        "average_gflops_per_frame": (
-                            self.max_iterations * self._flops_per_iteration
-                        )
-                        / 1e9,
+                        "average_gflops_per_frame": (self.max_iterations * self._flops_per_iteration) / 1e9,
                         "average_gflops_per_second": avg_gflops_per_second,
                     },
                 }

@@ -55,11 +55,7 @@ class TestCustomDIAKernel:
         import scipy.sparse as sp
 
         # Load latest synthetic patterns (use 64x64 block size for good balance of realism and efficiency)
-        pattern_path = (
-            Path(__file__).parent.parent
-            / "diffusion_patterns"
-            / "synthetic_1000_64x64.npz"
-        )
+        pattern_path = Path(__file__).parent.parent / "diffusion_patterns" / "synthetic_1000_64x64.npz"
         if not pattern_path.exists():
             # Fallback to simpler synthetic matrix if pattern file missing
             return self._create_fallback_ata_matrix()
@@ -73,35 +69,25 @@ class TestCustomDIAKernel:
             diffusion_dict = data["diffusion_matrix"].item()
             diffusion_matrix = LEDDiffusionCSCMatrix.from_dict(diffusion_dict)
 
-            print(
-                f"Loaded diffusion matrix A: {diffusion_matrix.shape}, nnz={diffusion_matrix.matrix.nnz}"
-            )
+            print(f"Loaded diffusion matrix A: {diffusion_matrix.shape}, nnz={diffusion_matrix.matrix.nnz}")
 
             # Use precomputed A^T A if available, otherwise compute it
             if "dense_ata" in data:
                 dense_ata_data = data["dense_ata"].item()
-                ata_matrices = dense_ata_data[
-                    "dense_ata_matrices"
-                ]  # (led_count, led_count, 3)
+                ata_matrices = dense_ata_data["dense_ata_matrices"]  # (led_count, led_count, 3)
 
                 # For testing, use channel 0 as representative A^T A matrix
                 ata_matrix_dense = ata_matrices[:, :, 0].astype(np.float32)
                 ata_matrix = sp.csr_matrix(ata_matrix_dense)
 
-                print(
-                    f"Using precomputed A^T A: {ata_matrix.shape}, nnz={ata_matrix.nnz}"
-                )
-                print(
-                    f"A^T A sparsity: {ata_matrix.nnz / (ata_matrix.shape[0] * ata_matrix.shape[1]) * 100:.2f}%"
-                )
+                print(f"Using precomputed A^T A: {ata_matrix.shape}, nnz={ata_matrix.nnz}")
+                print(f"A^T A sparsity: {ata_matrix.nnz / (ata_matrix.shape[0] * ata_matrix.shape[1]) * 100:.2f}%")
             else:
                 # Fallback: compute A^T A from diffusion matrix
                 A = diffusion_matrix.to_csc_matrix()
                 ata_matrix = A.T @ A
                 print(f"Computed A^T A: {ata_matrix.shape}, nnz={ata_matrix.nnz}")
-                print(
-                    f"A^T A sparsity: {ata_matrix.nnz / (ata_matrix.shape[0] * ata_matrix.shape[1]) * 100:.2f}%"
-                )
+                print(f"A^T A sparsity: {ata_matrix.nnz / (ata_matrix.shape[0] * ata_matrix.shape[1]) * 100:.2f}%")
 
             # Convert to DIA format - handle case where too many diagonals exist
             import warnings
@@ -112,9 +98,7 @@ class TestCustomDIAKernel:
 
                 # Check if SciPy warned about inefficient DIA matrix
                 if w and any("inefficient" in str(warning.message) for warning in w):
-                    print(
-                        f"A^T A has {len(ata_dia.offsets)} diagonals - too many for efficient DIA format"
-                    )
+                    print(f"A^T A has {len(ata_dia.offsets)} diagonals - too many for efficient DIA format")
                     # For testing purposes, use subset or fall back
                     raise ValueError("Too many diagonals for efficient DIA format")
 
@@ -142,12 +126,8 @@ class TestCustomDIAKernel:
 
         except Exception as e:
             print(f"Failed to load synthetic patterns: {e}")
-            print(
-                "Note: Current synthetic_1000_64x64.npz has too many diagonals for efficient DIA format"
-            )
-            print(
-                "(1201 diagonals vs expected ~200). 64x64 blocks much better than 96x96 but still suboptimal."
-            )
+            print("Note: Current synthetic_1000_64x64.npz has too many diagonals for efficient DIA format")
+            print("(1201 diagonals vs expected ~200). 64x64 blocks much better than 96x96 but still suboptimal.")
             return self._create_fallback_ata_matrix()
 
     def _create_fallback_ata_matrix(self) -> Tuple[cusp.dia_matrix, np.ndarray]:
@@ -181,9 +161,7 @@ class TestCustomDIAKernel:
                 if 0 <= row_idx < n:
                     # Simulate A^T A structure - higher values for closer LEDs
                     distance_factor = np.exp(-abs(offset) / 20.0)
-                    intensity = (
-                        base_intensity * distance_factor * (np.random.rand() * 50 + 10)
-                    )
+                    intensity = base_intensity * distance_factor * (np.random.rand() * 50 + 10)
                     data[i, j] = intensity
 
         # Create DIA matrix
@@ -232,13 +210,9 @@ class TestCustomDIAKernel:
         assert cupy.max(cupy.abs(y_opt - y_ref)) < tolerance
         assert cupy.max(cupy.abs(y_cupy - y_ref)) < tolerance
 
-        print(f"Simple matrix test passed:")
-        print(
-            f"  Basic kernel max error: {float(cupy.max(cupy.abs(y_basic - y_ref))):.2e}"
-        )
-        print(
-            f"  Optimized kernel max error: {float(cupy.max(cupy.abs(y_opt - y_ref))):.2e}"
-        )
+        print("Simple matrix test passed:")
+        print(f"  Basic kernel max error: {float(cupy.max(cupy.abs(y_basic - y_ref))):.2e}")
+        print(f"  Optimized kernel max error: {float(cupy.max(cupy.abs(y_opt - y_ref))):.2e}")
 
     def test_correctness_realistic_scale(self):
         """Test correctness at realistic LED optimization scale (1000 LEDs * 3 channels)."""
@@ -279,15 +253,9 @@ class TestCustomDIAKernel:
         print(f"  Optimized kernel max error: {error_opt:.2e}")
         print(f"  CuPy DIA max error: {error_cupy:.2e}")
 
-        assert (
-            error_basic < tolerance
-        ), f"Basic kernel error {error_basic} exceeds tolerance {tolerance}"
-        assert (
-            error_opt < tolerance
-        ), f"Optimized kernel error {error_opt} exceeds tolerance {tolerance}"
-        assert (
-            error_cupy < tolerance
-        ), f"CuPy DIA error {error_cupy} exceeds tolerance {tolerance}"
+        assert error_basic < tolerance, f"Basic kernel error {error_basic} exceeds tolerance {tolerance}"
+        assert error_opt < tolerance, f"Optimized kernel error {error_opt} exceeds tolerance {tolerance}"
+        assert error_cupy < tolerance, f"CuPy DIA error {error_cupy} exceeds tolerance {tolerance}"
 
     def test_multichannel_correctness(self):
         """Test correctness for 3-channel LED optimization scenario."""
@@ -317,17 +285,11 @@ class TestCustomDIAKernel:
             y_cupy = dia_matrix @ x
 
             # Track maximum errors across channels
-            max_errors["basic"] = max(
-                max_errors["basic"], float(cupy.max(cupy.abs(y_basic - y_ref)))
-            )
-            max_errors["opt"] = max(
-                max_errors["opt"], float(cupy.max(cupy.abs(y_opt - y_ref)))
-            )
-            max_errors["cupy"] = max(
-                max_errors["cupy"], float(cupy.max(cupy.abs(y_cupy - y_ref)))
-            )
+            max_errors["basic"] = max(max_errors["basic"], float(cupy.max(cupy.abs(y_basic - y_ref))))
+            max_errors["opt"] = max(max_errors["opt"], float(cupy.max(cupy.abs(y_opt - y_ref))))
+            max_errors["cupy"] = max(max_errors["cupy"], float(cupy.max(cupy.abs(y_cupy - y_ref))))
 
-        print(f"  Max errors across all channels:")
+        print("  Max errors across all channels:")
         print(f"    Basic kernel: {max_errors['basic']:.2e}")
         print(f"    Optimized kernel: {max_errors['opt']:.2e}")
         print(f"    CuPy DIA: {max_errors['cupy']:.2e}")
@@ -341,17 +303,12 @@ class TestCustomDIAKernel:
         dia_matrix, dense_matrix = self.realistic_ata_matrix()
         n = dia_matrix.shape[0]
 
-        print(
-            f"\nPerformance test: {n}x{n} matrix with {len(dia_matrix.offsets)} bands"
-        )
+        print(f"\nPerformance test: {n}x{n} matrix with {len(dia_matrix.offsets)} bands")
 
         # Create test vectors
         num_trials = 20
         num_warmup = 5
-        test_vectors = [
-            cupy.random.randn(n, dtype=cupy.float32)
-            for _ in range(num_trials + num_warmup)
-        ]
+        test_vectors = [cupy.random.randn(n, dtype=cupy.float32) for _ in range(num_trials + num_warmup)]
 
         results = {}
 
@@ -462,9 +419,9 @@ class TestCustomDIAKernel:
         }
 
         # Print results
-        print(f"\n  Performance Results:")
-        print(f"  Method              | Time (ms)      | GFLOPS    | Speedup vs Dense")
-        print(f"  --------------------|----------------|-----------|----------------")
+        print("\n  Performance Results:")
+        print("  Method              | Time (ms)      | GFLOPS    | Speedup vs Dense")
+        print("  --------------------|----------------|-----------|----------------")
 
         baseline_time = results["dense_gpu"]["mean_ms"]
 
@@ -474,34 +431,32 @@ class TestCustomDIAKernel:
             gflops = data["flops"] / (mean_ms / 1000.0) / 1e9
             speedup = baseline_time / mean_ms
 
-            print(
-                f"  {name:18s}  | {mean_ms:6.2f}±{std_ms:5.2f} | {gflops:8.2f}  | {speedup:6.2f}x"
-            )
+            print(f"  {name:18s}  | {mean_ms:6.2f}±{std_ms:5.2f} | {gflops:8.2f}  | {speedup:6.2f}x")
 
         # Performance assertions - relaxed for realistic expectations
         # Custom kernels should be competitive with dense at this scale
         # (At larger scales they will show more benefit)
-        assert (
-            results["custom_basic"]["mean_ms"] < baseline_time * 2.0
-        ), "Basic kernel should not be more than 2x slower than dense"
-        assert (
-            results["custom_optimized"]["mean_ms"] < baseline_time * 2.0
-        ), "Optimized kernel should not be more than 2x slower than dense"
+        assert results["custom_basic"]["mean_ms"] < baseline_time * 2.0, (
+            "Basic kernel should not be more than 2x slower than dense"
+        )
+        assert results["custom_optimized"]["mean_ms"] < baseline_time * 2.0, (
+            "Optimized kernel should not be more than 2x slower than dense"
+        )
 
         # Custom kernels should be significantly faster than CuPy DIA
-        assert (
-            results["custom_basic"]["mean_ms"] < results["cupy_dia"]["mean_ms"]
-        ), "Basic kernel should be faster than CuPy DIA"
-        assert (
-            results["custom_optimized"]["mean_ms"] < results["cupy_dia"]["mean_ms"]
-        ), "Optimized kernel should be faster than CuPy DIA"
+        assert results["custom_basic"]["mean_ms"] < results["cupy_dia"]["mean_ms"], (
+            "Basic kernel should be faster than CuPy DIA"
+        )
+        assert results["custom_optimized"]["mean_ms"] < results["cupy_dia"]["mean_ms"], (
+            "Optimized kernel should be faster than CuPy DIA"
+        )
 
     def test_led_optimization_scenario(self):
         """Test complete LED optimization scenario: A^T A @ led_values for 3 channels."""
         dia_matrix, dense_matrix, led_values = self.multichannel_test_data()
         n = dia_matrix.shape[0]
 
-        print(f"\nLED optimization scenario: (A^T A) @ led_values")
+        print("\nLED optimization scenario: (A^T A) @ led_values")
         print(f"  Matrix: {n}x{n}, LED values: 3x{n}")
 
         # Simulate the g^T (A^T A) g calculation used in optimization
@@ -537,22 +492,18 @@ class TestCustomDIAKernel:
         error_basic = np.max(np.abs(results_basic - results_ref) / np.abs(results_ref))
         error_opt = np.max(np.abs(results_opt - results_ref) / np.abs(results_ref))
 
-        print(f"  g^T (A^T A) g results:")
+        print("  g^T (A^T A) g results:")
         print(f"    Reference: {results_ref}")
         print(f"    Basic:     {results_basic}")
         print(f"    Optimized: {results_opt}")
-        print(f"  Relative errors:")
+        print("  Relative errors:")
         print(f"    Basic kernel: {error_basic:.2e}")
         print(f"    Optimized kernel: {error_opt:.2e}")
 
         # Relative tolerance for large values
         rel_tolerance = 5e-3  # 0.5% relative error
-        assert (
-            error_basic < rel_tolerance
-        ), f"Basic kernel relative error {error_basic} exceeds {rel_tolerance}"
-        assert (
-            error_opt < rel_tolerance
-        ), f"Optimized kernel relative error {error_opt} exceeds {rel_tolerance}"
+        assert error_basic < rel_tolerance, f"Basic kernel relative error {error_basic} exceeds {rel_tolerance}"
+        assert error_opt < rel_tolerance, f"Optimized kernel relative error {error_opt} exceeds {rel_tolerance}"
 
 
 class TestScaleVerification:
@@ -565,7 +516,7 @@ class TestScaleVerification:
         required_channels = 3
         required_ata_size = required_led_count * required_channels  # 3000
 
-        print(f"\nRequired test dimensions verified:")
+        print("\nRequired test dimensions verified:")
         print(f"  LED count: {required_led_count}")
         print(f"  Channels: {required_channels} (R, G, B)")
         print(f"  A^T A matrix size: {required_ata_size}x{required_ata_size}")
@@ -579,14 +530,10 @@ class TestScaleVerification:
 
         # Verify our realistic_ata_matrix fixture matches requirements
         # (May be subset for memory efficiency, but should be ≤ required size)
-        assert (
-            actual_size <= required_ata_size
-        ), f"Test matrix {actual_size} should be ≤ {required_ata_size}"
-        assert (
-            actual_size >= 1000
-        ), f"Test matrix {actual_size} should be ≥ 1000 for meaningful testing"
+        assert actual_size <= required_ata_size, f"Test matrix {actual_size} should be ≤ {required_ata_size}"
+        assert actual_size >= 1000, f"Test matrix {actual_size} should be ≥ 1000 for meaningful testing"
 
-        print(f"✅ Test matrix dimensions are appropriate for LED optimization testing")
+        print("✅ Test matrix dimensions are appropriate for LED optimization testing")
 
 
 if __name__ == "__main__":

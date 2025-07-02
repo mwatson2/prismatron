@@ -35,7 +35,7 @@ def measure_optimization_timing():
     led_count = 100
     dia_matrix = DiagonalATAMatrix(led_count=led_count)
 
-    print(f"Building DIA matrix...")
+    print("Building DIA matrix...")
     build_start = time.time()
     dia_matrix.build_from_diffusion_matrix(csc_matrix, led_positions)
     build_time = time.time() - build_start
@@ -46,10 +46,10 @@ def measure_optimization_timing():
     test_led_values = np.random.randn(3, led_count).astype(np.float32) * 0.5
     test_led_values_gpu = cp.asarray(test_led_values)
 
-    print(f"\n--- Individual Operation Timing ---")
+    print("\n--- Individual Operation Timing ---")
 
     # === Test multiply_3d (A^T A @ x) ===
-    print(f"\nTesting multiply_3d (A^T A @ x):")
+    print("\nTesting multiply_3d (A^T A @ x):")
 
     # Warmup
     for _ in range(5):
@@ -69,7 +69,7 @@ def measure_optimization_timing():
         times.append(time.time() - start)
 
     times_ms = np.array(times) * 1000
-    print(f"  multiply_3d timing (50 samples):")
+    print("  multiply_3d timing (50 samples):")
     print(f"    Mean: {times_ms.mean():.3f} ms")
     print(f"    Std:  {times_ms.std():.3f} ms")
     print(f"    Min:  {times_ms.min():.3f} ms")
@@ -78,7 +78,7 @@ def measure_optimization_timing():
     print(f"    Target: <1.000 ms ({'✅ PASS' if times_ms.mean() < 1.0 else '❌ FAIL'})")
 
     # === Test g_ata_g_3d (g^T @ A^T A @ g) ===
-    print(f"\nTesting g_ata_g_3d (g^T @ A^T A @ g):")
+    print("\nTesting g_ata_g_3d (g^T @ A^T A @ g):")
 
     gradient_gpu = result  # Use multiply result as gradient
 
@@ -100,7 +100,7 @@ def measure_optimization_timing():
         times.append(time.time() - start)
 
     times_ms = np.array(times) * 1000
-    print(f"  g_ata_g_3d timing (50 samples):")
+    print("  g_ata_g_3d timing (50 samples):")
     print(f"    Mean: {times_ms.mean():.3f} ms")
     print(f"    Std:  {times_ms.std():.3f} ms")
     print(f"    Min:  {times_ms.min():.3f} ms")
@@ -109,7 +109,7 @@ def measure_optimization_timing():
     print(f"    Target: <1.000 ms ({'✅ PASS' if times_ms.mean() < 1.0 else '❌ FAIL'})")
 
     # === Test complete optimization step ===
-    print(f"\nTesting complete optimization step:")
+    print("\nTesting complete optimization step:")
 
     # Simulate one optimization iteration
     # Step 1: A^T A @ x
@@ -148,22 +148,18 @@ def measure_optimization_timing():
         step_times.append(time.time() - start)
 
     step_times_ms = np.array(step_times) * 1000
-    print(f"  Complete optimization step (20 samples):")
+    print("  Complete optimization step (20 samples):")
     print(f"    Mean: {step_times_ms.mean():.3f} ms")
     print(f"    Std:  {step_times_ms.std():.3f} ms")
     print(f"    Min:  {step_times_ms.min():.3f} ms")
     print(f"    Max:  {step_times_ms.max():.3f} ms")
-    print(
-        f"    Target: <10.000 ms for 15fps ({'✅ PASS' if step_times_ms.mean() < 10.0 else '❌ FAIL'})"
-    )
+    print(f"    Target: <10.000 ms for 15fps ({'✅ PASS' if step_times_ms.mean() < 10.0 else '❌ FAIL'})")
 
     # === Scaling analysis ===
-    print(f"\n--- Scaling Analysis ---")
+    print("\n--- Scaling Analysis ---")
     print(f"LED count: {led_count}")
     print(f"DIA diagonals: {dia_matrix.dia_data_cpu.shape[1]}")
-    print(
-        f"DIA efficiency: {dia_matrix.dia_data_cpu.shape[1] / led_count:.1f}x LED count"
-    )
+    print(f"DIA efficiency: {dia_matrix.dia_data_cpu.shape[1] / led_count:.1f}x LED count")
     print(f"Matrix density: {dia_matrix.dia_data_cpu.shape[1] / led_count * 100:.1f}%")
 
     # Estimate for target LED counts
@@ -171,9 +167,7 @@ def measure_optimization_timing():
     for target in target_leds:
         # Assume similar diagonal density
         estimated_diagonals = dia_matrix.dia_data_cpu.shape[1] * (target / led_count)
-        estimated_multiply_time = (
-            times_ms.mean() * (target / led_count) ** 1.5
-        )  # Rough scaling
+        estimated_multiply_time = times_ms.mean() * (target / led_count) ** 1.5  # Rough scaling
         estimated_g_ata_g_time = times_ms.mean() * (target / led_count) ** 1.5
         estimated_total = estimated_multiply_time + estimated_g_ata_g_time
 
@@ -182,9 +176,7 @@ def measure_optimization_timing():
         print(f"  Est. multiply_3d: {estimated_multiply_time:.3f} ms")
         print(f"  Est. g_ata_g_3d: {estimated_g_ata_g_time:.3f} ms")
         print(f"  Est. total: {estimated_total:.3f} ms")
-        print(
-            f"  Target check: {'✅ FEASIBLE' if estimated_total < 10.0 else '❌ TOO SLOW'}"
-        )
+        print(f"  Target check: {'✅ FEASIBLE' if estimated_total < 10.0 else '❌ TOO SLOW'}")
 
 
 if __name__ == "__main__":

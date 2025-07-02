@@ -158,9 +158,7 @@ class ConsumerProcess:
             # Start processing thread
             self._running = True
             self._shutdown_requested = False
-            self._process_thread = threading.Thread(
-                target=self._process_loop, name="ConsumerProcess"
-            )
+            self._process_thread = threading.Thread(target=self._process_loop, name="ConsumerProcess")
             self._process_thread.start()
 
             logger.info("Consumer process started")
@@ -208,9 +206,7 @@ class ConsumerProcess:
                     break
 
                 # Wait for new frame
-                buffer_info = self._frame_consumer.wait_for_ready_buffer(
-                    timeout=self.max_frame_wait_timeout
-                )
+                buffer_info = self._frame_consumer.wait_for_ready_buffer(timeout=self.max_frame_wait_timeout)
 
                 if buffer_info is None:
                     # Timeout waiting for frame
@@ -257,28 +253,20 @@ class ConsumerProcess:
 
             # Apply brightness scaling
             if self.brightness_scale != 1.0:
-                rgb_frame = (
-                    (rgb_frame * self.brightness_scale).clip(0, 255).astype(np.uint8)
-                )
+                rgb_frame = (rgb_frame * self.brightness_scale).clip(0, 255).astype(np.uint8)
 
             # Optimize LED values
             optimization_start = time.time()
 
             # Use diffusion pattern optimization
-            max_iters = (
-                50 if self.use_optimization else 5
-            )  # Fewer iterations for speed mode
-            result = self._led_optimizer.optimize_frame(
-                rgb_frame, max_iterations=max_iters
-            )
+            max_iters = 50 if self.use_optimization else 5  # Fewer iterations for speed mode
+            result = self._led_optimizer.optimize_frame(rgb_frame, max_iterations=max_iters)
 
             optimization_time = time.time() - optimization_start
 
             # Check optimization result
             if not result.converged:
-                logger.warning(
-                    f"Optimization did not converge after {result.iterations} iterations"
-                )
+                logger.warning(f"Optimization did not converge after {result.iterations} iterations")
                 self._stats.optimization_errors += 1
 
             # Transmit to WLED
@@ -289,9 +277,7 @@ class ConsumerProcess:
             transmission_time = time.time() - transmission_start
 
             if not transmission_result.success:
-                logger.warning(
-                    f"WLED transmission failed: {transmission_result.errors}"
-                )
+                logger.warning(f"WLED transmission failed: {transmission_result.errors}")
                 self._stats.transmission_errors += 1
 
             # Update statistics
@@ -310,8 +296,8 @@ class ConsumerProcess:
 
                 logger.info(
                     f"Performance: {avg_fps:.1f} fps avg, "
-                    f"opt: {avg_opt_time*1000:.1f}ms, "
-                    f"tx: {avg_tx_time*1000:.1f}ms, "
+                    f"opt: {avg_opt_time * 1000:.1f}ms, "
+                    f"tx: {avg_tx_time * 1000:.1f}ms, "
                     f"errors: opt={self._stats.optimization_errors}, "
                     f"tx={self._stats.transmission_errors}"
                 )

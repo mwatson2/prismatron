@@ -4,7 +4,7 @@
 repos:
   # General code quality and formatting
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v5.0.0
     hooks:
       - id: trailing-whitespace
         args: [--markdown-linebreak-ext=md]
@@ -27,7 +27,7 @@ repos:
 
   # Python code formatting with Black
   - repo: https://github.com/psf/black
-    rev: 23.12.1
+    rev: 25.1.0
     hooks:
       - id: black
         language_version: python3
@@ -35,21 +35,18 @@ repos:
 
   # Import sorting with isort (compatible with Black)
   - repo: https://github.com/pycqa/isort
-    rev: 5.13.2
+    rev: 6.0.1
     hooks:
       - id: isort
         args: [--profile=black, --line-length=88]
 
-  # Python linting with flake8 (relaxed config for development phase)
-  - repo: https://github.com/pycqa/flake8
-    rev: 7.0.0
+  # Python linting with Ruff (fast and comprehensive)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.12.1
     hooks:
-      - id: flake8
-        additional_dependencies:
-          - flake8-docstrings
-          - flake8-bugbear
-          - flake8-comprehensions
-          - flake8-simplify
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
 
   # Type checking with mypy (temporarily disabled for initial setup)
   # - repo: https://github.com/pre-commit/mirrors-mypy
@@ -61,7 +58,7 @@ repos:
 
   # Security scanning with bandit
   - repo: https://github.com/pycqa/bandit
-    rev: 1.7.5
+    rev: 1.8.5
     hooks:
       - id: bandit
         args: ['-c', 'pyproject.toml']

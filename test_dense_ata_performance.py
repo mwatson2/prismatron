@@ -38,7 +38,7 @@ def test_dense_ata_performance():
     print(f"A matrix shape: {A_csc.shape}, nnz: {A_csc.nnz}")
 
     # === Method 1: Current DIA (for comparison) ===
-    print(f"\n--- Method 1: DIA Matrix (Current) ---")
+    print("\n--- Method 1: DIA Matrix (Current) ---")
 
     dia_matrix = DiagonalATAMatrix(led_count=led_count)
 
@@ -52,11 +52,11 @@ def test_dense_ata_performance():
     sys.stdout = old_stdout
 
     print(
-        f"DIA diagonals: {dia_matrix.dia_data_cpu.shape[1]} ({dia_matrix.dia_data_cpu.shape[1]/999*100:.1f}% dense)"
+        f"DIA diagonals: {dia_matrix.dia_data_cpu.shape[1]} ({dia_matrix.dia_data_cpu.shape[1] / 999 * 100:.1f}% dense)"
     )
 
     # === Method 2: Dense A^T A matrices ===
-    print(f"\n--- Method 2: Dense A^T A Matrices ---")
+    print("\n--- Method 2: Dense A^T A Matrices ---")
 
     dense_build_start = time.time()
 
@@ -79,22 +79,18 @@ def test_dense_ata_performance():
     dense_build_time = time.time() - dense_build_start
     print(f"Dense A^T A build time: {dense_build_time:.3f}s")
     print(f"Dense A^T A shape per channel: {ATA_dense_channels[0].shape}")
-    print(
-        f"Dense A^T A memory per channel: {ATA_dense_channels[0].nbytes / 1024 / 1024:.1f} MB"
-    )
-    print(
-        f"Total dense A^T A memory: {3 * ATA_dense_channels[0].nbytes / 1024 / 1024:.1f} MB"
-    )
+    print(f"Dense A^T A memory per channel: {ATA_dense_channels[0].nbytes / 1024 / 1024:.1f} MB")
+    print(f"Total dense A^T A memory: {3 * ATA_dense_channels[0].nbytes / 1024 / 1024:.1f} MB")
 
     # === Performance Testing ===
-    print(f"\n--- Performance Comparison ---")
+    print("\n--- Performance Comparison ---")
 
     # Test vectors
     test_led_values = np.full((3, led_count), 0.5, dtype=np.float32)
     test_led_values_gpu = cp.asarray(test_led_values)
 
     # === Test A^T A @ x operations ===
-    print(f"\nA^T A @ x Performance:")
+    print("\nA^T A @ x Performance:")
 
     # DIA performance
     dia_times = []
@@ -117,9 +113,7 @@ def test_dense_ata_performance():
 
         dense_result = cp.zeros((3, led_count), dtype=cp.float32)
         for channel in range(3):
-            dense_result[channel] = (
-                ATA_dense_gpu[channel] @ test_led_values_gpu[channel]
-            )
+            dense_result[channel] = ATA_dense_gpu[channel] @ test_led_values_gpu[channel]
 
         cp.cuda.Device().synchronize()
         dense_times.append(time.time() - start)
@@ -129,7 +123,7 @@ def test_dense_ata_performance():
     print(f"  Dense A^T A @ x: {dense_avg:.3f} ± {dense_std:.3f} ms")
 
     # === Test g^T @ A^T A @ g operations ===
-    print(f"\ng^T @ A^T A @ g Performance:")
+    print("\ng^T @ A^T A @ g Performance:")
 
     test_gradient = dia_result  # Use result as gradient
 
@@ -166,7 +160,7 @@ def test_dense_ata_performance():
     print(f"  Dense g^T @ A^T A @ g: {dense_gatag_avg:.3f} ± {dense_gatag_std:.3f} ms")
 
     # === Test optimized dense operations ===
-    print(f"\nOptimized Dense Operations:")
+    print("\nOptimized Dense Operations:")
 
     # Use cuBLAS directly for matrix-vector multiplication
     cublas_times = []
@@ -177,9 +171,7 @@ def test_dense_ata_performance():
         cublas_result = cp.zeros((3, led_count), dtype=cp.float32)
         for channel in range(3):
             # GEMV: y = alpha * A @ x + beta * y
-            cublas_result[channel] = cp.dot(
-                ATA_dense_gpu[channel], test_led_values_gpu[channel]
-            )
+            cublas_result[channel] = cp.dot(ATA_dense_gpu[channel], test_led_values_gpu[channel])
 
         cp.cuda.Device().synchronize()
         cublas_times.append(time.time() - start)
@@ -189,7 +181,7 @@ def test_dense_ata_performance():
     print(f"  cuBLAS A^T A @ x: {cublas_avg:.3f} ± {cublas_std:.3f} ms")
 
     # === Summary ===
-    print(f"\n--- Performance Summary (target: <1ms each) ---")
+    print("\n--- Performance Summary (target: <1ms each) ---")
 
     operations = [
         ("DIA A^T A @ x", dia_avg, dia_std),
@@ -199,7 +191,7 @@ def test_dense_ata_performance():
         ("Dense g^T @ A^T A @ g", dense_gatag_avg, dense_gatag_std),
     ]
 
-    print(f"")
+    print("")
     for name, avg_time, std_time in operations:
         status = "✅" if avg_time < 1.0 else f"⚠️ {avg_time:.1f}x slower"
         print(f"{name:20}: {avg_time:6.3f} ± {std_time:5.3f} ms  {status}")
@@ -218,10 +210,10 @@ def test_dense_ata_performance():
     dia_memory = dia_matrix.dia_data_cpu.nbytes / 1024 / 1024
     dense_memory = sum(mat.nbytes for mat in ATA_dense_channels) / 1024 / 1024
 
-    print(f"\n📊 Memory Usage:")
+    print("\n📊 Memory Usage:")
     print(f"  DIA matrix: {dia_memory:.1f} MB")
     print(f"  Dense matrices: {dense_memory:.1f} MB")
-    print(f"  Memory ratio: {dense_memory/dia_memory:.1f}x")
+    print(f"  Memory ratio: {dense_memory / dia_memory:.1f}x")
 
 
 if __name__ == "__main__":

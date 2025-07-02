@@ -267,9 +267,7 @@ class CustomDIAMatVec:
 
         # Compile kernels
         if use_optimized:
-            self.kernel = cupy.RawKernel(
-                DIA_MATVEC_OPTIMIZED_KERNEL, "dia_matvec_optimized_kernel"
-            )
+            self.kernel = cupy.RawKernel(DIA_MATVEC_OPTIMIZED_KERNEL, "dia_matvec_optimized_kernel")
         else:
             self.kernel = cupy.RawKernel(DIA_MATVEC_KERNEL, "dia_matvec_kernel")
 
@@ -294,12 +292,8 @@ class CustomDIAMatVec:
         num_bands = len(dia_matrix.offsets)
 
         # Prepare data arrays
-        data = cupy.asarray(
-            dia_matrix.data, dtype=cupy.float32
-        )  # Shape: (num_bands, n)
-        offsets = cupy.asarray(
-            dia_matrix.offsets, dtype=cupy.int32
-        )  # Shape: (num_bands,)
+        data = cupy.asarray(dia_matrix.data, dtype=cupy.float32)  # Shape: (num_bands, n)
+        offsets = cupy.asarray(dia_matrix.offsets, dtype=cupy.int32)  # Shape: (num_bands,)
         x_input = cupy.asarray(x, dtype=cupy.float32)  # Shape: (n,)
         y_output = cupy.zeros(n, dtype=cupy.float32)  # Shape: (n,)
 
@@ -345,9 +339,7 @@ class CustomDIA3DMatVec:
 
         # Compile 3D kernels
         if use_optimized:
-            self.kernel = cupy.RawKernel(
-                DIA_MATVEC_3D_OPTIMIZED_KERNEL, "dia_matvec_3d_optimized_kernel"
-            )
+            self.kernel = cupy.RawKernel(DIA_MATVEC_3D_OPTIMIZED_KERNEL, "dia_matvec_3d_optimized_kernel")
         else:
             self.kernel = cupy.RawKernel(DIA_MATVEC_3D_KERNEL, "dia_matvec_3d_kernel")
 
@@ -368,15 +360,11 @@ class CustomDIA3DMatVec:
             Result vectors y = A @ x for each channel (channels, n)
         """
         channels, num_bands, n = dia_data_3d.shape
-        assert dia_offsets.shape == (
-            num_bands,
-        ), f"Offsets shape mismatch: {dia_offsets.shape}"
+        assert dia_offsets.shape == (num_bands,), f"Offsets shape mismatch: {dia_offsets.shape}"
         assert x.shape == (channels, n), f"Input shape mismatch: {x.shape}"
 
         # Prepare GPU arrays with proper types
-        data_gpu = cupy.asarray(
-            dia_data_3d, dtype=cupy.float32
-        )  # Shape: (channels, num_bands, n)
+        data_gpu = cupy.asarray(dia_data_3d, dtype=cupy.float32)  # Shape: (channels, num_bands, n)
         offsets_gpu = cupy.asarray(dia_offsets, dtype=cupy.int32)  # Shape: (num_bands,)
         x_gpu = cupy.asarray(x, dtype=cupy.float32)  # Shape: (channels, n)
         y_gpu = cupy.zeros((channels, n), dtype=cupy.float32)  # Shape: (channels, n)
@@ -426,9 +414,7 @@ class CustomDIA3DMatVec:
         return y_gpu
 
 
-def create_test_dia_matrix(
-    n: int = 3000, num_bands: int = 101
-) -> Tuple[cusp.dia_matrix, np.ndarray]:
+def create_test_dia_matrix(n: int = 3000, num_bands: int = 101) -> Tuple[cusp.dia_matrix, np.ndarray]:
     """Create a test DIA matrix with realistic band structure.
 
     Args:
@@ -467,21 +453,15 @@ def create_test_dia_matrix(
     return dia_matrix, dense_matrix
 
 
-def benchmark_dia_kernels(
-    dia_matrix, dense_matrix, num_trials: int = 20, num_warmup: int = 5
-):
+def benchmark_dia_kernels(dia_matrix, dense_matrix, num_trials: int = 20, num_warmup: int = 5):
     """Benchmark different DIA kernel implementations."""
 
     n = dia_matrix.shape[0]
-    print(
-        f"Benchmarking DIA kernels for {n}x{n} matrix with {len(dia_matrix.offsets)} bands"
-    )
-    print(f"Matrix nnz: {dia_matrix.nnz}, sparsity: {dia_matrix.nnz/(n*n)*100:.2f}%")
+    print(f"Benchmarking DIA kernels for {n}x{n} matrix with {len(dia_matrix.offsets)} bands")
+    print(f"Matrix nnz: {dia_matrix.nnz}, sparsity: {dia_matrix.nnz / (n * n) * 100:.2f}%")
 
     # Create test vectors
-    test_vectors = [
-        cupy.random.randn(n, dtype=cupy.float32) for _ in range(num_trials + num_warmup)
-    ]
+    test_vectors = [cupy.random.randn(n, dtype=cupy.float32) for _ in range(num_trials + num_warmup)]
 
     results = {}
 
@@ -613,9 +593,7 @@ def verify_kernel_correctness(dia_matrix, dense_matrix, tolerance: float = 1e-2)
     print("  Testing with simple 3x3 matrix first...")
     import scipy.sparse as sp
 
-    simple_dense = cupy.array(
-        [[1.0, 2.0, 0.0], [3.0, 4.0, 5.0], [0.0, 6.0, 7.0]], dtype=cupy.float32
-    )
+    simple_dense = cupy.array([[1.0, 2.0, 0.0], [3.0, 4.0, 5.0], [0.0, 6.0, 7.0]], dtype=cupy.float32)
 
     simple_dia_scipy = sp.dia_matrix(cupy.asnumpy(simple_dense))
     simple_dia_cupy = cusp.dia_matrix(simple_dia_scipy)
@@ -634,12 +612,8 @@ def verify_kernel_correctness(dia_matrix, dense_matrix, tolerance: float = 1e-2)
     print(f"    Reference result: {y_ref_simple}")
     print(f"    Custom kernel:    {y_basic_simple}")
     print(f"    CuPy DIA:         {y_cupy_simple}")
-    print(
-        f"    Custom error:     {cupy.max(cupy.abs(y_basic_simple - y_ref_simple)):.6f}"
-    )
-    print(
-        f"    CuPy error:       {cupy.max(cupy.abs(y_cupy_simple - y_ref_simple)):.6f}"
-    )
+    print(f"    Custom error:     {cupy.max(cupy.abs(y_basic_simple - y_ref_simple)):.6f}")
+    print(f"    CuPy error:       {cupy.max(cupy.abs(y_cupy_simple - y_ref_simple)):.6f}")
 
     # If simple case fails, debug step by step
     if cupy.max(cupy.abs(y_basic_simple - y_ref_simple)) > tolerance:
@@ -666,12 +640,8 @@ def verify_kernel_correctness(dia_matrix, dense_matrix, tolerance: float = 1e-2)
                     contribution = matrix_val * x_cpu[j]
                     manual_sum += contribution
 
-                    print(
-                        f"        Band {band} (offset {offset}): A[{i},{j}] = data[{band},{j}] = {matrix_val:.1f}"
-                    )
-                    print(
-                        f"          Contribution: {matrix_val:.1f} * x[{j}] = {contribution:.1f}"
-                    )
+                    print(f"        Band {band} (offset {offset}): A[{i},{j}] = data[{band},{j}] = {matrix_val:.1f}")
+                    print(f"          Contribution: {matrix_val:.1f} * x[{j}] = {contribution:.1f}")
 
             print(f"      y[{i}] = {manual_sum:.1f} (expected {y_ref_simple[i]:.1f})")
 
@@ -703,9 +673,7 @@ def verify_kernel_correctness(dia_matrix, dense_matrix, tolerance: float = 1e-2)
     print(f"  Max error (custom optimized): {float(error_opt):.2e}")
     print(f"  Max error (CuPy DIA): {float(error_cupy):.2e}")
 
-    all_correct = (
-        error_basic < tolerance and error_opt < tolerance and error_cupy < tolerance
-    )
+    all_correct = error_basic < tolerance and error_opt < tolerance and error_cupy < tolerance
     print(f"  Basic kernel correct: {error_basic < tolerance}")
     print(f"  Optimized kernel correct: {error_opt < tolerance}")
     print(f"  CuPy DIA correct: {error_cupy < tolerance}")
@@ -725,9 +693,7 @@ def main():
     print(f"Number of bands: {len(dia_matrix.offsets)}")
     print(f"Band offsets: [{dia_matrix.offsets[0]}, ..., {dia_matrix.offsets[-1]}]")
     print(f"Matrix nnz: {dia_matrix.nnz}")
-    print(
-        f"Sparsity: {dia_matrix.nnz / (dia_matrix.shape[0] * dia_matrix.shape[1]) * 100:.2f}%"
-    )
+    print(f"Sparsity: {dia_matrix.nnz / (dia_matrix.shape[0] * dia_matrix.shape[1]) * 100:.2f}%")
     print(f"DIA memory: {dia_matrix.data.nbytes / 1024**2:.1f} MB")
     print(f"Dense memory: {dense_matrix.nbytes / 1024**2:.1f} MB")
     print(f"Memory reduction: {dense_matrix.nbytes / dia_matrix.data.nbytes:.1f}x\n")
@@ -755,9 +721,7 @@ def main():
         gflops = data["flops"] / data["mean_time"] / 1e9
         speedup = baseline_time / data["mean_time"]
 
-        print(
-            f"{name:19s}  | {mean_ms:6.2f}±{std_ms:5.2f} | {gflops:8.2f}  | {speedup:6.2f}x"
-        )
+        print(f"{name:19s}  | {mean_ms:6.2f}±{std_ms:5.2f} | {gflops:8.2f}  | {speedup:6.2f}x")
 
     print("\n=== Custom Kernel Development Complete ===")
 
