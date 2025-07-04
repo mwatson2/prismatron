@@ -40,28 +40,28 @@ def compute_ata_inverse_from_dia(
     """
     import scipy.sparse as sp
     import scipy.sparse.linalg as spla
-    
+
     print(f"Computing ATA inverse from DIA format: {dia_matrix.led_count} LEDs, {dia_matrix.k} diagonals")
-    
+
     led_count = dia_matrix.led_count
     ata_inverse = np.zeros((3, led_count, led_count), dtype=np.float32)
     condition_numbers = []
     successful_inversions = 0
-    
+
     for c in range(3):
-        channel_name = ['Red', 'Green', 'Blue'][c]
+        channel_name = ["Red", "Green", "Blue"][c]
         print(f"  Channel {c} ({channel_name})...")
-        
+
         try:
             # Extract DIA matrix for this channel
             ata_dia = dia_matrix.get_channel_dia_matrix(c)
-            
+
             # Convert to CSC for better solving performance (spsolve prefers CSC)
             ata_csc = ata_dia.tocsc()
-            
+
             # Add regularization for numerical stability
-            ata_regularized = ata_csc + regularization * sp.eye(led_count, format='csc')
-            
+            ata_regularized = ata_csc + regularization * sp.eye(led_count, format="csc")
+
             # Compute condition number for stability assessment
             # Convert a small sample to dense for condition number estimation
             if led_count <= 500:
@@ -73,38 +73,38 @@ def compute_ata_inverse_from_dia(
                 # Use the ratio of largest to smallest diagonal elements as approximation
                 diag = ata_regularized.diagonal()
                 cond_num = np.max(diag) / np.max([np.min(diag[diag > 0]), regularization])
-            
+
             condition_numbers.append(cond_num)
             print(f"    Condition number: {cond_num:.2e}")
-            
+
             if cond_num > max_condition_number:
                 print(f"    ⚠️  High condition number ({cond_num:.2e}), using pseudo-inverse")
                 # Use pseudo-inverse for ill-conditioned matrices
                 ata_dense = ata_regularized.toarray()
                 ata_inverse[c, :, :] = np.linalg.pinv(ata_dense).astype(np.float32)
             else:
-                print(f"    ✅ Computing sparse inverse using spsolve")
+                print("    ✅ Computing sparse inverse using spsolve")
                 # Use sparse solve: solve ATA * inv = I for inv
                 # Create identity matrix in CSC format for spsolve efficiency
-                identity = sp.eye(led_count, format='csc', dtype=np.float32)
-                
+                identity = sp.eye(led_count, format="csc", dtype=np.float32)
+
                 # Solve ATA * X = I to get ATA^-1
                 # spsolve can handle multiple right-hand sides efficiently
                 inverse_sparse = spla.spsolve(ata_regularized, identity)
-                
+
                 # Convert result to dense format
                 if sp.issparse(inverse_sparse):
                     ata_inverse[c, :, :] = inverse_sparse.toarray().astype(np.float32)
                 else:
                     ata_inverse[c, :, :] = inverse_sparse.astype(np.float32)
-                
+
                 successful_inversions += 1
-                
+
         except Exception as e:
             print(f"    ❌ Error computing inverse: {e}")
-            print(f"    Using pseudo-inverse as fallback")
-            condition_numbers.append(float('inf'))
-            
+            print("    Using pseudo-inverse as fallback")
+            condition_numbers.append(float("inf"))
+
             # Fallback: convert to dense and use pseudo-inverse
             try:
                 ata_dia = dia_matrix.get_channel_dia_matrix(c)
@@ -115,17 +115,17 @@ def compute_ata_inverse_from_dia(
                 print(f"    ❌ Pseudo-inverse also failed: {e2}")
                 # Last resort: identity matrix scaled by regularization
                 ata_inverse[c, :, :] = np.eye(led_count, dtype=np.float32) / regularization
-    
+
     # Calculate average condition number (excluding infinite values)
-    finite_cond_nums = [cn for cn in condition_numbers if cn != float('inf')]
-    avg_condition_number = np.mean(finite_cond_nums) if finite_cond_nums else float('inf')
-    
-    print(f"ATA inverse computation summary:")
+    finite_cond_nums = [cn for cn in condition_numbers if cn != float("inf")]
+    avg_condition_number = np.mean(finite_cond_nums) if finite_cond_nums else float("inf")
+
+    print("ATA inverse computation summary:")
     print(f"  Successful inversions: {successful_inversions}/3")
     print(f"  Average condition number: {avg_condition_number:.2e}")
     print(f"  Output shape: {ata_inverse.shape}")
     print(f"  Memory usage: {ata_inverse.nbytes / 1024 / 1024:.1f} MB")
-    
+
     return ata_inverse, successful_inversions, condition_numbers, avg_condition_number
 
 

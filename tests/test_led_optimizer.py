@@ -577,7 +577,11 @@ class TestATAInverseOptimization(unittest.TestCase):
         diffusion_matrix = LEDDiffusionCSCMatrix(csc_matrix=matrix, height=FRAME_HEIGHT, width=FRAME_WIDTH, channels=3)
 
         mixed_tensor = SingleBlockMixedSparseTensor(
-            batch_size=test_led_count, channels=3, height=FRAME_HEIGHT, width=FRAME_WIDTH, block_size=96
+            batch_size=test_led_count,
+            channels=3,
+            height=FRAME_HEIGHT,
+            width=FRAME_WIDTH,
+            block_size=96,
         )
 
         # Create realistic ATA matrices with some off-diagonal structure
@@ -608,7 +612,7 @@ class TestATAInverseOptimization(unittest.TestCase):
                 successful_inversions += 1
             except np.linalg.LinAlgError:
                 ata_inverse_matrices[c, :, :] = np.eye(test_led_count, dtype=np.float32)
-                condition_numbers.append(float('inf'))
+                condition_numbers.append(float("inf"))
 
         # Create dense_ata dictionary with inverse
         dense_ata_dict = {
@@ -618,7 +622,7 @@ class TestATAInverseOptimization(unittest.TestCase):
             "dense_ata_channels": 3,
             "dense_ata_computation_time": 0.1,
             "condition_numbers": condition_numbers,
-            "avg_condition_number": np.mean([cn for cn in condition_numbers if cn != float('inf')]),
+            "avg_condition_number": np.mean([cn for cn in condition_numbers if cn != float("inf")]),
             "successful_inversions": successful_inversions,
             "inversion_successful": [True] * successful_inversions + [False] * (3 - successful_inversions),
         }
@@ -664,7 +668,11 @@ class TestATAInverseOptimization(unittest.TestCase):
         diffusion_matrix = LEDDiffusionCSCMatrix(csc_matrix=matrix, height=FRAME_HEIGHT, width=FRAME_WIDTH, channels=3)
 
         mixed_tensor = SingleBlockMixedSparseTensor(
-            batch_size=test_led_count, channels=3, height=FRAME_HEIGHT, width=FRAME_WIDTH, block_size=96
+            batch_size=test_led_count,
+            channels=3,
+            height=FRAME_HEIGHT,
+            width=FRAME_WIDTH,
+            block_size=96,
         )
 
         # Create ATA matrices but NO inverse
@@ -705,14 +713,15 @@ class TestATAInverseOptimization(unittest.TestCase):
     def tearDown(self):
         """Clean up after tests."""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     @unittest.skipIf(not CUPY_AVAILABLE, "CuPy not available")
     def test_ata_inverse_performance_comparison(self):
         """Compare optimization performance with and without ATA inverse initialization."""
-        print("\n" + "="*100)
+        print("\n" + "=" * 100)
         print("ATA INVERSE PERFORMANCE COMPARISON TEST (2600 LEDs)")
-        print("="*100)
+        print("=" * 100)
 
         # Create test frame with realistic content
         test_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
@@ -723,7 +732,7 @@ class TestATAInverseOptimization(unittest.TestCase):
         # Test parameters
         max_iterations = 50
         num_warmup_runs = 2  # Warm-up runs not included in timing
-        num_test_runs = 5    # Actual measurement runs
+        num_test_runs = 5  # Actual measurement runs
 
         # Initialize optimizers
         print("Initializing optimizers...")
@@ -737,7 +746,10 @@ class TestATAInverseOptimization(unittest.TestCase):
         self.assertTrue(optimizer_with_inverse.initialize())
         self.assertTrue(optimizer_without_inverse.initialize())
         self.assertTrue(optimizer_with_inverse._has_ata_inverse, "Should have ATA inverse available")
-        self.assertFalse(optimizer_without_inverse._has_ata_inverse, "Should NOT have ATA inverse available")
+        self.assertFalse(
+            optimizer_without_inverse._has_ata_inverse,
+            "Should NOT have ATA inverse available",
+        )
 
         print(
             f"✓ Optimizer WITH inverse: {optimizer_with_inverse._actual_led_count} LEDs, "
@@ -753,7 +765,7 @@ class TestATAInverseOptimization(unittest.TestCase):
         for i in range(num_warmup_runs):
             optimizer_with_inverse.optimize_frame(test_frame, max_iterations=5, debug=False)
             optimizer_without_inverse.optimize_frame(test_frame, max_iterations=5, debug=False)
-            print(f"  Warm-up {i+1}/{num_warmup_runs} completed")
+            print(f"  Warm-up {i + 1}/{num_warmup_runs} completed")
 
         # Test WITH ATA inverse
         print(f"\nTesting optimization WITH ATA inverse ({num_test_runs} measurement runs)...")
@@ -766,9 +778,7 @@ class TestATAInverseOptimization(unittest.TestCase):
                 optimizer_with_inverse.timing.reset()
 
             start_time = time.perf_counter()
-            result_with = optimizer_with_inverse.optimize_frame(
-                test_frame, max_iterations=max_iterations, debug=True
-            )
+            result_with = optimizer_with_inverse.optimize_frame(test_frame, max_iterations=max_iterations, debug=True)
             end_time = time.perf_counter()
 
             total_time = (end_time - start_time) * 1000  # Convert to ms
@@ -777,7 +787,7 @@ class TestATAInverseOptimization(unittest.TestCase):
             with_inverse_timings.append(total_time)
 
             print(
-                f"  Run {run+1}: {result_with.iterations} iterations, "
+                f"  Run {run + 1}: {result_with.iterations} iterations, "
                 f"MSE: {result_with.error_metrics['mse']:.6f}, Time: {total_time:.2f}ms"
             )
 
@@ -803,7 +813,7 @@ class TestATAInverseOptimization(unittest.TestCase):
             without_inverse_timings.append(total_time)
 
             print(
-                f"  Run {run+1}: {result_without.iterations} iterations, "
+                f"  Run {run + 1}: {result_without.iterations} iterations, "
                 f"MSE: {result_without.error_metrics['mse']:.6f}, Time: {total_time:.2f}ms"
             )
 
@@ -813,10 +823,10 @@ class TestATAInverseOptimization(unittest.TestCase):
         std_iterations_with = np.std([r.iterations for r in with_inverse_results])
         std_iterations_without = np.std([r.iterations for r in without_inverse_results])
 
-        avg_mse_with = np.mean([r.error_metrics['mse'] for r in with_inverse_results])
-        avg_mse_without = np.mean([r.error_metrics['mse'] for r in without_inverse_results])
-        std_mse_with = np.std([r.error_metrics['mse'] for r in with_inverse_results])
-        std_mse_without = np.std([r.error_metrics['mse'] for r in without_inverse_results])
+        avg_mse_with = np.mean([r.error_metrics["mse"] for r in with_inverse_results])
+        avg_mse_without = np.mean([r.error_metrics["mse"] for r in without_inverse_results])
+        std_mse_with = np.std([r.error_metrics["mse"] for r in with_inverse_results])
+        std_mse_without = np.std([r.error_metrics["mse"] for r in without_inverse_results])
 
         avg_time_with = np.mean(with_inverse_timings)
         avg_time_without = np.mean(without_inverse_timings)
@@ -836,15 +846,15 @@ class TestATAInverseOptimization(unittest.TestCase):
         timing_breakdown_with = None
         timing_breakdown_without = None
 
-        if optimizer_with_inverse.timing and hasattr(optimizer_with_inverse.timing, 'get_summary'):
+        if optimizer_with_inverse.timing and hasattr(optimizer_with_inverse.timing, "get_summary"):
             timing_breakdown_with = optimizer_with_inverse.timing.get_summary()
-        if optimizer_without_inverse.timing and hasattr(optimizer_without_inverse.timing, 'get_summary'):
+        if optimizer_without_inverse.timing and hasattr(optimizer_without_inverse.timing, "get_summary"):
             timing_breakdown_without = optimizer_without_inverse.timing.get_summary()
 
         # Print comprehensive results
-        print("\n" + "="*100)
+        print("\n" + "=" * 100)
         print("COMPREHENSIVE PERFORMANCE COMPARISON RESULTS")
-        print("="*100)
+        print("=" * 100)
         print(f"LED Count: {optimizer_with_inverse._actual_led_count}")
         print(f"Frame Size: {FRAME_HEIGHT}x{FRAME_WIDTH}")
         print(f"Test Runs: {num_test_runs} (after {num_warmup_runs} warm-up runs)")
@@ -890,7 +900,7 @@ class TestATAInverseOptimization(unittest.TestCase):
             time_efficiency = (avg_time_without - avg_time_with) / avg_time_without * 100
             print(f"TIME EFFICIENCY CHANGE: {time_efficiency:+.1f}%")
 
-        print("="*100)
+        print("=" * 100)
 
         # Assertions
         self.assertGreater(avg_iterations_with, 0, "Should have non-zero iterations with inverse")
@@ -909,7 +919,7 @@ class TestATAInverseOptimization(unittest.TestCase):
             self.assertGreater(result.iterations, 0)
             self.assertTrue(np.all(result.led_values >= 0))
             self.assertTrue(np.all(result.led_values <= 255))
-            self.assertIn('mse', result.error_metrics)
+            self.assertIn("mse", result.error_metrics)
 
         # Report key findings
         if iteration_reduction >= 1:
@@ -923,14 +933,14 @@ class TestATAInverseOptimization(unittest.TestCase):
         if mse_improvement > 0:
             print(f"✨ QUALITY GAIN: {mse_improvement_percent:.1f}% better final MSE with ATA inverse")
 
-        print("="*100)
+        print("=" * 100)
 
     @unittest.skipIf(not CUPY_AVAILABLE, "CuPy not available")
     def test_ata_inverse_initialization_timing(self):
         """Test and measure the timing of ATA inverse initialization with 2600 LEDs."""
-        print("\n" + "="*80)
+        print("\n" + "=" * 80)
         print("ATA INVERSE INITIALIZATION TIMING TEST (2600 LEDs)")
-        print("="*80)
+        print("=" * 80)
 
         # Create optimizer with ATA inverse
         optimizer = LEDOptimizer(diffusion_patterns_path=self.patterns_with_inverse_path.replace(".npz", ""))
@@ -947,15 +957,15 @@ class TestATAInverseOptimization(unittest.TestCase):
         test_frame[200:300, 600:700] = [100, 50, 255]  # Purple-ish region
 
         # Test parameters
-        num_warmup_runs = 2   # Warm-up runs not included in timing
+        num_warmup_runs = 2  # Warm-up runs not included in timing
         num_measurement_runs = 10  # Actual measurement runs
-        max_iterations = 5    # Limited iterations to focus on initialization
+        max_iterations = 5  # Limited iterations to focus on initialization
 
         # WARM-UP RUNS (not included in measurements)
         print(f"\nPerforming {num_warmup_runs} warm-up runs (not included in timing)...")
         for i in range(num_warmup_runs):
             optimizer.optimize_frame(test_frame, max_iterations=max_iterations, debug=False)
-            print(f"  Warm-up {i+1}/{num_warmup_runs} completed")
+            print(f"  Warm-up {i + 1}/{num_warmup_runs} completed")
 
         # MEASUREMENT RUNS
         print(f"\nMeasuring ATA inverse initialization and optimization over {num_measurement_runs} runs...")
@@ -975,10 +985,10 @@ class TestATAInverseOptimization(unittest.TestCase):
             total_time = (end_time - start_time) * 1000  # Convert to ms
             init_times.append(total_time)
             iteration_counts.append(result.iterations)
-            mse_values.append(result.error_metrics['mse'])
+            mse_values.append(result.error_metrics["mse"])
 
             print(
-                f"  Run {i+1}: {result.iterations} iterations, "
+                f"  Run {i + 1}: {result.iterations} iterations, "
                 f"MSE: {result.error_metrics['mse']:.6f}, Time: {total_time:.2f}ms"
             )
 
@@ -995,13 +1005,13 @@ class TestATAInverseOptimization(unittest.TestCase):
 
         # Detailed timing breakdown (if available)
         timing_breakdown = None
-        if optimizer.timing and hasattr(optimizer.timing, 'get_summary'):
+        if optimizer.timing and hasattr(optimizer.timing, "get_summary"):
             timing_breakdown = optimizer.timing.get_summary()
 
         # Print comprehensive results
-        print("\n" + "="*80)
+        print("\n" + "=" * 80)
         print("DETAILED TIMING RESULTS")
-        print("="*80)
+        print("=" * 80)
         print(f"LED Count: {optimizer._actual_led_count}")
         print(f"Frame Size: {FRAME_HEIGHT}x{FRAME_WIDTH}")
         print(f"Max Iterations per Run: {max_iterations}")
@@ -1015,7 +1025,7 @@ class TestATAInverseOptimization(unittest.TestCase):
         if timing_breakdown:
             print("\nDETAILED TIMING BREAKDOWN:")
             for component, timing_data in timing_breakdown.items():
-                if isinstance(timing_data, dict) and 'total_time' in timing_data:
+                if isinstance(timing_data, dict) and "total_time" in timing_data:
                     print(f"  {component:20s}: {timing_data['total_time']:.2f} ms")
 
         # Verify the results are valid
@@ -1038,13 +1048,12 @@ class TestATAInverseOptimization(unittest.TestCase):
         self.assertLess(
             avg_time,
             1000.0,
-            f"ATA inverse optimization should complete in reasonable time for 2600 LEDs, "
-            f"got {avg_time:.2f} ms",
+            f"ATA inverse optimization should complete in reasonable time for 2600 LEDs, got {avg_time:.2f} ms",
         )
 
         print("\n✓ ATA inverse initialization and optimization completed successfully")
         print(f"✓ Average performance: {avg_time:.2f} ms for {optimizer._actual_led_count} LEDs")
-        print("="*80)
+        print("=" * 80)
 
 
 if __name__ == "__main__":

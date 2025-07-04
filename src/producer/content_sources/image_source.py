@@ -99,10 +99,7 @@ class ImageSource(ContentSource):
                 self.status = ContentStatus.READY
                 self.current_time = 0.0
                 self.current_frame = 0
-                logger.info(
-                    f"Loaded image: {self.filepath} "
-                    f"({self.content_info.width}x{self.content_info.height})"
-                )
+                logger.info(f"Loaded image: {self.filepath} ({self.content_info.width}x{self.content_info.height})")
                 return True
             else:
                 return False

@@ -36,19 +36,20 @@ class FrameOptimizationResult:
 def load_ata_inverse_from_pattern(pattern_file_path: str) -> Optional[np.ndarray]:
     """
     Load ATA inverse matrices from a diffusion pattern file.
-    
+
     Args:
         pattern_file_path: Path to the .npz pattern file
-        
+
     Returns:
         ATA inverse matrices (3, led_count, led_count) or None if not found
     """
     try:
         import numpy as np
+
         data = np.load(pattern_file_path, allow_pickle=True)
-        
-        if 'ata_inverse' in data:
-            return data['ata_inverse']
+
+        if "ata_inverse" in data:
+            return data["ata_inverse"]
         else:
             print(f"Warning: No ATA inverse found in {pattern_file_path}")
             return None
@@ -74,7 +75,7 @@ def optimize_frame_led_values(
     Optimize LED values for a target frame using gradient descent with optimal ATA inverse initialization.
 
     This is a standalone function that uses modern tensor formats and ATA inverse initialization
-    for optimal convergence: SingleBlockMixedSparseTensor for A^T @ b and DiagonalATAMatrix 
+    for optimal convergence: SingleBlockMixedSparseTensor for A^T @ b and DiagonalATAMatrix
     for efficient A^T A operations.
 
     Args:
@@ -130,7 +131,7 @@ def optimize_frame_led_values(
 
     # Step 2: Initialize LED values in optimization order - ATA inverse is now required
     led_count = ATb.shape[1]
-    
+
     # Validate ATA inverse shape (required parameter)
     if ATA_inverse.shape != (3, led_count, led_count):
         raise ValueError(f"ATA inverse shape {ATA_inverse.shape} != (3, {led_count}, {led_count})")
@@ -149,10 +150,10 @@ def optimize_frame_led_values(
         debug and logger.info("Using ATA inverse for optimal initialization")
         if timing:
             timing.start("ata_inverse_initialization")
-        
+
         # Compute optimal initial guess for each channel: x_c = (A^T A)^-1 * ATb_c
         led_values_normalized = np.zeros((3, led_count), dtype=np.float32)
-        
+
         if timing:
             # Time the overall matrix-vector multiplications
             with timing.section("ata_inverse_matvec_total", use_gpu_events=False):
@@ -161,10 +162,10 @@ def optimize_frame_led_values(
                     with timing.section(f"ata_inverse_matvec_channel_{c}", use_gpu_events=False):
                         # Extract ATb for this channel
                         ATb_channel = ATb[c, :]  # Shape: (led_count,)
-                        
+
                         # Extract ATA inverse for this channel
                         ATA_inv_channel = ATA_inverse[c, :, :]  # Shape: (led_count, led_count)
-                        
+
                         # Compute optimal initial guess: x_c = (A^T A)^-1 * ATb_c
                         x_channel = ATA_inv_channel @ ATb_channel  # Shape: (led_count,)
                         led_values_normalized[c, :] = x_channel
@@ -173,17 +174,17 @@ def optimize_frame_led_values(
             for c in range(3):
                 # Extract ATb for this channel
                 ATb_channel = ATb[c, :]  # Shape: (led_count,)
-                
+
                 # Extract ATA inverse for this channel
                 ATA_inv_channel = ATA_inverse[c, :, :]  # Shape: (led_count, led_count)
-                
+
                 # Compute optimal initial guess: x_c = (A^T A)^-1 * ATb_c
                 x_channel = ATA_inv_channel @ ATb_channel  # Shape: (led_count,)
                 led_values_normalized[c, :] = x_channel
-        
+
         # Clamp to valid range [0, 1]
         led_values_normalized = np.clip(led_values_normalized, 0.0, 1.0)
-        
+
         if timing:
             timing.stop("ata_inverse_initialization")
         debug and logger.info("Initialization completed using ATA inverse")
@@ -376,7 +377,7 @@ def _calculate_ATb(
         debug: Enable debug output
 
     Returns:
-        A^T @ b result (led_count, 3) 
+        A^T @ b result (led_count, 3)
     """
     # Mixed tensor format: use 3D CUDA kernel with uint8 data
     debug and logger.info("Using mixed tensor format for A^T @ b")
