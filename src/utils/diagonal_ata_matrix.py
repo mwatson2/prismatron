@@ -18,13 +18,22 @@ import scipy.sparse as sp
 
 # Import custom DIA kernels
 try:
-    from .custom_dia_kernel import CustomDIA3DMatVec, CustomDIAMatVec
+    from .custom_dia_kernel import (
+        CustomDIA3DMatVec,
+        CustomDIA3DMatVecFP16,
+        CustomDIAMatVec,
+        CustomDIAMatVecFP16,
+    )
 
     CUSTOM_KERNEL_AVAILABLE = True
     CUSTOM_3D_KERNEL_AVAILABLE = True
+    CUSTOM_KERNEL_FP16_AVAILABLE = True
+    CUSTOM_3D_KERNEL_FP16_AVAILABLE = True
 except ImportError:
     CUSTOM_KERNEL_AVAILABLE = False
     CUSTOM_3D_KERNEL_AVAILABLE = False
+    CUSTOM_KERNEL_FP16_AVAILABLE = False
+    CUSTOM_3D_KERNEL_FP16_AVAILABLE = False
     print("Warning: Custom DIA kernels not available")
 
 
@@ -43,17 +52,29 @@ class DiagonalATAMatrix:
     - offsets: (k,) - shared diagonal offsets
     """
 
-    def __init__(self, led_count: int, crop_size: int = 64):
+    def __init__(
+        self,
+        led_count: int,
+        crop_size: int = 64,
+        output_dtype: Optional[cupy.dtype] = None,
+    ):
         """
         Initialize diagonal A^T A matrix container.
 
         Args:
             led_count: Number of LEDs
             crop_size: Crop size used for LED regions (affects adjacency)
+            output_dtype: Data type for output tensors (cupy.float32 or cupy.float16).
+                         If None, defaults to cupy.float32.
         """
         self.led_count = led_count
         self.crop_size = crop_size
         self.channels = 3  # RGB
+
+        # Set output dtype with default
+        self.output_dtype = output_dtype if output_dtype is not None else cupy.float32
+        if self.output_dtype not in (cupy.float32, cupy.float16):
+            raise ValueError(f"Unsupported output dtype {self.output_dtype}. Supported: cupy.float32, cupy.float16")
 
         # Storage for unified 3D DIA format - shape (channels, k, leds)
         self.dia_data_cpu = None  # Shape: (channels, k, leds) - unified diagonal band data
@@ -63,13 +84,21 @@ class DiagonalATAMatrix:
 
         # Note: RCM ordering handled by pattern generation, not stored here
 
-        # Custom kernel instances
+        # Custom kernel instances (FP32)
         self.custom_kernel_basic = None
         self.custom_kernel_optimized = None
 
-        # 3D kernel instances
+        # 3D kernel instances (FP32)
         self.custom_3d_kernel_basic = None
         self.custom_3d_kernel_optimized = None
+
+        # FP16 kernel instances
+        self.custom_kernel_basic_fp16 = None
+        self.custom_kernel_optimized_fp16 = None
+
+        # 3D FP16 kernel instances
+        self.custom_3d_kernel_basic_fp16 = None
+        self.custom_3d_kernel_optimized_fp16 = None
 
         # Metadata
         self.bandwidth = None
@@ -81,6 +110,11 @@ class DiagonalATAMatrix:
         if CUSTOM_KERNEL_AVAILABLE:
             self.custom_kernel_basic = CustomDIAMatVec(use_optimized=False)
             self.custom_kernel_optimized = CustomDIAMatVec(use_optimized=True)
+
+        # Initialize FP16 kernels if available
+        if CUSTOM_KERNEL_FP16_AVAILABLE:
+            self.custom_kernel_basic_fp16 = CustomDIAMatVecFP16(use_optimized=False)
+            self.custom_kernel_optimized_fp16 = CustomDIAMatVecFP16(use_optimized=True)
 
     def build_from_diffusion_matrix(self, diffusion_matrix: sp.spmatrix) -> None:
         """
@@ -219,6 +253,7 @@ class DiagonalATAMatrix:
         led_values: np.ndarray,
         use_custom_kernel: bool = True,
         optimized_kernel: bool = False,
+        output_dtype: Optional[cupy.dtype] = None,
     ) -> np.ndarray:
         """
         Perform 3D DIA matrix-vector multiplication: (A^T)A @ led_values.
@@ -233,9 +268,11 @@ class DiagonalATAMatrix:
             led_values: LED values array (3, leds) in RCM order
             use_custom_kernel: Whether to use custom 3D DIA kernel
             optimized_kernel: Whether to use optimized custom kernel
+            output_dtype: Desired output data type (cupy.float32 or cupy.float16).
+                         If None, uses the instance's output_dtype setting.
 
         Returns:
-            Result array (3, leds) in RCM order
+            Result array (3, leds) in RCM order with specified output dtype
         """
         if led_values.shape != (self.channels, self.led_count):
             raise ValueError(f"LED values should be shape ({self.channels}, {self.led_count}), got {led_values.shape}")
@@ -248,6 +285,14 @@ class DiagonalATAMatrix:
         ):
             raise RuntimeError("Unified 3D DIA matrix not built. Call build_from_diffusion_matrix() first.")
 
+        # Determine output dtype
+        if output_dtype is None:
+            output_dtype = self.output_dtype
+
+        # Validate output dtype
+        if output_dtype not in (cupy.float32, cupy.float16):
+            raise ValueError(f"Unsupported output dtype {output_dtype}. Supported: cupy.float32, cupy.float16")
+
         # Convert to GPU arrays - avoid unnecessary copies
         if not isinstance(led_values, cupy.ndarray):
             led_values_gpu = cupy.asarray(led_values, dtype=cupy.float32)
@@ -258,25 +303,51 @@ class DiagonalATAMatrix:
             else:
                 led_values_gpu = led_values
 
-        # Perform 3D DIA matrix-vector multiplication - ONLY USE CUSTOM KERNEL
-        if use_custom_kernel and CUSTOM_3D_KERNEL_AVAILABLE:
-            # Use custom 3D CUDA kernel
-            if optimized_kernel:
-                if self.custom_3d_kernel_optimized is None:
-                    self.custom_3d_kernel_optimized = CustomDIA3DMatVec(use_optimized=True)
-                result_gpu = self.custom_3d_kernel_optimized(
-                    self.dia_data_gpu,  # Shape: (channels, k, leds)
-                    cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
-                    led_values_gpu,  # Shape: (channels, leds)
-                )
-            else:
-                if self.custom_3d_kernel_basic is None:
-                    self.custom_3d_kernel_basic = CustomDIA3DMatVec(use_optimized=False)
-                result_gpu = self.custom_3d_kernel_basic(
-                    self.dia_data_gpu,  # Shape: (channels, k, leds)
-                    cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
-                    led_values_gpu,  # Shape: (channels, leds)
-                )
+        # Perform 3D DIA matrix-vector multiplication - Select kernel based on output dtype
+        if use_custom_kernel:
+            if output_dtype == cupy.float32:
+                # Use FP32 kernels
+                if not CUSTOM_3D_KERNEL_AVAILABLE:
+                    raise RuntimeError("Custom 3D DIA FP32 kernel not available - required for performance measurement")
+
+                if optimized_kernel:
+                    if self.custom_3d_kernel_optimized is None:
+                        self.custom_3d_kernel_optimized = CustomDIA3DMatVec(use_optimized=True)
+                    result_gpu = self.custom_3d_kernel_optimized(
+                        self.dia_data_gpu,  # Shape: (channels, k, leds)
+                        cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                        led_values_gpu,  # Shape: (channels, leds)
+                    )
+                else:
+                    if self.custom_3d_kernel_basic is None:
+                        self.custom_3d_kernel_basic = CustomDIA3DMatVec(use_optimized=False)
+                    result_gpu = self.custom_3d_kernel_basic(
+                        self.dia_data_gpu,  # Shape: (channels, k, leds)
+                        cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                        led_values_gpu,  # Shape: (channels, leds)
+                    )
+
+            elif output_dtype == cupy.float16:
+                # Use FP16 kernels
+                if not CUSTOM_3D_KERNEL_FP16_AVAILABLE:
+                    raise RuntimeError("Custom 3D DIA FP16 kernel not available - required for FP16 output")
+
+                if optimized_kernel:
+                    if self.custom_3d_kernel_optimized_fp16 is None:
+                        self.custom_3d_kernel_optimized_fp16 = CustomDIA3DMatVecFP16(use_optimized=True)
+                    result_gpu = self.custom_3d_kernel_optimized_fp16(
+                        self.dia_data_gpu,  # Shape: (channels, k, leds)
+                        cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                        led_values_gpu,  # Shape: (channels, leds)
+                    )
+                else:
+                    if self.custom_3d_kernel_basic_fp16 is None:
+                        self.custom_3d_kernel_basic_fp16 = CustomDIA3DMatVecFP16(use_optimized=False)
+                    result_gpu = self.custom_3d_kernel_basic_fp16(
+                        self.dia_data_gpu,  # Shape: (channels, k, leds)
+                        cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                        led_values_gpu,  # Shape: (channels, leds)
+                    )
         else:
             # NO FALLBACK - custom kernel required for performance measurement
             raise RuntimeError("Custom 3D DIA kernel not available - required for performance measurement")
@@ -339,6 +410,7 @@ class DiagonalATAMatrix:
         gradient: np.ndarray,
         use_custom_kernel: bool = True,
         optimized_kernel: bool = False,
+        output_dtype: Optional[cupy.dtype] = None,
     ) -> np.ndarray:
         """
         Compute g^T (A^T A) g for step size calculation using 3D DIA format.
@@ -353,9 +425,11 @@ class DiagonalATAMatrix:
             gradient: Gradient array (3, leds) in RCM order
             use_custom_kernel: Whether to use custom 3D DIA kernel
             optimized_kernel: Whether to use optimized custom kernel
+            output_dtype: Desired output data type (cupy.float32 or cupy.float16).
+                         If None, uses the instance's output_dtype setting.
 
         Returns:
-            Result array (3,) - g^T (A^T A) g for each channel
+            Result array (3,) - g^T (A^T A) g for each channel with specified output dtype
         """
         if gradient.shape != (self.channels, self.led_count):
             raise ValueError(f"Gradient should be shape ({self.channels}, {self.led_count}), got {gradient.shape}")
@@ -367,6 +441,14 @@ class DiagonalATAMatrix:
         ):
             raise RuntimeError("Unified 3D DIA matrix not built. Call build_from_diffusion_matrix() first.")
 
+        # Determine output dtype
+        if output_dtype is None:
+            output_dtype = self.output_dtype
+
+        # Validate output dtype
+        if output_dtype not in (cupy.float32, cupy.float16):
+            raise ValueError(f"Unsupported output dtype {output_dtype}. Supported: cupy.float32, cupy.float16")
+
         # Convert to GPU arrays - avoid unnecessary copies
         if not isinstance(gradient, cupy.ndarray):
             gradient_gpu = cupy.asarray(gradient, dtype=cupy.float32)
@@ -377,25 +459,51 @@ class DiagonalATAMatrix:
             else:
                 gradient_gpu = gradient
 
-        # Compute (A^T A) @ g using unified 3D DIA - ONLY USE CUSTOM KERNEL
-        if use_custom_kernel and CUSTOM_3D_KERNEL_AVAILABLE:
-            # Use custom 3D CUDA kernel
-            if optimized_kernel:
-                if self.custom_3d_kernel_optimized is None:
-                    self.custom_3d_kernel_optimized = CustomDIA3DMatVec(use_optimized=True)
-                ata_g_gpu = self.custom_3d_kernel_optimized(
-                    self.dia_data_gpu,  # Shape: (channels, k, leds)
-                    cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
-                    gradient_gpu,  # Shape: (channels, leds)
-                )
-            else:
-                if self.custom_3d_kernel_basic is None:
-                    self.custom_3d_kernel_basic = CustomDIA3DMatVec(use_optimized=False)
-                ata_g_gpu = self.custom_3d_kernel_basic(
-                    self.dia_data_gpu,  # Shape: (channels, k, leds)
-                    cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
-                    gradient_gpu,  # Shape: (channels, leds)
-                )
+        # Compute (A^T A) @ g using unified 3D DIA - Select kernel based on output dtype
+        if use_custom_kernel:
+            if output_dtype == cupy.float32:
+                # Use FP32 kernels
+                if not CUSTOM_3D_KERNEL_AVAILABLE:
+                    raise RuntimeError("Custom 3D DIA FP32 kernel not available - required for performance measurement")
+
+                if optimized_kernel:
+                    if self.custom_3d_kernel_optimized is None:
+                        self.custom_3d_kernel_optimized = CustomDIA3DMatVec(use_optimized=True)
+                    ata_g_gpu = self.custom_3d_kernel_optimized(
+                        self.dia_data_gpu,  # Shape: (channels, k, leds)
+                        cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                        gradient_gpu,  # Shape: (channels, leds)
+                    )
+                else:
+                    if self.custom_3d_kernel_basic is None:
+                        self.custom_3d_kernel_basic = CustomDIA3DMatVec(use_optimized=False)
+                    ata_g_gpu = self.custom_3d_kernel_basic(
+                        self.dia_data_gpu,  # Shape: (channels, k, leds)
+                        cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                        gradient_gpu,  # Shape: (channels, leds)
+                    )
+
+            elif output_dtype == cupy.float16:
+                # Use FP16 kernels
+                if not CUSTOM_3D_KERNEL_FP16_AVAILABLE:
+                    raise RuntimeError("Custom 3D DIA FP16 kernel not available - required for FP16 output")
+
+                if optimized_kernel:
+                    if self.custom_3d_kernel_optimized_fp16 is None:
+                        self.custom_3d_kernel_optimized_fp16 = CustomDIA3DMatVecFP16(use_optimized=True)
+                    ata_g_gpu = self.custom_3d_kernel_optimized_fp16(
+                        self.dia_data_gpu,  # Shape: (channels, k, leds)
+                        cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                        gradient_gpu,  # Shape: (channels, leds)
+                    )
+                else:
+                    if self.custom_3d_kernel_basic_fp16 is None:
+                        self.custom_3d_kernel_basic_fp16 = CustomDIA3DMatVecFP16(use_optimized=False)
+                    ata_g_gpu = self.custom_3d_kernel_basic_fp16(
+                        self.dia_data_gpu,  # Shape: (channels, k, leds)
+                        cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                        gradient_gpu,  # Shape: (channels, leds)
+                    )
         else:
             # NO FALLBACK - custom kernel required for performance measurement
             raise RuntimeError("Custom 3D DIA kernel not available - required for performance measurement")
@@ -433,7 +541,8 @@ class DiagonalATAMatrix:
             "sparsity": self.sparsity,
             "nnz": self.nnz,
             "channel_nnz": self.channel_nnz,
-            "version": "7.0",  # Removed RCM ordering (handled by pattern generation)
+            "output_dtype": self.output_dtype.__name__,  # Store output dtype name
+            "version": "8.0",  # Added FP16 support
         }
 
     @classmethod
@@ -447,8 +556,17 @@ class DiagonalATAMatrix:
         Returns:
             DiagonalATAMatrix instance
         """
+        # Handle output_dtype - backward compatibility with files that don't have output_dtype
+        output_dtype = None
+        if "output_dtype" in data:
+            output_dtype_str = str(data["output_dtype"])
+            if output_dtype_str == "float32":
+                output_dtype = cupy.float32
+            elif output_dtype_str == "float16":
+                output_dtype = cupy.float16
+
         # Create instance
-        instance = cls(data["led_count"], data["crop_size"])
+        instance = cls(data["led_count"], data["crop_size"], output_dtype)
 
         # Restore metadata
         instance.channels = data["channels"]
@@ -459,7 +577,7 @@ class DiagonalATAMatrix:
         # Handle version compatibility
         version = data.get("version", "1.0")
 
-        if version == "7.0":
+        if version in ("8.0", "7.0"):
             # Current unified 3D DIA format (no RCM ordering stored)
             instance.dia_data_cpu = data["dia_data_3d"]
             instance.dia_offsets = data["dia_offsets_3d"]
@@ -547,10 +665,12 @@ class DiagonalATAMatrix:
             "channel_nnz": self.channel_nnz,
             "ordering": "pre_optimized_from_pattern_generation",
             "custom_kernel_available": CUSTOM_KERNEL_AVAILABLE,
+            "custom_kernel_fp16_available": CUSTOM_KERNEL_FP16_AVAILABLE,
+            "output_dtype": str(self.output_dtype),
             "unified_storage_built": unified_storage_built,
             "unified_k": self.k,
             "unified_storage_shape": (self.dia_data_cpu.shape if self.dia_data_cpu is not None else None),
-            "storage_format": "unified_3d_dia_v7",
+            "storage_format": "unified_3d_dia_v8_fp16",
         }
 
     def benchmark_3d(self, num_trials: int = 50, num_warmup: int = 10) -> Dict[str, float]:
@@ -657,28 +777,25 @@ class DiagonalATAMatrix:
     def get_channel_dia_matrix(self, channel: int) -> sp.dia_matrix:
         """
         Extract a single channel's A^T A matrix as scipy.sparse.dia_matrix.
-        
+
         Args:
             channel: Channel index (0=Red, 1=Green, 2=Blue)
-            
+
         Returns:
             scipy.sparse.dia_matrix for the specified channel
         """
         if self.dia_data_cpu is None or self.dia_offsets is None:
             raise RuntimeError("DIA matrix not built yet. Call build_from_diffusion_matrix() first.")
-        
+
         if not 0 <= channel < self.channels:
-            raise ValueError(f"Channel must be 0-{self.channels-1}, got {channel}")
-        
+            raise ValueError(f"Channel must be 0-{self.channels - 1}, got {channel}")
+
         # Extract DIA data for this channel: (k, led_count)
         dia_data_channel = self.dia_data_cpu[channel, :, :]  # Shape: (k, led_count)
-        
+
         # Create scipy DIA matrix
         # scipy.sparse.dia_matrix expects data shape (num_diags, matrix_size)
         # and offsets shape (num_diags,)
-        scipy_dia = sp.dia_matrix(
-            (dia_data_channel, self.dia_offsets), 
-            shape=(self.led_count, self.led_count)
-        )
-        
+        scipy_dia = sp.dia_matrix((dia_data_channel, self.dia_offsets), shape=(self.led_count, self.led_count))
+
         return scipy_dia

@@ -54,6 +54,7 @@ class SingleBlockMixedSparseTensor:
         block_size: int = 96,
         device: str = "cuda",
         dtype: cp.dtype = cp.float32,
+        output_dtype: Optional[cp.dtype] = None,
     ):
         """
         Initialize the single block sparse tensor.
@@ -66,6 +67,8 @@ class SingleBlockMixedSparseTensor:
             block_size: Size of square dense blocks (e.g., 64)
             device: Device to store tensors on ('cuda' or 'cpu')
             dtype: Data type for sparse values (cp.float32 or cp.uint8)
+            output_dtype: Data type for output tensors (cp.float32 or cp.float16).
+                         If None, defaults to cp.float32 for cp.uint8 input, or same as dtype for others.
         """
         self.batch_size = batch_size
         self.channels = channels
@@ -74,6 +77,13 @@ class SingleBlockMixedSparseTensor:
         self.block_size = block_size
         self.device = device
         self.dtype = self._validate_dtype(dtype)
+
+        # Set output dtype with intelligent defaults
+        if output_dtype is None:
+            # Default to FP32 for INT8 input (most common case), same dtype for FP32 input
+            self.output_dtype = cp.float32 if self.dtype == cp.uint8 else self.dtype
+        else:
+            self.output_dtype = self._validate_output_dtype(output_dtype)
 
         # Storage for dense blocks - only non-zero regions
         # Shape: (channels, batch_size, block_size, block_size) for planar layout
@@ -92,7 +102,7 @@ class SingleBlockMixedSparseTensor:
         logger.debug(
             f"SingleBlockMixedSparseTensor created: "
             f"({batch_size}, {channels}, {height}, {width}) "
-            f"with {block_size}x{block_size} blocks, dtype={self.dtype}"
+            f"with {block_size}x{block_size} blocks, dtype={self.dtype}, output_dtype={self.output_dtype}"
         )
 
     def _validate_dtype(self, dtype: cp.dtype) -> cp.dtype:
@@ -120,6 +130,34 @@ class SingleBlockMixedSparseTensor:
             return cp.uint8
         else:
             raise ValueError(f"Unsupported dtype {dtype}. Supported types: float32, uint8 (numpy or cupy)")
+
+    def _validate_output_dtype(self, output_dtype: cp.dtype) -> cp.dtype:
+        """
+        Validate and normalize the output data type.
+
+        Args:
+            output_dtype: Output data type to validate
+
+        Returns:
+            Validated output dtype (normalized to cupy dtype)
+
+        Raises:
+            ValueError: If output dtype is not supported
+        """
+        # Normalize dtype to cupy version
+        dtype_str = str(output_dtype)
+        if dtype_str in ("float32", "<class 'numpy.float32'>", "numpy.float32"):
+            return cp.float32
+        elif dtype_str in ("float16", "<class 'numpy.float16'>", "numpy.float16"):
+            return cp.float16
+        elif output_dtype == cp.float32:
+            return cp.float32
+        elif output_dtype == cp.float16:
+            return cp.float16
+        else:
+            raise ValueError(
+                f"Unsupported output dtype {output_dtype}. Supported types: float32, float16 (numpy or cupy)"
+            )
 
     def set_block(
         self,
@@ -194,7 +232,7 @@ class SingleBlockMixedSparseTensor:
         self.sparse_values[:] = values
         self.block_positions[:] = positions
 
-    def transpose_dot_product_3d(self, target_3d: cp.ndarray) -> cp.ndarray:
+    def transpose_dot_product_3d(self, target_3d: cp.ndarray, output_dtype: Optional[cp.dtype] = None) -> cp.ndarray:
         """
         Compute A^T @ b operation with 3D planar input (channels, height, width).
 
@@ -206,57 +244,99 @@ class SingleBlockMixedSparseTensor:
 
         Args:
             target_3d: Target image in planar form, shape (channels, height, width)
+            output_dtype: Desired output data type (cp.float32 or cp.float16).
+                         If None, uses the instance's output_dtype setting.
 
         Returns:
-            Result of A^T @ b, shape (batch_size, channels)
+            Result of A^T @ b, shape (batch_size, channels) with specified output dtype
         """
         if target_3d.shape != (self.channels, self.height, self.width):
             raise ValueError(
                 f"target_3d shape {target_3d.shape} != expected ({self.channels}, {self.height}, {self.width})"
             )
 
-        try:
-            # Route to appropriate kernel based on dtype
-            if self.dtype == cp.float32:
-                from .cuda_kernels import (
-                    cuda_transpose_dot_product_3d_compute_optimized,
-                )
+        # Determine output dtype
+        if output_dtype is None:
+            output_dtype = self.output_dtype
+        else:
+            output_dtype = self._validate_output_dtype(output_dtype)
 
+        try:
+            # Route to appropriate kernel based on input dtype and desired output dtype
+            if self.dtype == cp.float32:
                 # Validate target dtype matches tensor dtype
                 if target_3d.dtype != cp.float32:
                     raise ValueError(f"target_3d dtype {target_3d.dtype} must match tensor dtype {self.dtype}")
 
-                # Use fp32 compute-optimized CUDA kernel
-                result = cuda_transpose_dot_product_3d_compute_optimized(
-                    self.sparse_values,  # (channels, batch, H, W) - fp32
-                    self.block_positions,  # (channels, batch, 2) - int32
-                    target_3d,  # (channels, height, width) - fp32 planar input
-                    self.batch_size,
-                    self.channels,
-                    self.block_size,
-                )
+                if output_dtype == cp.float32:
+                    from .cuda_kernels import (
+                        cuda_transpose_dot_product_3d_compute_optimized,
+                    )
+
+                    # Use fp32 -> fp32 compute-optimized CUDA kernel
+                    result = cuda_transpose_dot_product_3d_compute_optimized(
+                        self.sparse_values,  # (channels, batch, H, W) - fp32
+                        self.block_positions,  # (channels, batch, 2) - int32
+                        target_3d,  # (channels, height, width) - fp32 planar input
+                        self.batch_size,
+                        self.channels,
+                        self.block_size,
+                    )
+                elif output_dtype == cp.float16:
+                    from .cuda_kernels import (
+                        cuda_transpose_dot_product_3d_compute_optimized_fp16,
+                    )
+
+                    # Use fp32 -> fp16 compute-optimized CUDA kernel
+                    result = cuda_transpose_dot_product_3d_compute_optimized_fp16(
+                        self.sparse_values,  # (channels, batch, H, W) - fp32
+                        self.block_positions,  # (channels, batch, 2) - int32
+                        target_3d,  # (channels, height, width) - fp32 planar input
+                        self.batch_size,
+                        self.channels,
+                        self.block_size,
+                    )
+                else:
+                    raise ValueError(f"Unsupported output dtype {output_dtype} for FP32 input")
 
             elif self.dtype == cp.uint8:
-                from .cuda_kernels import (
-                    cuda_transpose_dot_product_3d_compute_optimized_int8,
-                )
-
                 # Validate target dtype matches tensor dtype
                 if target_3d.dtype != cp.uint8:
                     raise ValueError(f"target_3d dtype {target_3d.dtype} must match tensor dtype {self.dtype}")
 
-                # Use int8 compute-optimized CUDA kernel
-                result = cuda_transpose_dot_product_3d_compute_optimized_int8(
-                    self.sparse_values,  # (channels, batch, H, W) - uint8
-                    self.block_positions,  # (channels, batch, 2) - int32
-                    target_3d,  # (channels, height, width) - uint8 planar input
-                    self.batch_size,
-                    self.channels,
-                    self.block_size,
-                )
+                if output_dtype == cp.float32:
+                    from .cuda_kernels import (
+                        cuda_transpose_dot_product_3d_compute_optimized_int8,
+                    )
+
+                    # Use int8 -> fp32 compute-optimized CUDA kernel
+                    result = cuda_transpose_dot_product_3d_compute_optimized_int8(
+                        self.sparse_values,  # (channels, batch, H, W) - uint8
+                        self.block_positions,  # (channels, batch, 2) - int32
+                        target_3d,  # (channels, height, width) - uint8 planar input
+                        self.batch_size,
+                        self.channels,
+                        self.block_size,
+                    )
+                elif output_dtype == cp.float16:
+                    from .cuda_kernels import (
+                        cuda_transpose_dot_product_3d_compute_optimized_int8_fp16,
+                    )
+
+                    # Use int8 -> fp16 compute-optimized CUDA kernel (main use case)
+                    result = cuda_transpose_dot_product_3d_compute_optimized_int8_fp16(
+                        self.sparse_values,  # (channels, batch, H, W) - uint8
+                        self.block_positions,  # (channels, batch, 2) - int32
+                        target_3d,  # (channels, height, width) - uint8 planar input
+                        self.batch_size,
+                        self.channels,
+                        self.block_size,
+                    )
+                else:
+                    raise ValueError(f"Unsupported output dtype {output_dtype} for INT8 input")
 
             else:
-                raise ValueError(f"Unsupported dtype {self.dtype} for CUDA kernel")
+                raise ValueError(f"Unsupported input dtype {self.dtype} for CUDA kernel")
 
             return result
 
@@ -265,7 +345,7 @@ class SingleBlockMixedSparseTensor:
             raise ImportError(
                 "CUDA kernels are required for transpose_dot_product_3d operation. "
                 "The previous transpose_dot_product fallback has been removed."
-            )
+            ) from e
 
     def forward_pass_3d(self, led_values: cp.ndarray) -> cp.ndarray:
         """
@@ -444,6 +524,7 @@ class SingleBlockMixedSparseTensor:
             "block_size": np.array(self.block_size, dtype=np.int32),
             "device": np.array(self.device, dtype="U10"),  # Unicode string
             "dtype": np.array(self.dtype.__name__, dtype="U10"),  # Store dtype name as string
+            "output_dtype": np.array(self.output_dtype.__name__, dtype="U10"),  # Store output dtype name
         }
 
         logger.debug(f"Exported tensor to dict with {len(data_dict)} arrays")
@@ -485,8 +566,20 @@ class SingleBlockMixedSparseTensor:
             # Backward compatibility: infer from sparse_values dtype
             dtype = cp.dtype(data_dict["sparse_values"].dtype)
 
+        # Handle output_dtype - backward compatibility with files that don't have output_dtype
+        output_dtype = None
+        if "output_dtype" in data_dict:
+            output_dtype_str = str(data_dict["output_dtype"])
+            if output_dtype_str == "float32":
+                output_dtype = cp.float32
+            elif output_dtype_str == "float16":
+                output_dtype = cp.float16
+            elif output_dtype_str.startswith("<class"):
+                # Fallback to None for old format
+                output_dtype = None
+
         # Create new tensor instance
-        tensor = cls(batch_size, channels, height, width, block_size, device, dtype)
+        tensor = cls(batch_size, channels, height, width, block_size, device, dtype, output_dtype)
 
         # Load data arrays, converting to CuPy if needed
         tensor.sparse_values = cp.asarray(data_dict["sparse_values"])
@@ -759,6 +852,7 @@ class SingleBlockMixedSparseTensor:
             f"shape=({self.batch_size}, {self.channels}, {self.height}, {self.width}), "
             f"block_size={self.block_size}, "
             f"dtype={self.dtype}, "
+            f"output_dtype={self.output_dtype}, "
             f"blocks_stored={blocks_stored}/{self.batch_size * self.channels}, "
             f"memory={memory_mb:.1f}MB)"
         )
