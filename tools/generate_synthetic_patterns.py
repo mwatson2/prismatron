@@ -554,86 +554,6 @@ class SyntheticPatternGenerator:
         # Return the mixed tensor object
         return mixed_tensor
 
-    def _precompute_dense_ata_matrices(self, sparse_matrix: sp.csc_matrix) -> dict:
-        """
-        Precompute dense A^T @ A matrices for each RGB channel using CSC matrix.
-
-        Args:
-            sparse_matrix: Sparse CSC matrix to compute A^T @ A from
-
-        Returns:
-            Dictionary with precomputed dense A^T @ A matrices
-        """
-        logger.info("Precomputing dense A^T @ A matrices from CSC sparse matrix...")
-
-        led_count = sparse_matrix.shape[1] // 3
-        channels = 3
-
-        # Initialize dense A^T @ A tensor: (led_count, led_count, channels)
-        ATA_dense = np.zeros((led_count, led_count, channels), dtype=np.float32)
-
-        start_time = time.time()
-
-        # Track bandwidth statistics for all channels
-        ata_bandwidths = []
-
-        # Compute A^T @ A for each channel separately
-        for c in range(channels):
-            logger.info(f"Computing A^T @ A for channel {c + 1}/{channels}")
-
-            # Extract channel matrix (pixels, leds) for this channel
-            channel_cols = list(range(c, sparse_matrix.shape[1], channels))
-            A_channel = sparse_matrix[:, channel_cols]
-
-            # Compute A_c^T @ A_c (led_count, led_count) - this is dense
-            ATA_channel = A_channel.T @ A_channel
-
-            # Compute bandwidth before converting to dense
-            coo = ATA_channel.tocoo()
-            if coo.nnz > 0:
-                diagonal_offsets = coo.col - coo.row
-                unique_diagonals = np.unique(diagonal_offsets)
-                bandwidth = len(unique_diagonals)
-                ata_bandwidths.append(bandwidth)
-                logger.info(f"Channel {c + 1} A^T @ A bandwidth: {bandwidth} diagonals")
-                logger.info(
-                    f"Channel {c + 1} A^T @ A diagonal range: [{diagonal_offsets.min()}, {diagonal_offsets.max()}]"
-                )
-                logger.info(f"Channel {c + 1} A^T @ A nnz: {coo.nnz:,}")
-                logger.info(f"Channel {c + 1} A^T @ A diagonals present: {sorted(unique_diagonals.tolist())}")
-                # Check if main diagonal (0) is present
-                if 0 in unique_diagonals:
-                    logger.info(f"Channel {c + 1} main diagonal (0) is present in A^T @ A")
-                else:
-                    logger.info(f"Channel {c + 1} main diagonal (0) is MISSING from A^T @ A")
-            else:
-                ata_bandwidths.append(0)
-                logger.info(f"Channel {c + 1} A^T @ A is empty")
-
-            # Convert to dense and store
-            ATA_dense[:, :, c] = ATA_channel.toarray().astype(np.float32)
-
-            channel_time = time.time() - start_time
-            logger.info(f"Channel {c + 1} A^T @ A computed in {channel_time:.2f}s")
-
-        total_time = time.time() - start_time
-        memory_mb = ATA_dense.nbytes / (1024 * 1024)
-        avg_ata_bandwidth = np.mean(ata_bandwidths) if ata_bandwidths else 0
-
-        logger.info(f"Dense A^T @ A precomputation completed in {total_time:.2f}s")
-        logger.info(f"Dense A^T @ A tensor shape: {ATA_dense.shape}")
-        logger.info(f"Dense A^T @ A memory: {memory_mb:.1f}MB")
-        logger.info(f"Average A^T @ A bandwidth across channels: {avg_ata_bandwidth:.1f} diagonals")
-
-        return {
-            "dense_ata_matrices": ATA_dense,
-            "dense_ata_led_count": led_count,
-            "dense_ata_channels": channels,
-            "dense_ata_computation_time": total_time,
-            "ata_bandwidths": ata_bandwidths,
-            "avg_ata_bandwidth": avg_ata_bandwidth,
-        }
-
     def _generate_dia_matrix(self, sparse_matrix: sp.csc_matrix, led_positions: np.ndarray) -> "DiagonalATAMatrix":
         """
         Generate DiagonalATAMatrix from sparse diffusion matrix.
@@ -725,6 +645,10 @@ class SyntheticPatternGenerator:
             if metadata:
                 save_metadata.update(metadata)
 
+            # Skip dense A^T @ A precomputation - moved to standalone utility
+            logger.info("Skipping dense A^T @ A precomputation (use standalone utility)")
+            dense_ata_data = {}
+
             # Generate DiagonalATAMatrix (DIA format)
             logger.info("Generating DiagonalATAMatrix (DIA format)...")
             dia_matrix = self._generate_dia_matrix(diffusion_matrix.to_csc_matrix(), self.led_positions)
@@ -747,7 +671,7 @@ class SyntheticPatternGenerator:
             # Log file info
             file_size = Path(output_path).stat().st_size / (1024 * 1024)  # MB
 
-            logger.info(f"Saved mixed tensor and DIA matrix to {output_path}")
+            logger.info(f"Saved mixed tensor, DIA matrix, and dense ATA matrices to {output_path}")
             logger.info(f"File size: {file_size:.1f} MB")
             logger.info("Mixed tensor format: SingleBlockMixedSparseTensor")
             logger.info(
@@ -760,6 +684,7 @@ class SyntheticPatternGenerator:
             )
             storage_shape = dia_matrix.dia_data_cpu.shape if dia_matrix.dia_data_cpu is not None else "None"
             logger.info(f"DIA matrix storage shape: {storage_shape}")
+            logger.info("Dense A^T @ A matrices: Use standalone compute_ata_inverse.py tool")
 
             return True
 

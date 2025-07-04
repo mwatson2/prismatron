@@ -82,7 +82,7 @@ class DiagonalATAMatrix:
             self.custom_kernel_basic = CustomDIAMatVec(use_optimized=False)
             self.custom_kernel_optimized = CustomDIAMatVec(use_optimized=True)
 
-    def build_from_diffusion_matrix(self, A: sp.spmatrix) -> None:
+    def build_from_diffusion_matrix(self, diffusion_matrix: sp.spmatrix) -> None:
         """
         Build diagonal A^T A matrices from diffusion matrix A.
 
@@ -93,16 +93,16 @@ class DiagonalATAMatrix:
             A: Diffusion matrix (pixels, leds*3) in optimal ordering
         """
         print("Building diagonal A^T A matrices...")
-        print(f"  Input A: shape {A.shape}, nnz {A.nnz}")
+        print(f"  Input A: shape {diffusion_matrix.shape}, nnz {diffusion_matrix.nnz}")
         print(f"  LEDs: {self.led_count}, channels: {self.channels}")
 
         # Validate input
         expected_cols = self.led_count * self.channels
-        if A.shape[1] != expected_cols:
-            raise ValueError(f"A matrix should have {expected_cols} columns, got {A.shape[1]}")
+        if diffusion_matrix.shape[1] != expected_cols:
+            raise ValueError(f"A matrix should have {expected_cols} columns, got {diffusion_matrix.shape[1]}")
 
         print("  Using diffusion matrix A in pre-optimized ordering (RCM from pattern generation)")
-        A_ordered = A
+        A_ordered = diffusion_matrix
 
         # Build unified 3D DIA format - shape (channels, k, leds) where k = max non-empty diagonals
         print("  Building unified 3D DIA format...")
@@ -185,12 +185,10 @@ class DiagonalATAMatrix:
             storage_efficiency = actual_elements / naive_elements * 100 if naive_elements > 0 else 100
 
             print(f"  Unified 3D DIA storage: shape {self.dia_data_cpu.shape}")
-            print(
-                f"  Storage efficiency: {self.k} / {len(set().union(*[dia.offsets for dia in channel_dia_matrices]))} bands = {storage_efficiency:.1f}%"
-            )
-            print(
-                f"  Total stored elements: {actual_elements:,} vs dense {self.channels * self.led_count * self.led_count:,}"
-            )
+            total_unique_bands = len(set().union(*[dia.offsets for dia in channel_dia_matrices]))
+            print(f"  Storage efficiency: {self.k} / {total_unique_bands} bands = {storage_efficiency:.1f}%")
+            dense_elements = self.channels * self.led_count * self.led_count
+            print(f"  Total stored elements: {actual_elements:,} vs dense {dense_elements:,}")
 
         else:
             self.dia_data_cpu = np.zeros((self.channels, 0, self.led_count), dtype=np.float32)
@@ -402,7 +400,8 @@ class DiagonalATAMatrix:
             # NO FALLBACK - custom kernel required for performance measurement
             raise RuntimeError("Custom 3D DIA kernel not available - required for performance measurement")
 
-        # Compute g^T @ (A^T A @ g) for each channel using vectorized operation: (channels,leds) * (channels,leds) -> (channels,)
+        # Compute g^T @ (A^T A @ g) for each channel using vectorized operation:
+        # (channels,leds) * (channels,leds) -> (channels,)
         result_gpu = cupy.sum(gradient_gpu * ata_g_gpu, axis=1)  # Shape: (channels,)
 
         # Convert back to numpy if input was numpy
