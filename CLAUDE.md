@@ -76,3 +76,7 @@ When overall system performance evaluation is needed, it will be explicitly requ
 - Focus on component-level optimizations and algorithmic improvements
 - Measure performance at the individual kernel and matrix operation level
 - Defer speculative performance analysis until a complete request is made
+
+### Deprecated Methods
+- CSC natrix for A is deprecated - we are using the mixed tensor now
+- Dense ATA is deprecated. We are using our custom DIA class for the ATA matrix

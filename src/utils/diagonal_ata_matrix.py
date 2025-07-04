@@ -653,3 +653,32 @@ class DiagonalATAMatrix:
             results["gpu_3d_custom_g_ata_g"] = np.mean(times)
 
         return results
+
+    def get_channel_dia_matrix(self, channel: int) -> sp.dia_matrix:
+        """
+        Extract a single channel's A^T A matrix as scipy.sparse.dia_matrix.
+        
+        Args:
+            channel: Channel index (0=Red, 1=Green, 2=Blue)
+            
+        Returns:
+            scipy.sparse.dia_matrix for the specified channel
+        """
+        if self.dia_data_cpu is None or self.dia_offsets is None:
+            raise RuntimeError("DIA matrix not built yet. Call build_from_diffusion_matrix() first.")
+        
+        if not 0 <= channel < self.channels:
+            raise ValueError(f"Channel must be 0-{self.channels-1}, got {channel}")
+        
+        # Extract DIA data for this channel: (k, led_count)
+        dia_data_channel = self.dia_data_cpu[channel, :, :]  # Shape: (k, led_count)
+        
+        # Create scipy DIA matrix
+        # scipy.sparse.dia_matrix expects data shape (num_diags, matrix_size)
+        # and offsets shape (num_diags,)
+        scipy_dia = sp.dia_matrix(
+            (dia_data_channel, self.dia_offsets), 
+            shape=(self.led_count, self.led_count)
+        )
+        
+        return scipy_dia

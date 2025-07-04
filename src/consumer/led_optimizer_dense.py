@@ -22,6 +22,8 @@ import numpy as np
 import scipy.sparse as sp
 
 from ..const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
+from ..utils.diagonal_ata_matrix import DiagonalATAMatrix
+from ..utils.frame_optimizer import load_ata_inverse_from_pattern, optimize_frame_led_values
 from ..utils.led_diffusion_csc_matrix import LEDDiffusionCSCMatrix
 from ..utils.performance_timing import PerformanceTiming
 from ..utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
@@ -94,9 +96,11 @@ class DenseLEDOptimizer:
         self.convergence_threshold = 1e-3
         self.step_size_scaling = 0.9
 
-        # Precomputed dense matrices (key insight: A^T*A is dense, small)
-        self._ATA_gpu = None  # Shape: (led_count, led_count, 3) - dense on GPU
-        self._ATA_cpu = None  # Shape: (led_count, led_count, 3) - dense on CPU
+        # ATA matrices: DIA format for efficiency, dense inverse for optimal initialization
+        self._diagonal_ata_matrix = None  # DiagonalATAMatrix instance for sparse ATA operations
+        self._ATA_inverse_gpu = None  # Shape: (3, led_count, led_count) - inverse on GPU
+        self._ATA_inverse_cpu = None  # Shape: (3, led_count, led_count) - inverse on CPU
+        self._has_ata_inverse = False  # Whether ATA inverse matrices are available
 
         # Sparse matrices for A^T*b calculation (kept sparse for efficiency)
         self._A_r_csc_gpu = None  # Red channel sparse matrix (pixels, leds)
@@ -175,7 +179,7 @@ class DenseLEDOptimizer:
 
             logger.info("Dense LED optimizer initialized successfully")
             logger.info(f"LED count: {self._actual_led_count}")
-            logger.info(f"Dense ATA tensor shape: {self._ATA_gpu.shape}")
+            logger.info(f"ATA format: {'DIA sparse' if self._diagonal_ata_matrix else 'None'}")
             logger.info(f"Device: {self.device_info['device']}")
             return True
 
@@ -186,6 +190,7 @@ class DenseLEDOptimizer:
     def _load_precomputed_ata_matrices(self, data: np.lib.npyio.NpzFile) -> bool:
         """
         Load precomputed A^T@A matrices from the pattern file if available.
+        Uses DiagonalATAMatrix for sparse ATA storage and loads dense inverse if available.
 
         Args:
             data: Loaded NPZ file data
@@ -194,64 +199,101 @@ class DenseLEDOptimizer:
             True if precomputed matrices were loaded successfully, False otherwise
         """
         try:
-            # Check for new nested format first (dense_ata dictionary)
-            if "dense_ata" in data:
-                logger.debug("Loading A^T@A matrices from new nested format")
-                dense_ata_dict = data["dense_ata"].item()
-
-                # Check for required keys in nested format
-                required_keys = [
-                    "dense_ata_matrices",
-                    "dense_ata_led_count",
-                    "dense_ata_channels",
-                ]
-
-                if not all(key in dense_ata_dict for key in required_keys):
-                    logger.debug("Required A^T@A keys not found in dense_ata dictionary")
-                    return False
-
-                # Load A^T@A data from nested dictionary
-                dense_ata_matrices = dense_ata_dict["dense_ata_matrices"]  # Shape: (led_count, led_count, channels)
-                dense_ata_led_count = int(dense_ata_dict["dense_ata_led_count"])
-                dense_ata_channels = int(dense_ata_dict["dense_ata_channels"])
-                computation_time = dense_ata_dict.get("dense_ata_computation_time", 0.0)
-
+            # Check for diagonal ATA matrix first (preferred format)
+            if "diagonal_ata_matrix" in data:
+                logger.debug("Loading A^T@A matrices from diagonal_ata_matrix key")
+                diagonal_ata_dict = data["diagonal_ata_matrix"].item()
+                self._diagonal_ata_matrix = DiagonalATAMatrix.from_dict(diagonal_ata_dict)
+                logger.info(f"Loaded diagonal A^T@A matrix: {self._diagonal_ata_matrix.led_count} LEDs")
+                logger.info(f"DIA format - bandwidth: {self._diagonal_ata_matrix.bandwidth}, k: {self._diagonal_ata_matrix.k}")
+                
+                # Calculate DIA memory usage
+                if self._diagonal_ata_matrix.dia_data_cpu is not None:
+                    dia_memory_mb = self._diagonal_ata_matrix.dia_data_cpu.nbytes / (1024 * 1024)
+                    logger.info(f"DIA A^T@A memory: {dia_memory_mb:.1f}MB")
+                    
+            # Check for new dia_matrix format (from pattern generation)
+            elif "dia_matrix" in data:
+                logger.debug("Loading A^T@A matrices from dia_matrix key")
+                dia_dict = data["dia_matrix"].item()
+                self._diagonal_ata_matrix = DiagonalATAMatrix.from_dict(dia_dict)
+                logger.info(f"Loaded DIA A^T@A matrix: {self._diagonal_ata_matrix.led_count} LEDs")
+                logger.info(f"DIA format - bandwidth: {self._diagonal_ata_matrix.bandwidth}, k: {self._diagonal_ata_matrix.k}")
+                
+                # Calculate DIA memory usage
+                if self._diagonal_ata_matrix.dia_data_cpu is not None:
+                    dia_memory_mb = self._diagonal_ata_matrix.dia_data_cpu.nbytes / (1024 * 1024)
+                    logger.info(f"DIA A^T@A memory: {dia_memory_mb:.1f}MB")
+                
+            # Check for dense ATA format (fallback for compatibility)
+            elif "dense_ata" in data:
+                logger.warning("Loading A^T@A matrices from legacy dense format - consider regenerating patterns")
+                return False  # Force regeneration with DIA format
             else:
-                # Fall back to old top-level format for backwards compatibility
-                logger.debug("Loading A^T@A matrices from old top-level format")
-                required_keys = [
-                    "dense_ata_matrices",
-                    "dense_ata_led_count",
-                    "dense_ata_channels",
-                ]
-
-                if not all(key in data for key in required_keys):
-                    logger.debug("Precomputed A^T@A matrices not found in pattern file")
-                    return False
-
-                # Load A^T@A data from top-level keys
-                dense_ata_matrices = data["dense_ata_matrices"]  # Shape: (led_count, led_count, channels)
-                dense_ata_led_count = int(data["dense_ata_led_count"])
-                dense_ata_channels = int(data["dense_ata_channels"])
-                computation_time = data.get("dense_ata_computation_time", 0.0)
-
-            # Validate dimensions
-            if dense_ata_led_count != self._actual_led_count or dense_ata_channels != 3:
-                logger.warning(
-                    f"Precomputed A^T@A dimensions mismatch: "
-                    f"({dense_ata_led_count}, {dense_ata_channels}) != "
-                    f"({self._actual_led_count}, 3)"
-                )
+                logger.debug("No precomputed A^T@A matrices found in pattern file") 
                 return False
 
-            # Store the precomputed matrices
-            self._ATA_cpu = dense_ata_matrices.astype(np.float32)
-
-            ata_memory_mb = self._ATA_cpu.nbytes / (1024 * 1024)
-
-            logger.info(f"Loaded precomputed A^T@A matrices: {self._ATA_cpu.shape}")
-            logger.info(f"A^T@A memory: {ata_memory_mb:.1f}MB")
-            logger.info(f"Original computation time: {computation_time:.2f}s")
+            # Load ATA inverse matrices if available
+            inverse_loaded = False
+            
+            # Check for new standalone ATA inverse format (preferred)
+            if "ata_inverse" in data:
+                logger.debug("Loading ATA inverse from standalone format")
+                ata_inverse = data["ata_inverse"]
+                
+                if ata_inverse.shape == (3, self._actual_led_count, self._actual_led_count):
+                    self._ATA_inverse_cpu = ata_inverse.astype(np.float32)
+                    self._has_ata_inverse = True
+                    inverse_loaded = True
+                    
+                    ata_inv_memory_mb = self._ATA_inverse_cpu.nbytes / (1024 * 1024)
+                    logger.info(f"Loaded A^T@A inverse matrices: {self._ATA_inverse_cpu.shape}")
+                    logger.info(f"A^T@A inverse memory: {ata_inv_memory_mb:.1f}MB")
+                else:
+                    logger.warning(f"ATA inverse shape {ata_inverse.shape} != (3, {self._actual_led_count}, {self._actual_led_count})")
+            
+            # Fallback to legacy dense_ata format
+            elif "dense_ata" in data:
+                logger.debug("Loading ATA inverse from legacy dense_ata format")
+                dense_ata_dict = data["dense_ata"].item()
+                dense_ata_inverse_matrices = dense_ata_dict.get("dense_ata_inverse_matrices", None)
+                successful_inversions = dense_ata_dict.get("successful_inversions", 0)
+                avg_condition_number = dense_ata_dict.get("avg_condition_number", float('inf'))
+                
+                if dense_ata_inverse_matrices is not None:
+                    # Validate dimensions
+                    if (dense_ata_inverse_matrices.shape[0] != self._actual_led_count or 
+                        dense_ata_inverse_matrices.shape[1] != self._actual_led_count):
+                        logger.warning(f"ATA inverse dimensions mismatch: {dense_ata_inverse_matrices.shape}")
+                    else:
+                        dense_ata_inverse_matrices = dense_ata_inverse_matrices.astype(np.float32)
+                        
+                        # Convert to channel-first format (3, led_count, led_count) if needed
+                        if dense_ata_inverse_matrices.shape == (self._actual_led_count, self._actual_led_count, 3):
+                            logger.debug("Converting ATA inverse from (led_count, led_count, 3) to (3, led_count, led_count)")
+                            self._ATA_inverse_cpu = np.transpose(dense_ata_inverse_matrices, (2, 0, 1))
+                        elif dense_ata_inverse_matrices.shape == (3, self._actual_led_count, self._actual_led_count):
+                            logger.debug("ATA inverse already in channel-first format")
+                            self._ATA_inverse_cpu = dense_ata_inverse_matrices
+                        else:
+                            logger.warning(f"Unexpected ATA inverse shape: {dense_ata_inverse_matrices.shape}")
+                            self._ATA_inverse_cpu = None
+                        
+                        if self._ATA_inverse_cpu is not None:
+                            self._has_ata_inverse = True
+                            inverse_loaded = True
+                            
+                            ata_inv_memory_mb = self._ATA_inverse_cpu.nbytes / (1024 * 1024)
+                            logger.info(f"Loaded A^T@A inverse matrices: {self._ATA_inverse_cpu.shape}")
+                            logger.info(f"A^T@A inverse memory: {ata_inv_memory_mb:.1f}MB")
+                            logger.info(f"Successful inversions: {successful_inversions}/3")
+                            if successful_inversions > 0:
+                                logger.info(f"Average condition number: {avg_condition_number:.2e}")
+            
+            if not inverse_loaded:
+                self._ATA_inverse_cpu = None
+                self._has_ata_inverse = False
+                logger.info("No A^T@A inverse matrices available - will use default initialization")
 
             return True
 
@@ -280,7 +322,7 @@ class DenseLEDOptimizer:
             data = np.load(patterns_path, allow_pickle=True)
 
             # Check for new nested format first
-            if "diffusion_matrix" in data and "mixed_tensor" in data:
+            if "mixed_tensor" in data and ("diffusion_matrix" in data or "dia_matrix" in data):
                 return self._load_matricies_from_file(data)
             else:
                 logger.error(f"{patterns_path} is in unsupported legacy format")
@@ -297,32 +339,53 @@ class DenseLEDOptimizer:
         """Load matrices from new nested format using utility classes."""
         logger.info("Detected new nested format with utility classes")
 
-        # Load LEDDiffusionCSCMatrix
-        logger.info("Loading LEDDiffusionCSCMatrix...")
-        diffusion_dict = data["diffusion_matrix"].item()
-        self._diffusion_matrix = LEDDiffusionCSCMatrix.from_dict(diffusion_dict)
+        # Load LEDDiffusionCSCMatrix - try diffusion_matrix first, then dia_matrix
+        if "diffusion_matrix" in data:
+            logger.info("Loading LEDDiffusionCSCMatrix from diffusion_matrix...")
+            diffusion_dict = data["diffusion_matrix"].item()
+            self._diffusion_matrix = LEDDiffusionCSCMatrix.from_dict(diffusion_dict)
+        elif "dia_matrix" in data:
+            logger.info("Loading from DIA matrix format - using direct frame optimizer approach...")
+            # Since we're using the standardized frame optimizer, we don't need the CSC wrapper
+            # We'll set _diffusion_matrix to None and skip CSC setup
+            self._diffusion_matrix = None
+            logger.info("DIA matrix format detected - will use frame optimizer directly")
+        else:
+            logger.error("No diffusion matrix found in data")
+            return False
 
-        # Load metadata from diffusion matrix
+        # Load metadata from diffusion matrix or pattern data
         self._led_spatial_mapping = data.get("led_spatial_mapping", {})
         if hasattr(self._led_spatial_mapping, "item"):
             self._led_spatial_mapping = self._led_spatial_mapping.item()
         self._led_positions = data.get("led_positions", None)
-        self._actual_led_count = self._diffusion_matrix.led_count
+        
+        if self._diffusion_matrix is not None:
+            self._actual_led_count = self._diffusion_matrix.led_count
+            # Validate matrix dimensions
+            expected_pixels = FRAME_HEIGHT * FRAME_WIDTH
+            if self._diffusion_matrix.pixels != expected_pixels:
+                logger.error(f"Matrix pixel dimension mismatch: {self._diffusion_matrix.pixels} != {expected_pixels}")
+                return False
+        else:
+            # Get LED count from metadata when using DIA format
+            metadata = data.get("metadata", {})
+            if hasattr(metadata, "item"):
+                metadata = metadata.item()
+            self._actual_led_count = metadata.get("led_count", LED_COUNT)
+            logger.info(f"Using LED count from metadata: {self._actual_led_count}")
 
-        # Validate matrix dimensions
-        expected_pixels = FRAME_HEIGHT * FRAME_WIDTH
-        if self._diffusion_matrix.pixels != expected_pixels:
-            logger.error(f"Matrix pixel dimension mismatch: {self._diffusion_matrix.pixels} != {expected_pixels}")
-            return False
-
-        # Load precomputed A^T*A matrices
+        # Load precomputed A^T*A matrices (DIA format)
         if not self._load_precomputed_ata_matrices(data):
             logger.error("Precomputed A^T*A matrices required but not found")
             return False
 
-        # Transfer to GPU
-        logger.info("Transferring dense ATA tensor to GPU...")
-        self._ATA_gpu = cp.asarray(self._ATA_cpu)
+        # Transfer ATA inverse to GPU if available
+        if self._has_ata_inverse:
+            logger.info("Transferring dense ATA inverse tensor to GPU...")
+            self._ATA_inverse_gpu = cp.asarray(self._ATA_inverse_cpu)
+        else:
+            self._ATA_inverse_gpu = None
 
         # Load mixed tensor
         logger.info("Loading SingleBlockMixedSparseTensor...")
@@ -330,13 +393,17 @@ class DenseLEDOptimizer:
         self._mixed_tensor = SingleBlockMixedSparseTensor.from_dict(mixed_dict)
         logger.info("Loaded mixed tensor format for A^T@b calculation")
 
-        # Load CSC format for A^T@b calculation (always needed)
-        logger.info("Setting up CSC matrices for A^T@b calculation...")
-        self._setup_csc_matrices()
+        # Load CSC format for A^T@b calculation (only if using legacy diffusion matrix)
+        if self._diffusion_matrix is not None:
+            logger.info("Setting up CSC matrices for A^T@b calculation...")
+            self._setup_csc_matrices()
+        else:
+            logger.info("Skipping CSC matrix setup - using frame optimizer directly")
 
-        # Calculate memory usage
-        ata_memory_mb = self._ATA_gpu.nbytes / (1024 * 1024)
-        logger.info(f"Dense ATA tensor memory: {ata_memory_mb:.1f}MB")
+        # Log memory usage summary
+        if self._diagonal_ata_matrix and self._diagonal_ata_matrix.dia_data_cpu is not None:
+            dia_memory_mb = self._diagonal_ata_matrix.dia_data_cpu.nbytes / (1024 * 1024)
+            logger.info(f"Total A^T@A memory (DIA format): {dia_memory_mb:.1f}MB")
 
         self._matrix_loaded = True
         logger.info("Matrix loading completed successfully")
@@ -414,11 +481,11 @@ class DenseLEDOptimizer:
         debug: bool = False,
     ) -> DenseOptimizationResult:
         """
-        Optimize LED values using dense tensor operations.
+        Optimize LED values using the standardized frame optimizer with ATA inverse initialization.
 
         Args:
             target_frame: Target image (height, width, 3) in range [0, 255]
-            initial_values: Initial LED values (led_count, 3), if None uses 0.5
+            initial_values: Initial LED values (led_count, 3), if None uses ATA inverse initialization
             max_iterations: Override default max iterations
             debug: If True, compute error metrics and detailed timing (slower)
 
@@ -434,67 +501,85 @@ class DenseLEDOptimizer:
             if target_frame.shape != (FRAME_HEIGHT, FRAME_WIDTH, 3):
                 raise ValueError(f"Target frame shape {target_frame.shape} != {(FRAME_HEIGHT, FRAME_WIDTH, 3)}")
 
-            # KEY STEP 2: Calculate A^T*b for current frame
-            self.timing and self.timing.start("ATb_calculation_total")
-            ATb = self._calculate_ATb(target_frame)
-            self.timing and self.timing.stop("ATb_calculation_total")
-
-            # Initialize LED values
-            if initial_values is not None:
-                initial_normalized = (initial_values / 255.0 if initial_values.max() > 1.0 else initial_values).astype(
-                    np.float32
+            # Load ATA inverse if not already available
+            if not self._has_ata_inverse:
+                logger.warning("ATA inverse not loaded - attempting to load from pattern file")
+                ata_inverse = load_ata_inverse_from_pattern(
+                    self.diffusion_patterns_path if self.diffusion_patterns_path.endswith(".npz") 
+                    else f"{self.diffusion_patterns_path}.npz"
                 )
-                self._led_values_gpu[:] = cp.asarray(initial_normalized)
+                if ata_inverse is not None:
+                    self._ATA_inverse_cpu = ata_inverse
+                    self._ATA_inverse_gpu = cp.asarray(ata_inverse)
+                    self._has_ata_inverse = True
+                    logger.info("Successfully loaded ATA inverse from pattern file")
+                else:
+                    raise RuntimeError("ATA inverse matrices required but not available")
+
+            # Prepare initial values in correct format for frame optimizer
+            # Frame optimizer expects (3, led_count) format, different from our (led_count, 3)
+            if initial_values is not None:
+                if initial_values.shape == (self._actual_led_count, 3):
+                    # Convert from (led_count, 3) to (3, led_count)
+                    initial_values_frame_opt = initial_values.T
+                elif initial_values.shape == (3, self._actual_led_count):
+                    # Already in correct format
+                    initial_values_frame_opt = initial_values
+                else:
+                    raise ValueError(f"Initial values shape {initial_values.shape} not supported")
             else:
-                # Use pre-initialized 0.5 values
-                self._led_values_gpu.fill(0.5)
+                initial_values_frame_opt = None
 
-            # Reset workspace references to ensure deterministic behavior
-            self._reset_workspace_references()
+            # Use standardized frame optimizer with ATA inverse
+            from ..utils.frame_optimizer import FrameOptimizationResult
+            
+            result_frame_opt = optimize_frame_led_values(
+                target_frame=target_frame,
+                AT_matrix=self._mixed_tensor,
+                ATA_matrix=self._diagonal_ata_matrix,
+                ATA_inverse=self._ATA_inverse_cpu,  # Required parameter - use CPU version
+                initial_values=initial_values_frame_opt,
+                max_iterations=max_iterations or self.max_iterations,
+                convergence_threshold=self.convergence_threshold,
+                step_size_scaling=self.step_size_scaling,
+                compute_error_metrics=debug,
+                debug=debug,
+                enable_timing=self.timing is not None,
+            )
 
-            # Dense tensor optimization loop
-            self.timing and self.timing.start("gradient_descent_total")
-            (
-                led_values_solved,
-                iterations_completed,
-            ) = self._solve_dense_gradient_descent(ATb, max_iterations)
-            self.timing and self.timing.stop("gradient_descent_total")
+            # Convert result from frame optimizer format to our format
+            # Frame optimizer returns (3, led_count), we need (led_count, 3)
+            led_values_output = result_frame_opt.led_values.T  # (3, led_count) -> (led_count, 3)
 
-            # Convert back to numpy
-            led_values_normalized = cp.asnumpy(led_values_solved)
-            led_values_output = (led_values_normalized * 255.0).astype(np.uint8)
-
-            # Calculate error metrics if debug mode is enabled
-            error_metrics = {}
-            if debug:
-                error_metrics = self._compute_error_metrics(led_values_solved, target_frame)
-
-            # Create result with optional debug information
+            # Create result compatible with our DenseOptimizationResult format
             result = DenseOptimizationResult(
                 led_values=led_values_output,
-                error_metrics=error_metrics,
-                iterations=iterations_completed,
-                converged=True,
+                error_metrics=result_frame_opt.error_metrics,
+                iterations=result_frame_opt.iterations,
+                converged=result_frame_opt.converged,
                 target_frame=target_frame.copy() if debug else None,
                 precomputation_info=(
                     {
-                        "ata_shape": self._ATA_gpu.shape,
-                        "ata_memory_mb": self._ATA_gpu.nbytes / (1024 * 1024),
-                        "approach": "dense_precomputed_ata",
+                        "ata_format": "DIA_sparse" if self._diagonal_ata_matrix else "None",
+                        "ata_memory_mb": (self._diagonal_ata_matrix.dia_data_cpu.nbytes / (1024 * 1024) 
+                                         if self._diagonal_ata_matrix and self._diagonal_ata_matrix.dia_data_cpu is not None else 0),
+                        "approach": "standardized_frame_optimizer_with_ata_inverse",
+                        "frame_optimizer_timing": result_frame_opt.timing_data,
                     }
                     if debug
                     else None
                 ),
+                optimization_time=0.0,  # Timing handled by frame optimizer
             )
 
             # Update statistics
             self._optimization_count += 1
 
-            logger.debug("Dense optimization completed")
+            logger.debug("Optimization completed using standardized frame optimizer")
             return result
 
         except Exception as e:
-            logger.error(f"Dense optimization failed: {e}")
+            logger.error(f"Frame optimization failed: {e}")
 
             # Return error result
             return DenseOptimizationResult(
@@ -620,12 +705,9 @@ class DenseLEDOptimizer:
         """
         max_iters = max_iterations or self.max_iterations
 
-        # Verify tensor shapes for einsum optimization
-        assert self._ATA_gpu.shape == (
-            self._actual_led_count,
-            self._actual_led_count,
-            3,
-        ), f"ATA shape {self._ATA_gpu.shape} != expected ({self._actual_led_count}, {self._actual_led_count}, 3)"
+        # Verify input shapes and DIA matrix availability
+        if self._diagonal_ata_matrix is None:
+            raise RuntimeError("Diagonal ATA matrix not loaded")
         assert ATb.shape == (
             self._actual_led_count,
             3,
@@ -642,12 +724,13 @@ class DenseLEDOptimizer:
         ), f"x shape {x.shape} != expected ({self._actual_led_count}, 3)"
 
         for iteration in range(max_iters):
-            # KEY OPTIMIZATION: Use einsum for parallel ATA @ x computation
-            # ATA: (led_count, led_count, 3), x: (led_count, 3) -> (led_count, 3)
-            # einsum 'ijk,jk->ik' computes all 3 channels in parallel
+            # KEY OPTIMIZATION: Use DIA format for sparse ATA @ x computation
+            # Convert x from (led_count, 3) to (3, led_count) for DIA multiplication
             self.timing and self.timing.start("gradient_calculation", use_gpu_events=True)
 
-            w["ATA_x"][:] = cp.einsum("ijk,jk->ik", self._ATA_gpu, x)
+            x_transposed = x.T  # Shape: (3, led_count)
+            ata_x_transposed = self._diagonal_ata_matrix.multiply_3d(cp.asnumpy(x_transposed))  # Shape: (3, led_count)
+            w["ATA_x"][:] = cp.asarray(ata_x_transposed).T  # Convert back to (led_count, 3)
             w["gradient"][:] = w["ATA_x"] - ATb
 
             self.timing and self.timing.stop("gradient_calculation")
@@ -693,10 +776,11 @@ class DenseLEDOptimizer:
         # g^T @ g (sum over all elements)
         g_dot_g = cp.sum(gradient * gradient)
 
-        # ULTRA-OPTIMIZED: Compute g^T @ ATA @ g for all channels in single einsum
-        # ATA: (led_count, led_count, 3), gradient: (led_count, 3)
-        # Computes sum over k of: g[:,k]^T @ ATA[:,:,k] @ g[:,k]
-        g_dot_ATA_g = cp.einsum("ik,ijk,jk->", gradient, self._ATA_gpu, gradient)
+        # Compute g^T @ ATA @ g using DIA format
+        # Convert gradient from (led_count, 3) to (3, led_count)
+        gradient_transposed = gradient.T  # Shape: (3, led_count)
+        g_ata_g_per_channel = self._diagonal_ata_matrix.g_ata_g_3d(cp.asnumpy(gradient_transposed))  # Shape: (3,)
+        g_dot_ATA_g = cp.sum(cp.asarray(g_ata_g_per_channel))
 
         if g_dot_ATA_g > 0:
             return float(self.step_size_scaling * g_dot_g / g_dot_ATA_g)
@@ -752,19 +836,31 @@ class DenseLEDOptimizer:
         }
 
         if self._matrix_loaded:
-            stats.update(
-                {
-                    "ata_tensor_shape": self._ATA_gpu.shape,
-                    "ata_memory_mb": self._ATA_gpu.nbytes / (1024 * 1024),
-                    "approach_description": "Precomputed A^T*A dense tensors with einsum",
-                    "flop_analysis": {
-                        "flops_per_iteration": 0,  # FLOP counting removed
-                        "total_flops_computed": 0,  # FLOP counting removed
-                        "average_gflops_per_frame": 0.0,  # FLOP counting removed
-                        "average_gflops_per_second": 0.0,  # FLOP counting removed
-                    },
+            ata_info = {}
+            if self._diagonal_ata_matrix:
+                ata_info = {
+                    "ata_format": "DIA_sparse",
+                    "ata_bandwidth": self._diagonal_ata_matrix.bandwidth,
+                    "ata_k_bands": self._diagonal_ata_matrix.k,
+                    "ata_memory_mb": (self._diagonal_ata_matrix.dia_data_cpu.nbytes / (1024 * 1024) 
+                                     if self._diagonal_ata_matrix.dia_data_cpu is not None else 0),
+                    "approach_description": "Precomputed A^T*A DIA sparse format with custom kernels",
                 }
-            )
+            else:
+                ata_info = {
+                    "ata_format": "None", 
+                    "approach_description": "No precomputed A^T*A matrices",
+                }
+            
+            stats.update(ata_info)
+            stats.update({
+                "flop_analysis": {
+                    "flops_per_iteration": 0,  # FLOP counting removed
+                    "total_flops_computed": 0,  # FLOP counting removed
+                    "average_gflops_per_frame": 0.0,  # FLOP counting removed
+                    "average_gflops_per_second": 0.0,  # FLOP counting removed
+                },
+            })
 
         # Add performance timing stats if available
         if self.timing:

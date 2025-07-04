@@ -1,49 +1,61 @@
 """
-Custom CUDA kernels for SingleBlockMixedSparseTensor operations.
+CUDA kernels for Prismatron LED optimization.
 
-This module provides compatibility imports for the reorganized CUDA kernels.
-The actual kernel implementations are now located in the utils.kernels submodule.
+This module contains optimized CUDA kernels for various LED optimization operations.
 """
 
-import logging
-from typing import Tuple
-
-import cupy as cp
-import numpy as np
-
-# Import all kernels from the reorganized structure
-from .kernels import (
+from .compute_optimized_3d import (
     cuda_transpose_dot_product_3d_compute_optimized,
-    cuda_transpose_dot_product_3d_compute_optimized_fp16,
-    cuda_transpose_dot_product_3d_compute_optimized_int8,
-    cuda_transpose_dot_product_3d_compute_optimized_int8_experimental,
-    cuda_transpose_dot_product_3d_compute_optimized_int8_experimental_fp16,
-    cuda_transpose_dot_product_3d_compute_optimized_int8_fp16,
-    get_compute_optimized_3d_fp16_kernel,
-    get_compute_optimized_3d_int8_experimental_fp16_kernel,
-    get_compute_optimized_3d_int8_experimental_kernel,
-    get_compute_optimized_3d_int8_fp16_kernel,
-    get_compute_optimized_3d_int8_kernel,
     get_compute_optimized_3d_kernel,
 )
+from .compute_optimized_3d_fp16 import (
+    cuda_transpose_dot_product_3d_compute_optimized_fp16,
+    get_compute_optimized_3d_fp16_kernel,
+)
+from .compute_optimized_3d_int8 import (
+    cuda_transpose_dot_product_3d_compute_optimized_int8,
+    cuda_transpose_dot_product_3d_compute_optimized_int8_experimental,
+    get_compute_optimized_3d_int8_experimental_kernel,
+    get_compute_optimized_3d_int8_kernel,
+)
+from .compute_optimized_3d_int8_fp16 import (
+    cuda_transpose_dot_product_3d_compute_optimized_int8_experimental_fp16,
+    cuda_transpose_dot_product_3d_compute_optimized_int8_fp16,
+    get_compute_optimized_3d_int8_experimental_fp16_kernel,
+    get_compute_optimized_3d_int8_fp16_kernel,
+)
+from .dia_matvec import (
+    CustomDIA3DMatVec,
+    CustomDIAMatVec,
+    benchmark_dia_kernels,
+    create_test_dia_matrix,
+    verify_kernel_correctness,
+)
+from .dia_matvec_fp16 import (
+    CustomDIA3DMatVecFP16,
+    CustomDIAMatVecFP16,
+)
 
-logger = logging.getLogger(__name__)
-
-# Legacy kernel definitions are now imported from kernels submodule
-# All kernel code has been moved to separate files for better organization
-
-# Backward compatibility - maintain existing API
 __all__ = [
+    # FP32 kernels
     "get_compute_optimized_3d_kernel",
     "cuda_transpose_dot_product_3d_compute_optimized",
-    "get_compute_optimized_3d_fp16_kernel",
-    "cuda_transpose_dot_product_3d_compute_optimized_fp16",
     "get_compute_optimized_3d_int8_kernel",
     "get_compute_optimized_3d_int8_experimental_kernel",
     "cuda_transpose_dot_product_3d_compute_optimized_int8",
     "cuda_transpose_dot_product_3d_compute_optimized_int8_experimental",
+    "CustomDIAMatVec",
+    "CustomDIA3DMatVec",
+    "create_test_dia_matrix",
+    "benchmark_dia_kernels",
+    "verify_kernel_correctness",
+    # FP16 kernels
+    "get_compute_optimized_3d_fp16_kernel",
+    "cuda_transpose_dot_product_3d_compute_optimized_fp16",
     "get_compute_optimized_3d_int8_fp16_kernel",
     "get_compute_optimized_3d_int8_experimental_fp16_kernel",
     "cuda_transpose_dot_product_3d_compute_optimized_int8_fp16",
     "cuda_transpose_dot_product_3d_compute_optimized_int8_experimental_fp16",
+    "CustomDIAMatVecFP16",
+    "CustomDIA3DMatVecFP16",
 ]

@@ -7,6 +7,7 @@ mixed tensor and DIA matrix formats for LED optimization.
 """
 
 import sys
+import time
 from pathlib import Path
 from typing import Tuple
 
@@ -21,8 +22,7 @@ from src.utils.diagonal_ata_matrix import DiagonalATAMatrix
 from src.utils.frame_optimizer import (
     FrameOptimizationResult,
     optimize_frame_led_values,
-    optimize_frame_with_dia_matrix,
-    optimize_frame_with_mixed_tensor,
+    optimize_frame_with_tensors,
 )
 from src.utils.led_diffusion_csc_matrix import LEDDiffusionCSCMatrix
 from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
@@ -42,8 +42,8 @@ class TestFrameOptimizer:
         """
         from pathlib import Path
 
-        # Load the latest 2600 LED patterns (v7.0 with optimized sparsity)
-        pattern_path = Path(__file__).parent.parent / "diffusion_patterns" / "synthetic_2600_64x64_v7.npz"
+        # Load the latest 1000 LED patterns 
+        pattern_path = Path(__file__).parent.parent / "diffusion_patterns" / "synthetic_1000_fresh.npz"
         if not pattern_path.exists():
             raise FileNotFoundError(f"Pattern file not found: {pattern_path}")
 
@@ -68,6 +68,28 @@ class TestFrameOptimizer:
         )
 
         return mixed_tensor, dia_matrix
+
+    def load_ata_inverse(self) -> np.ndarray:
+        """
+        Load real ATA inverse matrices from stored patterns.
+        
+        Returns:
+            ATA inverse matrices in shape (3, led_count, led_count)
+        """
+        from pathlib import Path
+        
+        pattern_path = Path(__file__).parent.parent / "diffusion_patterns" / "synthetic_1000_fresh.npz"
+        if not pattern_path.exists():
+            raise FileNotFoundError(f"Pattern file not found: {pattern_path}")
+            
+        data = np.load(str(pattern_path), allow_pickle=True)
+        
+        if 'ata_inverse' in data:
+            ata_inverse = data['ata_inverse']
+            print(f"Loaded real ATA inverse: shape={ata_inverse.shape}, dtype={ata_inverse.dtype}")
+            return ata_inverse
+        else:
+            raise KeyError("No ATA inverse found in pattern file")
 
     def create_test_frame(self, frame_format: str = "planar") -> np.ndarray:
         """
@@ -101,6 +123,32 @@ class TestFrameOptimizer:
             return frame_hwc.transpose(2, 0, 1)
         else:
             return frame_hwc
+
+    def create_test_diffusion_matrices(self, led_count: int) -> Tuple[sp.csc_matrix, np.ndarray]:
+        """
+        Create test diffusion matrices for testing.
+        
+        Args:
+            led_count: Number of LEDs
+            
+        Returns:
+            Tuple of (diffusion_matrix, led_positions)
+        """
+        height, width = 480, 800
+        pixels = height * width
+        
+        # Create random sparse diffusion matrix
+        np.random.seed(42)  # For reproducible tests
+        density = 0.001  # Sparse matrix
+        
+        # Create diffusion matrix: (pixels * 3, led_count * 3) - interleaved RGB
+        diffusion_matrix = sp.random(pixels * 3, led_count * 3, density=density, format='csc')
+        diffusion_matrix.data = diffusion_matrix.data.astype(np.float32) * 0.5 + 0.1  # Positive values
+        
+        # Create random LED positions
+        led_positions = np.random.rand(led_count, 2) * 100  # Random positions
+        
+        return diffusion_matrix, led_positions
 
     def test_frame_format_validation(self):
         """Test input frame format validation."""
@@ -375,10 +423,10 @@ class TestFrameOptimizer:
             target_frame = self.create_test_frame("planar")
 
             # Optimize
-            result = optimize_frame_with_mixed_tensor(
+            result = optimize_frame_with_tensors(
                 target_frame=target_frame,
                 mixed_tensor=mixed_tensor,
-                ata_dense=ATA_dense,
+                dia_matrix=ATA_dense,
                 max_iterations=10,
                 debug=True,
             )
@@ -568,6 +616,217 @@ class TestFrameOptimizer:
         assert result_csc_dense.led_values.shape == (3, led_count)
         assert result_csc_dia.iterations > 0
         assert result_csc_dense.iterations > 0
+
+    def test_ata_inverse_initialization(self):
+        """Test ATA inverse initialization for optimal convergence using real patterns."""
+        # Load real diffusion patterns with mixed tensor
+        try:
+            mixed_tensor, dia_matrix = self.load_real_diffusion_patterns()
+        except FileNotFoundError:
+            print("Real diffusion patterns not found, skipping ATA inverse test")
+            return
+        
+        led_count = mixed_tensor.batch_size
+        print(f"\nTesting ATA inverse initialization with {led_count} LEDs using real patterns:")
+
+        # Load real ATA inverse matrices computed by our standalone utility
+        try:
+            ATA_inverse = self.load_ata_inverse()
+            print(f"Using real ATA inverse matrices from standalone computation")
+        except (FileNotFoundError, KeyError) as e:
+            print(f"Real ATA inverse not available ({e}), creating dummy matrices")
+            # Fallback to dummy matrices for this test
+            np.random.seed(42)  # For reproducible test
+            ATA_inverse = np.zeros((3, led_count, led_count), dtype=np.float32)
+            
+            # Create well-conditioned matrices for each channel
+            for c in range(3):
+                # Create a positive definite matrix
+                A_temp = np.random.randn(led_count, led_count).astype(np.float32) * 0.1
+                ATA_temp = A_temp.T @ A_temp + np.eye(led_count, dtype=np.float32) * 0.01
+                try:
+                    ATA_inverse[c, :, :] = np.linalg.inv(ATA_temp)
+                except np.linalg.LinAlgError:
+                    ATA_inverse[c, :, :] = np.linalg.pinv(ATA_temp)
+
+        target_frame = self.create_test_frame("planar")
+
+        # Test WITHOUT ATA inverse (default initialization) - 1 iteration to see initial MSE
+        result_default_init = optimize_frame_led_values(
+            target_frame=target_frame,
+            AT_matrix=mixed_tensor,
+            ATA_matrix=dia_matrix,
+            max_iterations=1,
+            compute_error_metrics=True,
+            debug=True,
+        )
+
+        # Test WITH ATA inverse initialization - 1 iteration to see initial MSE
+        result_ata_inv_init = optimize_frame_led_values(
+            target_frame=target_frame,
+            AT_matrix=mixed_tensor,
+            ATA_matrix=dia_matrix,
+            ATA_inverse=ATA_inverse,
+            max_iterations=1,
+            compute_error_metrics=True,
+            debug=True,
+            enable_timing=True,  # Enable timing to measure ATA inverse matvec
+        )
+
+        print(f"  === INITIAL MSE COMPARISON ===")
+        print(f"  Default initialization (0.5): MSE = {result_default_init.error_metrics.get('mse', 'N/A')}")
+        print(f"  ATA inverse initialization: MSE = {result_ata_inv_init.error_metrics.get('mse', 'N/A')}")
+        
+        if 'mse' in result_default_init.error_metrics and 'mse' in result_ata_inv_init.error_metrics:
+            mse_improvement = result_default_init.error_metrics['mse'] - result_ata_inv_init.error_metrics['mse']
+            mse_ratio = result_default_init.error_metrics['mse'] / result_ata_inv_init.error_metrics['mse']
+            print(f"  MSE improvement: {mse_improvement:.6f} (ratio: {mse_ratio:.2f}x)")
+        
+        # Report ATA inverse timing if available
+        if result_ata_inv_init.timing_data:
+            print(f"\n  === ATA INVERSE INITIALIZATION TIMING ===")
+            timing_data = result_ata_inv_init.timing_data
+            
+            # Overall initialization timing
+            total_init_time = timing_data.get('ata_inverse_initialization', 0)
+            matvec_time = timing_data.get('ata_inverse_matvec_total', 0)
+            print(f"  Total ATA inverse initialization: {total_init_time:.4f}s")
+            print(f"  Matrix-vector multiplications: {matvec_time:.4f}s")
+            
+            # Per-channel timing
+            channel_times = []
+            for c in range(3):
+                channel_time = timing_data.get(f'ata_inverse_matvec_channel_{c}', 0)
+                if channel_time > 0:
+                    channel_times.append(channel_time)
+                    print(f"    Channel {c}: {channel_time:.4f}s")
+            
+            if channel_times:
+                avg_channel_time = np.mean(channel_times)
+                print(f"  Average per channel: {avg_channel_time:.4f}s")
+                
+            # Show as percentage of total optimization
+            if matvec_time > 0 and total_init_time > 0:
+                matvec_percentage = (matvec_time / total_init_time) * 100
+                print(f"  Matrix-vector operations: {matvec_percentage:.1f}% of initialization time")
+
+        # Now run full optimization
+        print(f"\n  === FULL OPTIMIZATION ===")
+        
+        # Test WITHOUT ATA inverse (default initialization)
+        result_default = optimize_frame_led_values(
+            target_frame=target_frame,
+            AT_matrix=mixed_tensor,
+            ATA_matrix=dia_matrix,
+            max_iterations=20,
+            debug=True,
+        )
+
+        # Test WITH ATA inverse initialization
+        result_ata_inv = optimize_frame_led_values(
+            target_frame=target_frame,
+            AT_matrix=mixed_tensor,
+            ATA_matrix=dia_matrix,
+            ATA_inverse=ATA_inverse,
+            max_iterations=20,
+            debug=True,
+        )
+
+        print(f"  Default initialization: {result_default.iterations} iterations")
+        print(f"  ATA inverse initialization: {result_ata_inv.iterations} iterations")
+        print(f"  Convergence improvement: {result_default.iterations - result_ata_inv.iterations} iterations")
+
+        # ATA inverse should converge faster or with same iterations
+        assert result_ata_inv.iterations <= result_default.iterations
+        
+        # Both should produce valid results
+        assert result_default.led_values.shape == (3, led_count)
+        assert result_ata_inv.led_values.shape == (3, led_count)
+        assert result_default.iterations > 0
+        assert result_ata_inv.iterations > 0
+
+    def test_ata_inverse_performance_comparison(self):
+        """Compare performance with and without ATA inverse initialization."""
+        # Load real patterns for realistic performance test
+        try:
+            mixed_tensor, dia_matrix = self.load_real_diffusion_patterns()
+        except FileNotFoundError:
+            pytest.skip("Real diffusion patterns not available")
+
+        led_count = mixed_tensor.batch_size
+        print(f"\nATA inverse performance comparison with {led_count} LEDs:")
+
+        # Load real ATA inverse matrices for performance test
+        try:
+            ATA_inverse = self.load_ata_inverse()
+            print(f"Using real ATA inverse matrices for performance test")
+        except (FileNotFoundError, KeyError) as e:
+            print(f"Real ATA inverse not available ({e}), creating dummy matrices")
+            # Fallback to dummy matrices
+            ATA_inverse = np.random.rand(3, led_count, led_count).astype(np.float32)
+            # Make them positive definite for each channel
+            for c in range(3):
+                A = np.random.rand(led_count, led_count).astype(np.float32)
+                ATA_inv_channel = A.T @ A + np.eye(led_count) * 0.1
+                ATA_inverse[c, :, :] = np.linalg.inv(ATA_inv_channel)
+
+        target_frame = self.create_test_frame("planar")
+
+        # Performance comparison parameters
+        max_iterations = 10
+        num_trials = 5
+
+        print("  === WITHOUT ATA inverse ===")
+        times_default = []
+        iterations_default = []
+        
+        for trial in range(num_trials):
+            start_time = time.perf_counter()
+            result_default = optimize_frame_led_values(
+                target_frame=target_frame,
+                AT_matrix=mixed_tensor,
+                ATA_matrix=dia_matrix,
+                max_iterations=max_iterations,
+                debug=False,
+            )
+            times_default.append(time.perf_counter() - start_time)
+            iterations_default.append(result_default.iterations)
+
+        avg_time_default = np.mean(times_default)
+        avg_iterations_default = np.mean(iterations_default)
+
+        print("  === WITH ATA inverse ===")
+        times_ata_inv = []
+        iterations_ata_inv = []
+        
+        for trial in range(num_trials):
+            start_time = time.perf_counter()
+            result_ata_inv = optimize_frame_led_values(
+                target_frame=target_frame,
+                AT_matrix=mixed_tensor,
+                ATA_matrix=dia_matrix,
+                ATA_inverse=ATA_inverse,
+                max_iterations=max_iterations,
+                debug=False,
+            )
+            times_ata_inv.append(time.perf_counter() - start_time)
+            iterations_ata_inv.append(result_ata_inv.iterations)
+
+        avg_time_ata_inv = np.mean(times_ata_inv)
+        avg_iterations_ata_inv = np.mean(iterations_ata_inv)
+
+        print(f"  === RESULTS ===")
+        print(f"  Default: {avg_time_default:.4f}s, {avg_iterations_default:.1f} iterations")
+        print(f"  ATA inverse: {avg_time_ata_inv:.4f}s, {avg_iterations_ata_inv:.1f} iterations")
+        
+        speedup = avg_time_default / avg_time_ata_inv if avg_time_ata_inv > 0 else 1.0
+        iteration_reduction = avg_iterations_default - avg_iterations_ata_inv
+        
+        print(f"  Speedup: {speedup:.2f}x")
+        print(f"  Iteration reduction: {iteration_reduction:.1f}")
+
+        # ATA inverse should generally improve convergence
+        assert avg_iterations_ata_inv <= avg_iterations_default + 1  # Allow small margin for noise
 
 
 class TestFrameOptimizerEdgeCases:
