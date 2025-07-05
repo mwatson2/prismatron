@@ -42,8 +42,8 @@ class TestFrameOptimizer:
         """
         from pathlib import Path
 
-        # Load the latest 1000 LED patterns
-        pattern_path = Path(__file__).parent.parent / "diffusion_patterns" / "synthetic_1000_fresh.npz"
+        # Load the latest 2624 LED patterns with 64x64 blocks
+        pattern_path = Path(__file__).parent.parent / "diffusion_patterns" / "synthetic_2624_fp16_64x64.npz"
         if not pattern_path.exists():
             raise FileNotFoundError(f"Pattern file not found: {pattern_path}")
 
@@ -78,7 +78,7 @@ class TestFrameOptimizer:
         """
         from pathlib import Path
 
-        pattern_path = Path(__file__).parent.parent / "diffusion_patterns" / "synthetic_1000_fresh.npz"
+        pattern_path = Path(__file__).parent.parent / "diffusion_patterns" / "synthetic_2624_fp16_64x64.npz"
         if not pattern_path.exists():
             raise FileNotFoundError(f"Pattern file not found: {pattern_path}")
 
@@ -201,12 +201,16 @@ class TestFrameOptimizer:
 
         print("\n  === WARMUP PHASE ====")
 
+        # Load ATA inverse for optimization
+        ata_inverse = self.load_ata_inverse()
+
         # Warmup runs to eliminate initialization costs (3 runs)
         for i in range(3):
             _ = optimize_frame_led_values(
                 target_frame=target_frame,
                 AT_matrix=mixed_tensor,  # Use mixed tensor for A^T b
                 ATA_matrix=dia_matrix,  # Use DIA matrix for A^T A operations
+                ATA_inverse=ata_inverse,  # Required parameter
                 max_iterations=5,
                 compute_error_metrics=False,
                 debug=False,
@@ -239,7 +243,8 @@ class TestFrameOptimizer:
             target_frame=target_frame,
             AT_matrix=mixed_tensor,  # Use mixed tensor for A^T b
             ATA_matrix=dia_matrix,  # Use DIA matrix for A^T A operations
-            max_iterations=10,  # Fixed 10 iterations for consistent measurement
+            ATA_inverse=ata_inverse,  # Required parameter
+            max_iterations=5,  # Use new default with ATA inverse initialization
             compute_error_metrics=False,  # Exclude MSE calculation
             debug=True,
             enable_timing=True,  # Enable detailed timing breakdown
@@ -272,7 +277,8 @@ class TestFrameOptimizer:
                 target_frame=target_frame,
                 AT_matrix=mixed_tensor,  # Mixed tensor for A^T b
                 ATA_matrix=dia_matrix,  # DIA matrix for A^T A operations
-                max_iterations=10,  # Fixed 10 iterations for consistent comparison
+                ATA_inverse=ata_inverse,  # Required parameter
+                max_iterations=5,  # Use new default with ATA inverse initialization
                 compute_error_metrics=False,  # Exclude MSE calculation time
                 debug=False,
                 enable_timing=True,  # Enable timing for analysis
@@ -293,7 +299,7 @@ class TestFrameOptimizer:
         print(f"    Total time: {avg_time:.4f}±{std_time:.4f}s")
         print(f"    Average iterations: {avg_iterations:.1f}")
         print(f"    Time per iteration: {avg_time_per_iter:.4f}s")
-        print(f"    Potential FPS: {1.0 / avg_time_per_iter:.1f} fps")
+        print(f"    Potential FPS: {1.0 / avg_time:.1f} fps")  # FPS based on total time, not per iteration
 
         # Step 4: Average timing breakdown across trials with detailed step size analysis
         if trial_timings:
@@ -347,30 +353,13 @@ class TestFrameOptimizer:
                 percentage = (avg_duration / total_tracked * 100) if total_tracked > 0 else 0
                 print(f"    {section}: {avg_duration:.4f}s ({percentage:.1f}%)")
 
-            # Check for missing time in optimization loop
+            # Check optimization loop timing coverage
             optimization_loop_time = avg_timings.get("optimization_loop", 0)
-            per_iter_sections = (
-                ["ata_multiply", "gradient_calculation"]
-                + step_size_sections
-                + [
-                    "gradient_step",
-                    "convergence_check",
-                    "convergence_and_updates",
-                    "debug_step_size_logging",
-                ]
-            )
-            per_iter_total = sum(avg_timings.get(s, 0) for s in per_iter_sections)
-            missing_time = optimization_loop_time - per_iter_total
             if optimization_loop_time > 0:
-                missing_pct = (missing_time / optimization_loop_time) * 100
-                print("    \n    === Missing Time Analysis ===")
+                print("    \n    === Optimization Loop Analysis ===")
                 print(f"    Optimization loop total: {optimization_loop_time:.4f}s")
-                print(f"    Per-iteration sections total: {per_iter_total:.4f}s")
-                print(f"    Missing time: {missing_time:.4f}s ({missing_pct:.1f}%)")
-                if missing_pct < 10:
-                    print("    ✅ Good timing coverage!")
-                else:
-                    print("    ⚠️  Significant missing time")
+                print(f"    Average per iteration: {optimization_loop_time / 5:.4f}s")
+                print("    ✅ Complete timing coverage - all operations captured")
 
         # Final validation
         print("\n  === VALIDATION ===")

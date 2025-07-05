@@ -26,6 +26,7 @@ def compute_ata_inverse_from_dia(
     dia_matrix: DiagonalATAMatrix,
     regularization: float = 1e-6,
     max_condition_number: float = 1e12,
+    output_fp16: bool = False,
 ) -> tuple:
     """
     Compute ATA inverse matrices from DIA matrix.
@@ -34,6 +35,7 @@ def compute_ata_inverse_from_dia(
         dia_matrix: DiagonalATAMatrix instance
         regularization: Regularization parameter for numerical stability
         max_condition_number: Maximum condition number to accept
+        output_fp16: Whether to output FP16 format (if input ATA matrix is FP16)
 
     Returns:
         Tuple of (ata_inverse, successful_inversions, condition_numbers, avg_condition_number)
@@ -43,8 +45,20 @@ def compute_ata_inverse_from_dia(
 
     print(f"Computing ATA inverse from DIA format: {dia_matrix.led_count} LEDs, {dia_matrix.k} diagonals")
 
+    # Detect input format and decide output format
+    input_is_fp16 = dia_matrix.output_dtype == np.float16
+    use_fp16_output = input_is_fp16 or output_fp16
+    output_dtype = np.float16 if use_fp16_output else np.float32
+
+    if input_is_fp16:
+        print("  Detected FP16 input ATA matrix - will output FP16 inverse")
+    elif output_fp16:
+        print("  Using FP16 output format as requested")
+    else:
+        print("  Using FP32 output format")
+
     led_count = dia_matrix.led_count
-    ata_inverse = np.zeros((3, led_count, led_count), dtype=np.float32)
+    ata_inverse = np.zeros((3, led_count, led_count), dtype=output_dtype)
     condition_numbers = []
     successful_inversions = 0
 
@@ -81,7 +95,7 @@ def compute_ata_inverse_from_dia(
                 print(f"    ⚠️  High condition number ({cond_num:.2e}), using pseudo-inverse")
                 # Use pseudo-inverse for ill-conditioned matrices
                 ata_dense = ata_regularized.toarray()
-                ata_inverse[c, :, :] = np.linalg.pinv(ata_dense).astype(np.float32)
+                ata_inverse[c, :, :] = np.linalg.pinv(ata_dense).astype(output_dtype)
             else:
                 print("    ✅ Computing sparse inverse using spsolve")
                 # Use sparse solve: solve ATA * inv = I for inv
@@ -92,11 +106,11 @@ def compute_ata_inverse_from_dia(
                 # spsolve can handle multiple right-hand sides efficiently
                 inverse_sparse = spla.spsolve(ata_regularized, identity)
 
-                # Convert result to dense format
+                # Convert result to dense format with appropriate dtype
                 if sp.issparse(inverse_sparse):
-                    ata_inverse[c, :, :] = inverse_sparse.toarray().astype(np.float32)
+                    ata_inverse[c, :, :] = inverse_sparse.toarray().astype(output_dtype)
                 else:
-                    ata_inverse[c, :, :] = inverse_sparse.astype(np.float32)
+                    ata_inverse[c, :, :] = inverse_sparse.astype(output_dtype)
 
                 successful_inversions += 1
 
@@ -110,11 +124,11 @@ def compute_ata_inverse_from_dia(
                 ata_dia = dia_matrix.get_channel_dia_matrix(c)
                 ata_dense = ata_dia.toarray()
                 ata_regularized_dense = ata_dense + regularization * np.eye(led_count)
-                ata_inverse[c, :, :] = np.linalg.pinv(ata_regularized_dense).astype(np.float32)
+                ata_inverse[c, :, :] = np.linalg.pinv(ata_regularized_dense).astype(output_dtype)
             except Exception as e2:
                 print(f"    ❌ Pseudo-inverse also failed: {e2}")
                 # Last resort: identity matrix scaled by regularization
-                ata_inverse[c, :, :] = np.eye(led_count, dtype=np.float32) / regularization
+                ata_inverse[c, :, :] = np.eye(led_count, dtype=output_dtype) / regularization
 
     # Calculate average condition number (excluding infinite values)
     finite_cond_nums = [cn for cn in condition_numbers if cn != float("inf")]
@@ -150,6 +164,11 @@ def main():
         "--force",
         action="store_true",
         help="Force recomputation even if ATA inverse already exists",
+    )
+    parser.add_argument(
+        "--fp16",
+        action="store_true",
+        help="Force FP16 output format (automatically detected from ATA matrix if not specified)",
     )
 
     args = parser.parse_args()
@@ -194,11 +213,22 @@ def main():
         elif has_ata_inverse and args.force:
             print("Force flag specified. Recomputing ATA inverse.")
 
+        # Initialize variables
+        ata_inverse = None
+        successful_inversions = 0
+        condition_numbers = []
+        avg_condition_number = 0
+        computation_time = 0
+        input_was_fp16 = False
+
         # Load DIA matrix or dense ATA matrices
         if "dia_matrix" in data:
             print("Loading DIA matrix...")
             dia_dict = data["dia_matrix"].item()
             dia_matrix = DiagonalATAMatrix.from_dict(dia_dict)
+
+            # Check if input is FP16
+            input_was_fp16 = dia_matrix.output_dtype == np.float16
 
             print(f"DIA matrix loaded: {dia_matrix.led_count} LEDs, bandwidth={dia_matrix.bandwidth}")
 
@@ -221,6 +251,7 @@ def main():
                 dia_matrix,
                 regularization=args.regularization,
                 max_condition_number=args.max_condition,
+                output_fp16=args.fp16,
             )
             computation_time = time.perf_counter() - start_time
 
@@ -265,6 +296,8 @@ def main():
             "avg_condition_number": avg_condition_number,
             "regularization": args.regularization,
             "max_condition_number": args.max_condition,
+            "output_dtype": str(ata_inverse.dtype),
+            "input_was_fp16": input_was_fp16,
             "timestamp": time.time(),
         }
         save_dict["ata_inverse_metadata"] = ata_inverse_metadata

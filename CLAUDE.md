@@ -80,3 +80,6 @@ When overall system performance evaluation is needed, it will be explicitly requ
 ### Deprecated Methods
 - CSC natrix for A is deprecated - we are using the mixed tensor now
 - Dense ATA is deprecated. We are using our custom DIA class for the ATA matrix
+
+### Pattern Design
+- We have decided on 64x64 blocks for the patterns

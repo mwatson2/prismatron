@@ -52,6 +52,7 @@ class SyntheticPatternGenerator:
         seed: Optional[int] = None,
         sparsity_threshold: float = 0.01,
         block_size: int = 96,
+        use_fp16: bool = False,
     ):
         """
         Initialize pattern generator.
@@ -62,12 +63,17 @@ class SyntheticPatternGenerator:
             seed: Random seed for reproducible patterns
             sparsity_threshold: Threshold below which pixels are considered zero
             block_size: Size of diffusion blocks (e.g., 64, 96)
+            use_fp16: Whether to generate FP16 output for ATA matrices
         """
         self.frame_width = frame_width
         self.frame_height = frame_height
         self.seed = seed  # Store seed attribute
         self.sparsity_threshold = sparsity_threshold
         self.block_size = block_size
+        self.use_fp16 = use_fp16
+
+        # Calculate LED size scaling based on LED count (will be set later)
+        self.led_size_scale = 1.0  # Default, will be updated in generate_led_positions
 
         if seed is not None:
             np.random.seed(seed)
@@ -89,6 +95,11 @@ class SyntheticPatternGenerator:
             Array of LED positions (led_count, 2) with [x, y] coordinates
         """
         logger.info(f"Generating {led_count} random LED positions...")
+
+        # Calculate LED size scaling: 1/sqrt(led_count) with 1000 LEDs as baseline
+        baseline_led_count = 1000
+        self.led_size_scale = np.sqrt(baseline_led_count / led_count)
+        logger.info(f"LED size scaling factor: {self.led_size_scale:.3f} (baseline: {baseline_led_count} LEDs)")
 
         if self.seed is not None:
             np.random.seed(self.seed)
@@ -202,13 +213,14 @@ class SyntheticPatternGenerator:
 
                 for _ in range(num_blobs):
                     # Random offset for sub-patterns (centered around LED position)
-                    offset_x = np.random.normal(0, 15)
-                    offset_y = np.random.normal(0, 15)
+                    offset_scale = 15 * self.led_size_scale
+                    offset_x = np.random.normal(0, offset_scale)
+                    offset_y = np.random.normal(0, offset_scale)
                     center_x = np.clip(led_x + offset_x, 0, self.frame_width - 1)
                     center_y = np.clip(led_y + offset_y, 0, self.frame_height - 1)
 
-                    # Random sigma for different spread
-                    sigma = np.random.uniform(8, 30)
+                    # Random sigma for different spread - scale with LED count
+                    sigma = np.random.uniform(8, 30) * self.led_size_scale
                     intensity = np.random.uniform(0.3, 1.0) * base_intensity
 
                     # Create meshgrid only for crop region (block boundaries)
@@ -231,7 +243,7 @@ class SyntheticPatternGenerator:
         elif pattern_type == "gaussian_simple":
             # Single Gaussian per channel (centered on LED, cropped to block)
             for c in range(3):
-                sigma = np.random.uniform(15, 40)
+                sigma = np.random.uniform(15, 40) * self.led_size_scale
                 intensity = np.random.uniform(0.5, 1.0) * base_intensity
 
                 # Create meshgrid only for crop region
@@ -249,7 +261,8 @@ class SyntheticPatternGenerator:
         elif pattern_type == "exponential":
             # Exponential falloff pattern (centered on LED, cropped to block)
             for c in range(3):
-                decay_rate = np.random.uniform(0.05, 0.15)
+                # Inverse scaling for decay rate - smaller LEDs need faster decay
+                decay_rate = np.random.uniform(0.05, 0.15) / self.led_size_scale
                 intensity = np.random.uniform(0.4, 1.0) * base_intensity
 
                 # Create distance map only for crop region
@@ -569,8 +582,12 @@ class SyntheticPatternGenerator:
 
         led_count = sparse_matrix.shape[1] // 3
 
-        # Create DiagonalATAMatrix instance
-        dia_matrix = DiagonalATAMatrix(led_count, crop_size=self.block_size)
+        # Create DiagonalATAMatrix instance with FP16 support if requested
+        output_dtype = cp.float16 if self.use_fp16 else cp.float32
+        dia_matrix = DiagonalATAMatrix(led_count, crop_size=self.block_size, output_dtype=output_dtype)
+
+        if self.use_fp16:
+            logger.info("Using FP16 output format for DiagonalATAMatrix")
 
         # Build from diffusion matrix (already in optimal RCM ordering)
         dia_matrix.build_from_diffusion_matrix(sparse_matrix)
@@ -746,6 +763,11 @@ def main():
         default=96,
         help="Block size for LED diffusion patterns (default: 96)",
     )
+    parser.add_argument(
+        "--fp16",
+        action="store_true",
+        help="Generate FP16 output format for ATA matrices (saves memory)",
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
@@ -762,6 +784,7 @@ def main():
             seed=args.seed,
             sparsity_threshold=args.sparsity_threshold,
             block_size=args.block_size,
+            use_fp16=args.fp16,
         )
 
         # Prepare metadata
@@ -770,6 +793,8 @@ def main():
             "seed": args.seed,
             "intensity_variation": not args.no_intensity_variation,
             "block_size": args.block_size,
+            "use_fp16": args.fp16,
+            "led_size_scaling": True,  # Always enabled now
             "command_line": " ".join(sys.argv),
         }
 
