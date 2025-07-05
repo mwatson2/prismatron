@@ -37,9 +37,7 @@ def time_operation(name, func, *args, **kwargs):
 
     # Synchronize and get GPU time
     cp.cuda.runtime.deviceSynchronize()
-    gpu_time = (
-        cp.cuda.get_elapsed_time(start_event, end_event) / 1000.0
-    )  # Convert to seconds
+    gpu_time = cp.cuda.get_elapsed_time(start_event, end_event) / 1000.0  # Convert to seconds
     cpu_time = end_cpu - start_cpu
 
     print(f"{name:30s}: CPU {cpu_time * 1000:6.2f}ms | GPU {gpu_time * 1000:6.2f}ms")
@@ -142,9 +140,7 @@ def analyze_mixed_dia_timing():
     # Time per iteration
     time_per_iteration = total_times / iterations
     print("Time per iteration:")
-    print(
-        f"  Mean: {np.mean(time_per_iteration):.1f}ms ± {np.std(time_per_iteration):.1f}ms"
-    )
+    print(f"  Mean: {np.mean(time_per_iteration):.1f}ms ± {np.std(time_per_iteration):.1f}ms")
 
     # Performance analysis
     print("\n=== Performance Analysis ===")
@@ -152,9 +148,7 @@ def analyze_mixed_dia_timing():
     mean_total_time = np.mean(total_times)
     mean_iterations = np.mean(iterations)
 
-    print(
-        f"Current performance: {mean_total_time:.1f}ms ({1000 / mean_total_time:.1f} FPS)"
-    )
+    print(f"Current performance: {mean_total_time:.1f}ms ({1000 / mean_total_time:.1f} FPS)")
     print(f"Target for 15 FPS: {1000 / 15:.1f}ms")
 
     if mean_total_time > 1000 / 15:
@@ -172,9 +166,7 @@ def analyze_mixed_dia_timing():
 
     print(f"Setup overhead: ~{setup_overhead:.1f}ms")
     total_iter_time = per_iteration_time * mean_iterations
-    print(
-        f"Per-iteration work: ~{per_iteration_time:.1f}ms × {mean_iterations:.1f} = {total_iter_time:.1f}ms"
-    )
+    print(f"Per-iteration work: ~{per_iteration_time:.1f}ms × {mean_iterations:.1f} = {total_iter_time:.1f}ms")
 
     # Per-iteration breakdown (estimates)
     print(f"\nPer-iteration breakdown (estimates for {per_iteration_time:.1f}ms):")
@@ -212,15 +204,11 @@ def analyze_mixed_dia_timing():
     print(f"Raw 3D DIA kernel: {raw_3d_kernel_time:.1f}ms")
 
     theoretical_min = raw_3d_kernel_time * mean_iterations * 2  # 2 calls per iteration
-    call_details = (
-        f"{mean_iterations:.1f} iterations × 2 calls × {raw_3d_kernel_time:.1f}ms"
-    )
+    call_details = f"{mean_iterations:.1f} iterations × 2 calls × {raw_3d_kernel_time:.1f}ms"
     print(f"Theoretical minimum: {theoretical_min:.1f}ms ({call_details})")
 
     overhead = mean_total_time - theoretical_min
-    print(
-        f"Current overhead: {overhead:.1f}ms ({overhead / mean_total_time * 100:.1f}%)"
-    )
+    print(f"Current overhead: {overhead:.1f}ms ({overhead / mean_total_time * 100:.1f}%)")
 
 
 if __name__ == "__main__":

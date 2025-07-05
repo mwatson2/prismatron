@@ -53,9 +53,7 @@ def instrumented_optimize_frame_led_values(
         # Input validation and format conversion
         with timer.section("input_validation"):
             if target_frame.dtype != np.int8 and target_frame.dtype != np.uint8:
-                raise ValueError(
-                    f"Target frame must be int8 or uint8, got {target_frame.dtype}"
-                )
+                raise ValueError(f"Target frame must be int8 or uint8, got {target_frame.dtype}")
 
         with timer.section("format_conversion"):
             # Handle both planar (3, H, W) and standard (H, W, 3) formats
@@ -63,9 +61,7 @@ def instrumented_optimize_frame_led_values(
                 target_planar = target_frame.astype(np.float32) / 255.0
             elif target_frame.shape == (480, 800, 3):
                 target_normalized = target_frame.astype(np.float32) / 255.0
-                target_planar = target_normalized.transpose(
-                    2, 0, 1
-                )  # (H, W, 3) -> (3, H, W)
+                target_planar = target_normalized.transpose(2, 0, 1)  # (H, W, 3) -> (3, H, W)
             else:
                 raise ValueError(f"Unsupported frame shape {target_frame.shape}")
 
@@ -83,12 +79,8 @@ def instrumented_optimize_frame_led_values(
                 ATb_channels = []
                 for channel in range(3):
                     channel_cols = np.arange(channel, csc_matrix.shape[1], 3)
-                    AT_channel = csc_matrix[
-                        :, channel_cols
-                    ]  # Shape: (pixels, led_count)
-                    ATb_channel = (
-                        AT_channel.T @ target_flattened[channel]
-                    )  # Shape: (led_count,)
+                    AT_channel = csc_matrix[:, channel_cols]  # Shape: (pixels, led_count)
+                    ATb_channel = AT_channel.T @ target_flattened[channel]  # Shape: (led_count,)
                     ATb_channels.append(ATb_channel)
 
                 ATb = cp.stack(ATb_channels, axis=0)  # Shape: (3, led_count)
@@ -124,9 +116,7 @@ def instrumented_optimize_frame_led_values(
                     else:
                         # Dense matrix computation
                         with timer.section("dense_einsum"):
-                            ATA_x = cp.einsum(
-                                "ijc,cj->ci", cp.asarray(ata_matrix), led_values_gpu
-                            )
+                            ATA_x = cp.einsum("ijc,cj->ci", cp.asarray(ata_matrix), led_values_gpu)
 
                 # Compute gradient
                 with timer.section("gradient_computation"):
@@ -146,9 +136,7 @@ def instrumented_optimize_frame_led_values(
                                     optimized_kernel=True,
                                 )
                                 if not isinstance(g_dot_ATA_g_per_channel, cp.ndarray):
-                                    g_dot_ATA_g_per_channel = cp.asarray(
-                                        g_dot_ATA_g_per_channel
-                                    )
+                                    g_dot_ATA_g_per_channel = cp.asarray(g_dot_ATA_g_per_channel)
                                 g_dot_ATA_g = cp.sum(g_dot_ATA_g_per_channel)
                         else:
                             with timer.section("dense_quadratic_form"):
@@ -170,9 +158,7 @@ def instrumented_optimize_frame_led_values(
 
                 # Update LED values
                 with timer.section("led_update"):
-                    led_values_new = cp.clip(
-                        led_values_gpu - step_size * gradient, 0, 1
-                    )
+                    led_values_new = cp.clip(led_values_gpu - step_size * gradient, 0, 1)
 
                 # Check convergence
                 with timer.section("convergence_check"):
@@ -180,9 +166,7 @@ def instrumented_optimize_frame_led_values(
                     if delta < convergence_threshold:
                         converged = True
                         if debug:
-                            print(
-                                f"Converged after {iteration + 1} iterations, delta: {delta:.6f}"
-                            )
+                            print(f"Converged after {iteration + 1} iterations, delta: {delta:.6f}")
                         break
 
                 # Update values for next iteration
@@ -338,16 +322,12 @@ def run_detailed_timing_analysis():
             }
 
     # Sort by mean duration
-    sorted_sections = sorted(
-        section_stats.items(), key=lambda x: x[1]["mean"], reverse=True
-    )
+    sorted_sections = sorted(section_stats.items(), key=lambda x: x[1]["mean"], reverse=True)
 
     # Print detailed breakdown
     print(f"\nDetailed Timing Breakdown (averaged over {timing_iterations} runs):")
     print("=" * 90)
-    print(
-        f"{'Section':<40} {'Mean (ms)':<12} {'Std (ms)':<12} {'GPU (ms)':<12} {'Count':<8}"
-    )
+    print(f"{'Section':<40} {'Mean (ms)':<12} {'Std (ms)':<12} {'GPU (ms)':<12} {'Count':<8}")
     print("-" * 90)
 
     total_time = section_stats.get("optimization_iterations", {}).get(
@@ -360,9 +340,7 @@ def run_detailed_timing_analysis():
         gpu_ms = stats["gpu_mean"] * 1000 if stats["gpu_mean"] else 0
         count = stats["count"]
 
-        print(
-            f"{section_name:<40} {mean_ms:<12.2f} {std_ms:<12.2f} {gpu_ms:<12.2f} {count:<8}"
-        )
+        print(f"{section_name:<40} {mean_ms:<12.2f} {std_ms:<12.2f} {gpu_ms:<12.2f} {count:<8}")
 
     # Identify bottlenecks and optimization opportunities
     print("\n=== Performance Analysis ===")
@@ -376,9 +354,7 @@ def run_detailed_timing_analysis():
 
     # Look for repeated work that could be optimized
     print("\n2. Repeated operations (potential for optimization):")
-    iteration_sections = [
-        (name, stats) for name, stats in sorted_sections if "iteration_" in name
-    ]
+    iteration_sections = [(name, stats) for name, stats in sorted_sections if "iteration_" in name]
     if iteration_sections:
         total_iteration_time = sum(stats["mean"] for _, stats in iteration_sections)
         print(f"   Total iteration time: {total_iteration_time * 1000:.2f}ms")
@@ -387,11 +363,7 @@ def run_detailed_timing_analysis():
 
     # Memory transfer analysis
     print("\n3. GPU operations:")
-    gpu_sections = [
-        (name, stats)
-        for name, stats in sorted_sections
-        if stats["gpu_mean"] is not None
-    ]
+    gpu_sections = [(name, stats) for name, stats in sorted_sections if stats["gpu_mean"] is not None]
     if gpu_sections:
         total_gpu_time = sum(stats["gpu_mean"] for _, stats in gpu_sections)
         print(f"   Total GPU time: {total_gpu_time * 1000:.2f}ms")
@@ -399,17 +371,11 @@ def run_detailed_timing_analysis():
             print(f"   {name}: {stats['gpu_mean'] * 1000:.2f}ms")
 
     # Final summary
-    overall_mean = np.mean(
-        [sum(s.duration for s in timer._sections.values()) for timer in all_timers]
-    )
-    overall_std = np.std(
-        [sum(s.duration for s in timer._sections.values()) for timer in all_timers]
-    )
+    overall_mean = np.mean([sum(s.duration for s in timer._sections.values()) for timer in all_timers])
+    overall_std = np.std([sum(s.duration for s in timer._sections.values()) for timer in all_timers])
 
     print("\n=== Final Summary ===")
-    print(
-        f"Overall optimization time: {overall_mean * 1000:.1f}ms ± {overall_std * 1000:.1f}ms"
-    )
+    print(f"Overall optimization time: {overall_mean * 1000:.1f}ms ± {overall_std * 1000:.1f}ms")
     print(f"Estimated FPS: {1 / overall_mean:.1f}")
     print(f"Target 15 FPS requires: {1000 / 15:.1f}ms")
 

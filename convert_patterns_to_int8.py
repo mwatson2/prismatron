@@ -34,9 +34,7 @@ def convert_patterns_to_int8(input_path: str, output_path: str):
     mixed_tensor_dict = patterns_data["mixed_tensor"].item()
     float32_mixed_tensor = SingleBlockMixedSparseTensor.from_dict(mixed_tensor_dict)
 
-    print(
-        f"Original mixed tensor: {float32_mixed_tensor.batch_size} LEDs, dtype={float32_mixed_tensor.dtype}"
-    )
+    print(f"Original mixed tensor: {float32_mixed_tensor.batch_size} LEDs, dtype={float32_mixed_tensor.dtype}")
     min_val = float(cp.min(float32_mixed_tensor.sparse_values))
     max_val = float(cp.max(float32_mixed_tensor.sparse_values))
     print(f"Original values range: [{min_val:.6f}, {max_val:.6f}]")
@@ -59,17 +57,13 @@ def convert_patterns_to_int8(input_path: str, output_path: str):
     int8_mixed_tensor.block_positions = float32_mixed_tensor.block_positions.copy()
 
     print(f"Converted mixed tensor: dtype={int8_mixed_tensor.dtype}")
-    print(
-        f"Converted values range: [{int(cp.min(int8_values))}, {int(cp.max(int8_values))}]"
-    )
+    print(f"Converted values range: [{int(cp.min(int8_values))}, {int(cp.max(int8_values))}]")
 
     # Verify conversion
     sample_float = float32_mixed_tensor.sparse_values[0, 0, 0, 0]
     sample_int8 = int8_mixed_tensor.sparse_values[0, 0, 0, 0]
     expected_int8 = int(sample_float * 255)
-    print(
-        f"Sample conversion: {float(sample_float):.6f} -> {int(sample_int8)} (expected: {expected_int8})"
-    )
+    print(f"Sample conversion: {float(sample_float):.6f} -> {int(sample_int8)} (expected: {expected_int8})")
 
     # Export to new dict format
     int8_mixed_dict = int8_mixed_tensor.to_dict()
@@ -96,9 +90,7 @@ def convert_patterns_to_int8(input_path: str, output_path: str):
     verify_mixed_dict = verify_data["mixed_tensor"].item()
     verify_mixed_tensor = SingleBlockMixedSparseTensor.from_dict(verify_mixed_dict)
 
-    print(
-        f"Verified mixed tensor: {verify_mixed_tensor.batch_size} LEDs, dtype={verify_mixed_tensor.dtype}"
-    )
+    print(f"Verified mixed tensor: {verify_mixed_tensor.batch_size} LEDs, dtype={verify_mixed_tensor.dtype}")
     min_verify = int(cp.min(verify_mixed_tensor.sparse_values))
     max_verify = int(cp.max(verify_mixed_tensor.sparse_values))
     print(f"Verified values range: [{min_verify}, {max_verify}]")

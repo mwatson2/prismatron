@@ -46,9 +46,7 @@ def detailed_optimization_trace(
         target_planar = target_frame.astype(np.float32) / 255.0
 
     print(f"Target planar shape: {target_planar.shape}")
-    print(
-        f"Target planar range: [{target_planar.min():.6f}, {target_planar.max():.6f}]"
-    )
+    print(f"Target planar range: [{target_planar.min():.6f}, {target_planar.max():.6f}]")
 
     # Step 1: Calculate A^T @ b
     print("\n=== STEP 1: Calculate A^T @ b ===")
@@ -86,9 +84,7 @@ def detailed_optimization_trace(
 
             atb_min = ATb_channel.min()
             atb_max = ATb_channel.max()
-            print(
-                f"Channel {channel}: A_channel shape {A_channel.shape}, ATb range [{atb_min:.6f}, {atb_max:.6f}]"
-            )
+            print(f"Channel {channel}: A_channel shape {A_channel.shape}, ATb range [{atb_min:.6f}, {atb_max:.6f}]")
 
         ATb = ATb_result.T  # Convert to (3, led_count)
         print(f"Final A^T @ b shape: {ATb.shape}")
@@ -105,17 +101,13 @@ def detailed_optimization_trace(
     print("\n=== STEP 2: Initialize LED values ===")
     led_values_normalized = np.full((3, led_count), 0.5, dtype=np.float32)
     print(f"Initial LED values shape: {led_values_normalized.shape}")
-    print(
-        f"Initial LED values range: [{led_values_normalized.min():.6f}, {led_values_normalized.max():.6f}]"
-    )
+    print(f"Initial LED values range: [{led_values_normalized.min():.6f}, {led_values_normalized.max():.6f}]")
 
     # Handle ordering for DIA matrix
     if isinstance(ata_matrix, DiagonalATAMatrix):
         print("Converting to RCM order for DIA matrix")
         ATb_opt_order = ata_matrix.reorder_led_values_to_rcm(ATb)
-        led_values_opt_order = ata_matrix.reorder_led_values_to_rcm(
-            led_values_normalized
-        )
+        led_values_opt_order = ata_matrix.reorder_led_values_to_rcm(led_values_normalized)
         print(f"DIA matrix shape: {ata_matrix.dia_data_cpu.shape}")
     else:
         print("Using spatial order for dense matrix")
@@ -147,16 +139,12 @@ def detailed_optimization_trace(
             ATA_x = cp.einsum("ijc,cj->ci", cp.asarray(ata_matrix), led_values_gpu)
 
         print(f"A^T A @ x shape: {ATA_x.shape}")
-        print(
-            f"A^T A @ x range: [{float(cp.min(ATA_x)):.6f}, {float(cp.max(ATA_x)):.6f}]"
-        )
+        print(f"A^T A @ x range: [{float(cp.min(ATA_x)):.6f}, {float(cp.max(ATA_x)):.6f}]")
 
         # Compute gradient
         gradient = ATA_x - ATb_gpu
         print(f"Gradient shape: {gradient.shape}")
-        print(
-            f"Gradient range: [{float(cp.min(gradient)):.6f}, {float(cp.max(gradient)):.6f}]"
-        )
+        print(f"Gradient range: [{float(cp.min(gradient)):.6f}, {float(cp.max(gradient)):.6f}]")
 
         # Compute step size
         g_dot_g = cp.sum(gradient * gradient)
@@ -168,14 +156,10 @@ def detailed_optimization_trace(
             if not isinstance(g_dot_ATA_g_per_channel, cp.ndarray):
                 g_dot_ATA_g_per_channel = cp.asarray(g_dot_ATA_g_per_channel)
             g_dot_ATA_g = cp.sum(g_dot_ATA_g_per_channel)
-            print(
-                f"g^T @ A^T A @ g per channel: {[float(x) for x in g_dot_ATA_g_per_channel]}"
-            )
+            print(f"g^T @ A^T A @ g per channel: {[float(x) for x in g_dot_ATA_g_per_channel]}")
         else:
             print("Computing g^T @ A^T A @ g using dense matrix")
-            g_dot_ATA_g = cp.einsum(
-                "ci,ijc,cj->", gradient, cp.asarray(ata_matrix), gradient
-            )
+            g_dot_ATA_g = cp.einsum("ci,ijc,cj->", gradient, cp.asarray(ata_matrix), gradient)
 
         print(f"g^T @ A^T A @ g: {float(g_dot_ATA_g):.6f}")
 
@@ -219,18 +203,14 @@ def detailed_optimization_trace(
 
     # Convert back to spatial order
     if isinstance(ata_matrix, DiagonalATAMatrix):
-        led_values_spatial = ata_matrix.reorder_led_values_from_rcm(
-            cp.asnumpy(led_values_gpu)
-        )
+        led_values_spatial = ata_matrix.reorder_led_values_from_rcm(cp.asnumpy(led_values_gpu))
         print("Converted LED values from RCM back to spatial order")
     else:
         led_values_spatial = cp.asnumpy(led_values_gpu)
         print("LED values already in spatial order")
 
     print(f"Final LED values spatial shape: {led_values_spatial.shape}")
-    print(
-        f"Final LED values range: [{led_values_spatial.min():.6f}, {led_values_spatial.max():.6f}]"
-    )
+    print(f"Final LED values range: [{led_values_spatial.min():.6f}, {led_values_spatial.max():.6f}]")
 
     # Compute forward pass for error metrics
     try:
@@ -238,17 +218,13 @@ def detailed_optimization_trace(
 
         if isinstance(at_matrix, SingleBlockMixedSparseTensor):
             print("Using mixed tensor forward pass")
-            led_values_gpu = cp.asarray(
-                led_values_spatial.T
-            )  # Convert to (led_count, 3)
+            led_values_gpu = cp.asarray(led_values_spatial.T)  # Convert to (led_count, 3)
             print(f"LED values for forward pass shape: {led_values_gpu.shape}")
 
             rendered_gpu = at_matrix.forward_pass_3d(led_values_gpu)
             rendered_planar = cp.asnumpy(rendered_gpu)
             print(f"Rendered frame shape: {rendered_planar.shape}")
-            print(
-                f"Rendered frame range: [{rendered_planar.min():.6f}, {rendered_planar.max():.6f}]"
-            )
+            print(f"Rendered frame range: [{rendered_planar.min():.6f}, {rendered_planar.max():.6f}]")
 
         elif isinstance(at_matrix, LEDDiffusionCSCMatrix):
             print("Using CSC forward pass")
@@ -262,9 +238,7 @@ def detailed_optimization_trace(
                 A_channel = csc_A[:, channel_cols]
                 rendered_channel = A_channel @ led_channel
                 rendered_planar[channel] = rendered_channel.reshape(height, width)
-                print(
-                    f"Channel {channel} rendered range: [{rendered_channel.min():.6f}, {rendered_channel.max():.6f}]"
-                )
+                print(f"Channel {channel} rendered range: [{rendered_channel.min():.6f}, {rendered_channel.max():.6f}]")
 
         # Compute error metrics
         diff = rendered_planar - target_planar
