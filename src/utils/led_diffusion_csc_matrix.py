@@ -674,8 +674,8 @@ class LEDDiffusionCSCMatrix:
         try:
             import cupy as cp
             from cupyx.scipy.sparse import csc_matrix as cupy_csc_matrix
-        except ImportError:
-            raise ImportError("CuPy is required for GPU matrix operations")
+        except ImportError as err:
+            raise ImportError("CuPy is required for GPU matrix operations") from err
 
         logger.debug("Transferring matrices to GPU...")
 

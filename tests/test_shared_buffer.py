@@ -329,21 +329,27 @@ def consumer_process(
                 if test_timing:
                     # Simple timing check - if frame is too old, consider it dropped
                     current_time = time.time()
-                    if buffer_info.metadata and buffer_info.metadata.presentation_timestamp > 0:
-                        if current_time > buffer_info.metadata.presentation_timestamp + 0.1:  # 100ms tolerance
-                            frames_dropped += 1
-                            should_display = False
+                    if (
+                        buffer_info.metadata
+                        and buffer_info.metadata.presentation_timestamp > 0
+                        and current_time > buffer_info.metadata.presentation_timestamp + 0.1
+                    ):  # 100ms tolerance
+                        frames_dropped += 1
+                        should_display = False
 
                     if not should_display:
                         ring_buffer.release_read_buffer()
                         continue
 
                 # Test resolution metadata if requested
-                if test_resolution and should_display and buffer_info.metadata:
-                    # Verify we got valid resolution metadata
-                    if buffer_info.metadata.source_width <= 0 or buffer_info.metadata.source_height <= 0:
-                        print(f"Invalid resolution metadata for frame {frames_received}")
-                        sys.exit(1)
+                if (
+                    test_resolution
+                    and should_display
+                    and buffer_info.metadata
+                    and (buffer_info.metadata.source_width <= 0 or buffer_info.metadata.source_height <= 0)
+                ):
+                    print(f"Invalid resolution metadata for frame {frames_received}")
+                    sys.exit(1)
 
                 # Verify pattern in a sample area instead of entire buffer
                 # Ring buffers provide latest frame, not necessarily every frame

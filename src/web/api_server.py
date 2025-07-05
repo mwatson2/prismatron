@@ -318,7 +318,7 @@ async def previous_item():
 # Upload endpoints
 @app.post("/api/upload")
 async def upload_file(
-    file: UploadFile = File(...),
+    file: UploadFile = File(...),  # noqa: B008
     name: Optional[str] = Form(None),
     duration: Optional[float] = Form(None),
 ):
@@ -373,7 +373,7 @@ async def upload_file(
 
     except Exception as e:
         logger.error(f"Upload failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # Effects endpoints
@@ -613,7 +613,7 @@ async def restart_system():
 
     except Exception as e:
         logger.error(f"Failed to restart system: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/api/system/reboot")
@@ -630,7 +630,7 @@ async def reboot_system():
 
     except Exception as e:
         logger.error(f"Failed to reboot system: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # Health check endpoint

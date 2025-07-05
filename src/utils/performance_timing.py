@@ -7,6 +7,7 @@ Key features include nested timing sections, GPU event timing, memory bandwidth
 calculations, and FLOPS analysis.
 """
 
+import contextlib
 import csv
 import logging
 import statistics
@@ -155,10 +156,8 @@ class PerformanceTiming:
     def _gpu_sync(self):
         """Perform GPU synchronization if available."""
         if self.enable_gpu_timing and cp is not None:
-            try:
+            with contextlib.suppress(Exception):
                 cp.cuda.runtime.deviceSynchronize()
-            except Exception:
-                pass  # nosec B110 Graceful fallback if GPU operations fail
 
     def _create_gpu_events(self):
         """Create GPU timing events if available."""
@@ -259,10 +258,8 @@ class PerformanceTiming:
                     section.gpu_end_event,
                 ) = self._create_gpu_events()
                 if section.gpu_start_event:
-                    try:
+                    with contextlib.suppress(Exception):
                         section.gpu_start_event.record()
-                    except Exception:
-                        pass  # nosec B110 Graceful fallback if GPU operations fail
 
             # Start CPU timing
             section.start_time = time.time()

@@ -307,9 +307,8 @@ class TestWLEDClient(unittest.TestCase):
 
     def test_context_manager_connection_failure(self):
         """Test context manager with connection failure."""
-        with patch.object(self.client, "connect", return_value=False), self.assertRaises(ConnectionError):
-            with self.client:
-                pass
+        with patch.object(self.client, "connect", return_value=False), self.assertRaises(ConnectionError), self.client:
+            pass
 
     def test_fragmentation_calculation(self):
         """Test LED data fragmentation calculation."""

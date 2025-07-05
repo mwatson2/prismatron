@@ -107,11 +107,15 @@ class DiffusionPatternVisualizer:
             data = np.load(self.patterns_file, allow_pickle=True)
 
             # Check for new nested format
-            if not all(key in data for key in ["diffusion_matrix", "mixed_tensor", "metadata"]):
+            if not all(
+                key in data for key in ["diffusion_matrix", "mixed_tensor", "metadata"]
+            ):
                 logger.error("File does not contain the new nested format")
                 logger.error("Expected keys: diffusion_matrix, mixed_tensor, metadata")
                 logger.error(f"Found keys: {list(data.keys())}")
-                logger.error("Please regenerate patterns with the updated generate_synthetic_patterns.py")
+                logger.error(
+                    "Please regenerate patterns with the updated generate_synthetic_patterns.py"
+                )
                 return False
 
             logger.info("Detected new nested format, loading wrapper objects...")
@@ -130,13 +134,17 @@ class DiffusionPatternVisualizer:
             # Load LEDDiffusionCSCMatrix
             logger.info("Loading LEDDiffusionCSCMatrix...")
             diffusion_matrix_dict = data["diffusion_matrix"].item()
-            self.diffusion_matrix = LEDDiffusionCSCMatrix.from_dict(diffusion_matrix_dict)
+            self.diffusion_matrix = LEDDiffusionCSCMatrix.from_dict(
+                diffusion_matrix_dict
+            )
             logger.info(f"Loaded diffusion matrix: {self.diffusion_matrix}")
 
             # Load SingleBlockMixedSparseTensor
             logger.info("Loading SingleBlockMixedSparseTensor...")
             mixed_tensor_dict = data["mixed_tensor"].item()
-            self.mixed_tensor = SingleBlockMixedSparseTensor.from_dict(mixed_tensor_dict)
+            self.mixed_tensor = SingleBlockMixedSparseTensor.from_dict(
+                mixed_tensor_dict
+            )
             logger.info(f"Loaded mixed tensor: {self.mixed_tensor}")
 
             # Load metadata
@@ -145,7 +153,9 @@ class DiffusionPatternVisualizer:
             # Load LED positions and spatial mapping
             self.led_positions = data.get("led_positions", None)
             self.led_spatial_mapping = data.get("led_spatial_mapping", None)
-            if self.led_spatial_mapping is not None and hasattr(self.led_spatial_mapping, "item"):
+            if self.led_spatial_mapping is not None and hasattr(
+                self.led_spatial_mapping, "item"
+            ):
                 self.led_spatial_mapping = self.led_spatial_mapping.item()
 
             # Load dense A^T@A data if available
@@ -159,7 +169,9 @@ class DiffusionPatternVisualizer:
             self.dense_patterns_mixed = self.mixed_tensor.to_dense_patterns()
 
             logger.info(f"CSC dense patterns shape: {self.dense_patterns_csc.shape}")
-            logger.info(f"Mixed tensor dense patterns shape: {self.dense_patterns_mixed.shape}")
+            logger.info(
+                f"Mixed tensor dense patterns shape: {self.dense_patterns_mixed.shape}"
+            )
 
             return True
 
@@ -235,8 +247,11 @@ class DiffusionPatternVisualizer:
             if self.dense_ata_data:
                 metadata_response["dense_ata_info"] = {
                     "shape": list(self.dense_ata_data["dense_ata_matrices"].shape),
-                    "memory_mb": self.dense_ata_data["dense_ata_matrices"].nbytes / (1024 * 1024),
-                    "computation_time": self.dense_ata_data["dense_ata_computation_time"],
+                    "memory_mb": self.dense_ata_data["dense_ata_matrices"].nbytes
+                    / (1024 * 1024),
+                    "computation_time": self.dense_ata_data[
+                        "dense_ata_computation_time"
+                    ],
                 }
 
             return jsonify(metadata_response)
@@ -251,7 +266,9 @@ class DiffusionPatternVisualizer:
                 page = int(request.args.get("page", 0))
                 per_page = int(request.args.get("per_page", 50))
                 channel = request.args.get("channel", "all")
-                order = request.args.get("order", "numerical")  # "numerical" or "storage"
+                order = request.args.get(
+                    "order", "numerical"
+                )  # "numerical" or "storage"
                 format_type = request.args.get("format", "csc")  # "csc" or "mixed"
 
                 # Use CSC matrix as authoritative for LED count
@@ -265,16 +282,21 @@ class DiffusionPatternVisualizer:
                 if order == "storage" and self.led_spatial_mapping:
                     # Storage order: show LEDs in matrix/file column order (spatial indices)
                     # Dense patterns are indexed by spatial indices, so use directly
-                    display_info = [{"spatial_idx": i, "display_id": i} for i in range(actual_led_count)]
+                    display_info = [
+                        {"spatial_idx": i, "display_id": i}
+                        for i in range(actual_led_count)
+                    ]
                 else:
                     # Numerical order: show LEDs in physical ID order (0, 1, 2, ...)
                     # Need to map from physical IDs to spatial indices for array access
                     reverse_mapping = {
-                        matrix_idx: physical_id for physical_id, matrix_idx in self.led_spatial_mapping.items()
+                        matrix_idx: physical_id
+                        for physical_id, matrix_idx in self.led_spatial_mapping.items()
                     }
                     # Sort by physical ID for display, but keep track of spatial index for array access
                     display_info = [
-                        {"spatial_idx": i, "display_id": reverse_mapping.get(i, i)} for i in range(actual_led_count)
+                        {"spatial_idx": i, "display_id": reverse_mapping.get(i, i)}
+                        for i in range(actual_led_count)
                     ]
                     # Sort by display_id (physical LED ID) for numerical order
                     display_info.sort(key=lambda x: x["display_id"])
@@ -295,11 +317,15 @@ class DiffusionPatternVisualizer:
                     display_id = info["display_id"]
                     if channel == "all":
                         # Create composite RGB image - patterns are (height, width, 3)
-                        rgb_pattern = patterns_to_use[spatial_idx]  # Use spatial index for array access
+                        rgb_pattern = patterns_to_use[
+                            spatial_idx
+                        ]  # Use spatial index for array access
                     else:
                         # Single channel - extract the specific channel
                         channel_idx = {"red": 0, "green": 1, "blue": 2}.get(channel, 0)
-                        single_channel = patterns_to_use[spatial_idx, :, :, channel_idx]  # (height, width)
+                        single_channel = patterns_to_use[
+                            spatial_idx, :, :, channel_idx
+                        ]  # (height, width)
                         rgb_pattern = np.stack([single_channel] * 3, axis=-1)
 
                     # Create thumbnail
@@ -308,7 +334,8 @@ class DiffusionPatternVisualizer:
                     # Get physical LED ID for this spatial index
                     if self.led_spatial_mapping:
                         reverse_mapping = {
-                            matrix_idx: physical_id for physical_id, matrix_idx in self.led_spatial_mapping.items()
+                            matrix_idx: physical_id
+                            for physical_id, matrix_idx in self.led_spatial_mapping.items()
                         }
                         physical_led_id = reverse_mapping.get(spatial_idx, spatial_idx)
                     else:
@@ -321,7 +348,9 @@ class DiffusionPatternVisualizer:
                             "physical_led_id": physical_led_id,  # Original LED numbering
                             "thumbnail": thumbnail,
                             "max_intensity": float(np.max(rgb_pattern)),
-                            "center_of_mass": self._calculate_center_of_mass(rgb_pattern).tolist(),
+                            "center_of_mass": self._calculate_center_of_mass(
+                                rgb_pattern
+                            ).tolist(),
                         }
                     )
 
@@ -374,7 +403,8 @@ class DiffusionPatternVisualizer:
                 # Get physical LED ID for this spatial index
                 if self.led_spatial_mapping:
                     reverse_mapping = {
-                        matrix_idx: physical_id for physical_id, matrix_idx in self.led_spatial_mapping.items()
+                        matrix_idx: physical_id
+                        for physical_id, matrix_idx in self.led_spatial_mapping.items()
                     }
                     physical_led_id = reverse_mapping.get(spatial_idx, spatial_idx)
                 else:
@@ -409,7 +439,9 @@ class DiffusionPatternVisualizer:
                             "min_intensity": float(np.min(pattern)),
                             "mean_intensity": float(np.mean(pattern)),
                             "std_intensity": float(np.std(pattern)),
-                            "center_of_mass": self._calculate_center_of_mass(pattern).tolist(),
+                            "center_of_mass": self._calculate_center_of_mass(
+                                pattern
+                            ).tolist(),
                         }
 
                         format_data["channels"][ch_name] = {
@@ -418,13 +450,17 @@ class DiffusionPatternVisualizer:
                         }
 
                     # Create composite RGB view for this format
-                    rgb_pattern = patterns_array[spatial_idx]  # Already in (height, width, 3) format
+                    rgb_pattern = patterns_array[
+                        spatial_idx
+                    ]  # Already in (height, width, 3) format
 
                     format_data["composite"] = {
                         "image": self._create_full_image(rgb_pattern),
                         "statistics": {
                             "max_intensity": float(np.max(rgb_pattern)),
-                            "center_of_mass": self._calculate_center_of_mass(rgb_pattern).tolist(),
+                            "center_of_mass": self._calculate_center_of_mass(
+                                rgb_pattern
+                            ).tolist(),
                         },
                     }
 
@@ -543,7 +579,9 @@ class DiffusionPatternVisualizer:
             return np.array([x_cm, y_cm])
 
         except Exception:
-            return np.array([self.diffusion_matrix.width // 2, self.diffusion_matrix.height // 2])
+            return np.array(
+                [self.diffusion_matrix.width // 2, self.diffusion_matrix.height // 2]
+            )
 
     def run(self, host: str = "127.0.0.1", port: int = 8080, debug: bool = False):
         """Run the web server."""
@@ -946,20 +984,25 @@ HTML_TEMPLATE = """
             html += `<div><strong>LED Count:</strong> ${data.led_count}</div>`;
             html += `<div><strong>Dimensions:</strong> ${data.frame_width} × ${data.frame_height}</div>`;
             html += `<div><strong>Channels:</strong> ${data.channels}</div>`;
-            html += `<div><strong>Formats:</strong> ${data.has_both_formats ? 'CSC Matrix + Mixed Tensor' : 'Single Format'}</div>`;
+            const format_text = data.has_both_formats ? 'CSC Matrix + Mixed Tensor' : 'Single Format';
+            html += `<div><strong>Formats:</strong> ${format_text}</div>`;
 
             if (data.csc_info) {
-                html += `<div><strong>CSC Matrix:</strong> ${data.csc_info.matrix_shape[0]} × ${data.csc_info.matrix_shape[1]}</div>`;
+                const rows = data.csc_info.matrix_shape[0];
+                const cols = data.csc_info.matrix_shape[1];
+                html += `<div><strong>CSC Matrix:</strong> ${rows} × ${cols}</div>`;
                 html += `<div><strong>CSC Memory:</strong> ${data.csc_info.memory_mb.toFixed(1)} MB</div>`;
                 html += `<div><strong>CSC Sparsity:</strong> ${data.csc_info.sparsity_percent.toFixed(2)}%</div>`;
                 html += `<div><strong>CSC NNZ:</strong> ${data.csc_info.nnz.toLocaleString()}</div>`;
             }
 
             if (data.mixed_tensor_info) {
-                html += `<div><strong>Mixed Tensor:</strong> ${data.mixed_tensor_info.batch_size} × ${data.mixed_tensor_info.channels} × ${data.mixed_tensor_info.height} × ${data.mixed_tensor_info.width}</div>`;
-                html += `<div><strong>Block Size:</strong> ${data.mixed_tensor_info.block_size} × ${data.mixed_tensor_info.block_size}</div>`;
-                html += `<div><strong>Mixed Memory:</strong> ${data.mixed_tensor_info.memory_mb.toFixed(1)} MB</div>`;
-                html += `<div><strong>Total Blocks:</strong> ${data.mixed_tensor_info.total_blocks.toLocaleString()}</div>`;
+                const info = data.mixed_tensor_info;
+                const tensor_dims = `${info.batch_size} × ${info.channels} × ${info.height} × ${info.width}`;
+                html += `<div><strong>Mixed Tensor:</strong> ${tensor_dims}</div>`;
+                html += `<div><strong>Block Size:</strong> ${info.block_size} × ${info.block_size}</div>`;
+                html += `<div><strong>Mixed Memory:</strong> ${info.memory_mb.toFixed(1)} MB</div>`;
+                html += `<div><strong>Total Blocks:</strong> ${info.total_blocks.toLocaleString()}</div>`;
             }
 
             html += '</div>';
@@ -1011,7 +1054,8 @@ HTML_TEMPLATE = """
                         <div class="pattern-info">
                             <div><strong>COL ${pattern.spatial_idx} LED ${pattern.physical_led_id}</strong></div>
                             <div>Max: ${pattern.max_intensity.toFixed(3)}</div>
-                            <div>CM: (${pattern.center_of_mass[0].toFixed(1)}, ${pattern.center_of_mass[1].toFixed(1)})</div>
+                            <div>CM: (${pattern.center_of_mass[0].toFixed(1)},
+                                     ${pattern.center_of_mass[1].toFixed(1)})</div>
                         </div>
                     </div>
                 `;
@@ -1028,8 +1072,10 @@ HTML_TEMPLATE = """
                 <button onclick="goToPage(0)" ${currentPage === 0 ? 'disabled' : ''}>First</button>
                 <button onclick="goToPage(${currentPage - 1})" ${currentPage === 0 ? 'disabled' : ''}>Previous</button>
                 <span>Page ${currentPage + 1} of ${totalPages} (${data.total_leds} LEDs, ${data.format_label})</span>
-                <button onclick="goToPage(${currentPage + 1})" ${currentPage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
-                <button onclick="goToPage(${totalPages - 1})" ${currentPage >= totalPages - 1 ? 'disabled' : ''}>Last</button>
+                <button onclick="goToPage(${currentPage + 1})"
+                        ${currentPage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+                <button onclick="goToPage(${totalPages - 1})"
+                        ${currentPage >= totalPages - 1 ? 'disabled' : ''}>Last</button>
             `;
 
             document.getElementById('pagination-top').innerHTML = paginationHTML;
@@ -1074,7 +1120,8 @@ HTML_TEMPLATE = """
             html += '<div class="format-toggle">';
             Object.keys(data.formats).forEach(format => {
                 const isActive = format === 'csc' ? 'active' : '';
-                html += `<button class="format-button ${isActive}" onclick="showFormatTab('${format}')">${format.toUpperCase()}</button>`;
+                html += `<button class="format-button ${isActive}"
+                         onclick="showFormatTab('${format}')">${format.toUpperCase()}</button>`;
             });
             html += '</div>';
 
@@ -1087,7 +1134,8 @@ HTML_TEMPLATE = """
                 // Left side - images
                 html += '<div>';
                 html += '<h3>Composite RGB</h3>';
-                html += `<img src="${formatData.composite.image}" style="width: 100%; max-width: 400px; border: 1px solid #444;">`;
+                html += `<img src="${formatData.composite.image}"
+                         style="width: 100%; max-width: 400px; border: 1px solid #444;">`;
 
                 html += '<h3>Individual Channels</h3>';
                 html += '<div class="channel-images">';

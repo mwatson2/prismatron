@@ -60,9 +60,9 @@ def load_ata_inverse_from_pattern(pattern_file_path: str) -> Optional[np.ndarray
 
 def optimize_frame_led_values(
     target_frame: np.ndarray,
-    AT_matrix: SingleBlockMixedSparseTensor,
-    ATA_matrix: DiagonalATAMatrix,
-    ATA_inverse: np.ndarray,
+    at_matrix: SingleBlockMixedSparseTensor,
+    ata_matrix: DiagonalATAMatrix,
+    ata_inverse: np.ndarray,
     initial_values: Optional[np.ndarray] = None,
     max_iterations: int = 5,
     convergence_threshold: float = 0.3,
@@ -80,9 +80,9 @@ def optimize_frame_led_values(
 
     Args:
         target_frame: Target image in planar int8 format (3, 480, 800) or standard (480, 800, 3)
-        AT_matrix: A^T matrix for computing A^T @ b (SingleBlockMixedSparseTensor with 3D CUDA kernels)
-        ATA_matrix: A^T A matrix for gradient computation (DiagonalATAMatrix in DIA format with RCM ordering)
-        ATA_inverse: A^T A inverse matrices for optimal initialization (3, led_count, led_count) [REQUIRED]
+        at_matrix: A^T matrix for computing A^T @ b (SingleBlockMixedSparseTensor with 3D CUDA kernels)
+        ata_matrix: A^T A matrix for gradient computation (DiagonalATAMatrix in DIA format with RCM ordering)
+        ata_inverse: A^T A inverse matrices for optimal initialization (3, led_count, led_count) [REQUIRED]
         initial_values: Override for initial LED values (3, led_count), if None uses ATA inverse initialization
         max_iterations: Maximum optimization iterations
         convergence_threshold: Convergence threshold for delta norm
@@ -119,9 +119,9 @@ def optimize_frame_led_values(
 
     if timing:
         with timing.section("atb_calculation", use_gpu_events=True):
-            ATb = _calculate_ATb(target_planar_uint8, AT_matrix, debug=debug)  # Shape: (3, led_count) or (led_count, 3)
+            ATb = _calculate_atb(target_planar_uint8, at_matrix, debug=debug)  # Shape: (3, led_count) or (led_count, 3)
     else:
-        ATb = _calculate_ATb(target_planar_uint8, AT_matrix, debug=debug)  # Shape: (3, led_count) or (led_count, 3)
+        ATb = _calculate_atb(target_planar_uint8, at_matrix, debug=debug)  # Shape: (3, led_count) or (led_count, 3)
 
     # Ensure ATb is in (3, led_count) format for consistency
     if ATb.shape[0] != 3:
@@ -133,8 +133,8 @@ def optimize_frame_led_values(
     led_count = ATb.shape[1]
 
     # Validate ATA inverse shape (required parameter)
-    if ATA_inverse.shape != (3, led_count, led_count):
-        raise ValueError(f"ATA inverse shape {ATA_inverse.shape} != (3, {led_count}, {led_count})")
+    if ata_inverse.shape != (3, led_count, led_count):
+        raise ValueError(f"ATA inverse shape {ata_inverse.shape} != (3, {led_count}, {led_count})")
 
     if initial_values is not None:
         # Use provided initial values (override ATA inverse)
@@ -157,21 +157,21 @@ def optimize_frame_led_values(
             # Time the overall matrix-vector multiplications using efficient einsum
             with timing.section("ata_inverse_matvec_total", use_gpu_events=True):
                 # Transfer to GPU for efficient computation
-                ATA_inverse_gpu = cp.asarray(ATA_inverse)  # Shape: (3, led_count, led_count)
+                ata_inverse_gpu = cp.asarray(ata_inverse)  # Shape: (3, led_count, led_count)
                 ATb_gpu = cp.asarray(ATb)  # Shape: (3, led_count)
 
                 # Efficient einsum: (3, led_count, led_count) @ (3, led_count) -> (3, led_count)
-                led_values_gpu = cp.einsum("ijk,ik->ij", ATA_inverse_gpu, ATb_gpu)
+                led_values_gpu = cp.einsum("ijk,ik->ij", ata_inverse_gpu, ATb_gpu)
 
                 # Transfer back to CPU
                 led_values_normalized = cp.asnumpy(led_values_gpu).astype(np.float32)
         else:
             # Non-timing version - same efficient einsum
-            ATA_inverse_gpu = cp.asarray(ATA_inverse)  # Shape: (3, led_count, led_count)
+            ata_inverse_gpu = cp.asarray(ata_inverse)  # Shape: (3, led_count, led_count)
             ATb_gpu = cp.asarray(ATb)  # Shape: (3, led_count)
 
             # Efficient einsum: (3, led_count, led_count) @ (3, led_count) -> (3, led_count)
-            led_values_gpu = cp.einsum("ijk,ik->ij", ATA_inverse_gpu, ATb_gpu)
+            led_values_gpu = cp.einsum("ijk,ik->ij", ata_inverse_gpu, ATb_gpu)
 
             # Transfer back to CPU
             led_values_normalized = cp.asnumpy(led_values_gpu).astype(np.float32)
@@ -208,12 +208,12 @@ def optimize_frame_led_values(
         with timing.section("optimization_loop", use_gpu_events=True):
             for iteration in range(max_iterations):
                 # Compute gradient: A^T A @ x - A^T @ b using DIA matrix operations
-                ATA_x = ATA_matrix.multiply_3d(led_values_gpu)
+                ATA_x = ata_matrix.multiply_3d(led_values_gpu)
                 gradient = ATA_x - ATb_gpu  # Shape: (3, led_count)
 
                 # Compute step size: (g^T @ g) / (g^T @ A^T A @ g)
                 g_dot_g = cp.sum(gradient * gradient)  # Shape: scalar, stays on GPU
-                g_dot_ATA_g_per_channel = ATA_matrix.g_ata_g_3d(gradient)
+                g_dot_ATA_g_per_channel = ata_matrix.g_ata_g_3d(gradient)
                 g_dot_ATA_g = cp.sum(g_dot_ATA_g_per_channel)  # Shape: scalar, stays on GPU
 
                 if g_dot_ATA_g > 0:
@@ -231,12 +231,12 @@ def optimize_frame_led_values(
         # Production optimized version - no convergence checks or debug code
         for iteration in range(max_iterations):
             # Compute gradient: A^T A @ x - A^T @ b using DIA matrix operations
-            ATA_x = ATA_matrix.multiply_3d(led_values_gpu)
+            ATA_x = ata_matrix.multiply_3d(led_values_gpu)
             gradient = ATA_x - ATb_gpu  # Shape: (3, led_count)
 
             # Compute step size: (g^T @ g) / (g^T @ A^T A @ g)
             g_dot_g = cp.sum(gradient * gradient)  # Shape: scalar, stays on GPU
-            g_dot_ATA_g_per_channel = ATA_matrix.g_ata_g_3d(gradient)
+            g_dot_ATA_g_per_channel = ata_matrix.g_ata_g_3d(gradient)
             g_dot_ATA_g = cp.sum(g_dot_ATA_g_per_channel)  # Shape: scalar, stays on GPU
 
             if g_dot_ATA_g > 0:
@@ -269,9 +269,9 @@ def optimize_frame_led_values(
     if compute_error_metrics:
         if timing:
             with timing.section("error_metrics", use_gpu_events=True):
-                error_metrics = _compute_error_metrics(led_values_spatial, target_planar_uint8, AT_matrix, debug=debug)
+                error_metrics = _compute_error_metrics(led_values_spatial, target_planar_uint8, at_matrix, debug=debug)
         else:
-            error_metrics = _compute_error_metrics(led_values_spatial, target_planar_uint8, AT_matrix, debug=debug)
+            error_metrics = _compute_error_metrics(led_values_spatial, target_planar_uint8, at_matrix, debug=debug)
 
     # Extract timing data if available
     timing_data = None
@@ -294,9 +294,9 @@ def optimize_frame_led_values(
     return result
 
 
-def _calculate_ATb(
+def _calculate_atb(
     target_planar: np.ndarray,
-    AT_matrix: SingleBlockMixedSparseTensor,
+    at_matrix: SingleBlockMixedSparseTensor,
     debug: bool = False,
 ) -> np.ndarray:
     """
@@ -304,7 +304,7 @@ def _calculate_ATb(
 
     Args:
         target_planar: Target frame in planar format (3, height, width)
-        AT_matrix: A^T matrix in mixed tensor format with 3D CUDA kernels
+        at_matrix: A^T matrix in mixed tensor format with 3D CUDA kernels
         debug: Enable debug output
 
     Returns:
@@ -314,21 +314,21 @@ def _calculate_ATb(
     debug and logger.info("Using mixed tensor format for A^T @ b")
 
     # For int8 mixed tensors, pass uint8 target directly
-    if AT_matrix.dtype == cp.uint8:
+    if at_matrix.dtype == cp.uint8:
         target_gpu = cp.asarray(target_planar)  # Keep as uint8: (3, height, width)
     else:
         # For float32 mixed tensors, convert target to float32 [0,1]
         target_float32 = target_planar.astype(np.float32) / 255.0
         target_gpu = cp.asarray(target_float32)
 
-    result = AT_matrix.transpose_dot_product_3d(target_gpu)  # Shape: (led_count, 3), dtype: float32
+    result = at_matrix.transpose_dot_product_3d(target_gpu)  # Shape: (led_count, 3), dtype: float32
     return cp.asnumpy(result)
 
 
 def _compute_error_metrics(
     led_values: np.ndarray,
     target_planar: np.ndarray,
-    AT_matrix: SingleBlockMixedSparseTensor,
+    at_matrix: SingleBlockMixedSparseTensor,
     debug: bool = False,
 ) -> Dict[str, float]:
     """
@@ -337,7 +337,7 @@ def _compute_error_metrics(
     Args:
         led_values: LED values (3, led_count) in spatial order [0,1]
         target_planar: Target frame (3, height, width) [0,1]
-        AT_matrix: Mixed tensor matrix for forward computation
+        at_matrix: Mixed tensor matrix for forward computation
         debug: Enable debug output
 
     Returns:
@@ -346,7 +346,7 @@ def _compute_error_metrics(
     try:
         # Forward pass: A @ led_values -> rendered_frame using mixed tensor
         led_values_gpu = cp.asarray(led_values.T)  # Convert to (led_count, 3)
-        rendered_gpu = AT_matrix.forward_pass_3d(led_values_gpu)  # Shape: (3, height, width)
+        rendered_gpu = at_matrix.forward_pass_3d(led_values_gpu)  # Shape: (3, height, width)
         rendered_planar = cp.asnumpy(rendered_gpu)
 
         # Convert target to float32 [0,1] for error computation
@@ -401,8 +401,8 @@ def optimize_frame_with_tensors(
     """
     return optimize_frame_led_values(
         target_frame=target_frame,
-        AT_matrix=mixed_tensor,
-        ATA_matrix=dia_matrix,
-        ATA_inverse=ata_inverse,
+        at_matrix=mixed_tensor,
+        ata_matrix=dia_matrix,
+        ata_inverse=ata_inverse,
         **kwargs,
     )

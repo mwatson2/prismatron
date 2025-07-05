@@ -5,6 +5,7 @@ This module implements a content source for video files with support
 for various video formats, hardware acceleration, and FFmpeg integration.
 """
 
+import contextlib
 import logging
 import os
 import queue
@@ -22,8 +23,6 @@ try:
 except ImportError:
     FFMPEG_AVAILABLE = False
     ffmpeg = None  # type: ignore
-
-import contextlib
 
 from .base import (
     ContentSource,
@@ -311,10 +310,8 @@ class VideoSource(ContentSource):
         finally:
             # Signal end of stream
             if self._frame_queue:
-                try:
+                with contextlib.suppress(queue.Full):
                     self._frame_queue.put(None, timeout=0.1)  # None signals end
-                except queue.Full:
-                    pass
 
     def get_next_frame(self) -> Optional[FrameData]:
         """

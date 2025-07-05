@@ -120,9 +120,9 @@ class TestContentSourceBase(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.temp_file = tempfile.NamedTemporaryFile(delete=False)
-        self.temp_file.write(b"test content")
-        self.temp_file.close()
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            temp_file.write(b"test content")
+            self.temp_file = temp_file
 
         self.mock_source = MockContentSource(self.temp_file.name)
 

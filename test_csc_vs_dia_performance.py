@@ -159,9 +159,9 @@ def test_csc_vs_dia_performance():
 
     # === Summary ===
     print("\n--- Summary ---")
-    print(
-        f"DIA matrix diagonals: {dia_matrix.dia_data_cpu.shape[1]} (efficiency: {dia_matrix.dia_data_cpu.shape[1] / 999 * 100:.1f}% of dense)"
-    )
+    diag_count = dia_matrix.dia_data_cpu.shape[1]
+    efficiency = diag_count / 999 * 100
+    print(f"DIA matrix diagonals: {diag_count} (efficiency: {efficiency:.1f}% of dense)")
     print(f"CSC matrix density: {np.mean([mat.nnz / (led_count**2) * 100 for mat in ATA_per_channel]):.1f}%")
     print("")
     print("Performance (target: <1ms each):")

@@ -76,12 +76,10 @@ def test_memory_usage():
         led_2600_old_mb = 2 * (3 * 2600 * 2600 * 4) / (1024 * 1024)
         led_2600_new_mb = (3 * 401 * 2600 * 4 + 3 * 2600 * 2600 * 4) / (1024 * 1024)  # Est DIA + inverse
 
-        print(
-            f"   2600 LEDs old format: {led_2600_old_mb:.0f}MB ({'✗ Too large' if led_2600_old_mb > free_mb else '✓ Fits'})"
-        )
-        print(
-            f"   2600 LEDs new format: {led_2600_new_mb:.0f}MB ({'✗ Too large' if led_2600_new_mb > free_mb else '✓ Fits'})"
-        )
+        status = "✗ Too large" if led_2600_old_mb > free_mb else "✓ Fits"
+        print(f"   2600 LEDs old format: {led_2600_old_mb:.0f}MB ({status})")
+        new_status = "✗ Too large" if led_2600_new_mb > free_mb else "✓ Fits"
+        print(f"   2600 LEDs new format: {led_2600_new_mb:.0f}MB ({new_status})")
 
     except Exception as e:
         print(f"   GPU memory check failed: {e}")

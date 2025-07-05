@@ -399,9 +399,12 @@ class ProducerProcess:
 
             # Scan directory
             for file_path in directory_path.rglob("*"):
-                if file_path.is_file() and file_path.suffix.lower() in supported_extensions:
-                    if self._playlist.add_item(str(file_path)):
-                        added_count += 1
+                if (
+                    file_path.is_file()
+                    and file_path.suffix.lower() in supported_extensions
+                    and self._playlist.add_item(str(file_path))
+                ):
+                    added_count += 1
 
             logger.info(f"Loaded {added_count} files from {directory}")
             return added_count

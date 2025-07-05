@@ -6,6 +6,7 @@ shared memory for efficient frame data transfer between producer and consumer
 processes without copying data.
 """
 
+import contextlib
 import logging
 import multiprocessing as mp
 import time
@@ -335,10 +336,8 @@ class FrameRingBuffer:
                     shm.close()  # Close this process's connection
 
                     # Only unlink if we created it (avoid errors from other processes)
-                    try:
+                    with contextlib.suppress(FileNotFoundError):
                         shm.unlink()  # Remove from system (may fail if already removed)
-                    except FileNotFoundError:
-                        pass  # Already cleaned up by another process
 
                 except Exception as e:
                     logger.warning(f"Error cleaning up shared memory buffer {i}: {e}")
@@ -347,10 +346,8 @@ class FrameRingBuffer:
             if self._metadata_memory:
                 try:
                     self._metadata_memory.close()
-                    try:
+                    with contextlib.suppress(FileNotFoundError):
                         self._metadata_memory.unlink()
-                    except FileNotFoundError:
-                        pass  # Already cleaned up
                 except Exception as e:
                     logger.warning(f"Error cleaning up metadata memory: {e}")
 
@@ -358,10 +355,8 @@ class FrameRingBuffer:
             if self._control_memory:
                 try:
                     self._control_memory.close()
-                    try:
+                    with contextlib.suppress(FileNotFoundError):
                         self._control_memory.unlink()
-                    except FileNotFoundError:
-                        pass  # Already cleaned up
                 except Exception as e:
                     logger.warning(f"Error cleaning up control memory: {e}")
 

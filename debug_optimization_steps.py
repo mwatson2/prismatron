@@ -23,8 +23,8 @@ from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 
 def detailed_optimization_trace(
     target_frame: np.ndarray,
-    AT_matrix,
-    ATA_matrix,
+    at_matrix,
+    ata_matrix,
     max_iterations: int = 10,
     convergence_threshold: float = 1e-6,
     step_size_scaling: float = 0.8,
@@ -46,17 +46,19 @@ def detailed_optimization_trace(
         target_planar = target_frame.astype(np.float32) / 255.0
 
     print(f"Target planar shape: {target_planar.shape}")
-    print(f"Target planar range: [{target_planar.min():.6f}, {target_planar.max():.6f}]")
+    print(
+        f"Target planar range: [{target_planar.min():.6f}, {target_planar.max():.6f}]"
+    )
 
     # Step 1: Calculate A^T @ b
     print("\n=== STEP 1: Calculate A^T @ b ===")
 
-    if isinstance(AT_matrix, SingleBlockMixedSparseTensor):
+    if isinstance(at_matrix, SingleBlockMixedSparseTensor):
         print("Using SingleBlockMixedSparseTensor for A^T @ b")
         target_gpu = cp.asarray(target_planar)  # Shape: (3, height, width)
         print(f"Target GPU shape: {target_gpu.shape}")
 
-        ATb = AT_matrix.transpose_dot_product_3d(target_gpu)  # Shape: (led_count, 3)
+        ATb = at_matrix.transpose_dot_product_3d(target_gpu)  # Shape: (led_count, 3)
         ATb = cp.asnumpy(ATb)
         print(f"A^T @ b result shape: {ATb.shape}")
         print(f"A^T @ b range: [{ATb.min():.6f}, {ATb.max():.6f}]")
@@ -66,9 +68,9 @@ def detailed_optimization_trace(
             ATb = ATb.T
             print(f"Transposed A^T @ b to shape: {ATb.shape}")
 
-    elif isinstance(AT_matrix, LEDDiffusionCSCMatrix):
+    elif isinstance(at_matrix, LEDDiffusionCSCMatrix):
         print("Using LEDDiffusionCSCMatrix for A^T @ b")
-        csc_A = AT_matrix.to_csc_matrix()
+        csc_A = at_matrix.to_csc_matrix()
         print(f"CSC matrix shape: {csc_A.shape}")
         print(f"CSC matrix nnz: {csc_A.nnz}")
 
@@ -82,8 +84,10 @@ def detailed_optimization_trace(
             ATb_channel = A_channel.T @ target_channel
             ATb_result[:, channel] = ATb_channel
 
+            atb_min = ATb_channel.min()
+            atb_max = ATb_channel.max()
             print(
-                f"Channel {channel}: A_channel shape {A_channel.shape}, ATb range [{ATb_channel.min():.6f}, {ATb_channel.max():.6f}]"
+                f"Channel {channel}: A_channel shape {A_channel.shape}, ATb range [{atb_min:.6f}, {atb_max:.6f}]"
             )
 
         ATb = ATb_result.T  # Convert to (3, led_count)
@@ -91,7 +95,7 @@ def detailed_optimization_trace(
         print(f"Final A^T @ b range: [{ATb.min():.6f}, {ATb.max():.6f}]")
 
     else:
-        print(f"Unknown AT_matrix type: {type(AT_matrix)}")
+        print(f"Unknown at_matrix type: {type(at_matrix)}")
         return
 
     led_count = ATb.shape[1]
@@ -101,19 +105,23 @@ def detailed_optimization_trace(
     print("\n=== STEP 2: Initialize LED values ===")
     led_values_normalized = np.full((3, led_count), 0.5, dtype=np.float32)
     print(f"Initial LED values shape: {led_values_normalized.shape}")
-    print(f"Initial LED values range: [{led_values_normalized.min():.6f}, {led_values_normalized.max():.6f}]")
+    print(
+        f"Initial LED values range: [{led_values_normalized.min():.6f}, {led_values_normalized.max():.6f}]"
+    )
 
     # Handle ordering for DIA matrix
-    if isinstance(ATA_matrix, DiagonalATAMatrix):
+    if isinstance(ata_matrix, DiagonalATAMatrix):
         print("Converting to RCM order for DIA matrix")
-        ATb_opt_order = ATA_matrix.reorder_led_values_to_rcm(ATb)
-        led_values_opt_order = ATA_matrix.reorder_led_values_to_rcm(led_values_normalized)
-        print(f"DIA matrix shape: {ATA_matrix.dia_data_cpu.shape}")
+        ATb_opt_order = ata_matrix.reorder_led_values_to_rcm(ATb)
+        led_values_opt_order = ata_matrix.reorder_led_values_to_rcm(
+            led_values_normalized
+        )
+        print(f"DIA matrix shape: {ata_matrix.dia_data_cpu.shape}")
     else:
         print("Using spatial order for dense matrix")
         ATb_opt_order = ATb
         led_values_opt_order = led_values_normalized
-        print(f"Dense ATA matrix shape: {ATA_matrix.shape}")
+        print(f"Dense ATA matrix shape: {ata_matrix.shape}")
 
     # Step 3: GPU transfer
     print("\n=== STEP 3: GPU Transfer ===")
@@ -129,37 +137,45 @@ def detailed_optimization_trace(
         print(f"\n--- Iteration {iteration + 1} ---")
 
         # Compute A^T A @ x
-        if isinstance(ATA_matrix, DiagonalATAMatrix):
+        if isinstance(ata_matrix, DiagonalATAMatrix):
             print("Computing A^T A @ x using DIA matrix")
-            ATA_x = ATA_matrix.multiply_3d(led_values_gpu)
+            ATA_x = ata_matrix.multiply_3d(led_values_gpu)
             if not isinstance(ATA_x, cp.ndarray):
                 ATA_x = cp.asarray(ATA_x)
         else:
             print("Computing A^T A @ x using dense matrix")
-            ATA_x = cp.einsum("ijc,cj->ci", cp.asarray(ATA_matrix), led_values_gpu)
+            ATA_x = cp.einsum("ijc,cj->ci", cp.asarray(ata_matrix), led_values_gpu)
 
         print(f"A^T A @ x shape: {ATA_x.shape}")
-        print(f"A^T A @ x range: [{float(cp.min(ATA_x)):.6f}, {float(cp.max(ATA_x)):.6f}]")
+        print(
+            f"A^T A @ x range: [{float(cp.min(ATA_x)):.6f}, {float(cp.max(ATA_x)):.6f}]"
+        )
 
         # Compute gradient
         gradient = ATA_x - ATb_gpu
         print(f"Gradient shape: {gradient.shape}")
-        print(f"Gradient range: [{float(cp.min(gradient)):.6f}, {float(cp.max(gradient)):.6f}]")
+        print(
+            f"Gradient range: [{float(cp.min(gradient)):.6f}, {float(cp.max(gradient)):.6f}]"
+        )
 
         # Compute step size
         g_dot_g = cp.sum(gradient * gradient)
         print(f"g^T @ g: {float(g_dot_g):.6f}")
 
-        if isinstance(ATA_matrix, DiagonalATAMatrix):
+        if isinstance(ata_matrix, DiagonalATAMatrix):
             print("Computing g^T @ A^T A @ g using DIA matrix")
-            g_dot_ATA_g_per_channel = ATA_matrix.g_ata_g_3d(gradient)
+            g_dot_ATA_g_per_channel = ata_matrix.g_ata_g_3d(gradient)
             if not isinstance(g_dot_ATA_g_per_channel, cp.ndarray):
                 g_dot_ATA_g_per_channel = cp.asarray(g_dot_ATA_g_per_channel)
             g_dot_ATA_g = cp.sum(g_dot_ATA_g_per_channel)
-            print(f"g^T @ A^T A @ g per channel: {[float(x) for x in g_dot_ATA_g_per_channel]}")
+            print(
+                f"g^T @ A^T A @ g per channel: {[float(x) for x in g_dot_ATA_g_per_channel]}"
+            )
         else:
             print("Computing g^T @ A^T A @ g using dense matrix")
-            g_dot_ATA_g = cp.einsum("ci,ijc,cj->", gradient, cp.asarray(ATA_matrix), gradient)
+            g_dot_ATA_g = cp.einsum(
+                "ci,ijc,cj->", gradient, cp.asarray(ata_matrix), gradient
+            )
 
         print(f"g^T @ A^T A @ g: {float(g_dot_ATA_g):.6f}")
 
@@ -202,33 +218,41 @@ def detailed_optimization_trace(
     print("\n=== STEP 5: Error Metrics Computation ===")
 
     # Convert back to spatial order
-    if isinstance(ATA_matrix, DiagonalATAMatrix):
-        led_values_spatial = ATA_matrix.reorder_led_values_from_rcm(cp.asnumpy(led_values_gpu))
+    if isinstance(ata_matrix, DiagonalATAMatrix):
+        led_values_spatial = ata_matrix.reorder_led_values_from_rcm(
+            cp.asnumpy(led_values_gpu)
+        )
         print("Converted LED values from RCM back to spatial order")
     else:
         led_values_spatial = cp.asnumpy(led_values_gpu)
         print("LED values already in spatial order")
 
     print(f"Final LED values spatial shape: {led_values_spatial.shape}")
-    print(f"Final LED values range: [{led_values_spatial.min():.6f}, {led_values_spatial.max():.6f}]")
+    print(
+        f"Final LED values range: [{led_values_spatial.min():.6f}, {led_values_spatial.max():.6f}]"
+    )
 
     # Compute forward pass for error metrics
     try:
         print("Computing forward pass for error metrics...")
 
-        if isinstance(AT_matrix, SingleBlockMixedSparseTensor):
+        if isinstance(at_matrix, SingleBlockMixedSparseTensor):
             print("Using mixed tensor forward pass")
-            led_values_gpu = cp.asarray(led_values_spatial.T)  # Convert to (led_count, 3)
+            led_values_gpu = cp.asarray(
+                led_values_spatial.T
+            )  # Convert to (led_count, 3)
             print(f"LED values for forward pass shape: {led_values_gpu.shape}")
 
-            rendered_gpu = AT_matrix.forward_pass_3d(led_values_gpu)
+            rendered_gpu = at_matrix.forward_pass_3d(led_values_gpu)
             rendered_planar = cp.asnumpy(rendered_gpu)
             print(f"Rendered frame shape: {rendered_planar.shape}")
-            print(f"Rendered frame range: [{rendered_planar.min():.6f}, {rendered_planar.max():.6f}]")
+            print(
+                f"Rendered frame range: [{rendered_planar.min():.6f}, {rendered_planar.max():.6f}]"
+            )
 
-        elif isinstance(AT_matrix, LEDDiffusionCSCMatrix):
+        elif isinstance(at_matrix, LEDDiffusionCSCMatrix):
             print("Using CSC forward pass")
-            csc_A = AT_matrix.to_csc_matrix()
+            csc_A = at_matrix.to_csc_matrix()
             height, width = target_planar.shape[1], target_planar.shape[2]
             rendered_planar = np.zeros((3, height, width), dtype=np.float32)
 
@@ -238,7 +262,9 @@ def detailed_optimization_trace(
                 A_channel = csc_A[:, channel_cols]
                 rendered_channel = A_channel @ led_channel
                 rendered_planar[channel] = rendered_channel.reshape(height, width)
-                print(f"Channel {channel} rendered range: [{rendered_channel.min():.6f}, {rendered_channel.max():.6f}]")
+                print(
+                    f"Channel {channel} rendered range: [{rendered_channel.min():.6f}, {rendered_channel.max():.6f}]"
+                )
 
         # Compute error metrics
         diff = rendered_planar - target_planar
@@ -310,8 +336,8 @@ def main():
 
     detailed_optimization_trace(
         target_frame=target_image,
-        AT_matrix=mixed_tensor,
-        ATA_matrix=dia_matrix,
+        at_matrix=mixed_tensor,
+        ata_matrix=dia_matrix,
         max_iterations=10,
         convergence_threshold=1e-6,
         step_size_scaling=0.8,

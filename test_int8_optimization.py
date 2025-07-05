@@ -47,8 +47,8 @@ def convert_to_int8_tensor(
 
 def optimize_frame_int8(
     target_frame_uint8: np.ndarray,
-    AT_matrix: SingleBlockMixedSparseTensor,
-    ATA_matrix: DiagonalATAMatrix,
+    at_matrix: SingleBlockMixedSparseTensor,
+    ata_matrix: DiagonalATAMatrix,
     max_iterations: int = 10,
     convergence_threshold: float = 1e-6,
     step_size_scaling: float = 0.8,
@@ -63,7 +63,7 @@ def optimize_frame_int8(
 
     print("=== Int8 Optimization ===")
     print(f"Target frame shape: {target_frame_uint8.shape}, dtype: {target_frame_uint8.dtype}")
-    print(f"AT matrix dtype: {AT_matrix.dtype}")
+    print(f"AT matrix dtype: {at_matrix.dtype}")
 
     # Keep target as uint8 and convert to planar format
     if target_frame_uint8.shape == (480, 800, 3):
@@ -77,7 +77,7 @@ def optimize_frame_int8(
     # Step 1: Calculate A^T @ b using int8 kernel
     print("\n--- Step 1: A^T @ b calculation ---")
     target_gpu = cp.asarray(target_planar_uint8)
-    ATb = AT_matrix.transpose_dot_product_3d(target_gpu)  # Uses int8 kernel with normalization
+    ATb = at_matrix.transpose_dot_product_3d(target_gpu)  # Uses int8 kernel with normalization
     ATb = cp.asnumpy(ATb)  # Shape: (led_count, 3)
 
     print(f"A^T @ b shape: {ATb.shape}")
@@ -99,8 +99,8 @@ def optimize_frame_int8(
 
     # Step 3: Convert to RCM order for DIA matrix
     print("\n--- Step 3: RCM ordering ---")
-    ATb_rcm = ATA_matrix.reorder_led_values_to_rcm(ATb)
-    led_values_rcm = ATA_matrix.reorder_led_values_to_rcm(led_values_normalized)
+    ATb_rcm = ata_matrix.reorder_led_values_to_rcm(ATb)
+    led_values_rcm = ata_matrix.reorder_led_values_to_rcm(led_values_normalized)
 
     # Step 4: GPU transfer
     ATb_gpu = cp.asarray(ATb_rcm)
@@ -115,7 +115,7 @@ def optimize_frame_int8(
             print(f"\nIteration {iteration + 1}")
 
         # Compute A^T A @ x
-        ATA_x = ATA_matrix.multiply_3d(led_values_gpu)
+        ATA_x = ata_matrix.multiply_3d(led_values_gpu)
         if not isinstance(ATA_x, cp.ndarray):
             ATA_x = cp.asarray(ATA_x)
 
@@ -124,7 +124,7 @@ def optimize_frame_int8(
 
         # Compute step size
         g_dot_g = cp.sum(gradient * gradient)
-        g_dot_ATA_g_per_channel = ATA_matrix.g_ata_g_3d(gradient)
+        g_dot_ATA_g_per_channel = ata_matrix.g_ata_g_3d(gradient)
         if not isinstance(g_dot_ATA_g_per_channel, cp.ndarray):
             g_dot_ATA_g_per_channel = cp.asarray(g_dot_ATA_g_per_channel)
         g_dot_ATA_g = cp.sum(g_dot_ATA_g_per_channel)
@@ -168,7 +168,7 @@ def optimize_frame_int8(
 
     # Step 6: Convert back to spatial order and scale to [0,255]
     print("\n--- Step 5: Final conversion ---")
-    led_values_spatial = ATA_matrix.reorder_led_values_from_rcm(cp.asnumpy(led_values_gpu))
+    led_values_spatial = ata_matrix.reorder_led_values_from_rcm(cp.asnumpy(led_values_gpu))
     led_values_final = (led_values_spatial * 255.0).astype(np.uint8)
 
     print(f"Final LED values spatial shape: {led_values_spatial.shape}")
@@ -224,8 +224,8 @@ def test_int8_convergence():
     # Test optimization
     result = optimize_frame_int8(
         target_frame_uint8=target_image_uint8,
-        AT_matrix=int8_mixed_tensor,
-        ATA_matrix=dia_matrix,
+        at_matrix=int8_mixed_tensor,
+        ata_matrix=dia_matrix,
         max_iterations=10,
         convergence_threshold=1e-6,
         step_size_scaling=0.8,

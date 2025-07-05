@@ -74,9 +74,9 @@ def test_with_int8_scaling():
 
     # Convert CSC matrix: [0,1] -> [0,255] to match int8 scaling
     int8_csc_matrix = (csc_matrix * 255.0).astype(np.uint8)
-    print(
-        f"CSC matrix converted: {int8_csc_matrix.dtype}, range [{int8_csc_matrix.data.min()}, {int8_csc_matrix.data.max()}]"
-    )
+    min_val = int8_csc_matrix.data.min()
+    max_val = int8_csc_matrix.data.max()
+    print(f"CSC matrix converted: {int8_csc_matrix.dtype}, range [{min_val}, {max_val}]")
 
     # Build DIA matrix from int8 CSC
     dia_matrix = DiagonalATAMatrix(led_count=int8_mixed_tensor.batch_size)
@@ -98,9 +98,9 @@ def test_with_int8_scaling():
     target_image_uint8 = np.array(image, dtype=np.uint8)  # Keep as uint8 [0,255]
 
     print("\n=== Testing with Int8 Data and Kernels ===")
-    print(
-        f"Target image dtype: {target_image_uint8.dtype}, range: [{target_image_uint8.min()}, {target_image_uint8.max()}]"
-    )
+    target_min = target_image_uint8.min()
+    target_max = target_image_uint8.max()
+    print(f"Target image dtype: {target_image_uint8.dtype}, range: [{target_min}, {target_max}]")
     print(f"Mixed tensor dtype: {int8_mixed_tensor.dtype}")
 
     # Test A^T @ b scaling first

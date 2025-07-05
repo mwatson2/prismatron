@@ -31,7 +31,7 @@ def load_2600_patterns():
 
     mixed_tensor = SingleBlockMixedSparseTensor.from_dict(data["mixed_tensor"].item())
     dia_matrix = DiagonalATAMatrix.from_dict(data["dia_matrix"].item())
-    ata_inverse = data["ata_inverse"] if "ata_inverse" in data else None
+    ata_inverse = data.get("ata_inverse", None)
 
     return mixed_tensor, dia_matrix, ata_inverse
 

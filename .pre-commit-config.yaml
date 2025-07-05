@@ -45,7 +45,7 @@ repos:
     rev: v0.12.1
     hooks:
       - id: ruff
-        args: [--fix]
+        args: [--fix, --ignore, E501, --ignore, N802, --ignore, N803, --ignore, B008]
         # Only run on staged files to avoid project-wide issues
         files: ^(src/|tests/|test_).*\.py$
         exclude: ^(convert_patterns_to_int8\.py|debug_optimization_steps\.py|instrumented_frame_optimizer\.py|simple_timing_breakdown\.py|tools/)

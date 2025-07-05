@@ -261,9 +261,8 @@ class DenseLEDOptimizer:
                     logger.info(f"Loaded A^T@A inverse matrices: {self._ATA_inverse_cpu.shape}")
                     logger.info(f"A^T@A inverse memory: {ata_inv_memory_mb:.1f}MB")
                 else:
-                    logger.warning(
-                        f"ATA inverse shape {ata_inverse.shape} != (3, {self._actual_led_count}, {self._actual_led_count})"
-                    )
+                    expected_shape = (3, self._actual_led_count, self._actual_led_count)
+                    logger.warning(f"ATA inverse shape {ata_inverse.shape} != {expected_shape}")
 
             # Fallback to legacy dense_ata format
             elif "dense_ata" in data:
@@ -618,7 +617,7 @@ class DenseLEDOptimizer:
                 converged=False,
             )
 
-    def _calculate_ATb(self, target_frame: np.ndarray) -> cp.ndarray:
+    def _calculate_atb(self, target_frame: np.ndarray) -> cp.ndarray:
         """
         Calculate A^T * b for the current target frame.
 
@@ -650,7 +649,7 @@ class DenseLEDOptimizer:
         # Transfer to GPU
         return cp.asarray(target_combined)
 
-    def _calculate_ATb_csc_format(self, target_frame: np.ndarray) -> cp.ndarray:
+    def _calculate_atb_csc_format(self, target_frame: np.ndarray) -> cp.ndarray:
         """Calculate A^T@b using CSC sparse format."""
         self.timing and self.timing.start("ATb_data_preparation")
 
@@ -674,7 +673,7 @@ class DenseLEDOptimizer:
 
         return self._ATb_gpu
 
-    def _calculate_ATb_mixed_tensor(self, target_frame: np.ndarray) -> cp.ndarray:
+    def _calculate_atb_mixed_tensor(self, target_frame: np.ndarray) -> cp.ndarray:
         """
         Calculate A^T@b using mixed tensor format with 3D CUDA kernel.
 
@@ -718,7 +717,7 @@ class DenseLEDOptimizer:
 
         return self._ATb_gpu
 
-    def _solve_dense_gradient_descent(self, ATb: cp.ndarray, max_iterations: Optional[int]) -> Tuple[cp.ndarray, int]:
+    def _solve_dense_gradient_descent(self, atb: cp.ndarray, max_iterations: Optional[int]) -> Tuple[cp.ndarray, int]:
         """
         Solve using dense gradient descent with precomputed A^T*A using optimized einsum.
 
@@ -737,10 +736,10 @@ class DenseLEDOptimizer:
         # Verify input shapes and DIA matrix availability
         if self._diagonal_ata_matrix is None:
             raise RuntimeError("Diagonal ATA matrix not loaded")
-        assert ATb.shape == (
+        assert atb.shape == (
             self._actual_led_count,
             3,
-        ), f"ATb shape {ATb.shape} != expected ({self._actual_led_count}, 3)"
+        ), f"ATb shape {atb.shape} != expected ({self._actual_led_count}, 3)"
 
         # Get workspace arrays
         w = self._gpu_workspace
@@ -760,7 +759,7 @@ class DenseLEDOptimizer:
             x_transposed = x.T  # Shape: (3, led_count)
             ata_x_transposed = self._diagonal_ata_matrix.multiply_3d(cp.asnumpy(x_transposed))  # Shape: (3, led_count)
             w["ATA_x"][:] = cp.asarray(ata_x_transposed).T  # Convert back to (led_count, 3)
-            w["gradient"][:] = w["ATA_x"] - ATb
+            w["gradient"][:] = w["ATA_x"] - atb
 
             self.timing and self.timing.stop("gradient_calculation")
 

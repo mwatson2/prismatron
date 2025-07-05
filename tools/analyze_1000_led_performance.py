@@ -36,7 +36,9 @@ def analyze_1000_led_performance():
     print(f"LED count: {led_count}")
     print(f"CSC matrix shape: {csc_matrix.shape}")
     print(f"CSC matrix nnz: {csc_matrix.nnz:,}")
-    print(f"CSC sparsity: {csc_matrix.nnz / (csc_matrix.shape[0] * csc_matrix.shape[1]) * 100:.3f}%")
+    print(
+        f"CSC sparsity: {csc_matrix.nnz / (csc_matrix.shape[0] * csc_matrix.shape[1]) * 100:.3f}%"
+    )
 
     # === Build DIA Matrix ===
     print("\n--- Building DIA Matrix ---")
@@ -47,7 +49,9 @@ def analyze_1000_led_performance():
     build_time = time.time() - build_start
     print(f"DIA matrix build time: {build_time:.3f}s")
     print(f"DIA matrix diagonals: {dia_matrix.dia_data_cpu.shape[1]}")
-    print(f"DIA efficiency: {dia_matrix.dia_data_cpu.shape[1] / led_count:.1f}x LED count")
+    print(
+        f"DIA efficiency: {dia_matrix.dia_data_cpu.shape[1] / led_count:.1f}x LED count"
+    )
 
     # Check if this matches our expectations for corrected patterns
     expected_diagonals = int(185 * (led_count / 100))  # Scale from 100 LED baseline
@@ -91,7 +95,9 @@ def analyze_1000_led_performance():
     print(f"    Min:  {times_ms.min():.3f} ms")
     print(f"    Max:  {times_ms.max():.3f} ms")
     print(f"    95th: {np.percentile(times_ms, 95):.3f} ms")
-    print(f"    Target: <1.000 ms ({'✅ PASS' if times_ms.mean() < 1.0 else '❌ FAIL'})")
+    print(
+        f"    Target: <1.000 ms ({'✅ PASS' if times_ms.mean() < 1.0 else '❌ FAIL'})"
+    )
 
     # === Test g_ata_g_3d (g^T @ A^T A @ g) ===
     print("\nTesting g_ata_g_3d (g^T @ A^T A @ g):")
@@ -122,7 +128,9 @@ def analyze_1000_led_performance():
     print(f"    Min:  {times_ms.min():.3f} ms")
     print(f"    Max:  {times_ms.max():.3f} ms")
     print(f"    95th: {np.percentile(times_ms, 95):.3f} ms")
-    print(f"    Target: <1.000 ms ({'✅ PASS' if times_ms.mean() < 1.0 else '❌ FAIL'})")
+    print(
+        f"    Target: <1.000 ms ({'✅ PASS' if times_ms.mean() < 1.0 else '❌ FAIL'})"
+    )
 
     # Store results for further analysis
     multiply_avg = times_ms.mean()
@@ -166,7 +174,9 @@ def analyze_1000_led_performance():
     print(f"    Std:  {step_times_ms.std():.3f} ms")
     print(f"    Min:  {step_times_ms.min():.3f} ms")
     print(f"    Max:  {step_times_ms.max():.3f} ms")
-    print(f"    Target: <66.67 ms for 15fps ({'✅ PASS' if step_times_ms.mean() < 66.67 else '❌ FAIL'})")
+    print(
+        f"    Target: <66.67 ms for 15fps ({'✅ PASS' if step_times_ms.mean() < 66.67 else '❌ FAIL'})"
+    )
 
     # === Comparison with 100 LED baseline ===
     print("\n--- Scaling Analysis vs 100 LED Baseline ---")
@@ -191,9 +201,15 @@ def analyze_1000_led_performance():
     g_ata_g_scale = g_ata_g_avg / baseline_g_ata_g
     step_scale = step_times_ms.mean() / baseline_step
 
-    print(f"  multiply_3d: {multiply_scale:.1f}x ({'✅ Linear' if multiply_scale < 15 else '❌ Superlinear'})")
-    print(f"  g_ata_g_3d: {g_ata_g_scale:.1f}x ({'✅ Linear' if g_ata_g_scale < 15 else '❌ Superlinear'})")
-    print(f"  complete step: {step_scale:.1f}x ({'✅ Linear' if step_scale < 15 else '❌ Superlinear'})")
+    print(
+        f"  multiply_3d: {multiply_scale:.1f}x ({'✅ Linear' if multiply_scale < 15 else '❌ Superlinear'})"
+    )
+    print(
+        f"  g_ata_g_3d: {g_ata_g_scale:.1f}x ({'✅ Linear' if g_ata_g_scale < 15 else '❌ Superlinear'})"
+    )
+    print(
+        f"  complete step: {step_scale:.1f}x ({'✅ Linear' if step_scale < 15 else '❌ Superlinear'})"
+    )
 
     # === FPS Analysis ===
     print("\n--- FPS Analysis ---")
@@ -205,15 +221,20 @@ def analyze_1000_led_performance():
     print(f"Complete optimization step: {step_time_s:.6f}s")
     print(f"Maximum theoretical FPS: {max_fps:.1f}")
     print(f"Target FPS: {target_fps}")
-    print(
-        f"FPS achievement: {'✅ EXCEEDS TARGET' if max_fps >= target_fps else f'❌ {target_fps / max_fps:.1f}x TOO SLOW'}"
+    status = (
+        "✅ EXCEEDS TARGET"
+        if max_fps >= target_fps
+        else f"❌ {target_fps / max_fps:.1f}x TOO SLOW"
     )
+    print(f"FPS achievement: {status}")
 
     # === Memory Usage ===
     print("\n--- Memory Usage ---")
 
     dia_memory = dia_matrix.dia_data_cpu.nbytes / (1024 * 1024)
-    csc_memory = (csc_matrix.data.nbytes + csc_matrix.indices.nbytes + csc_matrix.indptr.nbytes) / (1024 * 1024)
+    csc_memory = (
+        csc_matrix.data.nbytes + csc_matrix.indices.nbytes + csc_matrix.indptr.nbytes
+    ) / (1024 * 1024)
 
     print(f"DIA matrix memory: {dia_memory:.1f} MB")
     print(f"CSC matrix memory: {csc_memory:.1f} MB")
@@ -241,15 +262,16 @@ def analyze_1000_led_performance():
 
             dense_result = cp.zeros((3, led_count), dtype=cp.float32)
             for channel in range(3):
-                dense_result[channel] = dense_ata_gpu[channel] @ test_led_values_gpu[channel]
+                dense_result[channel] = (
+                    dense_ata_gpu[channel] @ test_led_values_gpu[channel]
+                )
 
             cp.cuda.Device().synchronize()
             dense_times.append(time.time() - start)
 
         dense_avg = np.mean(dense_times) * 1000
-        print(
-            f"  Dense A^T A @ x: {dense_avg:.3f} ms ({'✅ FASTER' if dense_avg < multiply_avg else '❌ SLOWER'} than DIA)"
-        )
+        comparison = "✅ FASTER" if dense_avg < multiply_avg else "❌ SLOWER"
+        print(f"  Dense A^T A @ x: {dense_avg:.3f} ms ({comparison} than DIA)")
 
         if dense_avg < multiply_avg:
             print(f"  Dense improvement: {multiply_avg / dense_avg:.1f}x faster")
@@ -259,18 +281,24 @@ def analyze_1000_led_performance():
     # === Summary ===
     print("\n--- PERFORMANCE SUMMARY ---")
     print("✅ Pattern generation: RCM ordering fixed")
-    print(
-        f"✅ DIA matrix sparsity: {dia_matrix.dia_data_cpu.shape[1]} diagonals ({dia_matrix.dia_data_cpu.shape[1] / led_count:.1f}x LED count)"
-    )
+    diag_count = dia_matrix.dia_data_cpu.shape[1]
+    ratio = diag_count / led_count
+    print(f"✅ DIA matrix sparsity: {diag_count} diagonals ({ratio:.1f}x LED count)")
     print("")
     print("Individual operation performance:")
-    print(f"  multiply_3d (A^T A @ x): {multiply_avg:.3f}ms ({'✅ <1ms' if multiply_avg < 1.0 else '❌ >1ms'})")
-    print(f"  g_ata_g_3d (g^T @ A^T A @ g): {g_ata_g_avg:.3f}ms ({'✅ <1ms' if g_ata_g_avg < 1.0 else '❌ >1ms'})")
+    print(
+        f"  multiply_3d (A^T A @ x): {multiply_avg:.3f}ms ({'✅ <1ms' if multiply_avg < 1.0 else '❌ >1ms'})"
+    )
+    print(
+        f"  g_ata_g_3d (g^T @ A^T A @ g): {g_ata_g_avg:.3f}ms ({'✅ <1ms' if g_ata_g_avg < 1.0 else '❌ >1ms'})"
+    )
     print("")
     print("System performance:")
     print(f"  Complete optimization step: {step_times_ms.mean():.3f}ms")
     print(f"  Maximum FPS: {max_fps:.1f}")
-    print(f"  Target 15fps: {'✅ ACHIEVABLE' if max_fps >= 15 else '❌ NOT ACHIEVABLE'}")
+    print(
+        f"  Target 15fps: {'✅ ACHIEVABLE' if max_fps >= 15 else '❌ NOT ACHIEVABLE'}"
+    )
 
     if max_fps < 15:
         print("")
