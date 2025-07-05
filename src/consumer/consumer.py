@@ -17,6 +17,7 @@ import numpy as np
 from ..const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
 from ..core import ControlState, FrameConsumer
 from .led_optimizer_dense import DenseLEDOptimizer
+from .test_renderer import TestRenderer, TestRendererConfig
 from .wled_client import WLEDClient, WLEDConfig
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,8 @@ class ConsumerProcess:
         wled_host: str = "192.168.1.100",
         wled_port: int = 4048,
         diffusion_patterns_path: Optional[str] = None,
+        enable_test_renderer: bool = False,
+        test_renderer_config: Optional[TestRendererConfig] = None,
     ):
         """
         Initialize consumer process.
@@ -79,6 +82,8 @@ class ConsumerProcess:
             wled_host: WLED controller IP address
             wled_port: WLED controller port
             diffusion_patterns_path: Path to diffusion patterns
+            enable_test_renderer: Enable test renderer for debugging
+            test_renderer_config: Test renderer configuration
         """
         self.buffer_name = buffer_name
         self.control_name = control_name
@@ -96,6 +101,11 @@ class ConsumerProcess:
             led_count=LED_COUNT,
         )
         self._wled_client = WLEDClient(wled_config)
+
+        # Test renderer (optional)
+        self.enable_test_renderer = enable_test_renderer
+        self._test_renderer: Optional[TestRenderer] = None
+        self._test_renderer_config = test_renderer_config or TestRendererConfig()
 
         # Process state
         self._running = False
@@ -132,6 +142,10 @@ class ConsumerProcess:
             if not self._wled_client.connect():
                 logger.error("Failed to connect to WLED controller")
                 return False
+
+            # Initialize test renderer if enabled
+            if self.enable_test_renderer:
+                self._initialize_test_renderer()
 
             logger.info("Consumer process initialized successfully")
             return True
@@ -269,6 +283,14 @@ class ConsumerProcess:
                 logger.warning(f"Optimization did not converge after {result.iterations} iterations")
                 self._stats.optimization_errors += 1
 
+            # Send to test renderer if enabled
+            if self._test_renderer and self._test_renderer.is_running:
+                try:
+                    led_values_uint8 = result.led_values.astype(np.uint8)
+                    self._test_renderer.render_led_values(led_values_uint8)
+                except Exception as e:
+                    logger.warning(f"Test renderer error: {e}")
+
             # Transmit to WLED
             transmission_start = time.time()
             led_values = result.led_values.astype(np.uint8)
@@ -306,6 +328,38 @@ class ConsumerProcess:
             logger.error(f"Error processing frame: {e}")
             self._stats.optimization_errors += 1
 
+    def _initialize_test_renderer(self) -> bool:
+        """
+        Initialize test renderer using mixed tensor from LED optimizer.
+
+        Returns:
+            True if initialized successfully, False otherwise
+        """
+        try:
+            # Get mixed tensor from LED optimizer
+            if not hasattr(self._led_optimizer, "_mixed_tensor") or self._led_optimizer._mixed_tensor is None:
+                logger.error("LED optimizer does not have mixed tensor - test renderer cannot be initialized")
+                return False
+
+            mixed_tensor = self._led_optimizer._mixed_tensor
+
+            # Create test renderer
+            self._test_renderer = TestRenderer(mixed_tensor, self._test_renderer_config)
+
+            # Start test renderer
+            if self._test_renderer.start():
+                logger.info("Test renderer initialized and started successfully")
+                return True
+            else:
+                logger.error("Failed to start test renderer")
+                self._test_renderer = None
+                return False
+
+        except Exception as e:
+            logger.error(f"Failed to initialize test renderer: {e}")
+            self._test_renderer = None
+            return False
+
     def get_stats(self) -> Dict[str, Any]:
         """
         Get consumer process statistics.
@@ -330,6 +384,8 @@ class ConsumerProcess:
             "frame_dimensions": (FRAME_WIDTH, FRAME_HEIGHT),
             "wled_stats": self._wled_client.get_statistics(),
             "optimizer_stats": self._led_optimizer.get_optimizer_stats(),
+            "test_renderer_enabled": self.enable_test_renderer,
+            "test_renderer_stats": (self._test_renderer.get_statistics() if self._test_renderer else None),
         }
 
     def set_performance_settings(
@@ -361,6 +417,51 @@ class ConsumerProcess:
             f"brightness={self.brightness_scale}"
         )
 
+    def set_test_renderer_enabled(self, enabled: bool) -> bool:
+        """
+        Enable or disable test renderer.
+
+        Args:
+            enabled: Whether to enable test renderer
+
+        Returns:
+            True if operation successful, False otherwise
+        """
+        try:
+            if enabled == self.enable_test_renderer:
+                return True  # Already in desired state
+
+            if enabled:
+                # Enable test renderer
+                if not self._led_optimizer._matrix_loaded:
+                    logger.error("Cannot enable test renderer: LED optimizer not loaded")
+                    return False
+
+                self.enable_test_renderer = True
+                return self._initialize_test_renderer()
+            else:
+                # Disable test renderer
+                self.enable_test_renderer = False
+                if self._test_renderer:
+                    self._test_renderer.stop()
+                    self._test_renderer = None
+
+                logger.info("Test renderer disabled")
+                return True
+
+        except Exception as e:
+            logger.error(f"Error setting test renderer enabled state: {e}")
+            return False
+
+    def get_test_renderer(self) -> Optional[TestRenderer]:
+        """
+        Get the test renderer instance.
+
+        Returns:
+            TestRenderer instance or None if not enabled
+        """
+        return self._test_renderer
+
     def _signal_handler(self, signum, frame) -> None:
         """Handle shutdown signals."""
         logger.info(f"Received signal {signum}, initiating shutdown...")
@@ -370,6 +471,9 @@ class ConsumerProcess:
         """Clean up resources."""
         try:
             # Cleanup components in reverse order
+            if hasattr(self, "_test_renderer") and self._test_renderer:
+                self._test_renderer.stop()
+
             if hasattr(self, "_wled_client"):
                 self._wled_client.disconnect()
 
