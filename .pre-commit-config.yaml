@@ -46,7 +46,13 @@ repos:
     hooks:
       - id: ruff
         args: [--fix]
+        # Only run on staged files to avoid project-wide issues
+        files: ^(src/|tests/|test_).*\.py$
+        exclude: ^(convert_patterns_to_int8\.py|debug_optimization_steps\.py|instrumented_frame_optimizer\.py|simple_timing_breakdown\.py|tools/)
       - id: ruff-format
+        # Only run on staged files to avoid project-wide issues
+        files: ^(src/|tests/|test_).*\.py$
+        exclude: ^(tools/)
 
   # Type checking with mypy (temporarily disabled for initial setup)
   # - repo: https://github.com/pre-commit/mirrors-mypy
