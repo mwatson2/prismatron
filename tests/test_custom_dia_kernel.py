@@ -436,20 +436,20 @@ class TestCustomDIAKernel:
         # Performance assertions - relaxed for realistic expectations
         # Custom kernels should be competitive with dense at this scale
         # (At larger scales they will show more benefit)
-        assert results["custom_basic"]["mean_ms"] < baseline_time * 2.0, (
-            "Basic kernel should not be more than 2x slower than dense"
-        )
-        assert results["custom_optimized"]["mean_ms"] < baseline_time * 2.0, (
-            "Optimized kernel should not be more than 2x slower than dense"
-        )
+        assert (
+            results["custom_basic"]["mean_ms"] < baseline_time * 2.0
+        ), "Basic kernel should not be more than 2x slower than dense"
+        assert (
+            results["custom_optimized"]["mean_ms"] < baseline_time * 2.0
+        ), "Optimized kernel should not be more than 2x slower than dense"
 
         # Custom kernels should be significantly faster than CuPy DIA
-        assert results["custom_basic"]["mean_ms"] < results["cupy_dia"]["mean_ms"], (
-            "Basic kernel should be faster than CuPy DIA"
-        )
-        assert results["custom_optimized"]["mean_ms"] < results["cupy_dia"]["mean_ms"], (
-            "Optimized kernel should be faster than CuPy DIA"
-        )
+        assert (
+            results["custom_basic"]["mean_ms"] < results["cupy_dia"]["mean_ms"]
+        ), "Basic kernel should be faster than CuPy DIA"
+        assert (
+            results["custom_optimized"]["mean_ms"] < results["cupy_dia"]["mean_ms"]
+        ), "Optimized kernel should be faster than CuPy DIA"
 
     def test_led_optimization_scenario(self):
         """Test complete LED optimization scenario: A^T A @ led_values for 3 channels."""

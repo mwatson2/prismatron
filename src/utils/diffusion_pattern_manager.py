@@ -116,9 +116,9 @@ class DiffusionPatternManager:
             diffusion_frame: Diffusion pattern in planar format (3, height, width)
         """
         assert 0 <= led_id < self.led_count, f"LED ID {led_id} out of range [0, {self.led_count})"
-        assert diffusion_frame.shape == self.get_frame_shape(), (
-            f"Frame shape must be {self.get_frame_shape()}, got {diffusion_frame.shape}"
-        )
+        assert (
+            diffusion_frame.shape == self.get_frame_shape()
+        ), f"Frame shape must be {self.get_frame_shape()}, got {diffusion_frame.shape}"
 
         # Store pattern for this LED
         pattern_data = {

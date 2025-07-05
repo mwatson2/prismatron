@@ -1029,9 +1029,7 @@ class TestProducerConsumerSubclasses(unittest.TestCase):
 
         # Write frame with past timestamp
         past_frame = np.full((480, 640, 3), 50, dtype=np.uint8)
-        buffer_info = self.producer.get_write_buffer(
-            presentation_timestamp=current_time - 0.1  # 100ms in the past
-        )
+        buffer_info = self.producer.get_write_buffer(presentation_timestamp=current_time - 0.1)  # 100ms in the past
         self.assertIsNotNone(buffer_info)
         h, w, c = past_frame.shape
         get_buffer_array(buffer_info)[:h, :w, :c] = past_frame

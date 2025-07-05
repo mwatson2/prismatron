@@ -131,9 +131,9 @@ def test_memory_efficiency():
     logger.info(f"Blocks stored: {final_memory['blocks_stored']}")
 
     # Memory should still be much smaller than dense
-    assert final_memory["compression_ratio"] < 0.1, (
-        f"Compression ratio {final_memory['compression_ratio']:.1%} should be < 10%"
-    )
+    assert (
+        final_memory["compression_ratio"] < 0.1
+    ), f"Compression ratio {final_memory['compression_ratio']:.1%} should be < 10%"
 
     logger.info("✓ Memory efficiency test passed")
 
@@ -471,9 +471,9 @@ def test_extract_pattern():
         # Check that areas outside block are zero
         outside_mask = np.ones((height, width), dtype=bool)
         outside_mask[row : row + block_size, col : col + block_size] = False
-        assert np.allclose(pattern[outside_mask], 0), (
-            f"LED {batch_idx}, channel {channel_idx} has non-zero values outside block"
-        )
+        assert np.allclose(
+            pattern[outside_mask], 0
+        ), f"LED {batch_idx}, channel {channel_idx} has non-zero values outside block"
 
     # Test error handling
     try:

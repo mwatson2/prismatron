@@ -156,9 +156,9 @@ class TestKernelIntegration:
 
         # Compare INT8 FP32 vs FP16 (same input)
         error_int8_fp32_vs_fp16 = cp.max(cp.abs(result_int8_fp32 - result_int8_fp16.astype(cp.float32)))
-        assert float(error_int8_fp32_vs_fp16) < self.tolerance_fp16, (
-            f"INT8 FP32 vs FP16 error: {float(error_int8_fp32_vs_fp16)}"
-        )
+        assert (
+            float(error_int8_fp32_vs_fp16) < self.tolerance_fp16
+        ), f"INT8 FP32 vs FP16 error: {float(error_int8_fp32_vs_fp16)}"
 
         # Compare FP32 vs INT8 (accounting for normalization)
         error_fp32_vs_int8 = cp.max(cp.abs(result_fp32_fp32 - result_int8_fp32))
@@ -205,17 +205,17 @@ class TestKernelIntegration:
 
         # Compare FP32 basic vs optimized
         error_fp32_basic_vs_opt = cp.max(cp.abs(result_fp32_basic - result_fp32_opt))
-        assert float(error_fp32_basic_vs_opt) < self.tolerance_strict, (
-            f"FP32 basic vs opt error: {float(error_fp32_basic_vs_opt)}"
-        )
+        assert (
+            float(error_fp32_basic_vs_opt) < self.tolerance_strict
+        ), f"FP32 basic vs opt error: {float(error_fp32_basic_vs_opt)}"
 
         # Compare FP16 basic vs optimized
         error_fp16_basic_vs_opt = cp.max(
             cp.abs(result_fp16_basic.astype(cp.float32) - result_fp16_opt.astype(cp.float32))
         )
-        assert float(error_fp16_basic_vs_opt) < self.tolerance_fp16, (
-            f"FP16 basic vs opt error: {float(error_fp16_basic_vs_opt)}"
-        )
+        assert (
+            float(error_fp16_basic_vs_opt) < self.tolerance_fp16
+        ), f"FP16 basic vs opt error: {float(error_fp16_basic_vs_opt)}"
 
         # Compare FP32 vs FP16
         error_fp32_vs_fp16 = cp.max(cp.abs(result_fp32_basic - result_fp16_basic.astype(cp.float32)))

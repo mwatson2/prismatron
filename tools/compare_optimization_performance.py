@@ -213,9 +213,7 @@ class OptimizerBenchmark:
                 # 3. Other operations (gradients, etc.): ~2 * led_count
 
                 flops_per_iteration = (
-                    2 * nnz
-                    + 4  # Sparse matrix-vector multiply
-                    * led_count  # Vector operations and overhead
+                    2 * nnz + 4 * led_count  # Sparse matrix-vector multiply  # Vector operations and overhead
                 )
 
                 total_flops = flops_per_iteration * timing_stats["iterations"]

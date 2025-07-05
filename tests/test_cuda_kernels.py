@@ -951,9 +951,9 @@ class TestCudaKernels:
 
         # Verify that all x-positions are aligned to multiples of 4
         x_positions = block_positions_aligned[:, :, 1].get()  # Get x-positions (columns)
-        assert np.all(x_positions % 4 == 0), (
-            f"Not all x-positions are aligned to 4: {x_positions[x_positions % 4 != 0]}"
-        )
+        assert np.all(
+            x_positions % 4 == 0
+        ), f"Not all x-positions are aligned to 4: {x_positions[x_positions % 4 != 0]}"
 
         logger.info(f"Testing experimental kernel equivalence with {test_led_count} LEDs")
         logger.info("Verified all x-positions are aligned to multiples of 4")

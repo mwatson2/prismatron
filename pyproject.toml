@@ -70,7 +70,7 @@ version_scheme = "post-release"
 local_scheme = "dirty-tag"
 
 [tool.black]
-line-length = 88
+line-length = 120
 target-version = ['py38', 'py39', 'py310', 'py311']
 include = '\.pyi?$'
 extend-exclude = '''
@@ -97,7 +97,7 @@ extend-exclude = '''
 [tool.isort]
 profile = "black"
 multi_line_output = 3
-line_length = 88
+line_length = 120
 known_first_party = ["src", "tests", "tools"]
 known_third_party = [
     "numpy", "scipy", "torch", "cv2", "PIL", "fastapi", "uvicorn",
@@ -274,6 +274,8 @@ known-third-party = [
 quote-style = "double"
 indent-style = "space"
 line-ending = "auto"
+skip-magic-trailing-comma = false
+docstring-code-format = false
 
 [tool.bandit]
 exclude_dirs = ["tests", "venv", "env", ".venv", "build", "dist"]

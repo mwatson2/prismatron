@@ -192,9 +192,9 @@ class TestComputeOptimized3DFP16Kernel:
         result_cpu = cp.asnumpy(result_gpu.astype(cp.float32))
         max_error = np.max(np.abs(result_cpu - result_ref))
 
-        assert max_error < self.tolerance_comparison, (
-            f"Max error {max_error} exceeds tolerance {self.tolerance_comparison}"
-        )
+        assert (
+            max_error < self.tolerance_comparison
+        ), f"Max error {max_error} exceeds tolerance {self.tolerance_comparison}"
 
     def test_medium_batch_correctness(self):
         """Test FP16 kernel correctness with medium batch size."""
