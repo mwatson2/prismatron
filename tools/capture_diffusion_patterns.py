@@ -6,11 +6,23 @@ This tool captures the diffusion patterns for each LED and color channel by:
 1. Connecting to WLED controller
 2. Setting each LED/channel to full brightness
 3. Capturing camera image (800x480)
-4. Storing the patterns in a numpy array
-5. Saving the complete diffusion pattern dataset
+4. Analyzing optimal block positions with 4-pixel alignment
+5. Storing patterns in SingleBlockMixedSparseTensor format
+6. Applying RCM spatial ordering for optimal matrix bandwidth
+7. Generating DiagonalATAMatrix for optimization
+8. Saving in modern mixed tensor format compatible with the optimization engine
+
+Features:
+- Configurable block size (default: 128x128, supports 32-256)
+- Precision control (fp16/fp32) for memory optimization
+- Automatic block position detection and alignment
+- RCM spatial ordering for bandwidth optimization
+- Modern mixed tensor storage format
+- Compatible with visualization and optimization tools
 
 Usage:
     python capture_diffusion_patterns.py --wled-host 192.168.1.100 --camera-device 0 --output patterns.npz --preview
+    python capture_diffusion_patterns.py --wled-host 192.168.1.100 --output patterns.npz --block-size 64 --precision fp16
 """
 
 import argparse
@@ -24,12 +36,26 @@ import cv2
 import numpy as np
 import scipy.sparse as sp
 
+try:
+    import cupy as cp
+except ImportError:
+    # Fallback for systems without CUDA
+    import numpy as cp
+
+# Import LED position utilities (add project root to path)
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+from tools.led_position_utils import calculate_block_positions
+
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 try:
     from const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
     from consumer.wled_client import WLEDClient, WLEDConfig
+    from utils.diagonal_ata_matrix import DiagonalATAMatrix
+    from utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
+    from utils.spatial_ordering import compute_rcm_ordering
 except ImportError:
     # Fallback to hardcoded constants for testing
     FRAME_HEIGHT = 480
@@ -166,6 +192,8 @@ class DiffusionPatternCapture:
         camera_device: int = 0,
         capture_fps: float = 10.0,
         crop_region: Optional[Tuple[int, int, int, int]] = None,
+        block_size: int = 128,
+        precision: str = "fp32",
     ):
         """
         Initialize diffusion pattern capture.
@@ -176,11 +204,15 @@ class DiffusionPatternCapture:
             camera_device: Camera device ID
             capture_fps: Target capture rate (captures per second)
             crop_region: Optional crop region for camera
+            block_size: Block size for mixed tensor storage
+            precision: Precision for mixed tensor storage ("fp16" or "fp32")
         """
         self.wled_host = wled_host
         self.wled_port = wled_port
         self.capture_fps = capture_fps
         self.capture_interval = 1.0 / capture_fps
+        self.block_size = block_size
+        self.precision = precision
 
         # Initialize WLED client
         wled_config = WLEDConfig(host=wled_host, port=wled_port, led_count=LED_COUNT, max_fps=60.0)
@@ -189,10 +221,27 @@ class DiffusionPatternCapture:
         # Initialize camera
         self.camera = CameraCapture(camera_device, crop_region)
 
-        # Storage for diffusion patterns
-        # Shape: (LED_COUNT, 3 channels, FRAME_HEIGHT, FRAME_WIDTH)
-        # Using uint8 to save memory: 3200×3×480×800×1 = ~3.5GB vs 14GB for float32
-        self.diffusion_patterns = np.zeros((LED_COUNT, 3, FRAME_HEIGHT, FRAME_WIDTH), dtype=np.uint8)
+        # Determine output dtype based on precision
+        if precision == "fp16":
+            output_dtype = cp.float16
+        else:
+            output_dtype = cp.float32
+
+        # Initialize mixed tensor for pattern storage
+        self.mixed_tensor = SingleBlockMixedSparseTensor(
+            batch_size=LED_COUNT,
+            channels=3,
+            height=FRAME_HEIGHT,
+            width=FRAME_WIDTH,
+            block_size=block_size,
+            device="cpu",  # Use CPU for capture
+            output_dtype=output_dtype,
+        )
+
+        # Storage for LED positions and block positions
+        self.led_positions = np.zeros((LED_COUNT, 2), dtype=np.float32)
+        self.block_positions = np.zeros((LED_COUNT, 2), dtype=np.int32)  # Top-left corner of each block
+        self.led_spatial_mapping = None  # Will be set after RCM reordering
 
     def initialize(self) -> bool:
         """Initialize WLED and camera connections."""
@@ -253,8 +302,35 @@ class DiffusionPatternCapture:
                         logger.warning(f"Failed to capture frame for LED {led_idx}, channel {channel_idx}")
                         continue
 
-                    # Store diffusion pattern (keep as uint8 to save memory)
-                    self.diffusion_patterns[led_idx, channel_idx] = frame.astype(np.uint8)
+                    # Convert frame to appropriate precision (normalize to [0, 1] range)
+                    if self.precision == "fp16":
+                        pattern_float = frame.astype(np.float16) / 255.0
+                    else:
+                        pattern_float = frame.astype(np.float32) / 255.0
+
+                    # For first channel of each LED, determine optimal block position
+                    if channel_idx == 0:
+                        top_row, left_col = self._find_optimal_block_position(frame, led_idx)
+                        self.block_positions[led_idx] = [top_row, left_col]
+                    else:
+                        # Use same block position for other channels of the same LED
+                        top_row, left_col = self.block_positions[led_idx]
+
+                    # Extract block from full pattern
+                    block = pattern_float[
+                        top_row : top_row + self.block_size, left_col : left_col + self.block_size, channel_idx
+                    ]
+
+                    # Ensure block is the right size (pad with zeros if needed)
+                    if block.shape != (self.block_size, self.block_size):
+                        padded_block = np.zeros((self.block_size, self.block_size), dtype=pattern_float.dtype)
+                        h, w = min(block.shape[0], self.block_size), min(block.shape[1], self.block_size)
+                        padded_block[:h, :w] = block[:h, :w]
+                        block = padded_block
+
+                    # Store block in mixed tensor
+                    block_cupy = cp.asarray(block)
+                    self.mixed_tensor.set_block(led_idx, channel_idx, top_row, left_col, block_cupy)
 
                     # Show preview if requested
                     if preview:
@@ -269,6 +345,10 @@ class DiffusionPatternCapture:
             self.wled_client.set_solid_color(0, 0, 0)
 
             logger.info("Diffusion pattern capture completed successfully")
+
+            # Reorder patterns using RCM spatial ordering
+            self.mixed_tensor, self.led_spatial_mapping = self._reorder_to_rcm_spatial_ordering()
+
             return True
 
         except KeyboardInterrupt:
@@ -320,59 +400,32 @@ class DiffusionPatternCapture:
         except Exception as e:
             logger.warning(f"Preview display failed: {e}")
 
-    def save_patterns(self, output_path: str) -> bool:
+    def _align_to_pixel_boundary(self, x_coord: int) -> int:
         """
-        Save captured diffusion patterns to file.
+        Align x-coordinate to 4-pixel boundary.
 
         Args:
-            output_path: Path to save diffusion patterns (.npz format)
+            x_coord: Original x-coordinate
 
         Returns:
-            True if save successful
+            Aligned x-coordinate (rounded down to multiple of 4)
+        """
+        return (x_coord // 4) * 4
+
+    def _find_optimal_block_position(self, pattern: np.ndarray, led_id: int) -> Tuple[int, int]:
+        """
+        Find optimal block position for a captured LED pattern.
+
+        Args:
+            pattern: Captured pattern (height, width, 3)
+            led_id: LED ID for position estimation
+
+        Returns:
+            Tuple of (top_row, left_col) for block position (aligned to 4-pixel boundary)
         """
         try:
-            # Create metadata
-            metadata = {
-                "led_count": LED_COUNT,
-                "frame_width": FRAME_WIDTH,
-                "frame_height": FRAME_HEIGHT,
-                "channels": 3,
-                "capture_fps": self.capture_fps,
-                "wled_host": self.wled_host,
-                "wled_port": self.wled_port,
-                "capture_timestamp": time.time(),
-                "data_shape": self.diffusion_patterns.shape,
-                "data_dtype": str(self.diffusion_patterns.dtype),
-            }
-
-            # Save patterns and metadata
-            np.savez_compressed(
-                output_path,
-                diffusion_patterns=self.diffusion_patterns,
-                metadata=metadata,
-            )
-
-            file_size_mb = Path(output_path).stat().st_size / (1024 * 1024)
-            logger.info(f"Diffusion patterns saved to {output_path} ({file_size_mb:.1f} MB)")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to save patterns: {e}")
-            return False
-
-    def estimate_led_positions(self) -> np.ndarray:
-        """
-        Estimate LED positions from captured diffusion patterns using centroid analysis.
-
-        Returns:
-            Array of LED positions (led_count, 2) with [x, y] coordinates
-        """
-        logger.info("Estimating LED positions from diffusion patterns...")
-        led_positions = np.zeros((LED_COUNT, 2), dtype=np.float32)
-
-        for led_idx in range(LED_COUNT):
-            # Combine all three color channels for position estimation
-            combined_pattern = np.max(self.diffusion_patterns[led_idx], axis=0)
+            # Combine all three color channels for intensity analysis
+            combined_pattern = np.max(pattern, axis=2).astype(np.float32)
 
             # Calculate intensity-weighted centroid
             total_intensity = 0
@@ -391,213 +444,279 @@ class DiffusionPatternCapture:
             if total_intensity > 0:
                 centroid_x = weighted_x / total_intensity
                 centroid_y = weighted_y / total_intensity
-                led_positions[led_idx] = [centroid_x, centroid_y]
+
+                # Store estimated LED position
+                self.led_positions[led_id] = [centroid_x, centroid_y]
+
+                # Calculate block position centered on LED
+                top_row = max(0, min(height - self.block_size, int(centroid_y - self.block_size // 2)))
+                left_col_candidate = max(0, min(width - self.block_size, int(centroid_x - self.block_size // 2)))
+
+                # Align to 4-pixel boundary
+                left_col = self._align_to_pixel_boundary(left_col_candidate)
+
+                return top_row, left_col
             else:
-                # Fallback for failed patterns
-                logger.warning(f"Failed to estimate position for LED {led_idx}")
-                led_positions[led_idx] = [width // 2, height // 2]
+                # Fallback for failed patterns - use center of frame
+                logger.warning(f"Failed to find pattern for LED {led_id}, using center")
+                self.led_positions[led_id] = [width // 2, height // 2]
 
-        logger.info(f"Estimated positions for {LED_COUNT} LEDs")
-        return led_positions
+                top_row = max(0, (height - self.block_size) // 2)
+                left_col_candidate = max(0, (width - self.block_size) // 2)
+                left_col = self._align_to_pixel_boundary(left_col_candidate)
 
-    def morton_encode(self, x: float, y: float) -> int:
+                return top_row, left_col
+
+        except Exception as e:
+            logger.error(f"Failed to find block position for LED {led_id}: {e}")
+            # Fallback to center
+            top_row = max(0, (FRAME_HEIGHT - self.block_size) // 2)
+            left_col_candidate = max(0, (FRAME_WIDTH - self.block_size) // 2)
+            left_col = self._align_to_pixel_boundary(left_col_candidate)
+
+            # Store fallback position
+            self.led_positions[led_id] = [FRAME_WIDTH // 2, FRAME_HEIGHT // 2]
+
+            return top_row, left_col
+
+    def _reorder_to_rcm_spatial_ordering(self) -> Tuple[SingleBlockMixedSparseTensor, dict]:
         """
-        Convert 2D coordinates to Z-order (Morton) index for spatial locality.
-
-        Args:
-            x: X coordinate (normalized to frame width)
-            y: Y coordinate (normalized to frame height)
+        Reorder captured patterns using RCM spatial ordering.
 
         Returns:
-            Morton-encoded integer for spatial ordering
+            Tuple of (reordered_mixed_tensor, led_spatial_mapping)
         """
-        # Normalize coordinates to [0, 1] and scale for precision
-        x_norm = x / FRAME_WIDTH
-        y_norm = y / FRAME_HEIGHT
-        x_int = int(x_norm * 65535)  # 16-bit precision
-        y_int = int(y_norm * 65535)
+        logger.info("Computing RCM spatial ordering for captured patterns...")
 
-        result = 0
-        for i in range(16):  # 16-bit precision
-            result |= (x_int & (1 << i)) << i | (y_int & (1 << i)) << (i + 1)
-        return result
+        # Compute RCM ordering using block positions
+        rcm_order, inverse_order, expected_ata_diagonals = compute_rcm_ordering(self.block_positions, self.block_size)
+        logger.info(f"Expected A^T A diagonals (from adjacency): {expected_ata_diagonals}")
 
-    def create_led_spatial_ordering(self, led_positions: np.ndarray) -> dict:
+        # Create mapping: physical_led_id -> rcm_ordered_matrix_index
+        led_spatial_mapping = {original_id: rcm_pos for rcm_pos, original_id in enumerate(rcm_order)}
+
+        # Create new mixed tensor with same configuration
+        if self.precision == "fp16":
+            output_dtype = cp.float16
+        else:
+            output_dtype = cp.float32
+
+        reordered_tensor = SingleBlockMixedSparseTensor(
+            batch_size=LED_COUNT,
+            channels=3,
+            height=FRAME_HEIGHT,
+            width=FRAME_WIDTH,
+            block_size=self.block_size,
+            device="cpu",
+            output_dtype=output_dtype,
+        )
+
+        # Copy all blocks from original tensor to RCM-ordered positions
+        logger.info("Copying patterns to RCM-ordered tensor...")
+        for original_led_id in range(LED_COUNT):
+            rcm_led_id = led_spatial_mapping[original_led_id]
+
+            for channel in range(3):
+                # Get block from original tensor
+                top_row, left_col = self.block_positions[original_led_id]
+
+                # Get the block from the original mixed tensor
+                try:
+                    # Use the mixed tensor's internal method to get the block
+                    block = self.mixed_tensor.get_block(original_led_id, channel, top_row, left_col)
+
+                    # Set in the reordered tensor at the RCM position
+                    reordered_tensor.set_block(rcm_led_id, channel, top_row, left_col, block)
+
+                except Exception as e:
+                    logger.warning(f"Failed to copy block for LED {original_led_id}, channel {channel}: {e}")
+                    # Create a zero block as fallback
+                    zero_block = cp.zeros((self.block_size, self.block_size), dtype=output_dtype)
+                    reordered_tensor.set_block(rcm_led_id, channel, top_row, left_col, zero_block)
+
+        logger.info("RCM reordering completed")
+        return reordered_tensor, led_spatial_mapping
+
+    def _generate_dia_matrix(self) -> DiagonalATAMatrix:
         """
-        Create LED ordering based on spatial proximity using Z-order curve.
-
-        Args:
-            led_positions: Array of LED positions (led_count, 2)
+        Generate DiagonalATAMatrix from captured mixed tensor.
 
         Returns:
-            Dictionary mapping physical_led_id -> spatially_ordered_matrix_index
+            DiagonalATAMatrix object with 3D DIA format
         """
-        # Create list of (led_id, x, y, morton_code)
-        led_list = []
-        for led_id, (x, y) in enumerate(led_positions):
-            morton_code = self.morton_encode(float(x), float(y))
-            led_list.append((led_id, x, y, morton_code))
+        logger.info("Building DiagonalATAMatrix from captured patterns...")
 
-        # Sort by Morton code for spatial locality
-        led_list.sort(key=lambda item: item[3])
+        # Determine output dtype based on precision
+        if self.precision == "fp16":
+            output_dtype = cp.float16
+        else:
+            output_dtype = cp.float32
 
-        # Create mapping: physical_led_id -> spatially_ordered_matrix_index
-        spatial_mapping = {led_id: matrix_idx for matrix_idx, (led_id, _, _, _) in enumerate(led_list)}
+        # Create DiagonalATAMatrix instance
+        dia_matrix = DiagonalATAMatrix(LED_COUNT, crop_size=self.block_size, output_dtype=output_dtype)
 
-        logger.info(f"Created spatial ordering for {len(spatial_mapping)} LEDs")
-        return spatial_mapping
+        # For captured data, we need to compute A^T @ A from actual diffusion patterns
+        # This requires converting the mixed tensor to a sparse matrix first
+        logger.info("Converting mixed tensor to sparse matrix for DIA matrix computation...")
 
-    def generate_sparse_csc_matrix(
-        self,
-        led_positions: np.ndarray,
-        led_spatial_mapping: dict,
-        sparsity_threshold: float = 0.01,
-    ) -> sp.csc_matrix:
+        # Convert mixed tensor to equivalent sparse CSC matrix
+        sparse_matrix = self._mixed_tensor_to_sparse_matrix()
+
+        # Build DIA matrix from sparse matrix
+        dia_matrix.build_from_diffusion_matrix(sparse_matrix)
+
+        logger.info(
+            f"DiagonalATAMatrix built: {LED_COUNT} LEDs, bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
+        )
+
+        return dia_matrix
+
+    def _mixed_tensor_to_sparse_matrix(self) -> sp.csc_matrix:
         """
-        Generate sparse CSC matrix from captured diffusion patterns.
-
-        Args:
-            led_positions: LED position array
-            led_spatial_mapping: Spatial ordering mapping
-            sparsity_threshold: Threshold below which pixels are considered zero
+        Convert mixed tensor to equivalent sparse CSC matrix for DIA matrix computation.
 
         Returns:
-            Sparse CSC matrix for optimization
+            Sparse CSC matrix (pixels, leds*3) equivalent to the mixed tensor
         """
-        logger.info(f"Generating sparse CSC matrix with threshold {sparsity_threshold}")
+        logger.info("Converting mixed tensor to sparse CSC matrix...")
 
         # Prepare sparse matrix data structures
         rows = []
         cols = []
         values = []
 
-        # Total number of pixels (single channel)
         pixels_per_channel = FRAME_HEIGHT * FRAME_WIDTH
-        threshold_uint8 = int(sparsity_threshold * 255)  # Convert to uint8 scale
 
-        for physical_led_id in range(LED_COUNT):
-            # Get spatially-ordered matrix column index
-            matrix_led_idx = led_spatial_mapping[physical_led_id]
-
-            # Process all three color channels for this LED
+        for led_id in range(LED_COUNT):
             for channel in range(3):
-                pattern = self.diffusion_patterns[physical_led_id, channel]
+                try:
+                    # Get block position
+                    top_row, left_col = self.block_positions[led_id]
 
-                # Extract significant pixels above threshold
-                significant_pixels = np.where(pattern > threshold_uint8)
-                pixel_rows, pixel_cols = significant_pixels
+                    # Get block from mixed tensor
+                    block = self.mixed_tensor.get_block(led_id, channel, top_row, left_col)
 
-                for idx in range(len(pixel_rows)):
-                    pixel_row = pixel_rows[idx]
-                    pixel_col = pixel_cols[idx]
-                    intensity = float(pattern[pixel_row, pixel_col]) / 255.0  # Normalize to [0,1]
+                    # Convert to numpy if needed
+                    if hasattr(block, "get"):  # CuPy array
+                        block_np = cp.asnumpy(block)
+                    else:
+                        block_np = block
 
-                    # Calculate flattened pixel index (single channel format)
-                    pixel_idx = pixel_row * FRAME_WIDTH + pixel_col
+                    # Find non-zero elements in the block
+                    block_rows, block_cols = np.nonzero(block_np)
 
-                    # Each LED has 3 columns (R, G, B) - treat as independent monochrome LEDs
-                    matrix_column_idx = matrix_led_idx * 3 + channel
+                    # Convert block coordinates to global pixel coordinates
+                    for br, bc in zip(block_rows, block_cols):
+                        global_row = top_row + br
+                        global_col = left_col + bc
 
-                    rows.append(pixel_idx)
-                    cols.append(matrix_column_idx)
-                    values.append(intensity)
+                        # Check bounds
+                        if global_row < FRAME_HEIGHT and global_col < FRAME_WIDTH:
+                            # Flatten pixel index
+                            pixel_idx = global_row * FRAME_WIDTH + global_col
 
-            # Progress reporting
-            if (physical_led_id + 1) % 500 == 0:
-                sparsity = len(values) / ((physical_led_id + 1) * pixels_per_channel * 3) * 100
-                logger.info(f"Processed {physical_led_id + 1}/{LED_COUNT} LEDs... Sparsity: {sparsity:.2f}%")
+                            # Column index for this LED/channel
+                            matrix_col_idx = led_id * 3 + channel
 
-        # Create CSC matrix (optimal for A^T operations in LSQR)
-        logger.info(f"Creating CSC matrix from {len(values)} non-zero entries...")
-        A_sparse_csc = sp.csc_matrix(
+                            # Value
+                            value = float(block_np[br, bc])
+
+                            rows.append(pixel_idx)
+                            cols.append(matrix_col_idx)
+                            values.append(value)
+
+                except Exception as e:
+                    logger.warning(f"Failed to process LED {led_id}, channel {channel}: {e}")
+                    continue
+
+        # Create CSC matrix
+        sparse_matrix = sp.csc_matrix(
             (values, (rows, cols)),
             shape=(pixels_per_channel, LED_COUNT * 3),
             dtype=np.float32,
         )
 
-        # Eliminate duplicate entries and compress
-        A_sparse_csc.eliminate_zeros()
-        A_sparse_csc = A_sparse_csc.tocsc()  # Ensure proper CSC format
+        # Clean up
+        sparse_matrix.eliminate_zeros()
+        sparse_matrix = sparse_matrix.tocsc()
 
-        actual_sparsity = A_sparse_csc.nnz / (A_sparse_csc.shape[0] * A_sparse_csc.shape[1]) * 100
-        memory_mb = A_sparse_csc.data.nbytes / (1024 * 1024)
+        logger.info(f"Created sparse matrix: shape {sparse_matrix.shape}, nnz {sparse_matrix.nnz}")
+        return sparse_matrix
 
-        logger.info("Generated sparse CSC matrix")
-        logger.info(f"Matrix shape: {A_sparse_csc.shape}")
-        logger.info(f"Non-zero entries: {A_sparse_csc.nnz:,}")
-        logger.info(f"Actual sparsity: {actual_sparsity:.3f}%")
-        logger.info(f"Memory usage: {memory_mb:.1f} MB")
-
-        return A_sparse_csc
-
-    def save_sparse_matrix(
-        self,
-        sparse_matrix: sp.csc_matrix,
-        led_positions: np.ndarray,
-        led_spatial_mapping: dict,
-        output_path: str,
-        sparsity_threshold: float = 0.01,
-    ) -> bool:
+    def save_patterns(self, output_path: str) -> bool:
         """
-        Save sparse CSC matrix and spatial mapping for optimization.
+        Save captured diffusion patterns to file in modern mixed tensor format.
 
         Args:
-            sparse_matrix: Sparse CSC matrix to save
-            led_positions: LED position array
-            led_spatial_mapping: LED spatial ordering mapping
-            output_path: Output file path
-            sparsity_threshold: Sparsity threshold used
+            output_path: Path to save diffusion patterns (.npz format)
 
         Returns:
-            True if saved successfully, False otherwise
+            True if save successful
         """
         try:
             # Ensure output directory exists
             output_dir = Path(output_path).parent
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Prepare metadata
+            # Generate DiagonalATAMatrix (DIA format) from mixed tensor
+            logger.info("Generating DiagonalATAMatrix (DIA format)...")
+            dia_matrix = self._generate_dia_matrix()
+
+            # Prepare metadata matching synthetic generation tool format
             save_metadata = {
                 "generator": "DiffusionPatternCapture",
-                "format": "sparse_csc",
-                "led_count": sparse_matrix.shape[1] // 3,
+                "format": "led_diffusion_csc_with_mixed_tensor",
+                "led_count": LED_COUNT,
                 "frame_width": FRAME_WIDTH,
                 "frame_height": FRAME_HEIGHT,
-                "matrix_shape": list(sparse_matrix.shape),
-                "nnz": sparse_matrix.nnz,
-                "sparsity_percent": sparse_matrix.nnz / (sparse_matrix.shape[0] * sparse_matrix.shape[1]) * 100,
-                "sparsity_threshold": sparsity_threshold,
-                "capture_timestamp": time.time(),
+                "channels": 3,
+                "matrix_shape": [FRAME_HEIGHT * FRAME_WIDTH, LED_COUNT * 3],  # Equivalent sparse matrix shape
+                "nnz": 0,  # Will be calculated if needed
+                "sparsity_percent": 0.0,  # Will be calculated if needed
+                "sparsity_threshold": 0.0,  # Not applicable for captured data
+                "generation_timestamp": time.time(),
+                "capture_fps": self.capture_fps,
                 "wled_host": self.wled_host,
                 "wled_port": self.wled_port,
-                "capture_fps": self.capture_fps,
+                "block_size": self.block_size,
+                "precision": self.precision,
             }
 
-            # Save everything in a single NPZ file
-            np.savez_compressed(
-                output_path,
-                # Sparse matrix components
-                matrix_data=sparse_matrix.data,
-                matrix_indices=sparse_matrix.indices,
-                matrix_indptr=sparse_matrix.indptr,
-                matrix_shape=sparse_matrix.shape,
+            # Save everything in a single NPZ file (matching synthetic tool format)
+            save_dict = {
                 # LED information
-                led_positions=led_positions,
-                led_spatial_mapping=led_spatial_mapping,
+                "led_positions": self.led_positions,
+                "led_spatial_mapping": self.led_spatial_mapping,
                 # Metadata
-                metadata=save_metadata,
-            )
+                "metadata": save_metadata,
+                # Mixed tensor stored as nested element using to_dict()
+                "mixed_tensor": self.mixed_tensor.to_dict(),
+                # DIA format A^T @ A matrix
+                "dia_matrix": dia_matrix.to_dict(),
+            }
+
+            np.savez_compressed(output_path, **save_dict)
 
             # Log file info
             file_size = Path(output_path).stat().st_size / (1024 * 1024)  # MB
 
-            logger.info(f"Saved sparse matrix and mapping to {output_path}")
+            logger.info(f"Saved mixed tensor and DIA matrix to {output_path}")
             logger.info(f"File size: {file_size:.1f} MB")
+            logger.info("Mixed tensor format: SingleBlockMixedSparseTensor")
+            logger.info(
+                f"Mixed tensor: {self.mixed_tensor.batch_size} LEDs, "
+                f"{self.mixed_tensor.height}x{self.mixed_tensor.width}, "
+                f"{self.mixed_tensor.block_size}x{self.mixed_tensor.block_size} blocks"
+            )
+            logger.info(
+                f"DIA matrix: {dia_matrix.led_count} LEDs, bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
+            )
+            logger.info("Use compute_ata_inverse.py tool to add ATA inverse matrices")
 
             return True
 
         except Exception as e:
-            logger.error(f"Failed to save sparse matrix: {e}")
+            logger.error(f"Failed to save mixed tensor format: {e}")
             return False
 
     def cleanup(self):
@@ -628,12 +747,17 @@ def main():
         metavar=("X", "Y", "W", "H"),
         help="Camera crop region (x y width height)",
     )
-    parser.add_argument("--sparse", "-s", action="store_true", help="Generate sparse CSC matrix format")
     parser.add_argument(
-        "--sparsity-threshold",
-        type=float,
-        default=0.01,
-        help="Threshold for sparse matrix (default: 0.01)",
+        "--precision",
+        choices=["fp16", "fp32"],
+        default="fp32",
+        help="Precision for mixed tensor storage (default: fp32)",
+    )
+    parser.add_argument(
+        "--block-size",
+        type=int,
+        default=128,
+        help="Block size for mixed tensor storage (default: 128)",
     )
     parser.add_argument(
         "--log-level",
@@ -643,6 +767,11 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # Validate block size
+    if args.block_size < 32 or args.block_size > 256 or (args.block_size & (args.block_size - 1)) != 0:
+        logger.error("Block size must be a power of 2 between 32 and 256")
+        return 1
 
     # Setup logging
     logging.basicConfig(
@@ -674,6 +803,8 @@ def main():
         camera_device=args.camera_device,
         capture_fps=args.capture_fps,
         crop_region=crop_region,
+        block_size=args.block_size,
+        precision=args.precision,
     )
 
     try:
@@ -692,40 +823,13 @@ def main():
             logger.error("Capture failed")
             return 1
 
-        # Save patterns (always save dense format as backup)
+        # Save patterns in modern mixed tensor format
         if not capture_tool.save_patterns(str(output_path)):
             logger.error("Failed to save patterns")
             return 1
 
-        # Generate sparse matrix if requested
-        if args.sparse:
-            logger.info("Generating sparse matrix format...")
-
-            # Estimate LED positions from captured patterns
-            led_positions = capture_tool.estimate_led_positions()
-
-            # Create spatial ordering
-            led_spatial_mapping = capture_tool.create_led_spatial_ordering(led_positions)
-
-            # Generate sparse CSC matrix
-            sparse_matrix = capture_tool.generate_sparse_csc_matrix(
-                led_positions, led_spatial_mapping, args.sparsity_threshold
-            )
-
-            # Save sparse matrix
-            if not capture_tool.save_sparse_matrix(
-                sparse_matrix,
-                led_positions,
-                led_spatial_mapping,
-                str(output_path),
-                args.sparsity_threshold,
-            ):
-                logger.error("Failed to save sparse matrix")
-                return 1
-
-            logger.info("Sparse matrix generation completed successfully!")
-
         logger.info("Diffusion pattern capture completed successfully!")
+        logger.info("Use compute_ata_inverse.py tool to add ATA inverse matrices for optimization")
         return 0
 
     except KeyboardInterrupt:
