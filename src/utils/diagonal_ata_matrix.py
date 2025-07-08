@@ -36,6 +36,15 @@ except ImportError:
     CUSTOM_3D_KERNEL_FP16_AVAILABLE = False
     print("Warning: Custom DIA kernels not available")
 
+# Import pure FP16 kernel
+try:
+    from .kernels.pure_fp16_dia_kernel import PureFP16DIA3DKernel
+
+    PURE_FP16_KERNEL_AVAILABLE = True
+except ImportError:
+    PURE_FP16_KERNEL_AVAILABLE = False
+    print("Warning: Pure FP16 DIA kernel not available")
+
 
 class DiagonalATAMatrix:
     """
@@ -79,6 +88,7 @@ class DiagonalATAMatrix:
         # Storage for unified 3D DIA format - shape (channels, k, leds)
         self.dia_data_cpu = None  # Shape: (channels, k, leds) - unified diagonal band data
         self.dia_data_gpu = None  # CuPy version of above
+        self.dia_data_gpu_fp16 = None  # FP16 version for pure FP16 kernel
         self.dia_offsets = None  # Shape: (k,) - unified diagonal offsets for non-empty diagonals only
         self.dia_offsets_gpu = None  # CuPy version of dia_offsets, cached for performance
         self.k = None  # Number of non-empty diagonal bands (max across all channels)
@@ -101,6 +111,10 @@ class DiagonalATAMatrix:
         self.custom_3d_kernel_basic_fp16 = None
         self.custom_3d_kernel_optimized_fp16 = None
 
+        # Pure FP16 kernel instances
+        self.pure_fp16_kernel_basic = None
+        self.pure_fp16_kernel_optimized = None
+
         # Metadata
         self.bandwidth = None
         self.sparsity = None  # Overall sparsity
@@ -117,12 +131,30 @@ class DiagonalATAMatrix:
             self.custom_kernel_basic_fp16 = CustomDIAMatVecFP16(use_optimized=False)
             self.custom_kernel_optimized_fp16 = CustomDIAMatVecFP16(use_optimized=True)
 
+        # Initialize pure FP16 kernels if available
+        if PURE_FP16_KERNEL_AVAILABLE:
+            self.pure_fp16_kernel_basic = PureFP16DIA3DKernel(use_optimized=False)
+            self.pure_fp16_kernel_optimized = PureFP16DIA3DKernel(use_optimized=True)
+
     def _update_dia_offsets_cache(self):
         """Update GPU cache for dia_offsets to avoid repeated cupy.asarray calls."""
         if self.dia_offsets is not None:
             self.dia_offsets_gpu = cupy.asarray(self.dia_offsets, dtype=cupy.int32)
         else:
             self.dia_offsets_gpu = None
+
+    def _update_dia_data_cache(self):
+        """Update GPU cache for dia_data including FP16 version for pure FP16 kernel."""
+        if self.dia_data_cpu is not None:
+            # Ensure FP32 GPU version exists
+            if self.dia_data_gpu is None:
+                self.dia_data_gpu = cupy.asarray(self.dia_data_cpu, dtype=self.output_dtype)
+
+            # Create FP16 version for pure FP16 kernel efficiency
+            # Always create FP16 version for potential pure FP16 usage
+            self.dia_data_gpu_fp16 = cupy.asarray(self.dia_data_cpu, dtype=cupy.float16)
+        else:
+            self.dia_data_gpu_fp16 = None
 
     def build_from_diffusion_matrix(self, diffusion_matrix: sp.spmatrix) -> None:
         """
@@ -257,6 +289,9 @@ class DiagonalATAMatrix:
         print(f"  Total nnz: {self.nnz}, overall sparsity: {self.sparsity:.3f}%")
         print(f"  Estimated bandwidth: {self.bandwidth}")
 
+        # Cache GPU data including FP16 version for pure FP16 kernel
+        self._update_dia_data_cache()
+
         print("  True 3D DIA matrices built successfully!")
 
     def multiply_3d(
@@ -265,6 +300,7 @@ class DiagonalATAMatrix:
         use_custom_kernel: bool = True,
         optimized_kernel: bool = False,
         output_dtype: Optional[cupy.dtype] = None,
+        use_pure_fp16: bool = False,
     ) -> np.ndarray:
         """
         Perform 3D DIA matrix-vector multiplication: (A^T)A @ led_values.
@@ -281,6 +317,7 @@ class DiagonalATAMatrix:
             optimized_kernel: Whether to use optimized custom kernel
             output_dtype: Desired output data type (cupy.float32 or cupy.float16).
                          If None, uses the instance's output_dtype setting.
+            use_pure_fp16: Whether to use pure FP16 kernel (only when output_dtype=cupy.float16)
 
         Returns:
             Result array (3, leds) in RCM order with specified output dtype
@@ -303,6 +340,10 @@ class DiagonalATAMatrix:
         # Validate output dtype
         if output_dtype not in (cupy.float32, cupy.float16):
             raise ValueError(f"Unsupported output dtype {output_dtype}. Supported: cupy.float32, cupy.float16")
+
+        # Validate pure FP16 option
+        if use_pure_fp16 and output_dtype != cupy.float16:
+            raise ValueError("use_pure_fp16=True requires output_dtype=cupy.float16")
 
         # Determine expected input dtype based on output dtype and kernel requirements
         if output_dtype == cupy.float16:
@@ -350,26 +391,55 @@ class DiagonalATAMatrix:
                     )
 
             elif output_dtype == cupy.float16:
-                # Use FP16 kernels
-                if not CUSTOM_3D_KERNEL_FP16_AVAILABLE:
-                    raise RuntimeError("Custom 3D DIA FP16 kernel not available - required for FP16 output")
+                # Use FP16 kernels - choose between pure FP16 and mixed precision
+                if use_pure_fp16:
+                    # Use pure FP16 kernel for maximum performance
+                    if not PURE_FP16_KERNEL_AVAILABLE:
+                        raise RuntimeError("Pure FP16 DIA kernel not available - required for pure FP16 mode")
 
-                if optimized_kernel:
-                    if self.custom_3d_kernel_optimized_fp16 is None:
-                        self.custom_3d_kernel_optimized_fp16 = CustomDIA3DMatVecFP16(use_optimized=True)
-                    result_gpu = self.custom_3d_kernel_optimized_fp16(
-                        self.dia_data_gpu,  # Shape: (channels, k, leds)
-                        self.dia_offsets_gpu,  # Shape: (k,) - cached GPU version
-                        led_values_gpu,  # Shape: (channels, leds)
-                    )
+                    # Use cached FP16 matrix data for optimal performance
+                    if self.dia_data_gpu_fp16 is None:
+                        raise RuntimeError(
+                            "FP16 matrix data not cached - call _update_dia_data_cache() after building matrix"
+                        )
+
+                    if optimized_kernel:
+                        if self.pure_fp16_kernel_optimized is None:
+                            self.pure_fp16_kernel_optimized = PureFP16DIA3DKernel(use_optimized=True)
+                        result_gpu = self.pure_fp16_kernel_optimized(
+                            self.dia_data_gpu_fp16,  # Shape: (channels, k, leds) - cached FP16
+                            self.dia_offsets_gpu,  # Shape: (k,) - cached GPU version
+                            led_values_gpu,  # Shape: (channels, leds) - FP16
+                        )
+                    else:
+                        if self.pure_fp16_kernel_basic is None:
+                            self.pure_fp16_kernel_basic = PureFP16DIA3DKernel(use_optimized=False)
+                        result_gpu = self.pure_fp16_kernel_basic(
+                            self.dia_data_gpu_fp16,  # Shape: (channels, k, leds) - cached FP16
+                            self.dia_offsets_gpu,  # Shape: (k,) - cached GPU version
+                            led_values_gpu,  # Shape: (channels, leds) - FP16
+                        )
                 else:
-                    if self.custom_3d_kernel_basic_fp16 is None:
-                        self.custom_3d_kernel_basic_fp16 = CustomDIA3DMatVecFP16(use_optimized=False)
-                    result_gpu = self.custom_3d_kernel_basic_fp16(
-                        self.dia_data_gpu,  # Shape: (channels, k, leds)
-                        self.dia_offsets_gpu,  # Shape: (k,) - cached GPU version
-                        led_values_gpu,  # Shape: (channels, leds)
-                    )
+                    # Use mixed precision FP16 kernels (existing implementation)
+                    if not CUSTOM_3D_KERNEL_FP16_AVAILABLE:
+                        raise RuntimeError("Custom 3D DIA FP16 kernel not available - required for FP16 output")
+
+                    if optimized_kernel:
+                        if self.custom_3d_kernel_optimized_fp16 is None:
+                            self.custom_3d_kernel_optimized_fp16 = CustomDIA3DMatVecFP16(use_optimized=True)
+                        result_gpu = self.custom_3d_kernel_optimized_fp16(
+                            self.dia_data_gpu,  # Shape: (channels, k, leds)
+                            self.dia_offsets_gpu,  # Shape: (k,) - cached GPU version
+                            led_values_gpu,  # Shape: (channels, leds)
+                        )
+                    else:
+                        if self.custom_3d_kernel_basic_fp16 is None:
+                            self.custom_3d_kernel_basic_fp16 = CustomDIA3DMatVecFP16(use_optimized=False)
+                        result_gpu = self.custom_3d_kernel_basic_fp16(
+                            self.dia_data_gpu,  # Shape: (channels, k, leds)
+                            self.dia_offsets_gpu,  # Shape: (k,) - cached GPU version
+                            led_values_gpu,  # Shape: (channels, leds)
+                        )
         else:
             # NO FALLBACK - custom kernel required for performance measurement
             raise RuntimeError("Custom 3D DIA kernel not available - required for performance measurement")
@@ -612,8 +682,9 @@ class DiagonalATAMatrix:
             else:
                 instance.dia_data_gpu = None
 
-            # Cache GPU version of dia_offsets
+            # Cache GPU version of dia_offsets and data
             instance._update_dia_offsets_cache()
+            instance._update_dia_data_cache()
 
         elif version == "6.0":
             # Legacy version with RCM ordering stored (still supported)
@@ -628,8 +699,9 @@ class DiagonalATAMatrix:
             else:
                 instance.dia_data_gpu = None
 
-            # Cache GPU version of dia_offsets
+            # Cache GPU version of dia_offsets and data
             instance._update_dia_offsets_cache()
+            instance._update_dia_data_cache()
 
             print("Warning: Loading legacy DIA matrix with RCM ordering. Consider regenerating patterns.")
 

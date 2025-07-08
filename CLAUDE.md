@@ -83,3 +83,6 @@ When overall system performance evaluation is needed, it will be explicitly requ
 
 ### Pattern Design
 - We have decided on 64x64 blocks for the patterns
+
+### File Organization Guidelines
+- Keep pattern files in the diffusion_patterns directory

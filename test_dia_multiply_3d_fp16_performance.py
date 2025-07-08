@@ -187,6 +187,61 @@ def run_multiply_3d_performance_test():
     print(f"  Output shape: {result_fp16.shape}")
     print(f"  Output dtype: {result_fp16.dtype}")
 
+    # === Pure FP16 Performance Test ===
+    print("\n" + "=" * 60)
+    print("PURE FP16 PERFORMANCE TEST")
+    print("=" * 60)
+
+    # Test pure FP16 kernel availability
+    try:
+        # Warmup phase for pure FP16
+        print("Warming up pure FP16 kernels...")
+        for i in range(warmup_runs):
+            test_data = cp.asarray(test_variants[i % len(test_variants)], dtype=cp.float16)
+            result = dia_matrix.multiply_3d(test_data, output_dtype=cp.float16, use_pure_fp16=True)
+            cp.cuda.Device().synchronize()
+
+        # Measurement phase for pure FP16
+        print("Measuring pure FP16 performance...")
+        pure_fp16_times = []
+
+        for i in range(measurement_runs):
+            test_data = cp.asarray(test_variants[i % len(test_variants)], dtype=cp.float16)
+
+            start_time = time.perf_counter()
+            result_pure_fp16 = dia_matrix.multiply_3d(test_data, output_dtype=cp.float16, use_pure_fp16=True)
+            cp.cuda.Device().synchronize()
+            end_time = time.perf_counter()
+
+            pure_fp16_times.append((end_time - start_time) * 1000)  # Convert to milliseconds
+
+        pure_fp16_avg = np.mean(pure_fp16_times)
+        pure_fp16_std = np.std(pure_fp16_times)
+        pure_fp16_min = np.min(pure_fp16_times)
+        pure_fp16_max = np.max(pure_fp16_times)
+
+        print("Pure FP16 Results:")
+        print(f"  Average: {pure_fp16_avg:.3f}ms")
+        print(f"  Std Dev: {pure_fp16_std:.3f}ms")
+        print(f"  Min: {pure_fp16_min:.3f}ms")
+        print(f"  Max: {pure_fp16_max:.3f}ms")
+        print(f"  Output shape: {result_pure_fp16.shape}")
+        print(f"  Output dtype: {result_pure_fp16.dtype}")
+
+        # Calculate speedup vs mixed precision FP16
+        if fp16_avg > 0:
+            pure_fp16_speedup = fp16_avg / pure_fp16_avg
+            print(f"  Speedup vs Mixed FP16: {pure_fp16_speedup:.2f}x")
+
+        # Store pure FP16 result for accuracy comparison
+        result_pure_fp16_check = result_pure_fp16
+        pure_fp16_available = True
+
+    except Exception as e:
+        print(f"Pure FP16 kernel not available: {e}")
+        pure_fp16_available = False
+        result_pure_fp16_check = None
+
     # === Accuracy Comparison ===
     print("\n" + "=" * 60)
     print("ACCURACY COMPARISON")
@@ -201,15 +256,43 @@ def run_multiply_3d_performance_test():
     # Convert fp16 to fp32 for comparison
     result_fp16_as_fp32 = result_fp16_check.astype(cp.float32)
 
-    # Calculate differences
+    # Calculate differences between FP32 and mixed FP16
     abs_diff = cp.abs(result_fp32_check - result_fp16_as_fp32)
     rel_diff = abs_diff / (cp.abs(result_fp32_check) + 1e-8)
 
-    print("Accuracy Analysis:")
+    print("Accuracy Analysis (FP32 vs Mixed FP16):")
     print(f"  Max absolute difference: {float(cp.max(abs_diff)):.6e}")
     print(f"  Mean absolute difference: {float(cp.mean(abs_diff)):.6e}")
     print(f"  Max relative difference: {float(cp.max(rel_diff)):.6e}")
     print(f"  Mean relative difference: {float(cp.mean(rel_diff)):.6e}")
+
+    # Compare pure FP16 if available
+    if pure_fp16_available and result_pure_fp16_check is not None:
+        # Get pure FP16 result for same input
+        result_pure_fp16_check = dia_matrix.multiply_3d(test_data_fp16, output_dtype=cp.float16, use_pure_fp16=True)
+
+        # Convert pure fp16 to fp32 for comparison
+        result_pure_fp16_as_fp32 = result_pure_fp16_check.astype(cp.float32)
+
+        # Compare pure FP16 vs FP32
+        abs_diff_pure = cp.abs(result_fp32_check - result_pure_fp16_as_fp32)
+        rel_diff_pure = abs_diff_pure / (cp.abs(result_fp32_check) + 1e-8)
+
+        print("\nAccuracy Analysis (FP32 vs Pure FP16):")
+        print(f"  Max absolute difference: {float(cp.max(abs_diff_pure)):.6e}")
+        print(f"  Mean absolute difference: {float(cp.mean(abs_diff_pure)):.6e}")
+        print(f"  Max relative difference: {float(cp.max(rel_diff_pure)):.6e}")
+        print(f"  Mean relative difference: {float(cp.mean(rel_diff_pure)):.6e}")
+
+        # Compare mixed FP16 vs pure FP16
+        abs_diff_fp16 = cp.abs(result_fp16_as_fp32 - result_pure_fp16_as_fp32)
+        rel_diff_fp16 = abs_diff_fp16 / (cp.abs(result_fp16_as_fp32) + 1e-8)
+
+        print("\nAccuracy Analysis (Mixed FP16 vs Pure FP16):")
+        print(f"  Max absolute difference: {float(cp.max(abs_diff_fp16)):.6e}")
+        print(f"  Mean absolute difference: {float(cp.mean(abs_diff_fp16)):.6e}")
+        print(f"  Max relative difference: {float(cp.max(rel_diff_fp16)):.6e}")
+        print(f"  Mean relative difference: {float(cp.mean(rel_diff_fp16)):.6e}")
 
     # === Memory Usage Analysis ===
     print("\n" + "=" * 60)
@@ -251,9 +334,19 @@ def run_multiply_3d_performance_test():
 
     print("Performance Comparison:")
     print(f"  FP32 average: {fp32_avg:.3f}ms")
-    print(f"  FP16 average: {fp16_avg:.3f}ms")
-    print(f"  Speedup: {speedup:.2f}x")
-    print(f"  Efficiency gain: {efficiency:.1f}%")
+    print(f"  Mixed FP16 average: {fp16_avg:.3f}ms")
+    print(f"  Mixed FP16 speedup: {speedup:.2f}x")
+    print(f"  Mixed FP16 efficiency gain: {efficiency:.1f}%")
+
+    if pure_fp16_available:
+        pure_speedup = fp32_avg / pure_fp16_avg if pure_fp16_avg > 0 else 0
+        pure_efficiency = (fp32_avg - pure_fp16_avg) / fp32_avg * 100 if fp32_avg > 0 else 0
+        mixed_vs_pure_speedup = fp16_avg / pure_fp16_avg if pure_fp16_avg > 0 else 0
+
+        print(f"  Pure FP16 average: {pure_fp16_avg:.3f}ms")
+        print(f"  Pure FP16 speedup vs FP32: {pure_speedup:.2f}x")
+        print(f"  Pure FP16 efficiency vs FP32: {pure_efficiency:.1f}%")
+        print(f"  Pure FP16 speedup vs Mixed FP16: {mixed_vs_pure_speedup:.2f}x")
 
     # Throughput calculation
     operations_per_second_fp32 = 1000 / fp32_avg if fp32_avg > 0 else 0
@@ -261,7 +354,11 @@ def run_multiply_3d_performance_test():
 
     print("\nThroughput:")
     print(f"  FP32: {operations_per_second_fp32:.1f} ops/sec")
-    print(f"  FP16: {operations_per_second_fp16:.1f} ops/sec")
+    print(f"  Mixed FP16: {operations_per_second_fp16:.1f} ops/sec")
+
+    if pure_fp16_available:
+        operations_per_second_pure_fp16 = 1000 / pure_fp16_avg if pure_fp16_avg > 0 else 0
+        print(f"  Pure FP16: {operations_per_second_pure_fp16:.1f} ops/sec")
 
     # Target performance analysis
     target_fps = 60
