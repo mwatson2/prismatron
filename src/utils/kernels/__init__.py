@@ -35,6 +35,7 @@ from .dia_matvec_fp16 import (
     CustomDIA3DMatVecFP16,
     CustomDIAMatVecFP16,
 )
+from .pure_fp16_dia_kernel import PureFP16DIA3DKernel, get_kernel_info
 
 __all__ = [
     # FP32 kernels
@@ -58,4 +59,7 @@ __all__ = [
     "cuda_transpose_dot_product_3d_compute_optimized_int8_experimental_fp16",
     "CustomDIAMatVecFP16",
     "CustomDIA3DMatVecFP16",
+    # Pure FP16 kernels
+    "PureFP16DIA3DKernel",
+    "get_kernel_info",
 ]

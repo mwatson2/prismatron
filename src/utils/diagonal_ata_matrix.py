@@ -80,6 +80,7 @@ class DiagonalATAMatrix:
         self.dia_data_cpu = None  # Shape: (channels, k, leds) - unified diagonal band data
         self.dia_data_gpu = None  # CuPy version of above
         self.dia_offsets = None  # Shape: (k,) - unified diagonal offsets for non-empty diagonals only
+        self.dia_offsets_gpu = None  # CuPy version of dia_offsets, cached for performance
         self.k = None  # Number of non-empty diagonal bands (max across all channels)
 
         # Note: RCM ordering handled by pattern generation, not stored here
@@ -115,6 +116,13 @@ class DiagonalATAMatrix:
         if CUSTOM_KERNEL_FP16_AVAILABLE:
             self.custom_kernel_basic_fp16 = CustomDIAMatVecFP16(use_optimized=False)
             self.custom_kernel_optimized_fp16 = CustomDIAMatVecFP16(use_optimized=True)
+
+    def _update_dia_offsets_cache(self):
+        """Update GPU cache for dia_offsets to avoid repeated cupy.asarray calls."""
+        if self.dia_offsets is not None:
+            self.dia_offsets_gpu = cupy.asarray(self.dia_offsets, dtype=cupy.int32)
+        else:
+            self.dia_offsets_gpu = None
 
     def build_from_diffusion_matrix(self, diffusion_matrix: sp.spmatrix) -> None:
         """
@@ -183,6 +191,9 @@ class DiagonalATAMatrix:
         else:
             self.dia_offsets = np.array([], dtype=np.int32)
             self.k = 0
+
+        # Cache GPU version of dia_offsets for performance
+        self._update_dia_offsets_cache()
 
         print("  Unified diagonal structure:")
         print(f"    Non-empty diagonal bands (k): {self.k}")
@@ -293,15 +304,26 @@ class DiagonalATAMatrix:
         if output_dtype not in (cupy.float32, cupy.float16):
             raise ValueError(f"Unsupported output dtype {output_dtype}. Supported: cupy.float32, cupy.float16")
 
-        # Convert to GPU arrays - avoid unnecessary copies
-        if not isinstance(led_values, cupy.ndarray):
-            led_values_gpu = cupy.asarray(led_values, dtype=cupy.float32)
+        # Determine expected input dtype based on output dtype and kernel requirements
+        if output_dtype == cupy.float16:
+            expected_input_dtype = cupy.float16  # FP16 kernels expect FP16 input
         else:
-            # Only convert dtype if necessary, avoid copy if already float32
-            if led_values.dtype != cupy.float32:
-                led_values_gpu = led_values.astype(cupy.float32)
-            else:
-                led_values_gpu = led_values
+            expected_input_dtype = cupy.float32  # FP32 kernels expect FP32 input
+
+        # Assert input is cupy array of correct dtype for optimal performance
+        if not isinstance(led_values, cupy.ndarray):
+            raise TypeError(
+                f"led_values must be a cupy.ndarray of dtype {expected_input_dtype.__name__}, "
+                f"got {type(led_values).__name__}. Convert before calling multiply_3d."
+            )
+
+        if led_values.dtype != expected_input_dtype:
+            raise TypeError(
+                f"led_values dtype must be {expected_input_dtype.__name__} for {output_dtype.__name__} output, "
+                f"got {led_values.dtype}. Convert before calling multiply_3d to avoid unexpected copies."
+            )
+
+        led_values_gpu = led_values  # No conversion needed
 
         # Perform 3D DIA matrix-vector multiplication - Select kernel based on output dtype
         if use_custom_kernel:
@@ -315,7 +337,7 @@ class DiagonalATAMatrix:
                         self.custom_3d_kernel_optimized = CustomDIA3DMatVec(use_optimized=True)
                     result_gpu = self.custom_3d_kernel_optimized(
                         self.dia_data_gpu,  # Shape: (channels, k, leds)
-                        cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                        self.dia_offsets_gpu,  # Shape: (k,) - cached GPU version
                         led_values_gpu,  # Shape: (channels, leds)
                     )
                 else:
@@ -323,7 +345,7 @@ class DiagonalATAMatrix:
                         self.custom_3d_kernel_basic = CustomDIA3DMatVec(use_optimized=False)
                     result_gpu = self.custom_3d_kernel_basic(
                         self.dia_data_gpu,  # Shape: (channels, k, leds)
-                        cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                        self.dia_offsets_gpu,  # Shape: (k,) - cached GPU version
                         led_values_gpu,  # Shape: (channels, leds)
                     )
 
@@ -337,7 +359,7 @@ class DiagonalATAMatrix:
                         self.custom_3d_kernel_optimized_fp16 = CustomDIA3DMatVecFP16(use_optimized=True)
                     result_gpu = self.custom_3d_kernel_optimized_fp16(
                         self.dia_data_gpu,  # Shape: (channels, k, leds)
-                        cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                        self.dia_offsets_gpu,  # Shape: (k,) - cached GPU version
                         led_values_gpu,  # Shape: (channels, leds)
                     )
                 else:
@@ -345,7 +367,7 @@ class DiagonalATAMatrix:
                         self.custom_3d_kernel_basic_fp16 = CustomDIA3DMatVecFP16(use_optimized=False)
                     result_gpu = self.custom_3d_kernel_basic_fp16(
                         self.dia_data_gpu,  # Shape: (channels, k, leds)
-                        cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                        self.dia_offsets_gpu,  # Shape: (k,) - cached GPU version
                         led_values_gpu,  # Shape: (channels, leds)
                     )
         else:
@@ -471,7 +493,7 @@ class DiagonalATAMatrix:
                         self.custom_3d_kernel_optimized = CustomDIA3DMatVec(use_optimized=True)
                     ata_g_gpu = self.custom_3d_kernel_optimized(
                         self.dia_data_gpu,  # Shape: (channels, k, leds)
-                        cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                        self.dia_offsets_gpu,  # Shape: (k,) - cached GPU version
                         gradient_gpu,  # Shape: (channels, leds)
                     )
                 else:
@@ -479,7 +501,7 @@ class DiagonalATAMatrix:
                         self.custom_3d_kernel_basic = CustomDIA3DMatVec(use_optimized=False)
                     ata_g_gpu = self.custom_3d_kernel_basic(
                         self.dia_data_gpu,  # Shape: (channels, k, leds)
-                        cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                        self.dia_offsets_gpu,  # Shape: (k,) - cached GPU version
                         gradient_gpu,  # Shape: (channels, leds)
                     )
 
@@ -493,7 +515,7 @@ class DiagonalATAMatrix:
                         self.custom_3d_kernel_optimized_fp16 = CustomDIA3DMatVecFP16(use_optimized=True)
                     ata_g_gpu = self.custom_3d_kernel_optimized_fp16(
                         self.dia_data_gpu,  # Shape: (channels, k, leds)
-                        cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                        self.dia_offsets_gpu,  # Shape: (k,) - cached GPU version
                         gradient_gpu,  # Shape: (channels, leds)
                     )
                 else:
@@ -501,7 +523,7 @@ class DiagonalATAMatrix:
                         self.custom_3d_kernel_basic_fp16 = CustomDIA3DMatVecFP16(use_optimized=False)
                     ata_g_gpu = self.custom_3d_kernel_basic_fp16(
                         self.dia_data_gpu,  # Shape: (channels, k, leds)
-                        cupy.asarray(self.dia_offsets, dtype=cupy.int32),  # Shape: (k,)
+                        self.dia_offsets_gpu,  # Shape: (k,) - cached GPU version
                         gradient_gpu,  # Shape: (channels, leds)
                     )
         else:
@@ -590,6 +612,9 @@ class DiagonalATAMatrix:
             else:
                 instance.dia_data_gpu = None
 
+            # Cache GPU version of dia_offsets
+            instance._update_dia_offsets_cache()
+
         elif version == "6.0":
             # Legacy version with RCM ordering stored (still supported)
             instance.dia_data_cpu = data["dia_data_3d"]
@@ -602,6 +627,9 @@ class DiagonalATAMatrix:
                 instance.dia_data_gpu = cupy.asarray(instance.dia_data_cpu)
             else:
                 instance.dia_data_gpu = None
+
+            # Cache GPU version of dia_offsets
+            instance._update_dia_offsets_cache()
 
             print("Warning: Loading legacy DIA matrix with RCM ordering. Consider regenerating patterns.")
 

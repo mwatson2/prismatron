@@ -98,7 +98,7 @@ class SyntheticPatternGenerator:
 
         # Calculate LED size scaling: 1/sqrt(led_count) with 1000 LEDs as baseline
         baseline_led_count = 1000
-        self.led_size_scale = np.sqrt(baseline_led_count / led_count)
+        self.led_size_scale = 1.0  # np.sqrt(baseline_led_count / led_count)
         logger.info(f"LED size scaling factor: {self.led_size_scale:.3f} (baseline: {baseline_led_count} LEDs)")
 
         if self.seed is not None:

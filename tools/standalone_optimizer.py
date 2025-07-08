@@ -50,9 +50,8 @@ from src.utils.diagonal_ata_matrix import DiagonalATAMatrix
 # Import frame optimization function and supporting classes
 from src.utils.frame_optimizer import (
     FrameOptimizationResult,
+    load_ata_inverse_from_pattern,
     optimize_frame_led_values,
-    optimize_frame_with_dia_matrix,
-    optimize_frame_with_mixed_tensor,
 )
 from src.utils.led_diffusion_csc_matrix import LEDDiffusionCSCMatrix
 from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
@@ -90,36 +89,58 @@ class StandaloneOptimizer:
             logger.warning("Mixed tensor not found in patterns file, falling back to sparse mode")
             self.optimizer_type = "sparse"
 
-        # Load CSC matrix for DIA creation and sparse fallback
-        if "diffusion_matrix" in patterns_data:
-            csc_data_dict = patterns_data["diffusion_matrix"].item()
-            self.diffusion_csc = LEDDiffusionCSCMatrix.from_dict(csc_data_dict)
-            logger.info(f"CSC diffusion matrix loaded: {self.diffusion_csc.led_count} LEDs")
+        # Load DIA matrix and other data for mixed tensor optimizer
+        if self.optimizer_type == "mixed" and hasattr(self, "mixed_tensor"):
+            # Load pre-computed DIA matrix
+            if "dia_matrix" in patterns_data:
+                logger.info("Loading pre-computed DIA matrix...")
+                dia_matrix_dict = patterns_data["dia_matrix"].item()
+                self.dia_matrix = DiagonalATAMatrix.from_dict(dia_matrix_dict)
+                logger.info("DIA matrix loaded successfully")
+            else:
+                logger.error("No DIA matrix found in patterns file for mixed optimizer")
+                raise ValueError("Patterns file must contain dia_matrix for mixed optimizer")
+
+            # Load ATA inverse data
+            if "ata_inverse" in patterns_data:
+                logger.info("Loading ATA inverse data...")
+                self.ata_inverse = patterns_data["ata_inverse"]
+                logger.info(f"ATA inverse loaded: shape={self.ata_inverse.shape}")
+            else:
+                logger.error("No ATA inverse found in patterns file for mixed optimizer")
+                raise ValueError("Patterns file must contain ata_inverse for mixed optimizer")
+
+            self.led_count = self.mixed_tensor.batch_size
         else:
-            logger.error("No diffusion matrix found in patterns file")
-            raise ValueError("Patterns file must contain diffusion_matrix")
+            # Load CSC matrix for sparse fallback
+            if "diffusion_matrix" in patterns_data:
+                csc_data_dict = patterns_data["diffusion_matrix"].item()
+                self.diffusion_csc = LEDDiffusionCSCMatrix.from_dict(csc_data_dict)
+                logger.info(f"CSC diffusion matrix loaded: {self.diffusion_csc.led_count} LEDs")
+            else:
+                logger.error("No diffusion matrix found in patterns file")
+                raise ValueError("Patterns file must contain diffusion_matrix")
 
-        # Create DIA matrix from CSC patterns
-        logger.info("Creating DIA matrix from CSC patterns...")
-        led_positions = patterns_data.get("led_positions", None)
-        if led_positions is None:
-            logger.warning("No LED positions found, DIA matrix may be less optimal")
+            # Create DIA matrix from CSC patterns
+            logger.info("Creating DIA matrix from CSC patterns...")
+            led_positions = patterns_data.get("led_positions", None)
+            if led_positions is None:
+                logger.warning("No LED positions found, DIA matrix may be less optimal")
 
-        self.dia_matrix = DiagonalATAMatrix(led_count=self.diffusion_csc.led_count)
-        csc_matrix = self.diffusion_csc.to_csc_matrix()
+            self.dia_matrix = DiagonalATAMatrix(led_count=self.diffusion_csc.led_count)
+            csc_matrix = self.diffusion_csc.to_csc_matrix()
 
-        # Suppress DIA build output
-        import sys
-        from io import StringIO
+            # Suppress DIA build output
+            import sys
+            from io import StringIO
 
-        old_stdout = sys.stdout
-        sys.stdout = StringIO()
-        self.dia_matrix.build_from_diffusion_matrix(csc_matrix, led_positions)
-        sys.stdout = old_stdout
+            old_stdout = sys.stdout
+            sys.stdout = StringIO()
+            self.dia_matrix.build_from_diffusion_matrix(csc_matrix, led_positions)
+            sys.stdout = old_stdout
 
-        logger.info("DIA matrix built successfully")
-
-        self.led_count = self.diffusion_csc.led_count
+            logger.info("DIA matrix built successfully")
+            self.led_count = self.diffusion_csc.led_count
         logger.info(f"Initialized {self.optimizer_type} optimizer with {self.led_count} LEDs")
 
     def show_preview(self, rendered_result: np.ndarray, target_image: np.ndarray):
@@ -173,11 +194,12 @@ class StandaloneOptimizer:
             logger.info("Using Mixed tensor A^T + DIA matrix A^T A")
             result = optimize_frame_led_values(
                 target_frame=original_image,
-                AT_matrix=self.mixed_tensor,
-                ATA_matrix=self.dia_matrix,
+                at_matrix=self.mixed_tensor,
+                ata_matrix=self.dia_matrix,
+                ata_inverse=self.ata_inverse,
                 max_iterations=10,
-                convergence_threshold=1e-6,
-                step_size_scaling=0.8,
+                convergence_threshold=0.3,
+                step_size_scaling=0.9,
                 compute_error_metrics=True,
                 debug=True,
             )
@@ -264,45 +286,93 @@ class StandaloneOptimizer:
         return image.astype(np.uint8)
 
     def _render_result(self, result: FrameOptimizationResult, target_image: np.ndarray) -> np.ndarray:
-        """Render optimization result using CSC matrices."""
-        logger.info("Rendering result using CSC forward pass...")
+        """Render optimization result using appropriate forward pass."""
 
-        # Get the CSC matrix for forward rendering
-        csc_A = self.diffusion_csc.to_csc_matrix()  # Shape: (pixels, led_count*3)
-        led_count = result.led_values.shape[1]
+        if self.optimizer_type == "mixed" and hasattr(self, "mixed_tensor"):
+            # Use mixed tensor forward pass (same as visualizer)
+            logger.info("Rendering result using mixed tensor forward pass...")
 
-        # Convert LED values from uint8 [0,255] to float32 [0,1]
-        led_values_normalized = result.led_values.astype(np.float32) / 255.0  # Shape: (3, led_count)
+            # result.led_values is in [0, 1] range, shape (3, led_count)
+            led_values_float32 = result.led_values.astype(np.float32)
 
-        logger.info(f"LED values shape: {result.led_values.shape}")
-        logger.info(f"CSC matrix shape: {csc_A.shape}")
+            # Convert from planar (3, led_count) to interleaved (led_count, 3) for forward_pass_3d
+            led_values_interleaved = led_values_float32.T  # (3, 2624) -> (2624, 3)
 
-        # Initialize rendered frame
-        rendered_image = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.float32)
+            logger.info(
+                f"LED values shape: {led_values_interleaved.shape}, range=[{led_values_interleaved.min():.3f}, {led_values_interleaved.max():.3f}]"
+            )
 
-        # Process each channel separately
-        for channel in range(3):
-            # Get LED values for this channel
-            led_channel = led_values_normalized[channel]  # Shape: (led_count,)
+            # Use forward_pass_3d to render
+            import cupy as cp
 
-            # Extract A matrix columns for this channel
-            # Channel 0 (R): columns 0, 3, 6, 9, ...
-            # Channel 1 (G): columns 1, 4, 7, 10, ...
-            # Channel 2 (B): columns 2, 5, 8, 11, ...
-            channel_cols = np.arange(channel, csc_A.shape[1], 3)
-            A_channel = csc_A[:, channel_cols]  # Shape: (pixels, led_count)
+            led_values_gpu = cp.asarray(led_values_interleaved)
+            output_frame = self.mixed_tensor.forward_pass_3d(led_values_gpu)
 
-            # Forward pass: A @ led_values
-            rendered_channel = A_channel @ led_channel  # Shape: (pixels,)
+            # Convert back to CPU
+            output_frame = cp.asnumpy(output_frame)
 
-            # Reshape to spatial dimensions
-            rendered_image[:, :, channel] = rendered_channel.reshape(FRAME_HEIGHT, FRAME_WIDTH)
+            # Convert from planar (3, H, W) to interleaved (H, W, 3) format
+            if output_frame.shape[0] == 3:
+                output_frame = output_frame.transpose(1, 2, 0)  # (3, H, W) -> (H, W, 3)
 
-        # Convert back to uint8 [0, 255] and clip
-        rendered_image = np.clip(rendered_image * 255.0, 0, 255).astype(np.uint8)
+            # Scale based on actual range (same as visualizer)
+            output_min = float(output_frame.min())
+            output_max = float(output_frame.max())
+            logger.info(f"forward_pass_3d output range: [{output_min:.3f}, {output_max:.3f}]")
 
-        logger.info(f"Rendered image shape: {rendered_image.shape}")
-        return rendered_image
+            if output_max > output_min:
+                # Scale the actual range to [0, 255]
+                output_normalized = (output_frame - output_min) / (output_max - output_min)
+                rendered_image = (output_normalized * 255).astype(np.uint8)
+                logger.info(f"Scaled to uint8 based on actual range: [{rendered_image.min()}, {rendered_image.max()}]")
+            else:
+                # All values are the same
+                rendered_image = np.zeros_like(output_frame, dtype=np.uint8)
+                logger.info("All values identical - converted to zeros")
+
+            logger.info(f"Rendered image shape: {rendered_image.shape}")
+            return rendered_image
+
+        else:
+            # Use CSC matrix forward pass (fallback)
+            logger.info("Rendering result using CSC forward pass...")
+
+            # Get the CSC matrix for forward rendering
+            csc_A = self.diffusion_csc.to_csc_matrix()  # Shape: (pixels, led_count*3)
+            led_count = result.led_values.shape[1]
+
+            # Convert LED values from uint8 [0,255] to float32 [0,1]
+            led_values_normalized = result.led_values.astype(np.float32) / 255.0  # Shape: (3, led_count)
+
+            logger.info(f"LED values shape: {result.led_values.shape}")
+            logger.info(f"CSC matrix shape: {csc_A.shape}")
+
+            # Initialize rendered frame
+            rendered_image = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.float32)
+
+            # Process each channel separately
+            for channel in range(3):
+                # Get LED values for this channel
+                led_channel = led_values_normalized[channel]  # Shape: (led_count,)
+
+                # Extract A matrix columns for this channel
+                # Channel 0 (R): columns 0, 3, 6, 9, ...
+                # Channel 1 (G): columns 1, 4, 7, 10, ...
+                # Channel 2 (B): columns 2, 5, 8, 11, ...
+                channel_cols = np.arange(channel, csc_A.shape[1], 3)
+                A_channel = csc_A[:, channel_cols]  # Shape: (pixels, led_count)
+
+                # Forward pass: A @ led_values
+                rendered_channel = A_channel @ led_channel  # Shape: (pixels,)
+
+                # Reshape to spatial dimensions
+                rendered_image[:, :, channel] = rendered_channel.reshape(FRAME_HEIGHT, FRAME_WIDTH)
+
+            # Convert back to uint8 [0, 255] and clip
+            rendered_image = np.clip(rendered_image * 255.0, 0, 255).astype(np.uint8)
+
+            logger.info(f"Rendered image shape: {rendered_image.shape}")
+            return rendered_image
 
     def _save_image(self, image: np.ndarray, output_path: str) -> None:
         """Save image."""
