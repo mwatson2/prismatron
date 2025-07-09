@@ -37,7 +37,7 @@ class TestFrameOptimizer:
         Load real diffusion patterns from stored patterns with DIA matrix.
 
         Args:
-            precision: Either "fp16" or "fp32" to specify which patterns to load
+            precision: Either "fp16", "fp32", or "uint8" to specify which patterns to load
 
         Returns:
             Tuple of (mixed_tensor, dia_matrix)
@@ -49,8 +49,10 @@ class TestFrameOptimizer:
             pattern_path = Path(__file__).parent.parent / "diffusion_patterns" / "synthetic_2624_fp16.npz"
         elif precision == "fp32":
             pattern_path = Path(__file__).parent.parent / "diffusion_patterns" / "synthetic_2624_fp32.npz"
+        elif precision == "uint8":
+            pattern_path = Path(__file__).parent.parent / "diffusion_patterns" / "synthetic_2624_uint8.npz"
         else:
-            raise ValueError(f"Invalid precision: {precision}. Must be 'fp16' or 'fp32'")
+            raise ValueError(f"Invalid precision: {precision}. Must be 'fp16', 'fp32', or 'uint8'")
 
         if not pattern_path.exists():
             raise FileNotFoundError(f"Pattern file not found: {pattern_path}")
@@ -72,7 +74,7 @@ class TestFrameOptimizer:
         print(
             f"  Mixed tensor: {mixed_tensor.batch_size} LEDs, "
             f"{mixed_tensor.height}x{mixed_tensor.width}, "
-            f"{mixed_tensor.block_size}x{mixed_tensor.block_size} blocks"
+            f"{mixed_tensor.block_size}x{mixed_tensor.block_size} blocks, dtype={mixed_tensor.dtype}"
         )
 
         return mixed_tensor, dia_matrix
@@ -82,7 +84,7 @@ class TestFrameOptimizer:
         Load real ATA inverse matrices from stored patterns.
 
         Args:
-            precision: Either "fp16" or "fp32" to specify which patterns to load
+            precision: Either "fp16", "fp32", or "uint8" to specify which patterns to load
 
         Returns:
             ATA inverse matrices in shape (3, led_count, led_count)
@@ -94,8 +96,10 @@ class TestFrameOptimizer:
             pattern_path = Path(__file__).parent.parent / "diffusion_patterns" / "synthetic_2624_fp16.npz"
         elif precision == "fp32":
             pattern_path = Path(__file__).parent.parent / "diffusion_patterns" / "synthetic_2624_fp32.npz"
+        elif precision == "uint8":
+            pattern_path = Path(__file__).parent.parent / "diffusion_patterns" / "synthetic_2624_uint8.npz"
         else:
-            raise ValueError(f"Invalid precision: {precision}. Must be 'fp16' or 'fp32'")
+            raise ValueError(f"Invalid precision: {precision}. Must be 'fp16', 'fp32', or 'uint8'")
 
         if not pattern_path.exists():
             raise FileNotFoundError(f"Pattern file not found: {pattern_path}")
@@ -492,3 +496,66 @@ class TestFrameOptimizer:
     def test_optimization_fp32_patterns_regression(self):
         """Test optimization with fp32 patterns and validate against fixture for regression detection."""
         self._test_optimization_patterns_regression("fp32")
+
+    def test_optimization_uint8_patterns_regression(self):
+        """Test optimization with uint8 patterns and validate against fixture for regression detection."""
+        self._test_optimization_patterns_regression("uint8")
+
+    def test_uint8_optimization_functionality(self):
+        """Test that uint8 patterns work correctly with the frame optimizer."""
+        print("\n=== Testing uint8 optimization functionality ===")
+
+        # Load uint8 patterns
+        mixed_tensor_uint8, dia_matrix_uint8 = self.load_real_diffusion_patterns("uint8")
+        ata_inverse_uint8 = self.load_ata_inverse("uint8")
+
+        # Create test frame
+        target_frame = self.create_test_frame("planar")
+
+        print(f"  uint8 tensor dtype: {mixed_tensor_uint8.dtype}")
+        print(f"  Target frame dtype: {target_frame.dtype}")
+        print(f"  DIA matrix storage dtype: {dia_matrix_uint8.storage_dtype}")
+        print(f"  ATA inverse dtype: {ata_inverse_uint8.dtype}")
+
+        # Run optimization with uint8 patterns
+        result_uint8 = optimize_frame_led_values(
+            target_frame=target_frame,
+            at_matrix=mixed_tensor_uint8,
+            ata_matrix=dia_matrix_uint8,
+            ata_inverse=ata_inverse_uint8,
+            max_iterations=5,
+            compute_error_metrics=True,
+            debug=True,  # Enable debug to see uint8 kernel usage
+        )
+
+        print(f"  uint8 result shape: {result_uint8.led_values.shape}")
+        print(f"  uint8 result dtype: {result_uint8.led_values.dtype}")
+        print(f"  uint8 result range: [{result_uint8.led_values.min()}, {result_uint8.led_values.max()}]")
+        print(f"  Iterations completed: {result_uint8.iterations}")
+
+        # Validate basic properties
+        assert result_uint8.led_values.shape == (3, mixed_tensor_uint8.batch_size)
+        assert result_uint8.led_values.dtype == np.uint8
+        assert np.all(result_uint8.led_values >= 0) and np.all(result_uint8.led_values <= 255)
+        assert result_uint8.iterations > 0
+
+        # Check error metrics are reasonable
+        if result_uint8.error_metrics:
+            mse_uint8 = result_uint8.error_metrics.get("mse", float("inf"))
+            psnr_uint8 = result_uint8.error_metrics.get("psnr", 0)
+            print(f"  uint8 MSE: {mse_uint8:.6f}")
+            print(f"  uint8 PSNR: {psnr_uint8:.2f} dB")
+
+            # MSE should be reasonable (not too high)
+            assert mse_uint8 < 1.0, f"uint8 MSE {mse_uint8} too high"
+            assert psnr_uint8 > 5.0, f"uint8 PSNR {psnr_uint8} too low"
+
+        # Test that values are distributed (not all zero or all max)
+        led_mean = np.mean(result_uint8.led_values)
+        led_std = np.std(result_uint8.led_values)
+        print(f"  LED value statistics: mean={led_mean:.2f}, std={led_std:.2f}")
+
+        assert led_std > 1.0, "LED values should have some variation"
+        assert 0 < led_mean < 255, "LED mean should be between 0 and 255"
+
+        print("  ✅ uint8 optimization functionality test passed")

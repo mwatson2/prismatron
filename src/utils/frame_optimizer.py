@@ -76,13 +76,17 @@ def optimize_frame_led_values(
 
     This is a standalone function that uses modern tensor formats and ATA inverse initialization
     for optimal convergence: SingleBlockMixedSparseTensor for A^T @ b and DiagonalATAMatrix
-    for efficient A^T A operations.
+    for efficient A^T A operations. Supports both fp32 and uint8 mixed tensor formats.
 
     Args:
-        target_frame: Target image in planar int8 format (3, 480, 800) or standard (480, 800, 3)
+        target_frame: Target image in uint8 format (3, 480, 800) or standard (480, 800, 3)
         at_matrix: A^T matrix for computing A^T @ b (SingleBlockMixedSparseTensor with 3D CUDA kernels)
+                   - If dtype=uint8: uses uint8 x uint8 -> fp32 kernels with proper scaling
+                   - If dtype=fp32: uses fp32 x fp32 -> fp32 kernels
         ata_matrix: A^T A matrix for gradient computation (DiagonalATAMatrix in DIA format with RCM ordering)
+                    - Maintained in fp32 or fp16 format regardless of A matrix dtype
         ata_inverse: A^T A inverse matrices for optimal initialization (3, led_count, led_count) [REQUIRED]
+                     - Maintained in fp32 or fp16 format regardless of A matrix dtype
         initial_values: Override for initial LED values (3, led_count), if None uses ATA inverse initialization
         max_iterations: Maximum optimization iterations
         convergence_threshold: Convergence threshold for delta norm
@@ -97,29 +101,31 @@ def optimize_frame_led_values(
 
     # Initialize performance timing if requested
     timing = PerformanceTiming("frame_optimizer", enable=False, enable_gpu_timing=False)  # Disable timing for now
-    # Validate input frame format and convert to planar int8 if needed
+
+    # Validate input frame format and convert to planar uint8 if needed
     if target_frame.dtype != np.int8 and target_frame.dtype != np.uint8:
         raise ValueError(f"Target frame must be int8 or uint8, got {target_frame.dtype}")
 
     # Handle both planar (3, H, W) and standard (H, W, 3) formats
-    # Keep target as uint8 for int8 mixed tensors, convert to float32 for CSC matrices
+    # Keep target as uint8 for consistent processing with both uint8 and fp32 mixed tensors
     if target_frame.shape == (3, 480, 800):
-        # Already in planar format - keep as uint8
+        # Already in planar format - ensure uint8
         target_planar_uint8 = target_frame.astype(np.uint8)
     elif target_frame.shape == (480, 800, 3):
-        # Convert from HWC to CHW planar format - keep as uint8
+        # Convert from HWC to CHW planar format - ensure uint8
         target_planar_uint8 = target_frame.astype(np.uint8).transpose(2, 0, 1)  # (H, W, 3) -> (3, H, W)
     else:
         raise ValueError(f"Unsupported frame shape {target_frame.shape}, expected (3, 480, 800) or (480, 800, 3)")
 
-    debug and logger.info(f"Target frame shape: {target_planar_uint8.shape}")
+    debug and logger.info(f"Target frame shape: {target_planar_uint8.shape}, dtype: {target_planar_uint8.dtype}")
+    debug and logger.info(f"Mixed tensor dtype: {at_matrix.dtype}")
 
     # Step 1: Calculate A^T @ b using the appropriate format
     debug and logger.info("Computing A^T @ b...")
 
-    ATb_gpu = _calculate_atb(target_planar_uint8, at_matrix, debug=debug)  # Shape: (3, led_count) or (led_count, 3)
+    ATb_gpu = _calculate_atb(target_planar_uint8, at_matrix, debug=debug)  # Shape: (led_count, 3), dtype: fp32
 
-    # Ensure ATb is in (3, led_count) format for consistency
+    # Ensure ATb is in (3, led_count) format for consistency with gradient descent
     if ATb_gpu.shape[0] != 3:
         ATb_gpu = ATb_gpu.T  # Convert (led_count, 3) -> (3, led_count)
 
@@ -227,26 +233,29 @@ def _calculate_atb(
     debug: bool = False,
 ) -> cp.ndarray:
     """
-    Calculate A^T @ b using mixed tensor format.
+    Calculate A^T @ b using mixed tensor format with proper dtype handling.
 
     Args:
-        target_planar: Target frame in planar format (3, height, width)
+        target_planar: Target frame in planar format (3, height, width) uint8 [0,255]
         at_matrix: A^T matrix in mixed tensor format with 3D CUDA kernels
         debug: Enable debug output
 
     Returns:
-        A^T @ b result (led_count, 3)
+        A^T @ b result (led_count, 3) float32 - always normalized to [0,1] equivalent range
     """
-    # Mixed tensor format: use 3D CUDA kernel with uint8 data
     debug and logger.info("Using mixed tensor format for A^T @ b")
 
-    # For int8 mixed tensors, pass uint8 target directly
+    # Handle different matrix dtypes appropriately
     if at_matrix.dtype == cp.uint8:
+        # For uint8 mixed tensors: use uint8 x uint8 -> fp32 kernel with built-in scaling
+        # The kernel applies / (255 * 255) scaling to produce [0,1] equivalent results
         target_gpu = cp.asarray(target_planar)  # Keep as uint8: (3, height, width)
+        debug and logger.info("Using uint8 x uint8 -> fp32 kernel with automatic scaling")
     else:
-        # For float32 mixed tensors, convert target to float32 [0,1]
+        # For float32 mixed tensors: convert target to float32 [0,1] for fp32 x fp32 -> fp32 kernel
         target_float32 = target_planar.astype(np.float32) / 255.0
         target_gpu = cp.asarray(target_float32)
+        debug and logger.info("Using fp32 x fp32 -> fp32 kernel")
 
     result = at_matrix.transpose_dot_product_3d(target_gpu)  # Shape: (led_count, 3), dtype: float32
     return result
@@ -263,7 +272,7 @@ def _compute_error_metrics(
 
     Args:
         led_values: LED values (3, led_count) in spatial order [0,1]
-        target_planar: Target frame (3, height, width) [0,1]
+        target_planar: Target frame (3, height, width) uint8 [0,255]
         at_matrix: Mixed tensor matrix for forward computation
         debug: Enable debug output
 
@@ -273,29 +282,46 @@ def _compute_error_metrics(
     try:
         # Forward pass: A @ led_values -> rendered_frame using mixed tensor
         led_values_gpu = cp.asarray(led_values.T)  # Convert to (led_count, 3)
-        rendered_gpu = at_matrix.forward_pass_3d(led_values_gpu)  # Shape: (3, height, width)
+        rendered_gpu = at_matrix.forward_pass_3d(led_values_gpu)  # Shape: (3, height, width), dtype: float32
         rendered_planar = cp.asnumpy(rendered_gpu)
 
-        # Convert target to float32 [0,1] for error computation
-        target_float32 = target_planar.astype(np.float32) / 255.0
+        # Handle different matrix types for error computation
+        if at_matrix.dtype == cp.uint8:
+            # For uint8 A matrix: rendered_planar is already in [0,1] range from forward_pass_3d
+            # Convert target to [0,1] for comparison
+            target_float32 = target_planar.astype(np.float32) / 255.0
 
-        # Compute error metrics (both in [0,1] range)
-        diff = rendered_planar - target_float32
-        mse = float(np.mean(diff**2))
-        mae = float(np.mean(np.abs(diff)))
+            # Compute error metrics (both in [0,1] range)
+            diff = rendered_planar - target_float32
+            mse = float(np.mean(diff**2))
+            mae = float(np.mean(np.abs(diff)))
 
-        # Peak signal-to-noise ratio
-        if mse > 0:
-            psnr = float(20 * np.log10(1.0 / np.sqrt(mse)))
+            # Peak signal-to-noise ratio
+            if mse > 0:
+                psnr = float(20 * np.log10(1.0 / np.sqrt(mse)))
+            else:
+                psnr = float("inf")
         else:
-            psnr = float("inf")
+            # For float32 A matrix: both are in [0,1] range
+            target_float32 = target_planar.astype(np.float32) / 255.0
+
+            # Compute error metrics (both in [0,1] range)
+            diff = rendered_planar - target_float32
+            mse = float(np.mean(diff**2))
+            mae = float(np.mean(np.abs(diff)))
+
+            # Peak signal-to-noise ratio
+            if mse > 0:
+                psnr = float(20 * np.log10(1.0 / np.sqrt(mse)))
+            else:
+                psnr = float("inf")
 
         return {
             "mse": mse,
             "mae": mae,
             "psnr": psnr,
             "rendered_mean": float(np.mean(rendered_planar)),
-            "target_mean": float(np.mean(target_planar)),
+            "target_mean": float(np.mean(target_float32)),
         }
 
     except Exception as e:
@@ -316,10 +342,14 @@ def optimize_frame_with_tensors(
     """
     Optimize frame using modern tensor formats: mixed tensor A^T and DIA A^T A matrices.
 
+    Supports both uint8 and fp32 mixed tensors with automatic dtype handling.
+
     Args:
-        target_frame: Target frame (3, 480, 800) or (480, 800, 3)
+        target_frame: Target frame uint8 (3, 480, 800) or (480, 800, 3)
         mixed_tensor: Mixed tensor for A^T @ b computation with 3D CUDA kernels
-        dia_matrix: DIA format A^T A matrix for optimization
+                     - uint8 dtype: uses optimized uint8 x uint8 -> fp32 kernels
+                     - fp32 dtype: uses fp32 x fp32 -> fp32 kernels
+        dia_matrix: DIA format A^T A matrix for optimization (fp32 or fp16)
         ata_inverse: Optional ATA inverse matrices for optimal initialization (3, led_count, led_count)
         **kwargs: Additional arguments for optimize_frame_led_values
 
