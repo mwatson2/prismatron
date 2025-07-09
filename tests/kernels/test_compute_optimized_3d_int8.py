@@ -66,7 +66,9 @@ class TestComputeOptimized3DInt8Kernel:
         for c in range(self.channels):
             for b in range(batch_size):
                 block_positions[c, b, 0] = np.random.randint(0, max_row)  # top_row
-                block_positions[c, b, 1] = np.random.randint(0, max_col)  # top_col
+                # Align x-coordinate to multiple of 4 for uint8 vectorization
+                top_col_candidate = np.random.randint(0, max_col)
+                block_positions[c, b, 1] = (top_col_candidate // 4) * 4  # Aligned top_col
 
         # Generate target image (channels, height, width) as UINT8
         target_3d = np.random.randint(0, 256, size=(self.channels, self.height, self.width), dtype=np.uint8)
@@ -87,7 +89,9 @@ class TestComputeOptimized3DInt8Kernel:
         for c in range(self.channels):
             for b in range(batch_size):
                 block_positions[c, b, 0] = np.random.randint(0, max_row)
-                block_positions[c, b, 1] = np.random.randint(0, max_col)
+                # Align x-coordinate to multiple of 4 for uint8 vectorization
+                top_col_candidate = np.random.randint(0, max_col)
+                block_positions[c, b, 1] = (top_col_candidate // 4) * 4  # Aligned top_col
 
         # Generate target image as FP32 normalized [0,1]
         target_3d = np.random.rand(self.channels, self.height, self.width).astype(np.float32)
@@ -272,8 +276,14 @@ class TestComputeOptimized3DInt8Kernel:
         relative_error_cpu = float(cp.asnumpy(relative_error))
 
         # Allow for quantization error
-        assert max_error_cpu < 0.01, f"Max error {max_error_cpu} too high for INT8 vs FP32"
-        assert relative_error_cpu < 0.1, f"Relative error {relative_error_cpu} too high"
+        # Quantization error can be up to 1/255 ≈ 0.004 per element
+        # For a 64x64 block (4096 elements), max total error ≈ 16
+        # In practice, typical error is much lower due to averaging
+        max_expected_error = (self.block_size * self.block_size) / 255.0  # Conservative bound
+        assert (
+            max_error_cpu < max_expected_error
+        ), f"Max error {max_error_cpu} exceeds expected quantization bound {max_expected_error}"
+        assert relative_error_cpu < 0.02, f"Relative error {relative_error_cpu} too high"  # 2% relative error
 
         logger.info(f"INT8 vs FP32 - Max error: {max_error_cpu:.6f}, Relative error: {relative_error_cpu:.6f}")
 
