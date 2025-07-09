@@ -225,6 +225,8 @@ def test_save_load():
         "width",
         "block_size",
         "device",
+        "dtype",
+        "output_dtype",
     }
     assert set(data_dict.keys()) == expected_keys, f"Missing keys: {expected_keys - set(data_dict.keys())}"
 
@@ -321,12 +323,12 @@ def test_to_dense_patterns():
 
     # Set blocks with known values and positions
     test_cases = [
-        (0, 0, 10, 15, cp.ones((8, 8)) * 2.0),  # LED 0, Red
-        (0, 1, 20, 25, cp.ones((8, 8)) * 3.0),  # LED 0, Green
-        (1, 0, 5, 30, cp.ones((8, 8)) * 4.0),  # LED 1, Red
-        (1, 1, 35, 10, cp.ones((8, 8)) * 5.0),  # LED 1, Green
-        (2, 0, 25, 45, cp.ones((8, 8)) * 6.0),  # LED 2, Red
-        (2, 1, 15, 5, cp.ones((8, 8)) * 7.0),  # LED 2, Green
+        (0, 0, 10, 15, cp.ones((8, 8), dtype=cp.float32) * 2.0),  # LED 0, Red
+        (0, 1, 20, 25, cp.ones((8, 8), dtype=cp.float32) * 3.0),  # LED 0, Green
+        (1, 0, 5, 30, cp.ones((8, 8), dtype=cp.float32) * 4.0),  # LED 1, Red
+        (1, 1, 35, 10, cp.ones((8, 8), dtype=cp.float32) * 5.0),  # LED 1, Green
+        (2, 0, 25, 45, cp.ones((8, 8), dtype=cp.float32) * 6.0),  # LED 2, Red
+        (2, 1, 15, 5, cp.ones((8, 8), dtype=cp.float32) * 7.0),  # LED 2, Green
     ]
 
     for batch_idx, channel_idx, row, col, values in test_cases:
