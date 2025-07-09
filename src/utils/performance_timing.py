@@ -108,7 +108,7 @@ class PerformanceTiming:
     Designed to be lightweight with minimal overhead when disabled.
     """
 
-    def __init__(self, module_name: str, enable_gpu_timing: bool = True):
+    def __init__(self, module_name: str, enable: bool = True, enable_gpu_timing: bool = True):
         """
         Initialize performance timing for a module.
 
@@ -117,6 +117,7 @@ class PerformanceTiming:
             enable_gpu_timing: Enable GPU event timing when available
         """
         self.module_name = module_name
+        self.enabled = enable
         self.enable_gpu_timing = enable_gpu_timing and GPU_AVAILABLE
 
         # Timing state
@@ -270,7 +271,7 @@ class PerformanceTiming:
 
             return True
 
-        return self._safe_execute(_start_impl) is not False
+        return (self._safe_execute(_start_impl) is not False) if self.enabled else True
 
     def stop(self, section_name: str, read: int = 0, written: int = 0, flops: int = 0) -> bool:
         """
@@ -350,7 +351,7 @@ class PerformanceTiming:
 
             return True
 
-        return self._safe_execute(_stop_impl) is not False
+        return (self._safe_execute(_stop_impl) is not False) if self.enabled else True
 
     def record_memory_transfer(self, size_mb: float, direction: str):
         """
@@ -391,11 +392,12 @@ class PerformanceTiming:
         Returns:
             TimingSectionContext for additional operations
         """
-        context = TimingSectionContext(self, section_name, **kwargs)
-        try:
-            yield context.__enter__()
-        finally:
-            context.__exit__(None, None, None)
+        if self.enabled:
+            context = TimingSectionContext(self, section_name, **kwargs)
+            try:
+                yield context.__enter__()
+            finally:
+                context.__exit__(None, None, None)
 
     def _calculate_bandwidth_metrics(self, section: TimingSection) -> Dict[str, float]:
         """Calculate memory bandwidth metrics for a section."""
