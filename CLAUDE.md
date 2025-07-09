@@ -58,7 +58,7 @@ The Prismatron LED Display System is **95% complete** with all major components 
 2. **Focus on algorithmic improvements** for the specific component being worked on
 3. **Measure component-level performance** (e.g., matrix multiply time, kernel execution time)
 4. **Scale considerations** should focus on algorithmic complexity, not raw performance numbers
-5. **Benchmark against baseline** implementations to measure improvement, not absolute performance
+5. **Benchmark against baseline** implementations to measure improvement, not absolute performance numbers
 
 ### Development Priorities
 - Optimize individual matrix operations and CUDA kernels
@@ -76,6 +76,8 @@ When overall system performance evaluation is needed, it will be explicitly requ
 - Focus on component-level optimizations and algorithmic improvements
 - Measure performance at the individual kernel and matrix operation level
 - Defer speculative performance analysis until a complete request is made
+- When doing ad hoc debug in command lines, Write the command as a single string, properly escaped for bash/zsh
+- Always run the pre-commit first before committing
 
 ### Deprecated Methods
 - CSC natrix for A is deprecated - we are using the mixed tensor now

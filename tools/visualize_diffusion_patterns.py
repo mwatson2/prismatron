@@ -37,6 +37,12 @@ import scipy.sparse as sp
 from flask import Flask, jsonify, render_template_string, request, send_file, send_from_directory
 
 try:
+    import cupy as cp
+except ImportError:
+    # Fallback for systems without CUDA
+    import numpy as cp
+
+try:
     from PIL import Image
 
     PIL_AVAILABLE = True
@@ -810,8 +816,13 @@ class DiffusionPatternVisualizer:
             if not PIL_AVAILABLE:
                 return ""
 
-            # Normalize to 0-255
-            normalized = np.clip(pattern * 255, 0, 255).astype(np.uint8)
+            # Normalize to 0-255 based on data type
+            if self.mixed_tensor.dtype == cp.uint8:
+                # Data is already in [0,255] range
+                normalized = np.clip(pattern, 0, 255).astype(np.uint8)
+            else:
+                # Data is in [0,1] range, scale to [0,255]
+                normalized = np.clip(pattern * 255, 0, 255).astype(np.uint8)
 
             # Create PIL image
             img = Image.fromarray(normalized, mode="RGB")
@@ -833,8 +844,13 @@ class DiffusionPatternVisualizer:
             if not PIL_AVAILABLE:
                 return ""
 
-            # Normalize to 0-255
-            normalized = np.clip(pattern * 255, 0, 255).astype(np.uint8)
+            # Normalize to 0-255 based on data type
+            if self.mixed_tensor.dtype == cp.uint8:
+                # Data is already in [0,255] range
+                normalized = np.clip(pattern, 0, 255).astype(np.uint8)
+            else:
+                # Data is in [0,1] range, scale to [0,255]
+                normalized = np.clip(pattern * 255, 0, 255).astype(np.uint8)
 
             # Create PIL image
             img = Image.fromarray(normalized, mode="L")
@@ -878,15 +894,29 @@ class DiffusionPatternVisualizer:
         except Exception:
             return np.array([self.mixed_tensor.width // 2, self.mixed_tensor.height // 2])
 
+    def _to_numpy(self, array) -> np.ndarray:
+        """Convert CuPy or NumPy array to NumPy array."""
+        if hasattr(array, "__cuda_array_interface__"):
+            # It's a CuPy array
+            return cp.asnumpy(array)
+        else:
+            # It's already a NumPy array or compatible
+            return np.asarray(array)
+
     def _get_pattern(self, led_id: int) -> np.ndarray:
         """Get pattern for a specific LED (with caching)."""
         if led_id in self.pattern_cache:
             return self.pattern_cache[led_id]
 
         # Extract pattern from mixed tensor for all RGB channels
-        r_pattern = self.mixed_tensor.extract_pattern(led_id, 0)  # Red channel
-        g_pattern = self.mixed_tensor.extract_pattern(led_id, 1)  # Green channel
-        b_pattern = self.mixed_tensor.extract_pattern(led_id, 2)  # Blue channel
+        r_pattern = self.mixed_tensor.to_array(led_id, 0)  # Red channel
+        g_pattern = self.mixed_tensor.to_array(led_id, 1)  # Green channel
+        b_pattern = self.mixed_tensor.to_array(led_id, 2)  # Blue channel
+
+        # Convert to numpy arrays for visualization
+        r_pattern = self._to_numpy(r_pattern)
+        g_pattern = self._to_numpy(g_pattern)
+        b_pattern = self._to_numpy(b_pattern)
 
         # Combine into RGB pattern
         pattern = np.stack([r_pattern, g_pattern, b_pattern], axis=2)  # Shape: (height, width, 3)

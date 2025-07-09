@@ -53,6 +53,7 @@ class SyntheticPatternGenerator:
         sparsity_threshold: float = 0.01,
         block_size: int = 96,
         use_fp16: bool = False,
+        use_uint8: bool = False,
     ):
         """
         Initialize pattern generator.
@@ -64,6 +65,7 @@ class SyntheticPatternGenerator:
             sparsity_threshold: Threshold below which pixels are considered zero
             block_size: Size of diffusion blocks (e.g., 64, 96)
             use_fp16: Whether to generate FP16 output for ATA matrices
+            use_uint8: Whether to generate uint8 patterns tensor (scaled to 0-255)
         """
         self.frame_width = frame_width
         self.frame_height = frame_height
@@ -71,6 +73,7 @@ class SyntheticPatternGenerator:
         self.sparsity_threshold = sparsity_threshold
         self.block_size = block_size
         self.use_fp16 = use_fp16
+        self.use_uint8 = use_uint8
 
         # Calculate LED size scaling based on LED count (will be set later)
         self.led_size_scale = 1.0  # Default, will be updated in generate_led_positions
@@ -463,7 +466,8 @@ class SyntheticPatternGenerator:
         height, width = self.frame_height, self.frame_width
         block_size = self.block_size  # Configurable block size
 
-        # Create the SingleBlockMixedSparseTensor
+        # Create the SingleBlockMixedSparseTensor with appropriate dtype
+        tensor_dtype = cp.uint8 if self.use_uint8 else cp.float32
         mixed_tensor = SingleBlockMixedSparseTensor(
             batch_size=led_count,
             channels=channels,
@@ -471,6 +475,7 @@ class SyntheticPatternGenerator:
             width=width,
             block_size=block_size,
             device="cpu",  # Use CPU for pattern generation
+            dtype=tensor_dtype,
         )
 
         blocks_stored = 0
@@ -486,7 +491,8 @@ class SyntheticPatternGenerator:
 
                 if column.nnz == 0:  # No non-zeros
                     # Set a zero block at position (0,0) - all blocks assumed to be set
-                    block = np.zeros((block_size, block_size), dtype=np.float32)
+                    block_dtype = np.uint8 if self.use_uint8 else np.float32
+                    block = np.zeros((block_size, block_size), dtype=block_dtype)
                     block_cupy = cp.asarray(block)
                     mixed_tensor.set_block(led_id, channel, 0, 0, block_cupy)
                     continue
@@ -544,8 +550,9 @@ class SyntheticPatternGenerator:
                         # ALIGNMENT: Round down x-coordinate to multiple of 4
                         top_col = (top_col_candidate // 4) * 4
 
-                # Create the dense block
-                block = np.zeros((block_size, block_size), dtype=np.float32)
+                # Create the dense block with appropriate dtype
+                block_dtype = np.uint8 if self.use_uint8 else np.float32
+                block = np.zeros((block_size, block_size), dtype=block_dtype)
 
                 # Fill the block with pattern values
                 for i, (pr, pc, val) in enumerate(zip(pixel_rows, pixel_cols, values)):
@@ -554,7 +561,11 @@ class SyntheticPatternGenerator:
 
                     # Only include values that fit in the block
                     if 0 <= block_r < block_size and 0 <= block_c < block_size:
-                        block[block_r, block_c] = val
+                        if self.use_uint8:
+                            # Convert float32 [0,1] to uint8 [0,255]
+                            block[block_r, block_c] = np.clip(val * 255.0, 0, 255).astype(np.uint8)
+                        else:
+                            block[block_r, block_c] = val
 
                 # Set the block in the mixed tensor using the proper API
                 # Convert numpy array to cupy if needed
@@ -563,6 +574,14 @@ class SyntheticPatternGenerator:
                 blocks_stored += 1
 
         logger.info(f"Converted {blocks_stored} blocks to mixed tensor format")
+
+        # Log dtype information
+        dtype_str = "uint8" if self.use_uint8 else "float32"
+        logger.info(f"Mixed tensor dtype: {dtype_str}")
+        if self.use_uint8:
+            logger.info("Using uint8 for memory efficiency and CUDA vectorization (values scaled to 0-255)")
+        else:
+            logger.info("Using float32 for standard precision (values in range 0-1)")
 
         # Return the mixed tensor object
         return mixed_tensor
@@ -796,6 +815,11 @@ def main():
         action="store_true",
         help="Use mixed precision: FP16 storage for ATA matrix with FP32 computation (saves ~50%% memory)",
     )
+    parser.add_argument(
+        "--uint8",
+        action="store_true",
+        help="Generate uint8 patterns tensor (scaled to 0-255) for memory efficiency and CUDA vectorization",
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
@@ -813,6 +837,7 @@ def main():
             sparsity_threshold=args.sparsity_threshold,
             block_size=args.block_size,
             use_fp16=args.fp16,
+            use_uint8=args.uint8,
         )
 
         # Prepare metadata
@@ -822,6 +847,7 @@ def main():
             "intensity_variation": not args.no_intensity_variation,
             "block_size": args.block_size,
             "use_fp16": args.fp16,
+            "use_uint8": args.uint8,
             "led_size_scaling": True,  # Always enabled now
             "command_line": " ".join(sys.argv),
         }

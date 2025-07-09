@@ -418,7 +418,8 @@ class SingleBlockMixedSparseTensor:
             Dense array, shape (height, width)
         """
         # Create dense array and place block (all blocks assumed to be set)
-        dense = cp.zeros((self.height, self.width), dtype=cp.float32)
+        # Use the same dtype as the stored data
+        dense = cp.zeros((self.height, self.width), dtype=self.dtype)
 
         top_row = int(self.block_positions[channel_idx, batch_idx, 0])  # Use channels-first indexing
         top_col = int(self.block_positions[channel_idx, batch_idx, 1])  # Use channels-first indexing
