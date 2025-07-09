@@ -666,6 +666,8 @@ def test_int8_fp32_equivalence():
     int8_sparse_data = np.random.randint(0, 256, (channels, batch_size, block_size, block_size), dtype=np.uint8)
     int8_target_data = np.random.randint(0, 256, (channels, height, width), dtype=np.uint8)
     positions = np.random.randint(0, min(height, width) - block_size, (channels, batch_size, 2), dtype=np.int32)
+    # Align x-coordinates to multiples of 4 for uint8 vectorization
+    positions[:, :, 1] = (positions[:, :, 1] // 4) * 4
 
     # Convert to CuPy arrays
     int8_sparse_cupy = cp.asarray(int8_sparse_data)
@@ -762,6 +764,8 @@ def test_transpose_dot_product_3d_dtypes(dtype):
         target_data = cp.random.randint(0, 256, (channels, height, width), dtype=dtype)
 
     positions = cp.random.randint(0, min(height, width) - block_size, (channels, batch_size, 2))
+    # Align x-coordinates to multiples of 4 for uint8 vectorization
+    positions[:, :, 1] = (positions[:, :, 1] // 4) * 4
 
     # Set data
     tensor.set_blocks_batch(positions, sparse_data)
