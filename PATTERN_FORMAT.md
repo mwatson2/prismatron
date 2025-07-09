@@ -20,6 +20,8 @@ All pattern files contain the following top-level keys:
 ### Optional Data
 - `ata_inverse` - Precomputed A^T A inverse matrices (if available)
 - `ata_inverse_metadata` - Metadata for ATA inverse computation
+- `ata_inverse_dia` - DIA format sparse approximation of A^T A inverse matrices (experimental)
+- `ata_inverse_dia_metadata` - Metadata for DIA format ATA inverse approximation
 
 ## Data Specifications
 
@@ -79,6 +81,27 @@ Diagonal storage format for A^T A matrix optimized for iterative solvers:
 - `crop_size`: Block size used for cropping
 - `dia_data_cpu`: Diagonal data array
 - `dia_offsets_cpu`: Diagonal offset array
+
+### ATA Inverse DIA Format (Experimental)
+```
+ata_inverse_dia: dict (serialized DiagonalATAMatrix per channel)
+```
+Experimental diagonal storage format for A^T A inverse matrices:
+- Three DiagonalATAMatrix objects (one per RGB channel)
+- Sparse approximation of dense ATA inverse by zeroing far-off-diagonal elements
+- Diagonal count controlled by `diagonal_factor` parameter
+- Trade-off between memory efficiency and approximation accuracy
+
+```
+ata_inverse_dia_metadata: dict
+```
+Metadata for DIA format ATA inverse approximation:
+- `diagonal_factor`: Multiplier for number of diagonals relative to ATA matrix
+- `original_nnz`: Number of non-zeros in original dense ATA inverse
+- `dia_nnz`: Number of non-zeros retained in DIA approximation
+- `compression_ratio`: Memory compression achieved (dia_size / dense_size)
+- `approximation_error`: RMS error introduced by diagonal truncation
+- `generation_timestamp`: When the DIA approximation was created
 
 ## Pattern Generation Details
 
