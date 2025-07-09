@@ -96,7 +96,7 @@ def optimize_frame_led_values(
     """
 
     # Initialize performance timing if requested
-    timing = PerformanceTiming("frame_optimizer", enable=enable_timing, enable_gpu_timing=True)
+    timing = PerformanceTiming("frame_optimizer", enable=False, enable_gpu_timing=False)  # Disable timing for now
     # Validate input frame format and convert to planar int8 if needed
     if target_frame.dtype != np.int8 and target_frame.dtype != np.uint8:
         raise ValueError(f"Target frame must be int8 or uint8, got {target_frame.dtype}")
@@ -117,8 +117,7 @@ def optimize_frame_led_values(
     # Step 1: Calculate A^T @ b using the appropriate format
     debug and logger.info("Computing A^T @ b...")
 
-    with timing.section("atb_calculation", use_gpu_events=True):
-        ATb_gpu = _calculate_atb(target_planar_uint8, at_matrix, debug=debug)  # Shape: (3, led_count) or (led_count, 3)
+    ATb_gpu = _calculate_atb(target_planar_uint8, at_matrix, debug=debug)  # Shape: (3, led_count) or (led_count, 3)
 
     # Ensure ATb is in (3, led_count) format for consistency
     if ATb_gpu.shape[0] != 3:
@@ -149,18 +148,15 @@ def optimize_frame_led_values(
     else:
         # Use ATA inverse for optimal initialization: x_init = (A^T A)^-1 * A^T b
         debug and logger.info("Using ATA inverse for optimal initialization")
-        with timing.section("ata_inverse_initialization"):
-            # Compute optimal initial guess for all channels using efficient einsum
+        # Compute optimal initial guess for all channels using efficient einsum
+        # Efficient einsum: (3, led_count, led_count) @ (3, led_count) -> (3, led_count)
+        led_values_gpu = cp.einsum("ijk,ik->ij", ata_inverse_gpu, ATb_gpu)
 
-            with timing.section("ata_inverse_matvec_total", use_gpu_events=True):
-                # Efficient einsum: (3, led_count, led_count) @ (3, led_count) -> (3, led_count)
-                led_values_gpu = cp.einsum("ijk,ik->ij", ata_inverse_gpu, ATb_gpu)
+        # Transfer back to CPU
+        led_values_normalized = led_values_gpu.astype(cp.float32)
 
-                # Transfer back to CPU
-                led_values_normalized = led_values_gpu.astype(cp.float32)
-
-            # Clamp to valid range [0, 1]
-            led_values_normalized = cp.clip(led_values_normalized, 0.0, 1.0)
+        # Clamp to valid range [0, 1]
+        led_values_normalized = cp.clip(led_values_normalized, 0.0, 1.0)
 
         debug and logger.info("Initialization completed using ATA inverse")
 
@@ -170,43 +166,39 @@ def optimize_frame_led_values(
     debug and logger.info(f"Starting optimization: max_iterations={max_iterations}")
     step_sizes = [] if debug else None
 
-    with timing.section("optimization_loop", use_gpu_events=True):
-        for iteration in range(max_iterations):
-            with timing.section("optimization_iteration", use_gpu_events=True):
-                # Compute gradient: A^T A @ x - A^T @ b using DIA matrix operations
-                ATA_x = ata_matrix.multiply_3d(led_values_gpu)
-                gradient = ATA_x - ATb_gpu  # Shape: (3, led_count)
+    for iteration in range(max_iterations):
+        # Compute gradient: A^T A @ x - A^T @ b using DIA matrix operations
+        ATA_x = ata_matrix.multiply_3d(led_values_gpu)
+        gradient = ATA_x - ATb_gpu  # Shape: (3, led_count)
 
-                # Compute step size: (g^T @ g) / (g^T @ A^T A @ g)
-                g_dot_g = cp.sum(gradient * gradient)  # Shape: scalar, stays on GPU
-                g_dot_ATA_g_per_channel = ata_matrix.g_ata_g_3d(gradient)
-                g_dot_ATA_g = cp.sum(g_dot_ATA_g_per_channel)  # Shape: scalar, stays on GPU
+        # Compute step size: (g^T @ g) / (g^T @ A^T A @ g)
+        g_dot_g = cp.sum(gradient * gradient)  # Shape: scalar, stays on GPU
+        g_dot_ATA_g_per_channel = ata_matrix.g_ata_g_3d(gradient)
+        g_dot_ATA_g = cp.sum(g_dot_ATA_g_per_channel)  # Shape: scalar, stays on GPU
 
-                if g_dot_ATA_g > 0:
-                    step_size = float(step_size_scaling * g_dot_g / g_dot_ATA_g)
-                else:
-                    step_size = 0.01  # Fallback
+        if g_dot_ATA_g > 0:
+            step_size = float(step_size_scaling * g_dot_g / g_dot_ATA_g)
+        else:
+            step_size = 0.01  # Fallback
 
-                # Record step size for debugging
-                if debug and step_sizes is not None:
-                    step_sizes.append(step_size)
+        # Record step size for debugging
+        if debug and step_sizes is not None:
+            step_sizes.append(step_size)
 
-                # Gradient descent step with projection to [0, 1]
-                led_values_gpu = cp.clip(led_values_gpu - step_size * gradient, 0, 1)
+        # Gradient descent step with projection to [0, 1]
+        led_values_gpu = cp.clip(led_values_gpu - step_size * gradient, 0, 1)
 
     # Step 5: Convert back to spatial order and CPU
-    with timing.section("cpu_transfer", use_gpu_events=True):
-        # Values are already in correct order (pattern generation handles ordering)
-        led_values_spatial = cp.asnumpy(led_values_gpu)
+    # Values are already in correct order (pattern generation handles ordering)
+    led_values_spatial = cp.asnumpy(led_values_gpu)
 
-        # Convert to uint8 [0, 255] range
-        led_values_output = (led_values_spatial * 255.0).astype(np.uint8)
+    # Convert to uint8 [0, 255] range
+    led_values_output = (led_values_spatial * 255.0).astype(np.uint8)
 
     # Step 6: Compute error metrics if requested
     error_metrics = {}
     if compute_error_metrics:
-        with timing.section("error_metrics", use_gpu_events=True):
-            error_metrics = _compute_error_metrics(led_values_spatial, target_planar_uint8, at_matrix, debug=debug)
+        error_metrics = _compute_error_metrics(led_values_spatial, target_planar_uint8, at_matrix, debug=debug)
 
     # Extract timing data if available
     timing_data = None
