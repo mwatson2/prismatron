@@ -46,12 +46,18 @@ def compute_ata_inverse_from_dia(
     print(f"Computing ATA inverse from DIA format: {dia_matrix.led_count} LEDs, {dia_matrix.k} diagonals")
 
     # Detect input format and decide output format
-    input_is_fp16 = dia_matrix.output_dtype == np.float16
-    use_fp16_output = input_is_fp16 or output_fp16
+    # Check storage dtype for FP16 storage detection
+    input_storage_fp16 = hasattr(dia_matrix, "storage_dtype") and dia_matrix.storage_dtype == np.float16
+    input_output_fp16 = dia_matrix.output_dtype == np.float16
+
+    # Use FP16 output if storage is FP16, output is FP16, or explicitly requested
+    use_fp16_output = input_storage_fp16 or input_output_fp16 or output_fp16
     output_dtype = np.float16 if use_fp16_output else np.float32
 
-    if input_is_fp16:
-        print("  Detected FP16 input ATA matrix - will output FP16 inverse")
+    if input_storage_fp16:
+        print("  Detected FP16 storage ATA matrix - will output FP16 inverse")
+    elif input_output_fp16:
+        print("  Detected FP16 output ATA matrix - will output FP16 inverse")
     elif output_fp16:
         print("  Using FP16 output format as requested")
     else:
@@ -70,11 +76,15 @@ def compute_ata_inverse_from_dia(
             # Extract DIA matrix for this channel
             ata_dia = dia_matrix.get_channel_dia_matrix(c)
 
+            # Convert to FP32 if needed (scipy doesn't support FP16)
+            if ata_dia.dtype == np.float16:
+                ata_dia = ata_dia.astype(np.float32)
+
             # Convert to CSC for better solving performance (spsolve prefers CSC)
             ata_csc = ata_dia.tocsc()
 
             # Add regularization for numerical stability
-            ata_regularized = ata_csc + regularization * sp.eye(led_count, format="csc")
+            ata_regularized = ata_csc + regularization * sp.eye(led_count, format="csc", dtype=np.float32)
 
             # Compute condition number for stability assessment
             # Convert a small sample to dense for condition number estimation
@@ -122,8 +132,11 @@ def compute_ata_inverse_from_dia(
             # Fallback: convert to dense and use pseudo-inverse
             try:
                 ata_dia = dia_matrix.get_channel_dia_matrix(c)
+                # Convert to FP32 if needed (numpy pseudo-inverse works better with FP32)
+                if ata_dia.dtype == np.float16:
+                    ata_dia = ata_dia.astype(np.float32)
                 ata_dense = ata_dia.toarray()
-                ata_regularized_dense = ata_dense + regularization * np.eye(led_count)
+                ata_regularized_dense = ata_dense + regularization * np.eye(led_count, dtype=np.float32)
                 ata_inverse[c, :, :] = np.linalg.pinv(ata_regularized_dense).astype(output_dtype)
             except Exception as e2:
                 print(f"    ❌ Pseudo-inverse also failed: {e2}")
@@ -227,8 +240,10 @@ def main():
             dia_dict = data["dia_matrix"].item()
             dia_matrix = DiagonalATAMatrix.from_dict(dia_dict)
 
-            # Check if input is FP16
-            input_was_fp16 = dia_matrix.output_dtype == np.float16
+            # Check if input is FP16 (check storage dtype for mixed precision)
+            input_was_fp16 = (
+                hasattr(dia_matrix, "storage_dtype") and dia_matrix.storage_dtype == np.float16
+            ) or dia_matrix.output_dtype == np.float16
 
             print(f"DIA matrix loaded: {dia_matrix.led_count} LEDs, bandwidth={dia_matrix.bandwidth}")
 

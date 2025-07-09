@@ -212,6 +212,15 @@ class DiffusionPatternVisualizer:
                 block_summary = self.mixed_tensor.get_block_summary()
                 memory_info = self.mixed_tensor.memory_info()
 
+                # Handle mixed tensor dtype (could be class or dtype object)
+                mixed_dtype = self.mixed_tensor.dtype
+                if hasattr(mixed_dtype, "name"):
+                    mixed_dtype_str = mixed_dtype.name
+                elif hasattr(mixed_dtype, "__name__"):
+                    mixed_dtype_str = mixed_dtype.__name__
+                else:
+                    mixed_dtype_str = str(mixed_dtype).replace("<class 'numpy.", "").replace("'>", "")
+
                 metadata_response["mixed_tensor_info"] = {
                     "batch_size": block_summary["batch_size"],
                     "channels": block_summary["channels"],
@@ -220,6 +229,12 @@ class DiffusionPatternVisualizer:
                     "block_size": block_summary["block_size"],
                     "total_blocks": block_summary["total_blocks"],
                     "memory_mb": memory_info["total_mb"],
+                    "dtype": mixed_dtype_str,
+                    "sparse_values_dtype": (
+                        self.mixed_tensor.sparse_values.dtype.name
+                        if hasattr(self.mixed_tensor.sparse_values.dtype, "name")
+                        else str(self.mixed_tensor.sparse_values.dtype)
+                    ),
                 }
 
             # Add DIA matrix info if available
@@ -237,6 +252,17 @@ class DiffusionPatternVisualizer:
                     metadata_response["dia_matrix_info"]["memory_mb"] = self.dia_matrix_data["dia_data_3d"].nbytes / (
                         1024 * 1024
                     )
+                    # Get proper dtype name
+                    dia_dtype = self.dia_matrix_data["dia_data_3d"].dtype
+                    metadata_response["dia_matrix_info"]["dtype"] = (
+                        dia_dtype.name if hasattr(dia_dtype, "name") else str(dia_dtype)
+                    )
+
+                # Add storage/output dtype info if available (for mixed precision support)
+                if "storage_dtype" in self.dia_matrix_data:
+                    metadata_response["dia_matrix_info"]["storage_dtype"] = str(self.dia_matrix_data["storage_dtype"])
+                if "output_dtype" in self.dia_matrix_data:
+                    metadata_response["dia_matrix_info"]["output_dtype"] = str(self.dia_matrix_data["output_dtype"])
 
             # Add ATA inverse info if available
             if self.ata_inverse_data is not None:
@@ -1989,6 +2015,12 @@ HTML_TEMPLATE = """
                 html += `<div><strong>Block Size:</strong> ${info.block_size} × ${info.block_size}</div>`;
                 html += `<div><strong>Mixed Memory:</strong> ${info.memory_mb.toFixed(1)} MB</div>`;
                 html += `<div><strong>Total Blocks:</strong> ${info.total_blocks.toLocaleString()}</div>`;
+                if (info.dtype) {
+                    html += `<div><strong>Mixed Tensor Type:</strong> ${info.dtype}</div>`;
+                }
+                if (info.sparse_values_dtype) {
+                    html += `<div><strong>Sparse Values Type:</strong> ${info.sparse_values_dtype}</div>`;
+                }
             }
 
             if (data.dia_matrix_info) {
@@ -1997,6 +2029,15 @@ HTML_TEMPLATE = """
                 html += `<div><strong>DIA Bandwidth:</strong> ${info.bandwidth}</div>`;
                 html += `<div><strong>DIA Diagonals:</strong> ${info.k_diagonals}</div>`;
                 html += `<div><strong>DIA Memory:</strong> ${info.memory_mb.toFixed(1)} MB</div>`;
+                if (info.dtype) {
+                    html += `<div><strong>DIA Data Type:</strong> ${info.dtype}</div>`;
+                }
+                if (info.storage_dtype) {
+                    html += `<div><strong>DIA Storage Type:</strong> ${info.storage_dtype}</div>`;
+                }
+                if (info.output_dtype) {
+                    html += `<div><strong>DIA Output Type:</strong> ${info.output_dtype}</div>`;
+                }
             }
 
             if (data.ata_inverse_info) {

@@ -582,12 +582,21 @@ class SyntheticPatternGenerator:
 
         led_count = sparse_matrix.shape[1] // 3
 
-        # Create DiagonalATAMatrix instance with FP16 support if requested
-        output_dtype = cp.float16 if self.use_fp16 else cp.float32
-        dia_matrix = DiagonalATAMatrix(led_count, crop_size=self.block_size, output_dtype=output_dtype)
-
+        # Create DiagonalATAMatrix instance with mixed precision if FP16 is requested
         if self.use_fp16:
-            logger.info("Using FP16 output format for DiagonalATAMatrix")
+            # Mixed precision: FP16 storage for memory efficiency, FP32 computation for precision
+            storage_dtype = cp.float16
+            output_dtype = cp.float32
+            logger.info("Using mixed precision: FP16 storage with FP32 computation for DiagonalATAMatrix")
+        else:
+            # Standard FP32 for both storage and computation
+            storage_dtype = cp.float32
+            output_dtype = cp.float32
+            logger.info("Using FP32 storage and computation for DiagonalATAMatrix")
+
+        dia_matrix = DiagonalATAMatrix(
+            led_count, crop_size=self.block_size, output_dtype=output_dtype, storage_dtype=storage_dtype
+        )
 
         # Build from diffusion matrix (already in optimal RCM ordering)
         dia_matrix.build_from_diffusion_matrix(sparse_matrix)
@@ -595,6 +604,25 @@ class SyntheticPatternGenerator:
         logger.info(
             f"DiagonalATAMatrix built: {led_count} LEDs, bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
         )
+
+        # Log storage details
+        storage_dtype_str = "FP16" if dia_matrix.storage_dtype == cp.float16 else "FP32"
+        output_dtype_str = "FP16" if dia_matrix.output_dtype == cp.float16 else "FP32"
+        logger.info(f"Storage dtype: {storage_dtype_str}, Output dtype: {output_dtype_str}")
+
+        # Calculate memory usage
+        if dia_matrix.dia_data_cpu is not None:
+            memory_mb = dia_matrix.dia_data_cpu.nbytes / (1024 * 1024)
+            logger.info(f"ATA matrix memory usage: {memory_mb:.1f} MB")
+
+            if self.use_fp16:
+                # Calculate savings compared to FP32
+                fp32_memory = dia_matrix.dia_data_cpu.size * 4  # 4 bytes per float32
+                fp16_memory = dia_matrix.dia_data_cpu.nbytes  # actual bytes used
+                savings_mb = (fp32_memory - fp16_memory) / (1024 * 1024)
+                logger.info(f"Memory saved with FP16 storage: {savings_mb:.1f} MB (50% reduction)")
+        else:
+            logger.info("No ATA matrix data stored")
 
         # Compare expected vs actual diagonal counts
         if hasattr(self, "expected_ata_diagonals"):
@@ -766,7 +794,7 @@ def main():
     parser.add_argument(
         "--fp16",
         action="store_true",
-        help="Generate FP16 output format for ATA matrices (saves memory)",
+        help="Use mixed precision: FP16 storage for ATA matrix with FP32 computation (saves ~50%% memory)",
     )
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
 
