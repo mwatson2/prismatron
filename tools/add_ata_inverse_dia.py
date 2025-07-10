@@ -29,22 +29,26 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 
-def dense_to_dia_approximation(
-    dense_matrix: np.ndarray, reference_bandwidth: int, diagonal_factor: float
+def create_unified_dia_from_dense_3d(
+    dense_matrices: np.ndarray, reference_bandwidth: int, diagonal_factor: float
 ) -> Tuple[DiagonalATAMatrix, Dict[str, float]]:
     """
-    Convert a dense matrix to DIA format approximation.
+    Convert 3D dense matrices to unified DIA format approximation.
 
     Args:
-        dense_matrix: Dense matrix to approximate (led_count, led_count)
+        dense_matrices: Dense matrices to approximate (3, led_count, led_count)
         reference_bandwidth: Bandwidth of the reference ATA matrix
         diagonal_factor: Multiplier for number of diagonals to keep
 
     Returns:
         Tuple of (DiagonalATAMatrix object, metadata dict)
     """
-    led_count = dense_matrix.shape[0]
-    assert dense_matrix.shape == (led_count, led_count), f"Expected square matrix, got {dense_matrix.shape}"
+    channels, led_count, _ = dense_matrices.shape
+    assert dense_matrices.shape == (
+        3,
+        led_count,
+        led_count,
+    ), f"Expected (3, led_count, led_count), got {dense_matrices.shape}"
 
     # Calculate target number of diagonals
     reference_k = 2 * reference_bandwidth + 1  # Total diagonals in reference ATA matrix
@@ -55,49 +59,100 @@ def dense_to_dia_approximation(
     logger.info(f"  Target DIA: bandwidth={target_bandwidth}, k={target_k}, factor={diagonal_factor}")
 
     # Create band mask to zero out far-off-diagonal elements
-    row_idx, col_idx = np.indices(dense_matrix.shape)
+    row_idx, col_idx = np.indices((led_count, led_count))
     distance = np.abs(row_idx - col_idx)
     band_mask = distance <= target_bandwidth
 
-    # Apply band mask to create sparse approximation
-    sparse_matrix = dense_matrix.copy()
-    sparse_matrix[~band_mask] = 0.0
+    # Apply band mask to each channel and collect diagonal data
+    all_offsets = set()
+    channel_sparse_matrices = []
 
-    # Convert to DIA format using scipy
-    sparse_csr = sp.csr_matrix(sparse_matrix)
-    sparse_dia = sparse_csr.todia()
+    for channel in range(channels):
+        # Apply band mask to create sparse approximation
+        sparse_matrix = dense_matrices[channel].copy()
+        sparse_matrix[~band_mask] = 0.0
+        channel_sparse_matrices.append(sparse_matrix)
 
-    # Create DiagonalATAMatrix object
+        # Convert to DIA format using scipy to get offsets
+        sparse_csr = sp.csr_matrix(sparse_matrix)
+        sparse_dia = sparse_csr.todia()
+
+        # Collect all non-zero offsets
+        for offset in sparse_dia.offsets:
+            all_offsets.add(offset)
+
+    # Create unified offset array (sorted for consistency)
+    unified_offsets = np.array(sorted(all_offsets), dtype=np.int32)
+    k = len(unified_offsets)
+
+    # Create unified DIA data array (3, k, led_count)
+    unified_dia_data = np.zeros((channels, k, led_count), dtype=np.float32)
+
+    for channel in range(channels):
+        sparse_csr = sp.csr_matrix(channel_sparse_matrices[channel])
+        sparse_dia = sparse_csr.todia()
+
+        # Map each diagonal to the unified offset array
+        for i, offset in enumerate(sparse_dia.offsets):
+            unified_idx = np.where(unified_offsets == offset)[0][0]
+            unified_dia_data[channel, unified_idx, :] = sparse_dia.data[i, :]
+
+    # Create DiagonalATAMatrix object with unified 3D format
     dia_matrix = DiagonalATAMatrix(led_count)
 
-    # Set the DIA data directly
-    dia_matrix.k = sparse_dia.nnz_diagonals if hasattr(sparse_dia, "nnz_diagonals") else len(sparse_dia.offsets)
+    # Set the unified 3D DIA data
+    dia_matrix.k = k
     dia_matrix.bandwidth = target_bandwidth
-    dia_matrix.dia_offsets_cpu = sparse_dia.offsets.copy()
-    dia_matrix.dia_data_cpu = sparse_dia.data.copy()
+    dia_matrix.dia_offsets = unified_offsets
+    dia_matrix.dia_data_cpu = unified_dia_data
+    dia_matrix.channels = channels
+
+    # Create GPU version
+    try:
+        import cupy as cp
+
+        dia_matrix.dia_data_gpu = cp.asarray(unified_dia_data) if unified_dia_data is not None else None
+    except ImportError:
+        # CuPy not available, GPU data will be created when needed
+        dia_matrix.dia_data_gpu = None
+
+    # Update internal caches
+    dia_matrix._update_dia_offsets_cache()
+    dia_matrix._update_dia_data_cache()
 
     # Calculate compression and error metrics
-    original_nnz = np.count_nonzero(dense_matrix)
-    dia_nnz = np.count_nonzero(sparse_matrix)
-    compression_ratio = (sparse_matrix.nbytes) / dense_matrix.nbytes
+    total_original_nnz = 0
+    total_dia_nnz = 0
+    total_rms_error = 0
 
-    # Calculate approximation error (RMS)
-    error_matrix = dense_matrix - sparse_matrix
-    rms_error = np.sqrt(np.mean(error_matrix**2))
+    for channel in range(channels):
+        original_nnz = np.count_nonzero(dense_matrices[channel])
+        dia_nnz = np.count_nonzero(channel_sparse_matrices[channel])
+
+        error_matrix = dense_matrices[channel] - channel_sparse_matrices[channel]
+        rms_error = np.sqrt(np.mean(error_matrix**2))
+
+        total_original_nnz += original_nnz
+        total_dia_nnz += dia_nnz
+        total_rms_error += rms_error
+
+    compression_ratio = (unified_dia_data.nbytes) / dense_matrices.nbytes
+    average_rms_error = total_rms_error / channels
 
     metadata = {
         "diagonal_factor": diagonal_factor,
-        "original_nnz": int(original_nnz),
-        "dia_nnz": int(dia_nnz),
+        "original_nnz": int(total_original_nnz),
+        "dia_nnz": int(total_dia_nnz),
         "compression_ratio": float(compression_ratio),
-        "approximation_error": float(rms_error),
+        "approximation_error": float(average_rms_error),
         "target_bandwidth": int(target_bandwidth),
-        "target_k": int(target_k),
+        "target_k": int(k),
         "generation_timestamp": time.time(),
     }
 
-    logger.info(f"  Compression: {compression_ratio:.3f} ({dia_nnz:,} / {original_nnz:,} non-zeros)")
-    logger.info(f"  RMS error: {rms_error:.6f}")
+    logger.info(f"  Unified DIA shape: {unified_dia_data.shape}")
+    logger.info(f"  Compression: {compression_ratio:.3f} ({total_dia_nnz:,} / {total_original_nnz:,} non-zeros)")
+    logger.info(f"  Average RMS error: {average_rms_error:.6f}")
 
     return dia_matrix, metadata
 
@@ -106,7 +161,7 @@ def create_ata_inverse_dia(
     ata_inverse: np.ndarray, reference_dia_matrix: DiagonalATAMatrix, diagonal_factor: float
 ) -> Tuple[Dict[str, any], Dict[str, any]]:
     """
-    Create DIA format approximation of ATA inverse matrices.
+    Create unified DIA format approximation of ATA inverse matrices.
 
     Args:
         ata_inverse: Dense ATA inverse matrices (3, led_count, led_count)
@@ -120,34 +175,18 @@ def create_ata_inverse_dia(
     assert channels == 3, f"Expected 3 channels, got {channels}"
     assert ata_inverse.shape == (3, led_count, led_count), f"Unexpected ATA inverse shape: {ata_inverse.shape}"
 
-    logger.info(f"Creating DIA format ATA inverse approximation:")
+    logger.info(f"Creating unified DIA format ATA inverse approximation:")
     logger.info(f"  Input shape: {ata_inverse.shape}")
     logger.info(f"  Diagonal factor: {diagonal_factor}")
     logger.info(f"  Reference bandwidth: {reference_dia_matrix.bandwidth}")
 
-    # Convert each channel separately
-    channel_matrices = {}
-    channel_metadata = {}
+    # Create unified DIA approximation (same format as regular ATA matrix)
+    dia_matrix, metadata = create_unified_dia_from_dense_3d(
+        ata_inverse, reference_dia_matrix.bandwidth, diagonal_factor
+    )
 
-    total_original_nnz = 0
-    total_dia_nnz = 0
-    total_rms_error = 0
-
-    for channel in range(channels):
-        logger.info(f"  Processing channel {channel}...")
-
-        channel_matrix = ata_inverse[channel]
-        dia_matrix, metadata = dense_to_dia_approximation(
-            channel_matrix, reference_dia_matrix.bandwidth, diagonal_factor
-        )
-
-        # Store as serializable dict
-        channel_matrices[f"channel_{channel}"] = dia_matrix.to_dict()
-        channel_metadata[f"channel_{channel}"] = metadata
-
-        total_original_nnz += metadata["original_nnz"]
-        total_dia_nnz += metadata["dia_nnz"]
-        total_rms_error += metadata["approximation_error"]
+    # Store as single unified matrix (same format as regular dia_matrix)
+    ata_inverse_dia = dia_matrix.to_dict()
 
     # Create overall metadata
     overall_metadata = {
@@ -155,18 +194,20 @@ def create_ata_inverse_dia(
         "channels": channels,
         "led_count": led_count,
         "reference_bandwidth": reference_dia_matrix.bandwidth,
-        "total_original_nnz": total_original_nnz,
-        "total_dia_nnz": total_dia_nnz,
-        "overall_compression_ratio": total_dia_nnz / total_original_nnz if total_original_nnz > 0 else 0,
-        "average_rms_error": total_rms_error / channels,
+        "total_original_nnz": metadata["original_nnz"],
+        "total_dia_nnz": metadata["dia_nnz"],
+        "overall_compression_ratio": metadata["compression_ratio"],
+        "average_rms_error": metadata["approximation_error"],
         "generation_timestamp": time.time(),
-        "channel_metadata": channel_metadata,
+        "unified_k": metadata["target_k"],
+        "unified_bandwidth": metadata["target_bandwidth"],
+        "format": "unified_3d_dia",
     }
 
     logger.info(f"  Overall compression: {overall_metadata['overall_compression_ratio']:.3f}")
     logger.info(f"  Average RMS error: {overall_metadata['average_rms_error']:.6f}")
 
-    return channel_matrices, overall_metadata
+    return ata_inverse_dia, overall_metadata
 
 
 def add_ata_inverse_dia_to_file(input_file: Path, diagonal_factor: float, output_file: Path = None):

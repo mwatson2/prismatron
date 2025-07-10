@@ -164,6 +164,72 @@ class DiagonalATAMatrix:
         else:
             self.dia_data_gpu_fp16 = None
 
+    def _validate_input_tensor_layout(self, tensor: np.ndarray, tensor_name: str) -> None:
+        """
+        Validate tensor memory layout for optimal kernel performance.
+
+        All DIA kernels expect C-contiguous tensors with specific stride patterns
+        for optimal memory access and vectorization.
+
+        Args:
+            tensor: Input tensor to validate
+            tensor_name: Name for error messages
+
+        Raises:
+            ValueError: If tensor layout is incompatible with kernels
+        """
+        # Check if tensor is a CuPy array (most common case)
+        if isinstance(tensor, cupy.ndarray):
+            # Validate C-contiguous layout
+            if not tensor.flags.c_contiguous:
+                # Provide detailed diagnostic information
+                stride_info = f"strides={tensor.strides}, shape={tensor.shape}"
+                layout = "F-contiguous" if tensor.flags.f_contiguous else "non-contiguous"
+
+                raise ValueError(
+                    f"DIA kernel requires C-contiguous {tensor_name} tensor for optimal performance. "
+                    f"Got {layout} tensor with {stride_info}. "
+                    f"Use cp.ascontiguousarray({tensor_name}) to fix layout issues. "
+                    f"Non-contiguous tensors can cause 9x performance degradation or incorrect results."
+                )
+
+            # Validate expected stride pattern for channels-first layout
+            expected_channel_stride = tensor.shape[1] * tensor.itemsize  # stride between channels
+            expected_led_stride = tensor.itemsize  # stride between LEDs within channel
+
+            if tensor.strides != (expected_channel_stride, expected_led_stride):
+                raise ValueError(
+                    f"DIA kernel expects channels-first stride pattern for {tensor_name}. "
+                    f"Expected strides ({expected_channel_stride}, {expected_led_stride}), "
+                    f"got {tensor.strides}. This indicates incorrect memory layout."
+                )
+
+            # Check data ownership for debugging memory issues
+            if not tensor.flags.owndata:
+                # This is a warning, not an error, as views can work if properly contiguous
+                import warnings
+
+                warnings.warn(
+                    f"{tensor_name} is a tensor view (flags.owndata=False). "
+                    f"This may indicate upstream memory layout issues. "
+                    f"Consider using cp.ascontiguousarray() if experiencing problems.",
+                    UserWarning,
+                )
+
+        elif isinstance(tensor, np.ndarray):
+            # NumPy array validation (less common in GPU kernels)
+            if not tensor.flags.c_contiguous:
+                stride_info = f"strides={tensor.strides}, shape={tensor.shape}"
+                layout = "F-contiguous" if tensor.flags.f_contiguous else "non-contiguous"
+
+                raise ValueError(
+                    f"DIA kernel requires C-contiguous {tensor_name} tensor. "
+                    f"Got {layout} tensor with {stride_info}. "
+                    f"Use np.ascontiguousarray({tensor_name}) before GPU transfer."
+                )
+        else:
+            raise TypeError(f"{tensor_name} must be numpy.ndarray or cupy.ndarray, got {type(tensor)}")
+
     def build_from_diffusion_matrix(self, diffusion_matrix: sp.spmatrix) -> None:
         """
         Build diagonal A^T A matrices from diffusion matrix A.
@@ -312,6 +378,7 @@ class DiagonalATAMatrix:
         optimized_kernel: bool = False,
         output_dtype: Optional[cupy.dtype] = None,
         use_pure_fp16: bool = False,
+        debug_logging: bool = False,
     ) -> np.ndarray:
         """
         Perform 3D DIA matrix-vector multiplication: (A^T)A @ led_values.
@@ -329,12 +396,16 @@ class DiagonalATAMatrix:
             output_dtype: Desired output data type (cupy.float32 or cupy.float16).
                          If None, uses the instance's output_dtype setting.
             use_pure_fp16: Whether to use pure FP16 kernel (only when output_dtype=cupy.float16)
+            debug_logging: Enable detailed logging of kernel selection and execution
 
         Returns:
             Result array (3, leds) in RCM order with specified output dtype
         """
         if led_values.shape != (self.channels, self.led_count):
             raise ValueError(f"LED values should be shape ({self.channels}, {self.led_count}), got {led_values.shape}")
+
+        # MEMORY LAYOUT VALIDATION: Critical for kernel correctness and performance
+        self._validate_input_tensor_layout(led_values, "led_values")
 
         # Check if unified 3D matrix is built
         if self.dia_data_gpu is None or self.dia_data_gpu.shape != (
@@ -394,11 +465,17 @@ class DiagonalATAMatrix:
                 if mixed_precision_mode:
                     # Mixed precision: convert FP16 storage to FP32 for computation
                     dia_data_for_computation = self.dia_data_gpu.astype(cupy.float32)
+                    if debug_logging:
+                        print("DIA multiply_3d: Using MIXED PRECISION FP32 (FP16 storage -> FP32 computation)")
                 else:
                     # Standard FP32 mode
                     dia_data_for_computation = self.dia_data_gpu
+                    if debug_logging:
+                        print("DIA multiply_3d: Using STANDARD FP32")
 
                 if optimized_kernel:
+                    if debug_logging:
+                        print("DIA multiply_3d: Using OPTIMIZED CustomDIA3DMatVec FP32 kernel")
                     if self.custom_3d_kernel_optimized is None:
                         self.custom_3d_kernel_optimized = CustomDIA3DMatVec(use_optimized=True)
                     result_gpu = self.custom_3d_kernel_optimized(
@@ -407,6 +484,8 @@ class DiagonalATAMatrix:
                         led_values_gpu,  # Shape: (channels, leds)
                     )
                 else:
+                    if debug_logging:
+                        print("DIA multiply_3d: Using BASIC CustomDIA3DMatVec FP32 kernel")
                     if self.custom_3d_kernel_basic is None:
                         self.custom_3d_kernel_basic = CustomDIA3DMatVec(use_optimized=False)
                     result_gpu = self.custom_3d_kernel_basic(
@@ -429,6 +508,8 @@ class DiagonalATAMatrix:
                         )
 
                     if optimized_kernel:
+                        if debug_logging:
+                            print("DIA multiply_3d: Using OPTIMIZED PureFP16DIA3DKernel")
                         if self.pure_fp16_kernel_optimized is None:
                             self.pure_fp16_kernel_optimized = PureFP16DIA3DKernel(use_optimized=True)
                         result_gpu = self.pure_fp16_kernel_optimized(
@@ -437,6 +518,8 @@ class DiagonalATAMatrix:
                             led_values_gpu,  # Shape: (channels, leds) - FP16
                         )
                     else:
+                        if debug_logging:
+                            print("DIA multiply_3d: Using BASIC PureFP16DIA3DKernel")
                         if self.pure_fp16_kernel_basic is None:
                             self.pure_fp16_kernel_basic = PureFP16DIA3DKernel(use_optimized=False)
                         result_gpu = self.pure_fp16_kernel_basic(
@@ -450,6 +533,8 @@ class DiagonalATAMatrix:
                         raise RuntimeError("Custom 3D DIA FP16 kernel not available - required for FP16 output")
 
                     if optimized_kernel:
+                        if debug_logging:
+                            print("DIA multiply_3d: Using OPTIMIZED CustomDIA3DMatVecFP16 (mixed precision)")
                         if self.custom_3d_kernel_optimized_fp16 is None:
                             self.custom_3d_kernel_optimized_fp16 = CustomDIA3DMatVecFP16(use_optimized=True)
                         result_gpu = self.custom_3d_kernel_optimized_fp16(
@@ -458,6 +543,8 @@ class DiagonalATAMatrix:
                             led_values_gpu,  # Shape: (channels, leds)
                         )
                     else:
+                        if debug_logging:
+                            print("DIA multiply_3d: Using BASIC CustomDIA3DMatVecFP16 (mixed precision)")
                         if self.custom_3d_kernel_basic_fp16 is None:
                             self.custom_3d_kernel_basic_fp16 = CustomDIA3DMatVecFP16(use_optimized=False)
                         result_gpu = self.custom_3d_kernel_basic_fp16(
@@ -467,8 +554,12 @@ class DiagonalATAMatrix:
                         )
         else:
             # Use fallback implementation
+            if debug_logging:
+                print("DIA multiply_3d: Using FALLBACK implementation (no custom kernels)")
             if mixed_precision_mode:
                 # Mixed precision: convert FP16 storage to FP32 for computation
+                if debug_logging:
+                    print("DIA multiply_3d: FALLBACK with mixed precision (FP16 storage -> FP32 computation)")
                 dia_data_for_computation = self.dia_data_gpu.astype(cupy.float32)
                 # Temporarily update the GPU data for fallback
                 original_dia_data = self.dia_data_gpu
@@ -477,6 +568,8 @@ class DiagonalATAMatrix:
                 # Restore original data
                 self.dia_data_gpu = original_dia_data
             else:
+                if debug_logging:
+                    print("DIA multiply_3d: FALLBACK with standard precision")
                 result_gpu = self._multiply_3d_fallback(led_values_gpu)
 
         # Convert back to numpy if input was numpy
@@ -560,6 +653,9 @@ class DiagonalATAMatrix:
         """
         if gradient.shape != (self.channels, self.led_count):
             raise ValueError(f"Gradient should be shape ({self.channels}, {self.led_count}), got {gradient.shape}")
+
+        # MEMORY LAYOUT VALIDATION: Critical for kernel correctness and performance
+        self._validate_input_tensor_layout(gradient, "gradient")
 
         if self.dia_data_gpu is None or self.dia_data_gpu.shape != (
             self.channels,

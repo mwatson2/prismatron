@@ -63,7 +63,7 @@ def optimize_frame_led_values(
     target_frame: np.ndarray,
     at_matrix: SingleBlockMixedSparseTensor,
     ata_matrix: DiagonalATAMatrix,
-    ata_inverse: np.ndarray,
+    ata_inverse: Union[np.ndarray, DiagonalATAMatrix, Dict[str, any]],
     initial_values: Optional[np.ndarray] = None,
     max_iterations: int = 5,
     convergence_threshold: float = 0.3,
@@ -72,6 +72,7 @@ def optimize_frame_led_values(
     debug: bool = False,
     enable_timing: bool = False,
     track_mse_per_iteration: bool = False,
+    compare_ata_inverse: Optional[Union[np.ndarray, DiagonalATAMatrix]] = None,
 ) -> FrameOptimizationResult:
     """
     Optimize LED values for a target frame using gradient descent with optimal ATA inverse initialization.
@@ -87,8 +88,10 @@ def optimize_frame_led_values(
                    - If dtype=fp32: uses fp32 x fp32 -> fp32 kernels
         ata_matrix: A^T A matrix for gradient computation (DiagonalATAMatrix in DIA format with RCM ordering)
                     - Maintained in fp32 or fp16 format regardless of A matrix dtype
-        ata_inverse: A^T A inverse matrices for optimal initialization (3, led_count, led_count) [REQUIRED]
-                     - Maintained in fp32 or fp16 format regardless of A matrix dtype
+        ata_inverse: A^T A inverse matrices for optimal initialization [REQUIRED]
+                     - Dense format: (3, led_count, led_count) numpy array
+                     - DIA format: DiagonalATAMatrix object with 3D data
+                     - Legacy DIA format: Dict with serialized DiagonalATAMatrix
         initial_values: Override for initial LED values (3, led_count), if None uses ATA inverse initialization
         max_iterations: Maximum optimization iterations
         convergence_threshold: Convergence threshold for delta norm
@@ -97,6 +100,7 @@ def optimize_frame_led_values(
         debug: Enable debug output and tracking
         enable_timing: Enable detailed performance timing breakdown
         track_mse_per_iteration: Whether to track MSE at each iteration (for convergence analysis)
+        compare_ata_inverse: Optional second ATA inverse to compare initialization with (for debugging)
 
     Returns:
         FrameOptimizationResult with LED values in spatial order (3, led_count)
@@ -112,11 +116,15 @@ def optimize_frame_led_values(
     # Handle both planar (3, H, W) and standard (H, W, 3) formats
     # Keep target as uint8 for consistent processing with both uint8 and fp32 mixed tensors
     if target_frame.shape == (3, 480, 800):
-        # Already in planar format - ensure uint8
-        target_planar_uint8 = target_frame.astype(np.uint8)
+        # Already in planar format - ensure uint8 and C-contiguous for optimal GPU performance
+        target_planar_uint8 = np.ascontiguousarray(target_frame.astype(np.uint8))
     elif target_frame.shape == (480, 800, 3):
-        # Convert from HWC to CHW planar format - ensure uint8
-        target_planar_uint8 = target_frame.astype(np.uint8).transpose(2, 0, 1)  # (H, W, 3) -> (3, H, W)
+        # Convert from HWC to CHW planar format with true data rearrangement
+        # Use ascontiguousarray to ensure actual planar layout (RRR...GGG...BBB...)
+        # instead of transpose view which keeps interleaved data (RGBRGB...)
+        target_planar_uint8 = np.ascontiguousarray(
+            target_frame.astype(np.uint8).transpose(2, 0, 1)
+        )  # (H, W, 3) -> (3, H, W)
     else:
         raise ValueError(f"Unsupported frame shape {target_frame.shape}, expected (3, 480, 800) or (480, 800, 3)")
 
@@ -132,42 +140,132 @@ def optimize_frame_led_values(
     if ATb_gpu.shape[0] != 3:
         ATb_gpu = ATb_gpu.T  # Convert (led_count, 3) -> (3, led_count)
 
-    # Transfer to GPU for efficient computation
-    # TODO: Move this outside this function
-    ata_inverse_gpu = cp.asarray(ata_inverse)  # Shape: (3, led_count, led_count)
+    # CRITICAL: Ensure C-contiguous layout for DIA kernel compatibility
+    # Mixed tensor operations can produce F-contiguous or non-contiguous results
+    # which cause DIA kernels to read incorrect values or have poor performance
+    ATb_gpu = cp.ascontiguousarray(ATb_gpu)
 
     debug and logger.info(f"A^T @ b shape: {ATb_gpu.shape}")
 
     # Step 2: Initialize LED values in optimization order - ATA inverse is now required
     led_count = ATb_gpu.shape[1]
 
-    # Validate ATA inverse shape (required parameter)
-    if ata_inverse.shape != (3, led_count, led_count):
-        raise ValueError(f"ATA inverse shape {ata_inverse.shape} != (3, {led_count}, {led_count})")
+    # Detect ATA inverse format and validate
+    is_dia_format = isinstance(ata_inverse, DiagonalATAMatrix)
+    is_legacy_dia_format = isinstance(ata_inverse, dict)
 
     if initial_values is not None:
         # Use provided initial values (override ATA inverse)
         if initial_values.shape != (3, led_count):
             raise ValueError(f"Initial values shape {initial_values.shape} != (3, {led_count})")
         # Normalize to [0,1] if needed
-        led_values_gpu = cp.asarray(
+        led_values_gpu_raw = cp.asarray(
             (initial_values / 255.0 if initial_values.max() > 1.0 else initial_values).astype(np.float32)
         )
+        led_values_gpu = led_values_gpu_raw  # No clipping needed for provided values
         debug and logger.info("Using provided initial values (overriding ATA inverse)")
     else:
         # Use ATA inverse for optimal initialization: x_init = (A^T A)^-1 * A^T b
-        debug and logger.info("Using ATA inverse for optimal initialization")
-        # Compute optimal initial guess for all channels using efficient einsum
-        # Efficient einsum: (3, led_count, led_count) @ (3, led_count) -> (3, led_count)
-        led_values_gpu = cp.einsum("ijk,ik->ij", ata_inverse_gpu, ATb_gpu)
+        if is_dia_format:
+            debug and logger.info("Using DIA format ATA inverse for optimal initialization")
+            # Use DIA format approximation directly - same operation as ATA multiply
+            led_values_gpu_raw = ata_inverse.multiply_3d(ATb_gpu)
+        elif is_legacy_dia_format:
+            debug and logger.info("Using legacy DIA format ATA inverse for optimal initialization")
+            # Load the DIA ATA inverse matrix - unified format
+            ata_inverse_dia = DiagonalATAMatrix.from_dict(ata_inverse)
+            # Use DIA format approximation
+            led_values_gpu_raw = ata_inverse_dia.multiply_3d(ATb_gpu)
+        else:
+            debug and logger.info("Using dense ATA inverse for optimal initialization")
+            # Validate dense ATA inverse shape
+            if ata_inverse.shape != (3, led_count, led_count):
+                raise ValueError(f"ATA inverse shape {ata_inverse.shape} != (3, {led_count}, {led_count})")
 
-        # Keep as GPU tensor and clamp to valid range [0, 1]
-        led_values_gpu = led_values_gpu.astype(cp.float32)
+            # Transfer to GPU for efficient computation
+            ata_inverse_gpu = cp.asarray(ata_inverse)  # Shape: (3, led_count, led_count)
+
+            # Compute optimal initial guess for all channels using efficient einsum
+            # Efficient einsum: (3, led_count, led_count) @ (3, led_count) -> (3, led_count)
+            led_values_gpu_raw = cp.einsum("ijk,ik->ij", ata_inverse_gpu, ATb_gpu)
+
+        # Transfer back to CPU if needed and clamp to valid range
+        led_values_gpu = led_values_gpu_raw.astype(cp.float32)
         led_values_gpu = cp.clip(led_values_gpu, 0.0, 1.0)
 
         debug and logger.info("Initialization completed using ATA inverse")
 
     debug and logger.info(f"Initial LED values shape: {led_values_gpu.shape}")
+
+    # DEBUG: Compare with alternative ATA inverse if provided
+    if compare_ata_inverse is not None:
+        print("\n=== COMPARING ATA INVERSE INITIALIZATION ===")
+        print(f"A^T @ b range: [{cp.asnumpy(ATb_gpu).min():.2f}, {cp.asnumpy(ATb_gpu).max():.2f}]")
+        print(f"A^T @ b RMS: {float(cp.sqrt(cp.mean(ATb_gpu**2))):.2f}")
+
+        # Get current initialization result (RAW, before clipping)
+        led_current_raw_cpu = cp.asnumpy(led_values_gpu_raw)
+        led_current_clipped_cpu = cp.asnumpy(led_values_gpu)
+        print("\nPrimary ATA inverse initialization:")
+        print(
+            f"  LED values (raw): range=[{led_current_raw_cpu.min():.6f}, {led_current_raw_cpu.max():.6f}], RMS={np.sqrt(np.mean(led_current_raw_cpu**2)):.6f}"
+        )
+        print(
+            f"  LED values (clipped): range=[{led_current_clipped_cpu.min():.6f}, {led_current_clipped_cpu.max():.6f}], RMS={np.sqrt(np.mean(led_current_clipped_cpu**2)):.6f}"
+        )
+
+        # Test comparison initialization
+        if isinstance(compare_ata_inverse, DiagonalATAMatrix):
+            print(f"  Type: DIA format (k={compare_ata_inverse.k}, bandwidth={compare_ata_inverse.bandwidth})")
+            led_compare_gpu_raw = compare_ata_inverse.multiply_3d(ATb_gpu)
+        else:
+            print(f"  Type: Dense format {compare_ata_inverse.shape}")
+            compare_gpu = cp.asarray(compare_ata_inverse)
+            led_compare_gpu_raw = cp.einsum("ijk,ik->ij", compare_gpu, ATb_gpu)
+
+        led_compare_gpu = cp.clip(led_compare_gpu_raw, 0.0, 1.0)
+        led_compare_raw_cpu = cp.asnumpy(led_compare_gpu_raw)
+        led_compare_clipped_cpu = cp.asnumpy(led_compare_gpu)
+
+        print("\nComparison ATA inverse initialization:")
+        print(
+            f"  LED values (raw): range=[{led_compare_raw_cpu.min():.6f}, {led_compare_raw_cpu.max():.6f}], RMS={np.sqrt(np.mean(led_compare_raw_cpu**2)):.6f}"
+        )
+        print(
+            f"  LED values (clipped): range=[{led_compare_clipped_cpu.min():.6f}, {led_compare_clipped_cpu.max():.6f}], RMS={np.sqrt(np.mean(led_compare_clipped_cpu**2)):.6f}"
+        )
+
+        # Compare the RAW results (before clipping)
+        max_diff_raw = np.max(np.abs(led_current_raw_cpu - led_compare_raw_cpu))
+        rms_diff_raw = np.sqrt(np.mean((led_current_raw_cpu - led_compare_raw_cpu) ** 2))
+        current_rms_raw = np.sqrt(np.mean(led_current_raw_cpu**2))
+
+        # Compare the CLIPPED results (after clipping)
+        max_diff_clipped = np.max(np.abs(led_current_clipped_cpu - led_compare_clipped_cpu))
+        rms_diff_clipped = np.sqrt(np.mean((led_current_clipped_cpu - led_compare_clipped_cpu) ** 2))
+        current_rms_clipped = np.sqrt(np.mean(led_current_clipped_cpu**2))
+
+        print("\nRAW initialization comparison (before clipping):")
+        print(f"  Max difference: {max_diff_raw:.6f}")
+        print(f"  RMS difference: {rms_diff_raw:.6f}")
+        if current_rms_raw > 1e-10:
+            print(f"  Relative error: {rms_diff_raw/current_rms_raw*100:.2f}%")
+
+        print("\nCLIPPED initialization comparison (after clipping):")
+        print(f"  Max difference: {max_diff_clipped:.6f}")
+        print(f"  RMS difference: {rms_diff_clipped:.6f}")
+        if current_rms_clipped > 1e-10:
+            print(f"  Relative error: {rms_diff_clipped/current_rms_clipped*100:.2f}%")
+
+        # Compute initial MSE for both
+        initial_mse_current = _compute_mse_only(led_values_gpu, target_planar_uint8, at_matrix)
+        initial_mse_compare = _compute_mse_only(led_compare_gpu, target_planar_uint8, at_matrix)
+
+        print("\nInitial MSE comparison:")
+        print(f"  Primary MSE: {initial_mse_current:.6f}")
+        print(f"  Comparison MSE: {initial_mse_compare:.6f}")
+        print(f"  MSE ratio: {initial_mse_compare/initial_mse_current:.2f}x")
+        print("=== END COMPARISON ===\n")
 
     # Step 4: Gradient descent optimization loop
     debug and logger.info(f"Starting optimization: max_iterations={max_iterations}")
@@ -200,6 +298,10 @@ def optimize_frame_led_values(
 
         # Gradient descent step with projection to [0, 1]
         led_values_gpu = cp.clip(led_values_gpu - step_size * gradient, 0, 1)
+
+        # Ensure LED values remain C-contiguous for next iteration's DIA operations
+        if not led_values_gpu.flags.c_contiguous:
+            led_values_gpu = cp.ascontiguousarray(led_values_gpu)
 
         # Track MSE after this iteration if requested
         if track_mse_per_iteration:

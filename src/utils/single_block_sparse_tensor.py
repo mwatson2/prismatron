@@ -105,6 +105,98 @@ class SingleBlockMixedSparseTensor:
             f"with {block_size}x{block_size} blocks, dtype={self.dtype}, output_dtype={self.output_dtype}"
         )
 
+    def _validate_tensor_memory_layout(self, tensor: cp.ndarray, tensor_name: str) -> None:
+        """
+        Validate tensor memory layout for optimal CUDA kernel performance.
+
+        All mixed sparse tensor CUDA kernels expect C-contiguous tensors with specific
+        stride patterns for optimal memory access and vectorization.
+
+        Args:
+            tensor: Input tensor to validate (CuPy array)
+            tensor_name: Name for error messages
+
+        Raises:
+            ValueError: If tensor layout is incompatible with kernels
+            TypeError: If tensor is not a CuPy array
+        """
+        # Only validate CuPy arrays (kernels only work with GPU tensors)
+        if not isinstance(tensor, cp.ndarray):
+            raise TypeError(f"{tensor_name} must be a cupy.ndarray for GPU kernels, got {type(tensor).__name__}")
+
+        # Validate C-contiguous layout
+        if not tensor.flags.c_contiguous:
+            # Provide detailed diagnostic information
+            stride_info = f"strides={tensor.strides}, shape={tensor.shape}"
+            layout = "F-contiguous" if tensor.flags.f_contiguous else "non-contiguous"
+
+            raise ValueError(
+                f"Mixed sparse tensor kernel requires C-contiguous {tensor_name} tensor for optimal performance. "
+                f"Got {layout} tensor with {stride_info}. "
+                f"Use cp.ascontiguousarray({tensor_name}) to fix layout issues. "
+                f"Non-contiguous tensors can cause significant performance degradation or incorrect results in "
+                f"uint8 and fp32 CUDA kernels."
+            )
+
+        # Validate expected stride patterns for known tensor types
+        if tensor_name == "target_3d":
+            # target_3d should be (channels, height, width) with C-contiguous strides
+            if len(tensor.shape) == 3:
+                expected_strides = (
+                    tensor.shape[1] * tensor.shape[2] * tensor.itemsize,  # channel stride
+                    tensor.shape[2] * tensor.itemsize,  # height stride
+                    tensor.itemsize,  # width stride
+                )
+                if tensor.strides != expected_strides:
+                    raise ValueError(
+                        f"target_3d has unexpected stride pattern for (channels, height, width) layout. "
+                        f"Expected strides {expected_strides}, got {tensor.strides}. "
+                        f"This indicates incorrect memory layout (not planar C-contiguous)."
+                    )
+
+        elif tensor_name == "sparse_values":
+            # sparse_values should be (channels, batch_size, block_size, block_size) with C-contiguous strides
+            if len(tensor.shape) == 4:
+                expected_strides = (
+                    tensor.shape[1] * tensor.shape[2] * tensor.shape[3] * tensor.itemsize,  # channel stride
+                    tensor.shape[2] * tensor.shape[3] * tensor.itemsize,  # batch stride
+                    tensor.shape[3] * tensor.itemsize,  # block_height stride
+                    tensor.itemsize,  # block_width stride
+                )
+                if tensor.strides != expected_strides:
+                    raise ValueError(
+                        f"sparse_values has unexpected stride pattern for (channels, batch, block_h, block_w) layout. "
+                        f"Expected strides {expected_strides}, got {tensor.strides}. "
+                        f"This indicates incorrect memory layout (not channels-first C-contiguous)."
+                    )
+
+        elif tensor_name == "block_positions":
+            # block_positions should be (channels, batch_size, 2) with C-contiguous strides
+            if len(tensor.shape) == 3 and tensor.shape[2] == 2:
+                expected_strides = (
+                    tensor.shape[1] * tensor.shape[2] * tensor.itemsize,  # channel stride
+                    tensor.shape[2] * tensor.itemsize,  # batch stride
+                    tensor.itemsize,  # coordinate stride
+                )
+                if tensor.strides != expected_strides:
+                    raise ValueError(
+                        f"block_positions has unexpected stride pattern for (channels, batch, 2) layout. "
+                        f"Expected strides {expected_strides}, got {tensor.strides}. "
+                        f"This indicates incorrect memory layout (not channels-first C-contiguous)."
+                    )
+
+        # Check data ownership for debugging memory issues
+        if not tensor.flags.owndata:
+            # This is a warning, not an error, as views can work if properly contiguous
+            import warnings
+
+            warnings.warn(
+                f"{tensor_name} is a tensor view (flags.owndata=False). "
+                f"This may indicate upstream memory layout issues. "
+                f"Consider using cp.ascontiguousarray() if experiencing problems.",
+                UserWarning,
+            )
+
     def _validate_dtype(self, dtype: cp.dtype) -> cp.dtype:
         """
         Validate and normalize the data type.
@@ -254,6 +346,11 @@ class SingleBlockMixedSparseTensor:
             raise ValueError(
                 f"target_3d shape {target_3d.shape} != expected ({self.channels}, {self.height}, {self.width})"
             )
+
+        # MEMORY LAYOUT VALIDATION: Critical for kernel correctness and performance
+        self._validate_tensor_memory_layout(target_3d, "target_3d")
+        self._validate_tensor_memory_layout(self.sparse_values, "sparse_values")
+        self._validate_tensor_memory_layout(self.block_positions, "block_positions")
 
         # Determine output dtype
         if output_dtype is None:
