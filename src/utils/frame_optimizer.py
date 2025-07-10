@@ -134,16 +134,10 @@ def optimize_frame_led_values(
     # Step 1: Calculate A^T @ b using the appropriate format
     debug and logger.info("Computing A^T @ b...")
 
-    ATb_gpu = _calculate_atb(target_planar_uint8, at_matrix, debug=debug)  # Shape: (led_count, 3), dtype: fp32
-
-    # Ensure ATb is in (3, led_count) format for consistency with gradient descent
-    if ATb_gpu.shape[0] != 3:
-        ATb_gpu = ATb_gpu.T  # Convert (led_count, 3) -> (3, led_count)
-
-    # CRITICAL: Ensure C-contiguous layout for DIA kernel compatibility
-    # Mixed tensor operations can produce F-contiguous or non-contiguous results
-    # which cause DIA kernels to read incorrect values or have poor performance
-    ATb_gpu = cp.ascontiguousarray(ATb_gpu)
+    ATb_gpu = _calculate_atb(target_planar_uint8, at_matrix, debug=debug)  # Shape: (3, led_count), dtype: fp32
+    
+    # ATb is already in correct (3, led_count) format and C-contiguous layout
+    # The planar_output=True parameter eliminates transpose operations and memory layout issues
 
     debug and logger.info(f"A^T @ b shape: {ATb_gpu.shape}")
 
@@ -356,7 +350,7 @@ def _calculate_atb(
         debug: Enable debug output
 
     Returns:
-        A^T @ b result (led_count, 3) float32 - always normalized to [0,1] equivalent range
+        A^T @ b result (3, led_count) float32 - always normalized to [0,1] equivalent range
     """
     debug and logger.info("Using mixed tensor format for A^T @ b")
 
@@ -372,7 +366,9 @@ def _calculate_atb(
         target_gpu = cp.asarray(target_float32)
         debug and logger.info("Using fp32 x fp32 -> fp32 kernel")
 
-    result = at_matrix.transpose_dot_product_3d(target_gpu)  # Shape: (led_count, 3), dtype: float32
+    # Use planar_output=True to get result directly in (3, led_count) format
+    # This eliminates the need for transpose operations and prevents F-contiguous memory layout issues
+    result = at_matrix.transpose_dot_product_3d(target_gpu, planar_output=True)  # Shape: (3, led_count), dtype: float32
     return result
 
 

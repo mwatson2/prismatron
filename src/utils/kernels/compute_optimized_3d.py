@@ -33,12 +33,13 @@ void compute_optimized_3d_transpose_dot_product_kernel(
     const float* sparse_values,     // Shape: (channels, batch_size, block_size, block_size)
     const int* block_positions,     // Shape: (channels, batch_size, 2)
     const float* target_3d,         // Shape: (channels, height, width) - planar form
-    float* result,                  // Shape: (batch_size, channels)
+    float* result,                  // Shape: (batch_size, channels) if interleaved, (channels, batch_size) if planar
     const int batch_size,
     const int channels,
     const int height,
     const int width,
-    const int block_size
+    const int block_size,
+    const bool interleaved          // true: (batch_size, channels), false: (channels, batch_size)
 ) {
     // Row-based processing optimization: each thread processes whole rows
     // Requires: block_size % 32 == 0 (e.g., 64x64 blocks with 32 threads = 2 rows per thread)
@@ -53,7 +54,10 @@ void compute_optimized_3d_transpose_dot_product_kernel(
     // Bounds check
     if (led_id >= batch_size || channel_id >= channels) return;
 
-    int idx = led_id * channels + channel_id;
+    // Calculate output index based on desired memory layout
+    // interleaved=true:  (batch_size, channels) layout - idx = led_id * channels + channel_id
+    // interleaved=false: (channels, batch_size) layout - idx = channel_id * batch_size + led_id
+    int idx = interleaved ? led_id * channels + channel_id : channel_id * batch_size + led_id;
 
     // Get block position for this LED/channel from (channels, batch_size, 2) layout
     int pos_idx = channel_id * (batch_size * 2) + led_id * 2;
@@ -129,6 +133,7 @@ def cuda_transpose_dot_product_3d_compute_optimized(
     batch_size: int,
     channels: int,
     block_size: int,
+    interleaved: bool = True,
 ) -> cp.ndarray:
     """
     3D Compute-optimized CUDA kernel wrapper for A^T @ b operation with planar input.
@@ -144,17 +149,22 @@ def cuda_transpose_dot_product_3d_compute_optimized(
         batch_size: Number of LEDs
         channels: Number of channels
         block_size: Size of square blocks (must be multiple of 32)
+        interleaved: If True, return (batch_size, channels). If False, return (channels, batch_size).
 
     Returns:
-        Result of A^T @ b, shape (batch_size, channels)
+        Result of A^T @ b, shape (batch_size, channels) if interleaved=True, 
+        (channels, batch_size) if interleaved=False
     """
     channels_input, height, width = target_3d.shape
 
     if channels_input != channels:
         raise ValueError(f"Input channels {channels_input} != expected {channels}")
 
-    # Prepare output array
-    result = cp.zeros((batch_size, channels), dtype=cp.float32)
+    # Prepare output array with correct shape based on layout preference
+    if interleaved:
+        result = cp.zeros((batch_size, channels), dtype=cp.float32)
+    else:
+        result = cp.zeros((channels, batch_size), dtype=cp.float32)
 
     # Get compiled kernel
     kernel = get_compute_optimized_3d_kernel()
@@ -190,6 +200,7 @@ def cuda_transpose_dot_product_3d_compute_optimized(
             height,
             width,
             block_size,
+            interleaved,  # New parameter for output layout control
         ),
         shared_mem=shared_mem_size,
     )

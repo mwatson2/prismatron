@@ -31,12 +31,13 @@ void compute_optimized_3d_transpose_dot_product_int8_experimental_fp16_kernel(
     const unsigned char* sparse_values,  // (channels, batch_size, block_size, block_size) - int8
     const int* block_positions,          // Shape: (channels, batch_size, 2)
     const unsigned char* target_3d,      // Shape: (channels, height, width) - int8 planar form
-    __half* result,                      // Shape: (batch_size, channels) - fp16 output
+    __half* result,                      // Shape: (batch_size, channels) if interleaved, (channels, batch_size) if planar - fp16 output
     const int batch_size,
     const int channels,
     const int height,
     const int width,
-    const int block_size
+    const int block_size,
+    const bool interleaved
 ) {
     // EXPERIMENTAL: Aligned uchar4 loads for both sparse and target data
     // Requirements:
@@ -53,7 +54,10 @@ void compute_optimized_3d_transpose_dot_product_int8_experimental_fp16_kernel(
     // Bounds check
     if (led_id >= batch_size || channel_id >= channels) return;
 
-    int idx = led_id * channels + channel_id;
+    // Calculate output index based on desired memory layout
+    // interleaved=true:  (batch_size, channels) layout - idx = led_id * channels + channel_id
+    // interleaved=false: (channels, batch_size) layout - idx = channel_id * batch_size + led_id
+    int idx = interleaved ? led_id * channels + channel_id : channel_id * batch_size + led_id;
 
     // Get block position for this LED/channel from (channels, batch_size, 2) layout
     int pos_idx = channel_id * (batch_size * 2) + led_id * 2;
@@ -130,12 +134,13 @@ void compute_optimized_3d_transpose_dot_product_int8_fp16_kernel(
     const unsigned char* sparse_values,  // (channels, batch_size, block_size, block_size) - int8
     const int* block_positions,          // Shape: (channels, batch_size, 2)
     const unsigned char* target_3d,      // Shape: (channels, height, width) - int8 planar form
-    __half* result,                      // Shape: (batch_size, channels) - fp16 output
+    __half* result,                      // Shape: (batch_size, channels) if interleaved, (channels, batch_size) if planar - fp16 output
     const int batch_size,
     const int channels,
     const int height,
     const int width,
-    const int block_size
+    const int block_size,
+    const bool interleaved
 ) {
     // Row-based processing optimization with aligned uchar4 loads
     // Requires:
@@ -152,7 +157,10 @@ void compute_optimized_3d_transpose_dot_product_int8_fp16_kernel(
     // Bounds check
     if (led_id >= batch_size || channel_id >= channels) return;
 
-    int idx = led_id * channels + channel_id;
+    // Calculate output index based on desired memory layout
+    // interleaved=true:  (batch_size, channels) layout - idx = led_id * channels + channel_id
+    // interleaved=false: (channels, batch_size) layout - idx = channel_id * batch_size + led_id
+    int idx = interleaved ? led_id * channels + channel_id : channel_id * batch_size + led_id;
 
     // Get block position for this LED/channel from (channels, batch_size, 2) layout
     int pos_idx = channel_id * (batch_size * 2) + led_id * 2;
@@ -256,6 +264,7 @@ def cuda_transpose_dot_product_3d_compute_optimized_int8_fp16(
     batch_size: int,
     channels: int,
     block_size: int,
+    interleaved: bool = True,
 ) -> cp.ndarray:
     """
     3D Compute-optimized CUDA kernel wrapper for A^T @ b operation with int8 inputs and FP16 output.
@@ -271,9 +280,11 @@ def cuda_transpose_dot_product_3d_compute_optimized_int8_fp16(
         batch_size: Number of LEDs
         channels: Number of channels
         block_size: Size of square blocks (must be multiple of 4)
+        interleaved: If True, return (batch_size, channels). If False, return (channels, batch_size).
 
     Returns:
-        Result of A^T @ b, shape (batch_size, channels), dtype float16
+        Result of A^T @ b, shape (batch_size, channels) if interleaved=True,
+        (channels, batch_size) if interleaved=False, dtype float16
         Values are normalized by (255*255) to align with fp32 range [0,1]
     """
     channels_input, height, width = target_3d.shape
@@ -290,8 +301,11 @@ def cuda_transpose_dot_product_3d_compute_optimized_int8_fp16(
     if block_size % 4 != 0:
         raise ValueError(f"block_size {block_size} must be multiple of 4 for vectorization")
 
-    # Prepare output array with FP16 dtype
-    result = cp.zeros((batch_size, channels), dtype=cp.float16)
+    # Prepare output array with FP16 dtype and correct shape based on layout preference
+    if interleaved:
+        result = cp.zeros((batch_size, channels), dtype=cp.float16)
+    else:
+        result = cp.zeros((channels, batch_size), dtype=cp.float16)
 
     # Get compiled kernel
     kernel = get_compute_optimized_3d_int8_fp16_kernel()
@@ -328,6 +342,7 @@ def cuda_transpose_dot_product_3d_compute_optimized_int8_fp16(
             height,
             width,
             block_size,
+            interleaved,
         ),
         shared_mem=shared_mem_size,
     )
@@ -342,6 +357,7 @@ def cuda_transpose_dot_product_3d_compute_optimized_int8_experimental_fp16(
     batch_size: int,
     channels: int,
     block_size: int,
+    interleaved: bool = True,
 ) -> cp.ndarray:
     """
     Experimental 3D Compute-optimized CUDA kernel wrapper for A^T @ b operation with int8 inputs and FP16 output.
@@ -356,9 +372,11 @@ def cuda_transpose_dot_product_3d_compute_optimized_int8_experimental_fp16(
         batch_size: Number of LEDs
         channels: Number of channels
         block_size: Size of square blocks (must be multiple of 4)
+        interleaved: If True, return (batch_size, channels). If False, return (channels, batch_size).
 
     Returns:
-        Result of A^T @ b, shape (batch_size, channels), dtype float16
+        Result of A^T @ b, shape (batch_size, channels) if interleaved=True,
+        (channels, batch_size) if interleaved=False, dtype float16
         Values are normalized by (255*255) to align with fp32 range [0,1]
     """
     channels_input, height, width = target_3d.shape
@@ -375,8 +393,11 @@ def cuda_transpose_dot_product_3d_compute_optimized_int8_experimental_fp16(
     if block_size % 4 != 0:
         raise ValueError(f"block_size {block_size} must be multiple of 4 for vectorization")
 
-    # Prepare output array with FP16 dtype
-    result = cp.zeros((batch_size, channels), dtype=cp.float16)
+    # Prepare output array with FP16 dtype and correct shape based on layout preference
+    if interleaved:
+        result = cp.zeros((batch_size, channels), dtype=cp.float16)
+    else:
+        result = cp.zeros((channels, batch_size), dtype=cp.float16)
 
     # Get compiled experimental kernel
     kernel = get_compute_optimized_3d_int8_experimental_fp16_kernel()
@@ -413,6 +434,7 @@ def cuda_transpose_dot_product_3d_compute_optimized_int8_experimental_fp16(
             height,
             width,
             block_size,
+            interleaved,
         ),
         shared_mem=shared_mem_size,
     )

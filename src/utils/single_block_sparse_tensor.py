@@ -324,7 +324,7 @@ class SingleBlockMixedSparseTensor:
         self.sparse_values[:] = values
         self.block_positions[:] = positions
 
-    def transpose_dot_product_3d(self, target_3d: cp.ndarray, output_dtype: Optional[cp.dtype] = None) -> cp.ndarray:
+    def transpose_dot_product_3d(self, target_3d: cp.ndarray, output_dtype: Optional[cp.dtype] = None, planar_output: bool = False) -> cp.ndarray:
         """
         Compute A^T @ b operation with 3D planar input (channels, height, width).
 
@@ -332,15 +332,18 @@ class SingleBlockMixedSparseTensor:
         Implements einsum 'ijkl,jkl->ij' efficiently where:
         - Mixed tensor: (leds, channels, height, width) - shape 'ijkl'
         - Target: (channels, height, width) - shape 'jkl' (planar form)
-        - Result: (leds, channels) - shape 'ij'
+        - Result: (leds, channels) or (channels, leds) - shape 'ij' based on planar_output
 
         Args:
             target_3d: Target image in planar form, shape (channels, height, width)
             output_dtype: Desired output data type (cp.float32 or cp.float16).
                          If None, uses the instance's output_dtype setting.
+            planar_output: If True, return (channels, batch_size). If False, return (batch_size, channels).
+                          This eliminates the need for transpose operations and prevents F-contiguous memory layout issues.
 
         Returns:
-            Result of A^T @ b, shape (batch_size, channels) with specified output dtype
+            Result of A^T @ b, shape (batch_size, channels) if planar_output=False, 
+            (channels, batch_size) if planar_output=True, with specified output dtype
         """
         if target_3d.shape != (self.channels, self.height, self.width):
             raise ValueError(
@@ -378,6 +381,7 @@ class SingleBlockMixedSparseTensor:
                         self.batch_size,
                         self.channels,
                         self.block_size,
+                        interleaved=not planar_output,  # Kernel parameter is inverse of planar_output
                     )
                 elif output_dtype == cp.float16:
                     from .cuda_kernels import (
@@ -392,6 +396,7 @@ class SingleBlockMixedSparseTensor:
                         self.batch_size,
                         self.channels,
                         self.block_size,
+                        interleaved=not planar_output,  # Kernel parameter is inverse of planar_output
                     )
                 else:
                     raise ValueError(f"Unsupported output dtype {output_dtype} for FP32 input")
@@ -414,6 +419,7 @@ class SingleBlockMixedSparseTensor:
                         self.batch_size,
                         self.channels,
                         self.block_size,
+                        interleaved=not planar_output,  # Kernel parameter is inverse of planar_output
                     )
                 elif output_dtype == cp.float16:
                     from .cuda_kernels import (
@@ -428,6 +434,7 @@ class SingleBlockMixedSparseTensor:
                         self.batch_size,
                         self.channels,
                         self.block_size,
+                        interleaved=not planar_output,  # Kernel parameter is inverse of planar_output
                     )
                 else:
                     raise ValueError(f"Unsupported output dtype {output_dtype} for INT8 input")
