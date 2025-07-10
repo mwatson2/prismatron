@@ -31,6 +31,7 @@ class FrameOptimizationResult:
     converged: bool  # Whether optimization converged
     step_sizes: Optional[np.ndarray] = None  # Step sizes per iteration (for debugging)
     timing_data: Optional[Dict[str, float]] = None  # Performance timing breakdown
+    mse_per_iteration: Optional[np.ndarray] = None  # MSE value at each iteration (for convergence analysis)
 
 
 def load_ata_inverse_from_pattern(pattern_file_path: str) -> Optional[np.ndarray]:
@@ -70,6 +71,7 @@ def optimize_frame_led_values(
     compute_error_metrics: bool = False,
     debug: bool = False,
     enable_timing: bool = False,
+    track_mse_per_iteration: bool = False,
 ) -> FrameOptimizationResult:
     """
     Optimize LED values for a target frame using gradient descent with optimal ATA inverse initialization.
@@ -94,6 +96,7 @@ def optimize_frame_led_values(
         compute_error_metrics: Whether to compute error metrics (slower)
         debug: Enable debug output and tracking
         enable_timing: Enable detailed performance timing breakdown
+        track_mse_per_iteration: Whether to track MSE at each iteration (for convergence analysis)
 
     Returns:
         FrameOptimizationResult with LED values in spatial order (3, led_count)
@@ -147,8 +150,8 @@ def optimize_frame_led_values(
         if initial_values.shape != (3, led_count):
             raise ValueError(f"Initial values shape {initial_values.shape} != (3, {led_count})")
         # Normalize to [0,1] if needed
-        led_values_normalized = (initial_values / 255.0 if initial_values.max() > 1.0 else initial_values).astype(
-            np.float32
+        led_values_gpu = cp.asarray(
+            (initial_values / 255.0 if initial_values.max() > 1.0 else initial_values).astype(np.float32)
         )
         debug and logger.info("Using provided initial values (overriding ATA inverse)")
     else:
@@ -158,19 +161,23 @@ def optimize_frame_led_values(
         # Efficient einsum: (3, led_count, led_count) @ (3, led_count) -> (3, led_count)
         led_values_gpu = cp.einsum("ijk,ik->ij", ata_inverse_gpu, ATb_gpu)
 
-        # Transfer back to CPU
-        led_values_normalized = led_values_gpu.astype(cp.float32)
-
-        # Clamp to valid range [0, 1]
-        led_values_normalized = cp.clip(led_values_normalized, 0.0, 1.0)
+        # Keep as GPU tensor and clamp to valid range [0, 1]
+        led_values_gpu = led_values_gpu.astype(cp.float32)
+        led_values_gpu = cp.clip(led_values_gpu, 0.0, 1.0)
 
         debug and logger.info("Initialization completed using ATA inverse")
 
-    debug and logger.info(f"Initial LED values shape: {led_values_normalized.shape}")
+    debug and logger.info(f"Initial LED values shape: {led_values_gpu.shape}")
 
     # Step 4: Gradient descent optimization loop
     debug and logger.info(f"Starting optimization: max_iterations={max_iterations}")
     step_sizes = [] if debug else None
+    mse_values = [] if track_mse_per_iteration else None
+
+    # Track initial MSE before any optimization steps (after clipping)
+    if track_mse_per_iteration:
+        initial_mse = _compute_mse_only(led_values_gpu, target_planar_uint8, at_matrix)
+        mse_values.append(float(initial_mse))
 
     for iteration in range(max_iterations):
         # Compute gradient: A^T A @ x - A^T @ b using DIA matrix operations
@@ -193,6 +200,11 @@ def optimize_frame_led_values(
 
         # Gradient descent step with projection to [0, 1]
         led_values_gpu = cp.clip(led_values_gpu - step_size * gradient, 0, 1)
+
+        # Track MSE after this iteration if requested
+        if track_mse_per_iteration:
+            current_mse = _compute_mse_only(led_values_gpu, target_planar_uint8, at_matrix)
+            mse_values.append(float(current_mse))
 
     # Step 5: Convert back to spatial order and CPU
     # Values are already in correct order (pattern generation handles ordering)
@@ -220,6 +232,7 @@ def optimize_frame_led_values(
         converged=False,  # Fixed iterations, no convergence checking
         step_sizes=np.array(step_sizes) if step_sizes else None,
         timing_data=timing_data,
+        mse_per_iteration=np.array(mse_values) if mse_values else None,
     )
 
     debug and logger.info(f"Optimization completed in {result.iterations} iterations")
@@ -259,6 +272,46 @@ def _calculate_atb(
 
     result = at_matrix.transpose_dot_product_3d(target_gpu)  # Shape: (led_count, 3), dtype: float32
     return result
+
+
+def _compute_mse_only(
+    led_values_gpu: cp.ndarray,
+    target_planar: np.ndarray,
+    at_matrix: SingleBlockMixedSparseTensor,
+) -> float:
+    """
+    Compute MSE only for fast convergence tracking.
+
+    Args:
+        led_values_gpu: LED values on GPU (3, led_count) in [0,1] range
+        target_planar: Target frame (3, height, width) uint8 [0,255]
+        at_matrix: Mixed tensor matrix for forward computation
+
+    Returns:
+        MSE value as float
+    """
+    try:
+        # Forward pass: A @ led_values -> rendered_frame using mixed tensor
+        led_values_transposed = led_values_gpu.T  # Convert to (led_count, 3)
+        rendered_gpu = at_matrix.forward_pass_3d(led_values_transposed)  # Shape: (3, height, width), dtype: float32
+
+        # Handle different matrix types for error computation
+        if at_matrix.dtype == cp.uint8:
+            # For uint8 A matrix: rendered_gpu is already in [0,1] range from forward_pass_3d
+            # Convert target to [0,1] for comparison
+            target_gpu = cp.asarray(target_planar, dtype=cp.float32) / 255.0
+        else:
+            # For float32 A matrix: both are in [0,1] range
+            target_gpu = cp.asarray(target_planar, dtype=cp.float32) / 255.0
+
+        # Compute MSE efficiently on GPU
+        diff = rendered_gpu - target_gpu
+        mse = float(cp.mean(diff**2))
+
+        return mse
+
+    except Exception:
+        return float("inf")
 
 
 def _compute_error_metrics(
