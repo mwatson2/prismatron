@@ -987,9 +987,9 @@ class DiffusionPatternVisualizer:
 
             logger.info(f"Optimization completed: converged={result.converged}, iterations={result.iterations}")
 
-            # result.led_values is in range [0, 1] from frame optimizer
-            # Keep LED values in [0, 1] range for forward_pass_3d
-            led_values_float32 = result.led_values.astype(np.float32)  # Shape: (3, led_count)
+            # result.led_values is in range [0, 255] uint8 from frame optimizer
+            # Convert to [0, 1] range for forward_pass_3d
+            led_values_float32 = result.led_values.astype(np.float32) / 255.0  # Shape: (3, led_count)
 
             # Render LED values back to frame using diffusion patterns
             optimized_frame = self._render_led_values_to_frame(led_values_float32)
@@ -1020,8 +1020,8 @@ class DiffusionPatternVisualizer:
     def _render_led_values_to_frame(self, led_values: np.ndarray) -> np.ndarray:
         """Render LED values back to frame using forward_pass_3d."""
         try:
-            # led_values shape: (3, led_count) in range [0, 1] - planar format from optimizer
-            # Mixed tensor forward_pass_3d expects LED values in [0, 1] range for fp16 processing
+            # led_values shape: (3, led_count) in range [0, 1] - planar format (converted from optimizer [0, 255])
+            # Mixed tensor forward_pass_3d expects LED values in [0, 1] range
             led_values_float32 = led_values.astype(np.float32)
 
             logger.info(
@@ -1053,22 +1053,11 @@ class DiffusionPatternVisualizer:
             if output_frame.shape[0] == 3:
                 output_frame = output_frame.transpose(1, 2, 0)  # (3, H, W) -> (H, W, 3)
 
-            # Let's understand what range forward_pass_3d actually outputs
-            # From logs: we're seeing [0, 7.988] output
-            # Let's scale based on what we actually get, not assumptions
-            output_min = float(output_frame.min())
-            output_max = float(output_frame.max())
-            logger.info(f"forward_pass_3d output range: [{output_min:.3f}, {output_max:.3f}]")
+            # forward_pass_3d now outputs [0, 1] range - scale to [0, 255] for image
+            output_frame = np.clip(output_frame, 0.0, 1.0)  # Ensure valid range
+            output_frame = (output_frame * 255.0).astype(np.uint8)
 
-            if output_max > output_min:
-                # Scale the actual range to [0, 255]
-                output_normalized = (output_frame - output_min) / (output_max - output_min)
-                output_frame = (output_normalized * 255).astype(np.uint8)
-                logger.info(f"Scaled to uint8 based on actual range: [{output_frame.min()}, {output_frame.max()}]")
-            else:
-                # All values are the same
-                output_frame = np.zeros_like(output_frame, dtype=np.uint8)
-                logger.info("All values identical - converted to zeros")
+            logger.info(f"Scaled to uint8 [0, 255]: [{output_frame.min()}, {output_frame.max()}]")
 
             # Ensure it's a NumPy array (CPU) for PIL compatibility
             if hasattr(output_frame, "get"):
