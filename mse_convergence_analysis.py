@@ -6,7 +6,7 @@ Analyzes MSE convergence for different precision combinations:
 1. fp16 ATA + fp16 ATA inverse with fp32 A-matrix + ATA-inverse initialization
 2. fp32 ATA + fp32 ATA inverse with fp32 A-matrix + ATA-inverse initialization
 3. fp32 A-matrix without ATA-inverse initialization (random init)
-4. fp32 A-matrix with ATA-inverse initialization
+4. uint8 A-matrix with fp32 ATA + fp32 ATA inverse + ATA-inverse initialization
 
 Uses the flower image from source/images/flower for testing.
 """
@@ -115,7 +115,7 @@ def run_mse_convergence_test(
     ata_inverse: np.ndarray,
     target_frame: np.ndarray,
     use_ata_inverse_init: bool = True,
-    max_iterations: int = 20,
+    max_iterations: int = 10,
 ) -> Tuple[np.ndarray, Dict]:
     """Run MSE convergence test for a specific case."""
     print(f"\n=== {case_name} ===")
@@ -224,22 +224,34 @@ def main():
         metrics_summary["fp32_random_init"] = metrics
         cases.append("fp32_random_init")
 
-    # Case 4: Same as Case 2 (fp32 with ATA-inverse initialization) - already done
-    if "fp32_with_ata_init" in mse_results:
-        mse_results["fp32_with_ata_init_repeat"] = mse_results["fp32_with_ata_init"]
-        metrics_summary["fp32_with_ata_init_repeat"] = metrics_summary["fp32_with_ata_init"]
+    # Case 4: uint8 A-matrix with fp32 ATA + ATA-inverse initialization
+    try:
+        mixed_tensor_uint8, dia_matrix_uint8, ata_inverse_uint8 = load_patterns_and_ata_inverse("uint8")
+        mse_values, metrics = run_mse_convergence_test(
+            "Case 4: uint8 A-matrix + fp32 ATA + ATA-inverse init",
+            mixed_tensor_uint8,
+            dia_matrix_uint8,
+            ata_inverse_uint8,
+            target_frame,
+            use_ata_inverse_init=True,
+        )
+        mse_results["uint8_with_ata_init"] = mse_values
+        metrics_summary["uint8_with_ata_init"] = metrics
+        cases.append("uint8_with_ata_init")
+    except Exception as e:
+        print(f"Skipping uint8 case: {e}")
 
     # Generate convergence plot
     if mse_results:
         print(f"\n=== Generating Convergence Plot ===")
         plt.figure(figsize=(12, 8))
 
-        colors = ["blue", "red", "green", "orange"]
+        colors = ["blue", "red", "green", "orange", "purple"]
         labels = {
             "fp16_with_ata_init": "FP16 ATA + ATA-inverse init",
             "fp32_with_ata_init": "FP32 ATA + ATA-inverse init",
             "fp32_random_init": "FP32 ATA + Random init",
-            "fp32_with_ata_init_repeat": "FP32 ATA + ATA-inverse init (repeat)",
+            "uint8_with_ata_init": "uint8 A-matrix + FP32 ATA + ATA-inverse init",
         }
 
         for i, case in enumerate(cases):
@@ -280,6 +292,7 @@ def main():
         "fp16_with_ata_init": "FP16 + ATA-inverse init",
         "fp32_with_ata_init": "FP32 + ATA-inverse init",
         "fp32_random_init": "FP32 + Random init",
+        "uint8_with_ata_init": "uint8 A-matrix + FP32 ATA + ATA-inverse",
     }
 
     for case in cases:
