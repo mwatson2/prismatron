@@ -394,8 +394,8 @@ class SingleBlockMixedSparseTensor:
                 if pattern_height > 0 and pattern_width > 0:
                     # Apply scaling to match the kernel normalization
                     if self.dtype == cp.uint8:
-                        # For int8 data, apply same normalization as the int8 kernel
-                        scale_factor = led_brightness / (255.0 * 255.0)
+                        # For uint8 A matrix: scale by 255 (only A is uint8, led_values are float32 [0,1])
+                        scale_factor = led_brightness / 255.0
                     else:
                         # For float32 data, apply direct scaling
                         scale_factor = led_brightness
