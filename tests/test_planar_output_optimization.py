@@ -13,7 +13,7 @@ import cupy as cp
 import numpy as np
 from PIL import Image
 
-sys.path.append(str(Path(__file__).parent / "src"))
+sys.path.append(str(Path(__file__).parent.parent / "src"))
 
 from utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 
@@ -170,12 +170,8 @@ def test_planar_output_optimization():
     print("  ✅ Reduces memory allocations and bandwidth")
     print("  ✅ Direct integration with DIA kernels (no layout fixes needed)")
     
-    return {
-        'old_result': result_old_cpu,
-        'new_result': result_new_cpu,
-        'identical': results_identical,
-        'mixed_tensor': mixed_tensor
-    }
+    # Assert that results are identical
+    assert results_identical, f"Results should be identical, got max_diff={np.max(np.abs(result_old_cpu - result_new_cpu)):.6f}"
 
 
 def test_frame_optimizer_integration():
@@ -234,17 +230,19 @@ def test_frame_optimizer_integration():
     print("  ✅ Direct C-contiguous output ready for DIA kernels")
     print("  ✅ Eliminates memory layout validation errors")
     
-    return ATb_result
+    # Assert that ATb result is correct
+    assert ATb_result.shape == expected_shape, f"ATb result has wrong shape: {ATb_result.shape}, expected: {expected_shape}"
+    assert ATb_result.flags.c_contiguous, "ATb result should be C-contiguous"
 
 
 if __name__ == "__main__":
     print("Testing planar output optimization...")
     
     # Test 1: Basic planar output functionality
-    results = test_planar_output_optimization()
+    test_planar_output_optimization()
     
     # Test 2: Frame optimizer integration
-    atb_result = test_frame_optimizer_integration()
+    test_frame_optimizer_integration()
     
     print(f"\n" + "=" * 70)
     print("OPTIMIZATION TEST COMPLETE")

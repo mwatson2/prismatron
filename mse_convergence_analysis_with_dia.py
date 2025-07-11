@@ -27,7 +27,7 @@ from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 
 def load_flower_image() -> np.ndarray:
     """Load and prepare the flower image for testing."""
-    flower_path = Path("source/images/flower")
+    flower_path = Path("images/source/flower")
 
     # Try common image extensions
     for ext in [".jpg", ".jpeg", ".png", ".bmp"]:
