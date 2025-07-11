@@ -797,30 +797,30 @@ def test_transpose_dot_product_3d_dtypes(dtype):
 def test_planar_output_basic_functionality():
     """Test basic functionality of the planar_output parameter."""
     logger.info("=== Testing planar_output basic functionality ===")
-    
+
     batch_size, channels = 5, 3
     height, width = 64, 80
     block_size = 16
-    
+
     tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size, dtype=cp.float32)
-    
+
     # Set some test data
     sparse_data = cp.random.rand(channels, batch_size, block_size, block_size).astype(cp.float32)
     positions = cp.random.randint(0, min(height, width) - block_size, (channels, batch_size, 2))
     target_data = cp.random.rand(channels, height, width).astype(cp.float32)
-    
+
     tensor.set_blocks_batch(positions, sparse_data)
-    
+
     # Test default behavior (planar_output=False)
     result_interleaved = tensor.transpose_dot_product_3d(target_data, planar_output=False)
     assert result_interleaved.shape == (batch_size, channels)
     assert result_interleaved.flags.c_contiguous
-    
+
     # Test planar output (planar_output=True)
     result_planar = tensor.transpose_dot_product_3d(target_data, planar_output=True)
     assert result_planar.shape == (channels, batch_size)
     assert result_planar.flags.c_contiguous
-    
+
     logger.info("✓ planar_output basic functionality test passed")
 
 
@@ -828,13 +828,13 @@ def test_planar_output_basic_functionality():
 def test_planar_output_equivalence(dtype):
     """Test that planar_output=True/False produce equivalent results."""
     logger.info(f"=== Testing planar_output equivalence with {dtype} ===")
-    
+
     batch_size, channels = 4, 3
     height, width = 48, 64
     block_size = 16
-    
+
     tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size, dtype=dtype)
-    
+
     # Create test data of appropriate dtype
     if dtype == cp.float32:
         sparse_data = cp.random.rand(channels, batch_size, block_size, block_size).astype(dtype)
@@ -842,49 +842,49 @@ def test_planar_output_equivalence(dtype):
     else:  # uint8
         sparse_data = cp.random.randint(0, 256, (channels, batch_size, block_size, block_size), dtype=dtype)
         target_data = cp.random.randint(0, 256, (channels, height, width), dtype=dtype)
-    
+
     positions = cp.random.randint(0, min(height, width) - block_size, (channels, batch_size, 2))
     # Align x-coordinates for uint8 vectorization
     positions[:, :, 1] = (positions[:, :, 1] // 4) * 4
-    
+
     tensor.set_blocks_batch(positions, sparse_data)
-    
+
     # Get results in both formats
     result_interleaved = tensor.transpose_dot_product_3d(target_data, planar_output=False)  # (batch_size, channels)
     result_planar = tensor.transpose_dot_product_3d(target_data, planar_output=True)  # (channels, batch_size)
-    
+
     # Transpose one to match the other for comparison
     result_interleaved_transposed = result_interleaved.T  # (channels, batch_size)
-    
+
     # Results should be numerically identical
     cp.testing.assert_allclose(
-        result_planar, 
-        result_interleaved_transposed, 
-        rtol=1e-6, 
+        result_planar,
+        result_interleaved_transposed,
+        rtol=1e-6,
         atol=1e-8,
-        err_msg=f"planar_output results should be equivalent for {dtype}"
+        err_msg=f"planar_output results should be equivalent for {dtype}",
     )
-    
+
     logger.info(f"✓ planar_output equivalence test passed for {dtype}")
 
 
 def test_planar_output_memory_layout():
     """Test memory layout properties of planar_output results."""
     logger.info("=== Testing planar_output memory layout ===")
-    
+
     batch_size, channels = 6, 3
     height, width = 64, 80
     block_size = 16
-    
+
     tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size, dtype=cp.float32)
-    
+
     # Set test data
     sparse_data = cp.random.rand(channels, batch_size, block_size, block_size).astype(cp.float32)
     positions = cp.random.randint(0, min(height, width) - block_size, (channels, batch_size, 2))
     target_data = cp.random.rand(channels, height, width).astype(cp.float32)
-    
+
     tensor.set_blocks_batch(positions, sparse_data)
-    
+
     # Test interleaved output memory layout
     result_interleaved = tensor.transpose_dot_product_3d(target_data, planar_output=False)
     assert result_interleaved.shape == (batch_size, channels)
@@ -892,7 +892,7 @@ def test_planar_output_memory_layout():
     assert not result_interleaved.flags.f_contiguous
     expected_strides_interleaved = (channels * result_interleaved.itemsize, result_interleaved.itemsize)
     assert result_interleaved.strides == expected_strides_interleaved
-    
+
     # Test planar output memory layout
     result_planar = tensor.transpose_dot_product_3d(target_data, planar_output=True)
     assert result_planar.shape == (channels, batch_size)
@@ -900,7 +900,7 @@ def test_planar_output_memory_layout():
     assert not result_planar.flags.f_contiguous
     expected_strides_planar = (batch_size * result_planar.itemsize, result_planar.itemsize)
     assert result_planar.strides == expected_strides_planar
-    
+
     # Demonstrate the old problem: transposing interleaved creates F-contiguous
     result_interleaved_transposed = result_interleaved.T
     assert result_interleaved_transposed.shape == (channels, batch_size)
@@ -909,47 +909,47 @@ def test_planar_output_memory_layout():
     # F-contiguous has interleaved strides
     f_contiguous_strides = (result_interleaved.itemsize, channels * result_interleaved.itemsize)
     assert result_interleaved_transposed.strides == f_contiguous_strides
-    
+
     logger.info("✓ planar_output memory layout test passed")
 
 
 def test_planar_output_performance_benefit():
     """Test that planar_output eliminates transpose operations."""
     logger.info("=== Testing planar_output performance benefit ===")
-    
+
     batch_size, channels = 10, 3
     height, width = 64, 80
     block_size = 16
-    
+
     tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size, dtype=cp.float32)
-    
+
     # Set test data
     sparse_data = cp.random.rand(channels, batch_size, block_size, block_size).astype(cp.float32)
     positions = cp.random.randint(0, min(height, width) - block_size, (channels, batch_size, 2))
     target_data = cp.random.rand(channels, height, width).astype(cp.float32)
-    
+
     tensor.set_blocks_batch(positions, sparse_data)
-    
+
     # Method 1: Old approach (interleaved + transpose + fix)
     result_old = tensor.transpose_dot_product_3d(target_data, planar_output=False)  # (batch_size, channels)
     result_old_transposed = result_old.T  # Creates F-contiguous view
     result_old_fixed = cp.ascontiguousarray(result_old_transposed)  # Fix memory layout
-    
+
     # Method 2: New approach (direct planar output)
     result_new = tensor.transpose_dot_product_3d(target_data, planar_output=True)  # (channels, batch_size)
-    
+
     # Verify results are identical
     cp.testing.assert_allclose(result_old_fixed, result_new, rtol=1e-6, atol=1e-8)
-    
+
     # Verify memory layout properties
     assert result_old_fixed.flags.c_contiguous  # Required cp.ascontiguousarray()
     assert result_new.flags.c_contiguous  # Direct C-contiguous output
-    
+
     # Verify no additional operations needed for new approach
     assert result_new.flags.owndata  # Direct allocation, not a view
     assert not result_old_transposed.flags.owndata  # Transpose is a view
     assert result_old_fixed.flags.owndata  # ascontiguousarray creates new allocation
-    
+
     logger.info("✓ planar_output performance benefit test passed")
 
 
@@ -957,30 +957,30 @@ def test_planar_output_performance_benefit():
 def test_planar_output_with_output_dtype(output_dtype):
     """Test planar_output works correctly with different output dtypes."""
     logger.info(f"=== Testing planar_output with output_dtype={output_dtype} ===")
-    
+
     batch_size, channels = 4, 2
     height, width = 32, 48
     block_size = 8
-    
+
     tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size, dtype=cp.float32)
-    
+
     # Set test data
     sparse_data = cp.random.rand(channels, batch_size, block_size, block_size).astype(cp.float32)
     positions = cp.random.randint(0, min(height, width) - block_size, (channels, batch_size, 2))
     target_data = cp.random.rand(channels, height, width).astype(cp.float32)
-    
+
     tensor.set_blocks_batch(positions, sparse_data)
-    
+
     # Test both planar_output modes with specified output dtype
     result_interleaved = tensor.transpose_dot_product_3d(target_data, output_dtype=output_dtype, planar_output=False)
     result_planar = tensor.transpose_dot_product_3d(target_data, output_dtype=output_dtype, planar_output=True)
-    
+
     # Verify shapes and dtypes
     assert result_interleaved.shape == (batch_size, channels)
     assert result_planar.shape == (channels, batch_size)
     assert result_interleaved.dtype == output_dtype
     assert result_planar.dtype == output_dtype
-    
+
     # Verify results are equivalent (accounting for dtype precision)
     if output_dtype == cp.float16:
         # Lower precision for FP16
@@ -988,40 +988,40 @@ def test_planar_output_with_output_dtype(output_dtype):
     else:
         # Higher precision for FP32
         rtol, atol = 1e-6, 1e-8
-    
+
     cp.testing.assert_allclose(result_planar, result_interleaved.T, rtol=rtol, atol=atol)
-    
+
     logger.info(f"✓ planar_output with output_dtype={output_dtype} test passed")
 
 
 def test_planar_output_backward_compatibility():
     """Test that the default behavior maintains backward compatibility."""
     logger.info("=== Testing planar_output backward compatibility ===")
-    
+
     batch_size, channels = 3, 2
     height, width = 32, 48
     block_size = 8
-    
+
     tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size, dtype=cp.float32)
-    
+
     # Set test data
     sparse_data = cp.random.rand(channels, batch_size, block_size, block_size).astype(cp.float32)
     positions = cp.random.randint(0, min(height, width) - block_size, (channels, batch_size, 2))
     target_data = cp.random.rand(channels, height, width).astype(cp.float32)
-    
+
     tensor.set_blocks_batch(positions, sparse_data)
-    
+
     # Test that default behavior (no planar_output specified) matches planar_output=False
     result_default = tensor.transpose_dot_product_3d(target_data)
     result_explicit_false = tensor.transpose_dot_product_3d(target_data, planar_output=False)
-    
+
     # Results should be identical
     cp.testing.assert_array_equal(result_default, result_explicit_false)
-    
+
     # Both should have (batch_size, channels) shape
     assert result_default.shape == (batch_size, channels)
     assert result_explicit_false.shape == (batch_size, channels)
-    
+
     logger.info("✓ planar_output backward compatibility test passed")
 
 

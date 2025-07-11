@@ -156,7 +156,7 @@ def main():
 
     # Test DIA factors
     dia_factors = [1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 10.0]
-    
+
     # Check which factors are available
     available_factors = []
     for factor in dia_factors:
@@ -198,11 +198,11 @@ def main():
         plt.figure(figsize=(12, 8))
 
         colors = ["blue", "green", "red", "purple", "orange", "brown", "pink"]
-        
+
         for i, (case_key, mse_values) in enumerate(mse_results.items()):
             factor = float(case_key.split("_")[-1])
             iterations = np.arange(len(mse_values))
-            
+
             # Add approximation error info to label
             if factor == 10.0:
                 label = f"DIA factor {factor} (Perfect)"
@@ -214,7 +214,7 @@ def main():
                 label = f"DIA factor {factor} (~7.1% error)"
             else:
                 label = f"DIA factor {factor}"
-            
+
             plt.semilogy(
                 iterations,
                 mse_values,
@@ -268,7 +268,7 @@ def main():
                     dia_elements = 3 * k * 2624
                     memory_ratio = dia_elements / dense_elements
                 else:
-                    memory_ratio = float('nan')
+                    memory_ratio = float("nan")
 
                 print(
                     f"{factor:6.1f} | {bandwidth:9} | {k:5} | {memory_ratio:12.4f} | "
@@ -277,9 +277,11 @@ def main():
                 )
 
             except Exception as e:
-                print(f"{factor:6.1f} | {'Error':>9} | {'N/A':>5} | {'N/A':>12} | "
-                      f"{metrics['initial_mse']:8.6f} | {metrics['final_mse']:8.6f} | "
-                      f"{metrics['mse_reduction_pct']:6.1f}% | {metrics['final_psnr']:8.2f}")
+                print(
+                    f"{factor:6.1f} | {'Error':>9} | {'N/A':>5} | {'N/A':>12} | "
+                    f"{metrics['initial_mse']:8.6f} | {metrics['final_mse']:8.6f} | "
+                    f"{metrics['mse_reduction_pct']:6.1f}% | {metrics['final_psnr']:8.2f}"
+                )
 
     print(f"\n=== Analysis Complete ===")
     print("Key findings:")
