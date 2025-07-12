@@ -97,7 +97,7 @@ class ConsumerProcess:
         self._wled_client = WLEDClient(wled_config)
 
         # New timestamp-based rendering components
-        self._led_buffer = LEDBuffer(buffer_size=100)
+        self._led_buffer = LEDBuffer(buffer_size=10)
         self._frame_renderer = FrameRenderer(first_frame_delay_ms=100.0, timing_tolerance_ms=5.0)
 
         # Test renderer (optional)
