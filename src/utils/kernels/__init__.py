@@ -21,6 +21,11 @@ from .dia_matvec import (
     create_test_dia_matrix,
     verify_kernel_correctness,
 )
+from .dia_matvec_fp16 import (
+    CustomDIA3DMatVecFP16,
+    CustomDIAMatVecFP16,
+)
+from .pure_fp16_dia_kernel import PureFP16DIA3DKernel, get_kernel_info
 
 __all__ = [
     # FP32 kernels
@@ -35,4 +40,10 @@ __all__ = [
     "create_test_dia_matrix",
     "benchmark_dia_kernels",
     "verify_kernel_correctness",
+    # FP16 DIA kernels
+    "CustomDIAMatVecFP16",
+    "CustomDIA3DMatVecFP16",
+    # Pure FP16 kernels
+    "PureFP16DIA3DKernel",
+    "get_kernel_info",
 ]
