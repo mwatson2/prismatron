@@ -64,7 +64,7 @@ class TestFrameOptimizer:
     """Test standalone frame optimization function."""
 
     def load_real_diffusion_patterns(
-        self, precision: str = "fp16"
+        self, precision: str = "fp32"
     ) -> Tuple[SingleBlockMixedSparseTensor, DiagonalATAMatrix]:
         """
         Load real diffusion patterns from stored patterns with DIA matrix.
@@ -112,7 +112,7 @@ class TestFrameOptimizer:
 
         return mixed_tensor, dia_matrix
 
-    def load_ata_inverse(self, precision: str = "fp16") -> np.ndarray:
+    def load_ata_inverse(self, precision: str = "fp32") -> np.ndarray:
         """
         Load real ATA inverse matrices from stored patterns.
 
@@ -522,6 +522,7 @@ class TestFrameOptimizer:
 
         print(f"  ✅ {precision} patterns test completed")
 
+    @pytest.mark.skip(reason="FP16 pattern file not available - mixed tensor FP16 support removed")
     def test_optimization_fp16_patterns_regression(self):
         """Test optimization with fp16 patterns and validate against fixture for regression detection."""
         self._test_optimization_patterns_regression("fp16")

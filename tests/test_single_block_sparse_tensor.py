@@ -995,7 +995,7 @@ def test_planar_output_performance_benefit():
     logger.info("✓ planar_output performance benefit test passed")
 
 
-@pytest.mark.parametrize("output_dtype", [cp.float32, cp.float16])
+@pytest.mark.parametrize("output_dtype", [cp.float32])
 def test_planar_output_with_output_dtype(output_dtype):
     """Test planar_output works correctly with different output dtypes."""
     logger.info(f"=== Testing planar_output with output_dtype={output_dtype} ===")
