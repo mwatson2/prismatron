@@ -135,7 +135,7 @@ def optimize_frame_led_values(
     debug and logger.info("Computing A^T @ b...")
 
     ATb_gpu = _calculate_atb(target_planar_uint8, at_matrix, debug=debug)  # Shape: (3, led_count), dtype: fp32
-    
+
     # ATb is already in correct (3, led_count) format and C-contiguous layout
     # The planar_output=True parameter eliminates transpose operations and memory layout issues
 

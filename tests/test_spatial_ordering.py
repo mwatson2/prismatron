@@ -20,15 +20,16 @@ class TestComputeRCMOrdering:
     def test_empty_positions(self):
         """Test with empty positions array."""
         positions = np.array([]).reshape(0, 2)
-        rcm_order, inverse_order = compute_rcm_ordering(positions, block_size=64)
+        rcm_order, inverse_order, adjacency_diagonals = compute_rcm_ordering(positions, block_size=64)
 
         assert len(rcm_order) == 0
         assert len(inverse_order) == 0
+        assert adjacency_diagonals == 0  # No diagonals for empty case
 
     def test_single_position(self):
         """Test with single position."""
         positions = np.array([[100, 100]])
-        rcm_order, inverse_order = compute_rcm_ordering(positions, block_size=64)
+        rcm_order, inverse_order, _ = compute_rcm_ordering(positions, block_size=64)
 
         assert len(rcm_order) == 1
         assert len(inverse_order) == 1
@@ -39,7 +40,7 @@ class TestComputeRCMOrdering:
         """Test with two overlapping positions."""
         # Two positions that should overlap with block_size=64
         positions = np.array([[100, 100], [120, 120]])  # Distance ~28, both blocks size 64
-        rcm_order, inverse_order = compute_rcm_ordering(positions, block_size=64)
+        rcm_order, inverse_order, _ = compute_rcm_ordering(positions, block_size=64)
 
         assert len(rcm_order) == 2
         assert len(inverse_order) == 2
@@ -53,7 +54,7 @@ class TestComputeRCMOrdering:
         """Test with two non-overlapping positions."""
         # Two positions that should NOT overlap with block_size=64
         positions = np.array([[100, 100], [300, 300]])  # Distance ~283, blocks size 64
-        rcm_order, inverse_order = compute_rcm_ordering(positions, block_size=64)
+        rcm_order, inverse_order, _ = compute_rcm_ordering(positions, block_size=64)
 
         assert len(rcm_order) == 2
         assert len(inverse_order) == 2
@@ -75,7 +76,7 @@ class TestComputeRCMOrdering:
             ]
         )
 
-        rcm_order, inverse_order = compute_rcm_ordering(positions, block_size=64)
+        rcm_order, inverse_order, _ = compute_rcm_ordering(positions, block_size=64)
 
         assert len(rcm_order) == 4
         assert len(inverse_order) == 4
@@ -92,7 +93,7 @@ class TestComputeRCMOrdering:
         n_blocks = 10
         positions = np.random.uniform(0, 500, (n_blocks, 2))
 
-        rcm_order, inverse_order = compute_rcm_ordering(positions, block_size=64)
+        rcm_order, inverse_order, _ = compute_rcm_ordering(positions, block_size=64)
 
         assert len(rcm_order) == n_blocks
         assert len(inverse_order) == n_blocks
@@ -268,7 +269,7 @@ class TestIntegration:
         matrix = sp.random(6, 12, density=0.3)
 
         # Compute RCM ordering
-        rcm_order, inverse_order = compute_rcm_ordering(positions, block_size=64)
+        rcm_order, inverse_order, _ = compute_rcm_ordering(positions, block_size=64)
 
         # Reorder matrix
         reordered_matrix = reorder_matrix_columns(matrix, rcm_order, channels_per_block=3)
@@ -289,7 +290,7 @@ class TestIntegration:
         )
 
         positions = np.array([[0, 0], [50, 0], [0, 50], [50, 50]])
-        rcm_order, _ = compute_rcm_ordering(positions, block_size=64)
+        rcm_order, _, _ = compute_rcm_ordering(positions, block_size=64)
 
         # Reorder to spatial order
         spatial_values = reorder_block_values(original_values, rcm_order, from_ordered=False)

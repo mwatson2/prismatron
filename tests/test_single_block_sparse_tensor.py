@@ -25,6 +25,38 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 
+@pytest.fixture(autouse=True)
+def cuda_cleanup():
+    """Ensure clean CUDA state before and after each test."""
+    # Clear CUDA memory and reset state before test
+    if cp.cuda.is_available():
+        try:
+            cp.cuda.Device().synchronize()
+            cp.get_default_memory_pool().free_all_blocks()
+            cp.get_default_pinned_memory_pool().free_all_blocks()
+            # Clear any cached CUDA modules if available
+            if hasattr(cp._core, "_kernel") and hasattr(cp._core._kernel, "clear_memo"):
+                cp._core._kernel.clear_memo()
+        except Exception:
+            # If cleanup fails, continue with test
+            pass
+
+    yield  # Run the test
+
+    # Clean up after test
+    if cp.cuda.is_available():
+        try:
+            cp.cuda.Device().synchronize()
+            cp.get_default_memory_pool().free_all_blocks()
+            cp.get_default_pinned_memory_pool().free_all_blocks()
+            # Clear any cached CUDA modules if available
+            if hasattr(cp._core, "_kernel") and hasattr(cp._core._kernel, "clear_memo"):
+                cp._core._kernel.clear_memo()
+        except Exception:
+            # If cleanup fails, don't fail the test
+            pass
+
+
 def test_basic_functionality():
     """Test basic tensor creation and block setting."""
     logger.info("=== Testing Basic Functionality ===")
@@ -73,6 +105,8 @@ def test_batch_operations():
 
     # Create batch data (note: positions should be channels-first for new layout)
     positions = cp.random.randint(0, height - block_size, (channels, batch_size, 2))
+    # Align x-coordinates to multiples of 4 for uint8 vectorization
+    positions[:, :, 1] = (positions[:, :, 1] // 4) * 4
     values = cp.random.rand(channels, batch_size, block_size, block_size).astype(cp.float32)
 
     # Set blocks in batch
@@ -153,6 +187,8 @@ def test_performance_comparison():
 
     # Set all blocks with random data (note: positions should be channels-first for new layout)
     positions = cp.random.randint(0, height - block_size, (channels, batch_size, 2))
+    # Align x-coordinates to multiples of 4 for uint8 vectorization
+    positions[:, :, 1] = (positions[:, :, 1] // 4) * 4
     values = cp.random.rand(channels, batch_size, block_size, block_size).astype(cp.float32)
     tensor.set_blocks_batch(positions, values)
 
@@ -807,6 +843,8 @@ def test_planar_output_basic_functionality():
     # Set some test data
     sparse_data = cp.random.rand(channels, batch_size, block_size, block_size).astype(cp.float32)
     positions = cp.random.randint(0, min(height, width) - block_size, (channels, batch_size, 2))
+    # Align x-coordinates to multiples of 4 for uint8 vectorization
+    positions[:, :, 1] = (positions[:, :, 1] // 4) * 4
     target_data = cp.random.rand(channels, height, width).astype(cp.float32)
 
     tensor.set_blocks_batch(positions, sparse_data)
@@ -881,6 +919,8 @@ def test_planar_output_memory_layout():
     # Set test data
     sparse_data = cp.random.rand(channels, batch_size, block_size, block_size).astype(cp.float32)
     positions = cp.random.randint(0, min(height, width) - block_size, (channels, batch_size, 2))
+    # Align x-coordinates to multiples of 4 for uint8 vectorization
+    positions[:, :, 1] = (positions[:, :, 1] // 4) * 4
     target_data = cp.random.rand(channels, height, width).astype(cp.float32)
 
     tensor.set_blocks_batch(positions, sparse_data)
@@ -926,6 +966,8 @@ def test_planar_output_performance_benefit():
     # Set test data
     sparse_data = cp.random.rand(channels, batch_size, block_size, block_size).astype(cp.float32)
     positions = cp.random.randint(0, min(height, width) - block_size, (channels, batch_size, 2))
+    # Align x-coordinates to multiples of 4 for uint8 vectorization
+    positions[:, :, 1] = (positions[:, :, 1] // 4) * 4
     target_data = cp.random.rand(channels, height, width).astype(cp.float32)
 
     tensor.set_blocks_batch(positions, sparse_data)
@@ -967,6 +1009,8 @@ def test_planar_output_with_output_dtype(output_dtype):
     # Set test data
     sparse_data = cp.random.rand(channels, batch_size, block_size, block_size).astype(cp.float32)
     positions = cp.random.randint(0, min(height, width) - block_size, (channels, batch_size, 2))
+    # Align x-coordinates to multiples of 4 for uint8 vectorization
+    positions[:, :, 1] = (positions[:, :, 1] // 4) * 4
     target_data = cp.random.rand(channels, height, width).astype(cp.float32)
 
     tensor.set_blocks_batch(positions, sparse_data)
@@ -1007,6 +1051,8 @@ def test_planar_output_backward_compatibility():
     # Set test data
     sparse_data = cp.random.rand(channels, batch_size, block_size, block_size).astype(cp.float32)
     positions = cp.random.randint(0, min(height, width) - block_size, (channels, batch_size, 2))
+    # Align x-coordinates to multiples of 4 for uint8 vectorization
+    positions[:, :, 1] = (positions[:, :, 1] // 4) * 4
     target_data = cp.random.rand(channels, height, width).astype(cp.float32)
 
     tensor.set_blocks_batch(positions, sparse_data)

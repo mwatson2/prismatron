@@ -11,11 +11,44 @@ from pathlib import Path
 
 import cupy as cp
 import numpy as np
+import pytest
 from PIL import Image
 
 sys.path.append(str(Path(__file__).parent.parent / "src"))
 
 from utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
+
+
+@pytest.fixture(autouse=True)
+def cuda_cleanup():
+    """Ensure clean CUDA state before and after each test."""
+    # Clear CUDA memory and reset state before test
+    if cp.cuda.is_available():
+        try:
+            cp.cuda.Device().synchronize()
+            cp.get_default_memory_pool().free_all_blocks()
+            cp.get_default_pinned_memory_pool().free_all_blocks()
+            # Clear any cached CUDA modules if available
+            if hasattr(cp._core, "_kernel") and hasattr(cp._core._kernel, "clear_memo"):
+                cp._core._kernel.clear_memo()
+        except Exception:
+            # If cleanup fails, continue with test
+            pass
+
+    yield  # Run the test
+
+    # Clean up after test
+    if cp.cuda.is_available():
+        try:
+            cp.cuda.Device().synchronize()
+            cp.get_default_memory_pool().free_all_blocks()
+            cp.get_default_pinned_memory_pool().free_all_blocks()
+            # Clear any cached CUDA modules if available
+            if hasattr(cp._core, "_kernel") and hasattr(cp._core._kernel, "clear_memo"):
+                cp._core._kernel.clear_memo()
+        except Exception:
+            # If cleanup fails, don't fail the test
+            pass
 
 
 def load_flower_image() -> np.ndarray:

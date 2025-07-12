@@ -214,6 +214,7 @@ class DiagonalATAMatrix:
                     f"This may indicate upstream memory layout issues. "
                     f"Consider using cp.ascontiguousarray() if experiencing problems.",
                     UserWarning,
+                    stacklevel=2,
                 )
 
         elif isinstance(tensor, np.ndarray):

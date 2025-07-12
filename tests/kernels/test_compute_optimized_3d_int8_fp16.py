@@ -69,6 +69,9 @@ class TestComputeOptimized3DInt8FP16Kernel:
                 block_positions[c, b, 0] = np.random.randint(0, max_row)  # top_row
                 block_positions[c, b, 1] = np.random.randint(0, max_col)  # top_col
 
+        # Align x-coordinates to multiples of 4 for uint8 kernel requirements
+        block_positions[:, :, 1] = (block_positions[:, :, 1] // 4) * 4
+
         # Generate target image (channels, height, width) as UINT8
         target_3d = np.random.randint(0, 256, size=(self.channels, self.height, self.width), dtype=np.uint8)
 

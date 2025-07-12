@@ -810,7 +810,7 @@ class TestCudaKernels:
         int8_target_data = np.random.randint(0, 256, (channels, height, width), dtype=np.uint8)
         positions = np.random.randint(0, (min(height, width) - block_size) // 4, (channels, batch_size, 2))
 
-        positions = positions * 4  # Ensure positions are multiples of 4
+        positions[:, :, 1] = (positions[:, :, 1] // 4) * 4  # Align x-coordinates to multiples of 4
 
         # Convert to CuPy arrays
         sparse_values = cp.asarray(int8_sparse_data)
@@ -851,7 +851,7 @@ class TestCudaKernels:
         int8_target_data = np.random.randint(0, 256, (channels, height, width), dtype=np.uint8)
         positions = np.random.randint(0, (min(height, width) - block_size) // 4, (channels, batch_size, 2))
 
-        positions = positions * 4  # Ensure positions are multiples of 4
+        positions[:, :, 1] = (positions[:, :, 1] // 4) * 4  # Align x-coordinates to multiples of 4
 
         # Convert to CuPy arrays
         int8_sparse_cupy = cp.asarray(int8_sparse_data)
@@ -911,7 +911,7 @@ class TestCudaKernels:
             int8_target_data = np.random.randint(0, 256, (channels, height, width), dtype=np.uint8)
             positions = np.random.randint(0, (min(height, width) - block_size) // 4, (channels, batch_size, 2))
 
-            positions = positions * 4  # Ensure positions are multiples of 4
+            positions[:, :, 1] = (positions[:, :, 1] // 4) * 4  # Align x-coordinates to multiples of 4
 
             # Convert to CuPy
             sparse_values = cp.asarray(int8_sparse_data)

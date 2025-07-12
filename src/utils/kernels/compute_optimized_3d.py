@@ -152,7 +152,7 @@ def cuda_transpose_dot_product_3d_compute_optimized(
         interleaved: If True, return (batch_size, channels). If False, return (channels, batch_size).
 
     Returns:
-        Result of A^T @ b, shape (batch_size, channels) if interleaved=True, 
+        Result of A^T @ b, shape (batch_size, channels) if interleaved=True,
         (channels, batch_size) if interleaved=False
     """
     channels_input, height, width = target_3d.shape

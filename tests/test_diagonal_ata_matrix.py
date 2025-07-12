@@ -28,6 +28,38 @@ except ImportError:
 from src.utils.diagonal_ata_matrix import DiagonalATAMatrix
 
 
+@pytest.fixture(autouse=True)
+def cuda_cleanup():
+    """Ensure clean CUDA state before and after each test."""
+    # Clear CUDA memory and reset state before test
+    if CUPY_AVAILABLE and cp.cuda.is_available():
+        try:
+            cp.cuda.Device().synchronize()
+            cp.get_default_memory_pool().free_all_blocks()
+            cp.get_default_pinned_memory_pool().free_all_blocks()
+            # Clear any cached CUDA modules if available
+            if hasattr(cp._core, "_kernel") and hasattr(cp._core._kernel, "clear_memo"):
+                cp._core._kernel.clear_memo()
+        except Exception:
+            # If cleanup fails, continue with test
+            pass
+
+    yield  # Run the test
+
+    # Clean up after test
+    if CUPY_AVAILABLE and cp.cuda.is_available():
+        try:
+            cp.cuda.Device().synchronize()
+            cp.get_default_memory_pool().free_all_blocks()
+            cp.get_default_pinned_memory_pool().free_all_blocks()
+            # Clear any cached CUDA modules if available
+            if hasattr(cp._core, "_kernel") and hasattr(cp._core._kernel, "clear_memo"):
+                cp._core._kernel.clear_memo()
+        except Exception:
+            # If cleanup fails, don't fail the test
+            pass
+
+
 class TestDiagonalATAMatrix:
     """Test suite for DiagonalATAMatrix class."""
 

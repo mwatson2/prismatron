@@ -178,12 +178,12 @@ class SingleBlockMixedSparseTensor:
                     tensor.shape[2] * tensor.itemsize,  # batch stride
                     tensor.itemsize,  # coordinate stride
                 )
-                if tensor.strides != expected_strides:
-                    raise ValueError(
-                        f"block_positions has unexpected stride pattern for (channels, batch, 2) layout. "
-                        f"Expected strides {expected_strides}, got {tensor.strides}. "
-                        f"This indicates incorrect memory layout (not channels-first C-contiguous)."
-                    )
+            if len(tensor.shape) == 3 and tensor.shape[2] == 2 and tensor.strides != expected_strides:
+                raise ValueError(
+                    f"block_positions has unexpected stride pattern for (channels, batch, 2) layout. "
+                    f"Expected strides {expected_strides}, got {tensor.strides}. "
+                    f"This indicates incorrect memory layout (not channels-first C-contiguous)."
+                )
 
         # Check data ownership for debugging memory issues
         if not tensor.flags.owndata:
@@ -195,6 +195,7 @@ class SingleBlockMixedSparseTensor:
                 f"This may indicate upstream memory layout issues. "
                 f"Consider using cp.ascontiguousarray() if experiencing problems.",
                 UserWarning,
+                stacklevel=2,
             )
 
     def _validate_dtype(self, dtype: cp.dtype) -> cp.dtype:
@@ -324,7 +325,9 @@ class SingleBlockMixedSparseTensor:
         self.sparse_values[:] = values
         self.block_positions[:] = positions
 
-    def transpose_dot_product_3d(self, target_3d: cp.ndarray, output_dtype: Optional[cp.dtype] = None, planar_output: bool = False) -> cp.ndarray:
+    def transpose_dot_product_3d(
+        self, target_3d: cp.ndarray, output_dtype: Optional[cp.dtype] = None, planar_output: bool = False
+    ) -> cp.ndarray:
         """
         Compute A^T @ b operation with 3D planar input (channels, height, width).
 
@@ -342,7 +345,7 @@ class SingleBlockMixedSparseTensor:
                           This eliminates the need for transpose operations and prevents F-contiguous memory layout issues.
 
         Returns:
-            Result of A^T @ b, shape (batch_size, channels) if planar_output=False, 
+            Result of A^T @ b, shape (batch_size, channels) if planar_output=False,
             (channels, batch_size) if planar_output=True, with specified output dtype
         """
         if target_3d.shape != (self.channels, self.height, self.width):
