@@ -16,6 +16,8 @@ import numpy as np
 
 from ..const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
 from ..core import ControlState, FrameConsumer
+from .frame_renderer import FrameRenderer
+from .led_buffer import LEDBuffer
 from .led_optimizer_dense import LEDOptimizer
 from .test_renderer import TestRenderer, TestRendererConfig
 from .wled_client import WLEDClient, WLEDConfig
@@ -30,11 +32,9 @@ class ConsumerStats:
     frames_processed: int = 0
     total_processing_time: float = 0.0
     total_optimization_time: float = 0.0
-    total_transmission_time: float = 0.0
     optimization_errors: int = 0
-    transmission_errors: int = 0
     last_frame_time: float = 0.0
-    current_fps: float = 0.0
+    current_optimization_fps: float = 0.0
 
     def get_average_fps(self) -> float:
         """Get average FPS since start."""
@@ -46,12 +46,6 @@ class ConsumerStats:
         """Get average optimization time per frame."""
         if self.frames_processed > 0:
             return self.total_optimization_time / self.frames_processed
-        return 0.0
-
-    def get_average_transmission_time(self) -> float:
-        """Get average transmission time per frame."""
-        if self.frames_processed > 0:
-            return self.total_transmission_time / self.frames_processed
         return 0.0
 
 
@@ -102,22 +96,27 @@ class ConsumerProcess:
         )
         self._wled_client = WLEDClient(wled_config)
 
+        # New timestamp-based rendering components
+        self._led_buffer = LEDBuffer(buffer_size=100)
+        self._frame_renderer = FrameRenderer(first_frame_delay_ms=100.0, timing_tolerance_ms=5.0)
+
         # Test renderer (optional)
         self.enable_test_renderer = enable_test_renderer
         self._test_renderer: Optional[TestRenderer] = None
         self._test_renderer_config = test_renderer_config or TestRendererConfig()
 
-        # Process state
+        # Process state and threading
         self._running = False
         self._shutdown_requested = False
         self._stats = ConsumerStats()
-        self._process_thread: Optional[threading.Thread] = None
+        self._optimization_thread: Optional[threading.Thread] = None
+        self._renderer_thread: Optional[threading.Thread] = None
 
         # Performance settings
-        self.target_fps = 15.0
         self.max_frame_wait_timeout = 1.0
         self.use_optimization = True
         self.brightness_scale = 1.0
+        self.max_optimization_iterations = 50  # No timing constraints
 
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -147,6 +146,9 @@ class ConsumerProcess:
             if self.enable_test_renderer:
                 self._initialize_test_renderer()
 
+            # Configure frame renderer output targets
+            self._frame_renderer.set_output_targets(wled_client=self._wled_client, test_renderer=self._test_renderer)
+
             logger.info("Consumer process initialized successfully")
             return True
 
@@ -169,13 +171,17 @@ class ConsumerProcess:
             if not self.initialize():
                 return False
 
-            # Start processing thread
+            # Start optimization and renderer threads
             self._running = True
             self._shutdown_requested = False
-            self._process_thread = threading.Thread(target=self._process_loop, name="ConsumerProcess")
-            self._process_thread.start()
 
-            logger.info("Consumer process started")
+            self._optimization_thread = threading.Thread(target=self._optimization_loop, name="OptimizationThread")
+            self._renderer_thread = threading.Thread(target=self._rendering_loop, name="RendererThread")
+
+            self._optimization_thread.start()
+            self._renderer_thread.start()
+
+            logger.info("Consumer process started with dual threads")
             return True
 
         except Exception as e:
@@ -191,11 +197,16 @@ class ConsumerProcess:
             self._shutdown_requested = True
             self._running = False
 
-            # Wait for processing thread to finish
-            if self._process_thread and self._process_thread.is_alive():
-                self._process_thread.join(timeout=5.0)
-                if self._process_thread.is_alive():
-                    logger.warning("Process thread did not stop gracefully")
+            # Wait for both threads to finish
+            if self._optimization_thread and self._optimization_thread.is_alive():
+                self._optimization_thread.join(timeout=5.0)
+                if self._optimization_thread.is_alive():
+                    logger.warning("Optimization thread did not stop gracefully")
+
+            if self._renderer_thread and self._renderer_thread.is_alive():
+                self._renderer_thread.join(timeout=5.0)
+                if self._renderer_thread.is_alive():
+                    logger.warning("Renderer thread did not stop gracefully")
 
             # Cleanup components
             self._cleanup()
@@ -205,15 +216,12 @@ class ConsumerProcess:
         except Exception as e:
             logger.error(f"Error stopping consumer process: {e}")
 
-    def _process_loop(self) -> None:
-        """Main processing loop."""
-        logger.info("Consumer processing loop started")
-        target_frame_time = 1.0 / self.target_fps
+    def _optimization_loop(self) -> None:
+        """Optimization thread - processes frames as fast as possible."""
+        logger.info("Optimization thread started")
 
         while self._running and not self._shutdown_requested:
             try:
-                loop_start_time = time.time()
-
                 # Check for shutdown signal from control state
                 if self._control_state.should_shutdown():
                     logger.info("Shutdown signal received from control state")
@@ -226,27 +234,45 @@ class ConsumerProcess:
                     # Timeout waiting for frame
                     continue
 
-                # Process the frame
-                self._process_frame(buffer_info)
-
-                # Update FPS tracking
-                loop_time = time.time() - loop_start_time
-                self._stats.current_fps = 1.0 / loop_time if loop_time > 0 else 0.0
-
-                # Frame rate limiting
-                remaining_time = target_frame_time - loop_time
-                if remaining_time > 0:
-                    time.sleep(remaining_time)
+                # Process the frame for optimization only
+                self._process_frame_optimization(buffer_info)
 
             except Exception as e:
-                logger.error(f"Error in consumer processing loop: {e}")
+                logger.error(f"Error in optimization loop: {e}")
                 time.sleep(0.1)  # Brief pause before retrying
 
-        logger.info("Consumer processing loop ended")
+        logger.info("Optimization thread ended")
 
-    def _process_frame(self, buffer_info) -> None:
+    def _rendering_loop(self) -> None:
+        """Rendering thread - handles timestamp-based frame output."""
+        logger.info("Renderer thread started")
+
+        while self._running and not self._shutdown_requested:
+            try:
+                # Get next LED values with timeout
+                led_data = self._led_buffer.read_led_values(timeout=0.1)
+
+                if led_data is None:
+                    continue  # Timeout - no data available
+
+                led_values, timestamp, metadata = led_data
+
+                # Render with timestamp-based timing
+                success = self._frame_renderer.render_frame_at_timestamp(led_values, timestamp, metadata)
+
+                if not success:
+                    logger.warning("Frame rendering failed")
+
+            except Exception as e:
+                logger.error(f"Error in rendering loop: {e}")
+                time.sleep(0.01)
+
+        logger.info("Renderer thread ended")
+
+    def _process_frame_optimization(self, buffer_info) -> None:
         """
-        Process a single frame from shared memory.
+        Process frame for LED optimization only - no rendering.
+        Rendering handled by separate renderer thread.
 
         Args:
             buffer_info: Buffer information from frame consumer
@@ -254,8 +280,9 @@ class ConsumerProcess:
         start_time = time.time()
 
         try:
-            # Get frame array from buffer
+            # Extract frame and timestamp
             frame_array = buffer_info.get_array()
+            timestamp = getattr(buffer_info, "presentation_timestamp", None) or time.time()
 
             # Validate frame shape
             if frame_array.shape != (FRAME_HEIGHT, FRAME_WIDTH, 4):
@@ -269,63 +296,57 @@ class ConsumerProcess:
             if self.brightness_scale != 1.0:
                 rgb_frame = (rgb_frame * self.brightness_scale).clip(0, 255).astype(np.uint8)
 
-            # Optimize LED values
+            # Optimize LED values (no timing constraints)
             optimization_start = time.time()
-
-            # Use diffusion pattern optimization
-            max_iters = 50 if self.use_optimization else 5  # Fewer iterations for speed mode
-            result = self._led_optimizer.optimize_frame(rgb_frame, max_iterations=max_iters)
-
+            result = self._led_optimizer.optimize_frame(rgb_frame, max_iterations=self.max_optimization_iterations)
             optimization_time = time.time() - optimization_start
 
             # Check optimization result
             if not result.converged:
-                logger.warning(f"Optimization did not converge after {result.iterations} iterations")
+                logger.debug(f"Optimization did not converge after {result.iterations} iterations")
                 self._stats.optimization_errors += 1
 
-            # Send to test renderer if enabled
-            if self._test_renderer and self._test_renderer.is_running:
-                try:
-                    led_values_uint8 = result.led_values.astype(np.uint8)
-                    self._test_renderer.render_led_values(led_values_uint8)
-                except Exception as e:
-                    logger.warning(f"Test renderer error: {e}")
+            # Store in LED buffer with timestamp
+            led_values_uint8 = result.led_values.astype(np.uint8)
+            success = self._led_buffer.write_led_values(
+                led_values_uint8,
+                timestamp,
+                {
+                    "optimization_time": optimization_time,
+                    "converged": result.converged,
+                    "iterations": result.iterations,
+                    "error_metrics": result.error_metrics,
+                },
+            )
 
-            # Transmit to WLED
-            transmission_start = time.time()
-            led_values = result.led_values.astype(np.uint8)
+            if not success:
+                logger.warning("Failed to write LED values to buffer")
 
-            transmission_result = self._wled_client.send_led_data(led_values)
-            transmission_time = time.time() - transmission_start
-
-            if not transmission_result.success:
-                logger.warning(f"WLED transmission failed: {transmission_result.errors}")
-                self._stats.transmission_errors += 1
-
-            # Update statistics
+            # Update statistics (optimization only)
             total_time = time.time() - start_time
             self._stats.frames_processed += 1
             self._stats.total_processing_time += total_time
             self._stats.total_optimization_time += optimization_time
-            self._stats.total_transmission_time += transmission_time
             self._stats.last_frame_time = start_time
+
+            # Update optimization FPS (independent of rendering)
+            self._stats.current_optimization_fps = 1.0 / total_time if total_time > 0 else 0.0
 
             # Log performance periodically
             if self._stats.frames_processed % 100 == 0:
                 avg_fps = self._stats.get_average_fps()
                 avg_opt_time = self._stats.get_average_optimization_time()
-                avg_tx_time = self._stats.get_average_transmission_time()
+                buffer_stats = self._led_buffer.get_buffer_stats()
 
                 logger.info(
-                    f"Performance: {avg_fps:.1f} fps avg, "
+                    f"Optimization: {avg_fps:.1f} fps avg, "
                     f"opt: {avg_opt_time * 1000:.1f}ms, "
-                    f"tx: {avg_tx_time * 1000:.1f}ms, "
-                    f"errors: opt={self._stats.optimization_errors}, "
-                    f"tx={self._stats.transmission_errors}"
+                    f"buffer: {buffer_stats['utilization']:.1%}, "
+                    f"errors: {self._stats.optimization_errors}"
                 )
 
         except Exception as e:
-            logger.error(f"Error processing frame: {e}")
+            logger.error(f"Error in optimization: {e}")
             self._stats.optimization_errors += 1
 
     def _initialize_test_renderer(self) -> bool:
@@ -370,14 +391,12 @@ class ConsumerProcess:
         return {
             "running": self._running,
             "frames_processed": self._stats.frames_processed,
-            "current_fps": self._stats.current_fps,
-            "average_fps": self._stats.get_average_fps(),
+            "current_optimization_fps": self._stats.current_optimization_fps,
+            "average_optimization_fps": self._stats.get_average_fps(),
             "total_processing_time": self._stats.total_processing_time,
             "average_optimization_time": self._stats.get_average_optimization_time(),
-            "average_transmission_time": self._stats.get_average_transmission_time(),
             "optimization_errors": self._stats.optimization_errors,
-            "transmission_errors": self._stats.transmission_errors,
-            "target_fps": self.target_fps,
+            "max_optimization_iterations": self.max_optimization_iterations,
             "use_optimization": self.use_optimization,
             "brightness_scale": self.brightness_scale,
             "led_count": LED_COUNT,
@@ -386,11 +405,13 @@ class ConsumerProcess:
             "optimizer_stats": self._led_optimizer.get_optimizer_stats(),
             "test_renderer_enabled": self.enable_test_renderer,
             "test_renderer_stats": (self._test_renderer.get_statistics() if self._test_renderer else None),
+            "led_buffer_stats": self._led_buffer.get_buffer_stats(),
+            "renderer_stats": self._frame_renderer.get_renderer_stats(),
         }
 
     def set_performance_settings(
         self,
-        target_fps: Optional[float] = None,
+        max_optimization_iterations: Optional[int] = None,
         use_optimization: Optional[bool] = None,
         brightness_scale: Optional[float] = None,
     ) -> None:
@@ -398,12 +419,12 @@ class ConsumerProcess:
         Update performance settings.
 
         Args:
-            target_fps: Target frames per second
+            max_optimization_iterations: Maximum optimization iterations (no timing constraints)
             use_optimization: Whether to use full optimization or simple sampling
             brightness_scale: Brightness scaling factor (0.0 to 1.0)
         """
-        if target_fps is not None:
-            self.target_fps = max(1.0, min(60.0, target_fps))
+        if max_optimization_iterations is not None:
+            self.max_optimization_iterations = max(1, min(200, max_optimization_iterations))
 
         if use_optimization is not None:
             self.use_optimization = use_optimization
@@ -412,7 +433,7 @@ class ConsumerProcess:
             self.brightness_scale = max(0.0, min(1.0, brightness_scale))
 
         logger.info(
-            f"Updated performance settings: fps={self.target_fps}, "
+            f"Updated performance settings: max_iters={self.max_optimization_iterations}, "
             f"optimization={self.use_optimization}, "
             f"brightness={self.brightness_scale}"
         )
@@ -438,10 +459,15 @@ class ConsumerProcess:
                     return False
 
                 self.enable_test_renderer = True
-                return self._initialize_test_renderer()
+                success = self._initialize_test_renderer()
+                if success:
+                    # Update frame renderer output targets
+                    self._frame_renderer.set_test_renderer_enabled(True)
+                return success
             else:
                 # Disable test renderer
                 self.enable_test_renderer = False
+                self._frame_renderer.set_test_renderer_enabled(False)
                 if self._test_renderer:
                     self._test_renderer.stop()
                     self._test_renderer = None
@@ -462,6 +488,49 @@ class ConsumerProcess:
         """
         return self._test_renderer
 
+    def set_timing_parameters(
+        self, first_frame_delay_ms: Optional[float] = None, timing_tolerance_ms: Optional[float] = None
+    ) -> None:
+        """
+        Update timing parameters for the frame renderer.
+
+        Args:
+            first_frame_delay_ms: New first frame delay
+            timing_tolerance_ms: New timing tolerance
+        """
+        self._frame_renderer.set_timing_parameters(
+            first_frame_delay_ms=first_frame_delay_ms, timing_tolerance_ms=timing_tolerance_ms
+        )
+
+    def set_led_buffer_size(self, buffer_size: int) -> bool:
+        """
+        Set LED buffer size (will clear existing data).
+
+        Args:
+            buffer_size: New buffer size
+
+        Returns:
+            True if successful, False otherwise
+        """
+        return self._led_buffer.set_buffer_size(buffer_size)
+
+    def clear_led_buffer(self) -> None:
+        """Clear all data from LED buffer."""
+        self._led_buffer.clear()
+
+    def reset_renderer_stats(self) -> None:
+        """Reset renderer timing statistics."""
+        self._frame_renderer.reset_stats()
+
+    def set_wled_enabled(self, enabled: bool) -> None:
+        """Enable or disable WLED output."""
+        self._frame_renderer.set_wled_enabled(enabled)
+        logger.info(f"WLED output {'enabled' if enabled else 'disabled'}")
+
+    def is_renderer_initialized(self) -> bool:
+        """Check if renderer is initialized with timing delta."""
+        return self._frame_renderer.is_initialized()
+
     def _signal_handler(self, signum, frame) -> None:
         """Handle shutdown signals."""
         logger.info(f"Received signal {signum}, initiating shutdown...")
@@ -476,6 +545,9 @@ class ConsumerProcess:
 
             if hasattr(self, "_wled_client"):
                 self._wled_client.disconnect()
+
+            if hasattr(self, "_led_buffer"):
+                self._led_buffer.clear()
 
             if hasattr(self, "_frame_consumer"):
                 self._frame_consumer.cleanup()

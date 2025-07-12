@@ -1,0 +1,13 @@
+Next I would like to discuss how the main application handles different producer / consumer speeds. Please check the implementations in @src/producer and     │
+│   @src/consumer. The way I would like this to work is that producers are free-running, producing frames as fast as they can and marking each with a render      │
+│   timestamp. The producers will block on the ring buffer if the consumer has not read enough frames. Similarly, the consumer LED optimization task should run   │
+│   as fast as possible, pulling frames from the ring buffer and performing the optimization task. Finally, the renderer should render frames according to their  │
+│   timestamps. I think we may need a separate renderer class for this which then feeds frames at render time to the wled_client or test_renderer. We may also    │
+│   need a separate producer/consumeer buffer between led optimization and rendered. This can be quite deep as it's storing the LED values which are small        │
+│   conpared to the whole frame (3 x 2624). This would allow us plenty of scope to absorb jitter in the frame generation and optimization processes and will      │
+│   help us introduce batch frame optimization later. The renderer will need to know how to interpret frame timestamps. Probably it should note the wallclock     │
+│   time at which the first frame arrives and use that to establish a fixed delta between frame timestamps and the wallclock time at which to render the frame    │
+│   (perhaps with a default 100ms first frame delay). From then on, frames that arrive late should be rendered immediately and we should wait when a frame        │
+│   arrives early. I think we can do the consumer/rendered part all in one process, right, using threads ? Please write up a detailed specification for frame     │
+│   timestamp handling based on this overview with references to the relevant parts of the existing code and detailed descriptions of the new components to be    │
+│   added.
