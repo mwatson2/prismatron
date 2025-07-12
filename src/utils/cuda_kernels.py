@@ -14,15 +14,9 @@ import numpy as np
 # Import all kernels from the reorganized structure
 from .kernels import (
     cuda_transpose_dot_product_3d_compute_optimized,
-    cuda_transpose_dot_product_3d_compute_optimized_fp16,
     cuda_transpose_dot_product_3d_compute_optimized_int8,
     cuda_transpose_dot_product_3d_compute_optimized_int8_experimental,
-    cuda_transpose_dot_product_3d_compute_optimized_int8_experimental_fp16,
-    cuda_transpose_dot_product_3d_compute_optimized_int8_fp16,
-    get_compute_optimized_3d_fp16_kernel,
-    get_compute_optimized_3d_int8_experimental_fp16_kernel,
     get_compute_optimized_3d_int8_experimental_kernel,
-    get_compute_optimized_3d_int8_fp16_kernel,
     get_compute_optimized_3d_int8_kernel,
     get_compute_optimized_3d_kernel,
 )
@@ -36,14 +30,8 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "get_compute_optimized_3d_kernel",
     "cuda_transpose_dot_product_3d_compute_optimized",
-    "get_compute_optimized_3d_fp16_kernel",
-    "cuda_transpose_dot_product_3d_compute_optimized_fp16",
     "get_compute_optimized_3d_int8_kernel",
     "get_compute_optimized_3d_int8_experimental_kernel",
     "cuda_transpose_dot_product_3d_compute_optimized_int8",
     "cuda_transpose_dot_product_3d_compute_optimized_int8_experimental",
-    "get_compute_optimized_3d_int8_fp16_kernel",
-    "get_compute_optimized_3d_int8_experimental_fp16_kernel",
-    "cuda_transpose_dot_product_3d_compute_optimized_int8_fp16",
-    "cuda_transpose_dot_product_3d_compute_optimized_int8_experimental_fp16",
 ]

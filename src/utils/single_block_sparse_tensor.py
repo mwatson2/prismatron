@@ -67,8 +67,8 @@ class SingleBlockMixedSparseTensor:
             block_size: Size of square dense blocks (e.g., 64)
             device: Device to store tensors on ('cuda' or 'cpu')
             dtype: Data type for sparse values (cp.float32 or cp.uint8)
-            output_dtype: Data type for output tensors (cp.float32 or cp.float16).
-                         If None, defaults to cp.float32 for cp.uint8 input, or same as dtype for others.
+            output_dtype: Data type for output tensors (cp.float32).
+                         If None, defaults to cp.float32.
         """
         self.batch_size = batch_size
         self.channels = channels
@@ -239,18 +239,10 @@ class SingleBlockMixedSparseTensor:
         """
         # Normalize dtype to cupy version
         dtype_str = str(output_dtype)
-        if dtype_str in ("float32", "<class 'numpy.float32'>", "numpy.float32"):
+        if dtype_str in ("float32", "<class 'numpy.float32'>", "numpy.float32") or output_dtype == cp.float32:
             return cp.float32
-        elif dtype_str in ("float16", "<class 'numpy.float16'>", "numpy.float16"):
-            return cp.float16
-        elif output_dtype == cp.float32:
-            return cp.float32
-        elif output_dtype == cp.float16:
-            return cp.float16
         else:
-            raise ValueError(
-                f"Unsupported output dtype {output_dtype}. Supported types: float32, float16 (numpy or cupy)"
-            )
+            raise ValueError(f"Unsupported output dtype {output_dtype}. Supported types: float32 (numpy or cupy)")
 
     def set_block(
         self,
@@ -339,7 +331,7 @@ class SingleBlockMixedSparseTensor:
 
         Args:
             target_3d: Target image in planar form, shape (channels, height, width)
-            output_dtype: Desired output data type (cp.float32 or cp.float16).
+            output_dtype: Desired output data type (cp.float32).
                          If None, uses the instance's output_dtype setting.
             planar_output: If True, return (channels, batch_size). If False, return (batch_size, channels).
                           This eliminates the need for transpose operations and prevents F-contiguous memory layout issues.
@@ -386,21 +378,6 @@ class SingleBlockMixedSparseTensor:
                         self.block_size,
                         interleaved=not planar_output,  # Kernel parameter is inverse of planar_output
                     )
-                elif output_dtype == cp.float16:
-                    from .cuda_kernels import (
-                        cuda_transpose_dot_product_3d_compute_optimized_fp16,
-                    )
-
-                    # Use fp32 -> fp16 compute-optimized CUDA kernel
-                    result = cuda_transpose_dot_product_3d_compute_optimized_fp16(
-                        self.sparse_values,  # (channels, batch, H, W) - fp32
-                        self.block_positions,  # (channels, batch, 2) - int32
-                        target_3d,  # (channels, height, width) - fp32 planar input
-                        self.batch_size,
-                        self.channels,
-                        self.block_size,
-                        interleaved=not planar_output,  # Kernel parameter is inverse of planar_output
-                    )
                 else:
                     raise ValueError(f"Unsupported output dtype {output_dtype} for FP32 input")
 
@@ -416,21 +393,6 @@ class SingleBlockMixedSparseTensor:
 
                     # Use int8 -> fp32 compute-optimized CUDA kernel
                     result = cuda_transpose_dot_product_3d_compute_optimized_int8(
-                        self.sparse_values,  # (channels, batch, H, W) - uint8
-                        self.block_positions,  # (channels, batch, 2) - int32
-                        target_3d,  # (channels, height, width) - uint8 planar input
-                        self.batch_size,
-                        self.channels,
-                        self.block_size,
-                        interleaved=not planar_output,  # Kernel parameter is inverse of planar_output
-                    )
-                elif output_dtype == cp.float16:
-                    from .cuda_kernels import (
-                        cuda_transpose_dot_product_3d_compute_optimized_int8_fp16,
-                    )
-
-                    # Use int8 -> fp16 compute-optimized CUDA kernel (main use case)
-                    result = cuda_transpose_dot_product_3d_compute_optimized_int8_fp16(
                         self.sparse_values,  # (channels, batch, H, W) - uint8
                         self.block_positions,  # (channels, batch, 2) - int32
                         target_3d,  # (channels, height, width) - uint8 planar input
@@ -680,8 +642,6 @@ class SingleBlockMixedSparseTensor:
             output_dtype_str = str(data_dict["output_dtype"])
             if output_dtype_str == "float32":
                 output_dtype = cp.float32
-            elif output_dtype_str == "float16":
-                output_dtype = cp.float16
             elif output_dtype_str.startswith("<class"):
                 # Fallback to None for old format
                 output_dtype = None

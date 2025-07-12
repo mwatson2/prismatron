@@ -8,21 +8,11 @@ from .compute_optimized_3d import (
     cuda_transpose_dot_product_3d_compute_optimized,
     get_compute_optimized_3d_kernel,
 )
-from .compute_optimized_3d_fp16 import (
-    cuda_transpose_dot_product_3d_compute_optimized_fp16,
-    get_compute_optimized_3d_fp16_kernel,
-)
 from .compute_optimized_3d_int8 import (
     cuda_transpose_dot_product_3d_compute_optimized_int8,
     cuda_transpose_dot_product_3d_compute_optimized_int8_experimental,
     get_compute_optimized_3d_int8_experimental_kernel,
     get_compute_optimized_3d_int8_kernel,
-)
-from .compute_optimized_3d_int8_fp16 import (
-    cuda_transpose_dot_product_3d_compute_optimized_int8_experimental_fp16,
-    cuda_transpose_dot_product_3d_compute_optimized_int8_fp16,
-    get_compute_optimized_3d_int8_experimental_fp16_kernel,
-    get_compute_optimized_3d_int8_fp16_kernel,
 )
 from .dia_matvec import (
     CustomDIA3DMatVec,
@@ -31,11 +21,6 @@ from .dia_matvec import (
     create_test_dia_matrix,
     verify_kernel_correctness,
 )
-from .dia_matvec_fp16 import (
-    CustomDIA3DMatVecFP16,
-    CustomDIAMatVecFP16,
-)
-from .pure_fp16_dia_kernel import PureFP16DIA3DKernel, get_kernel_info
 
 __all__ = [
     # FP32 kernels
@@ -50,16 +35,4 @@ __all__ = [
     "create_test_dia_matrix",
     "benchmark_dia_kernels",
     "verify_kernel_correctness",
-    # FP16 kernels
-    "get_compute_optimized_3d_fp16_kernel",
-    "cuda_transpose_dot_product_3d_compute_optimized_fp16",
-    "get_compute_optimized_3d_int8_fp16_kernel",
-    "get_compute_optimized_3d_int8_experimental_fp16_kernel",
-    "cuda_transpose_dot_product_3d_compute_optimized_int8_fp16",
-    "cuda_transpose_dot_product_3d_compute_optimized_int8_experimental_fp16",
-    "CustomDIAMatVecFP16",
-    "CustomDIA3DMatVecFP16",
-    # Pure FP16 kernels
-    "PureFP16DIA3DKernel",
-    "get_kernel_info",
 ]
