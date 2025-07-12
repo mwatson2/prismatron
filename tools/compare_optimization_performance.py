@@ -33,7 +33,7 @@ archive_path = str(Path(__file__).parent.parent / "archive")
 sys.path.insert(0, archive_path)
 from led_optimizer_sparse import LEDOptimizer
 
-from src.consumer.led_optimizer_dense import DenseLEDOptimizer
+from src.consumer.led_optimizer_dense import LEDOptimizer
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +85,7 @@ class OptimizerBenchmark:
             raise RuntimeError("Failed to initialize sparse optimizer")
 
         logger.info("Initializing dense optimizer...")
-        self.dense_optimizer = DenseLEDOptimizer(diffusion_patterns_path=patterns_path)
+        self.dense_optimizer = LEDOptimizer(diffusion_patterns_path=patterns_path)
         if not self.dense_optimizer.initialize():
             raise RuntimeError("Failed to initialize dense optimizer")
 

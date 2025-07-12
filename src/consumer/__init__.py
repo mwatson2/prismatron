@@ -9,13 +9,13 @@ This module contains components for the consumer process:
 """
 
 from .consumer import ConsumerProcess, ConsumerStats
-from .led_optimizer_dense import DenseLEDOptimizer, DenseOptimizationResult
+from .led_optimizer_dense import DenseOptimizationResult, LEDOptimizer
 from .wled_client import TransmissionResult, WLEDClient, WLEDConfig
 
 __all__ = [
     "ConsumerProcess",
     "ConsumerStats",
-    "DenseLEDOptimizer",
+    "LEDOptimizer",
     "DenseOptimizationResult",
     "WLEDClient",
     "WLEDConfig",

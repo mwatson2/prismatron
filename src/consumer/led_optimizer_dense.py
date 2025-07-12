@@ -55,19 +55,19 @@ class DenseOptimizationResult:
         return self.error_metrics.get("mse", float("inf"))
 
 
-class DenseLEDOptimizer:
+class LEDOptimizer:
     """
-    Dense tensor LED optimization engine using precomputed A^T*A matrices.
+    LED optimization engine using standardized frame optimizer with modern tensor formats.
 
-    This approach precomputes the dense (led_count x led_count) matrices A^T*A
-    for each RGB channel, then uses dense tensor operations in the optimization
-    loop for much better GPU utilization compared to sparse operations.
+    This class serves as a wrapper around the standardized frame_optimizer module,
+    providing compatibility with the existing API while using the latest optimization
+    techniques including mixed tensor A^T, DIA matrix A^T*A, and dense A^T*A inverse.
 
-    Key steps:
-    1. Precompute: ATA_rgb = A_rgb^T @ A_rgb (dense matrices)
-    2. Per frame: ATb = A^T @ b (dense vector)
-    3. Loop: gradient = ATA @ x - ATb (dense operations)
-    4. Step size: (g^T @ g) / (g^T @ ATA @ g) (dense operations)
+    Key components:
+    1. SingleBlockMixedSparseTensor for A^T @ b calculation (uint8 or fp32)
+    2. DiagonalATAMatrix for A^T*A operations (DIA format with FP16 storage)
+    3. Dense A^T*A inverse for optimal initialization
+    4. Standardized optimize_frame_led_values function for optimization
     """
 
     def __init__(
@@ -77,22 +77,18 @@ class DenseLEDOptimizer:
         enable_performance_timing: bool = True,
     ):
         """
-        Initialize dense tensor LED optimizer.
+        Initialize LED optimizer using standardized frame optimizer.
 
         Args:
-            diffusion_patterns_path: Path to sparse diffusion matrix files
-            use_mixed_tensor: If True, use mixed tensor format for A^T@b calculation.
-                             If False, use CSC sparse format for A^T@b calculation.
-                             Both modes use the same dense A^T@A matrices for optimization.
+            diffusion_patterns_path: Path to diffusion pattern files with mixed tensor and DIA matrix
+            use_mixed_tensor: Deprecated parameter - always uses mixed tensor format
             enable_performance_timing: If True, enable detailed performance timing
         """
         self.diffusion_patterns_path = diffusion_patterns_path or "diffusion_patterns/synthetic_1000"
         self.use_mixed_tensor = use_mixed_tensor
 
         # Performance timing
-        self.timing = (
-            PerformanceTiming("DenseLEDOptimizer", enable_gpu_timing=True) if enable_performance_timing else None
-        )
+        self.timing = PerformanceTiming("LEDOptimizer", enable_gpu_timing=True) if enable_performance_timing else None
 
         # Optimization parameters for gradient descent
         self.max_iterations = 10
@@ -180,14 +176,14 @@ class DenseLEDOptimizer:
             # Initialize workspace arrays
             self._initialize_workspace()
 
-            logger.info("Dense LED optimizer initialized successfully")
+            logger.info("LED optimizer initialized successfully")
             logger.info(f"LED count: {self._actual_led_count}")
             logger.info(f"ATA format: {'DIA sparse' if self._diagonal_ata_matrix else 'None'}")
             logger.info(f"Device: {self.device_info['device']}")
             return True
 
         except Exception as e:
-            logger.error(f"Dense LED optimizer initialization failed: {e}")
+            logger.error(f"LED optimizer initialization failed: {e}")
             return False
 
     def _load_precomputed_ata_matrices(self, data: np.lib.npyio.NpzFile) -> bool:
@@ -506,7 +502,7 @@ class DenseLEDOptimizer:
         pixels = FRAME_HEIGHT * FRAME_WIDTH
         led_count = self._actual_led_count
 
-        logger.info("Initializing dense workspace arrays...")
+        logger.info("Initializing workspace arrays...")
 
         # CPU buffers
         self._target_rgb_buffer = np.empty((pixels, 3), dtype=np.float32)
@@ -524,7 +520,7 @@ class DenseLEDOptimizer:
         }
 
         workspace_mb = sum(arr.nbytes for arr in self._gpu_workspace.values()) / (1024 * 1024)
-        logger.info(f"Dense workspace memory: {workspace_mb:.1f}MB")
+        logger.info(f"Workspace memory: {workspace_mb:.1f}MB")
 
     def _reset_workspace_references(self) -> None:
         """Reset workspace array references to ensure deterministic behavior."""
@@ -547,7 +543,7 @@ class DenseLEDOptimizer:
         debug: bool = False,
     ) -> DenseOptimizationResult:
         """
-        Optimize LED values using the standardized frame optimizer with ATA inverse initialization.
+        Optimize LED values using the standardized frame optimizer API.
 
         Args:
             target_frame: Target image (height, width, 3) in range [0, 255]
@@ -602,9 +598,9 @@ class DenseLEDOptimizer:
 
             result_frame_opt = optimize_frame_led_values(
                 target_frame=target_frame,
-                AT_matrix=self._mixed_tensor,
-                ATA_matrix=self._diagonal_ata_matrix,
-                ATA_inverse=self._ATA_inverse_cpu,  # Required parameter - use CPU version
+                at_matrix=self._mixed_tensor,  # Updated parameter name
+                ata_matrix=self._diagonal_ata_matrix,  # Updated parameter name
+                ata_inverse=self._ATA_inverse_cpu,  # Required parameter - use CPU version
                 initial_values=initial_values_frame_opt,
                 max_iterations=max_iterations or self.max_iterations,
                 convergence_threshold=self.convergence_threshold,
@@ -633,7 +629,7 @@ class DenseLEDOptimizer:
                             if self._diagonal_ata_matrix and self._diagonal_ata_matrix.dia_data_cpu is not None
                             else 0
                         ),
-                        "approach": "standardized_frame_optimizer_with_ata_inverse",
+                        "approach": "standardized_frame_optimizer",
                         "frame_optimizer_timing": result_frame_opt.timing_data,
                     }
                     if debug
@@ -645,7 +641,7 @@ class DenseLEDOptimizer:
             # Update statistics
             self._optimization_count += 1
 
-            logger.debug("Optimization completed using standardized frame optimizer")
+            logger.debug("Optimization completed using standardized frame optimizer API")
             return result
 
         except Exception as e:
@@ -661,20 +657,13 @@ class DenseLEDOptimizer:
 
     def _calculate_atb(self, target_frame: np.ndarray) -> cp.ndarray:
         """
-        Calculate A^T * b for the current target frame.
+        DEPRECATED: Calculate A^T * b - now handled by frame optimizer.
 
-        Uses either CSC sparse format or mixed tensor format based on use_mixed_tensor flag.
-
-        Args:
-            target_frame: Target image (height, width, 3)
-
-        Returns:
-            ATb vector (led_count, 3) on GPU
+        This method is kept for compatibility but should not be used.
+        The standardized frame optimizer handles A^T @ b calculation internally.
         """
-        if self.use_mixed_tensor:
-            return self._calculate_ATb_mixed_tensor(target_frame)
-        else:
-            return self._calculate_ATb_csc_format(target_frame)
+        logger.warning("_calculate_atb is deprecated - use standardized frame optimizer API")
+        return self._calculate_atb_mixed_tensor(target_frame)
 
     def _convert_frame_to_flat_format(self, target_frame: np.ndarray) -> cp.ndarray:
         """Convert frame to flat format for CSC sparse operations."""
@@ -761,18 +750,12 @@ class DenseLEDOptimizer:
 
     def _solve_dense_gradient_descent(self, atb: cp.ndarray, max_iterations: Optional[int]) -> Tuple[cp.ndarray, int]:
         """
-        Solve using dense gradient descent with precomputed A^T*A using optimized einsum.
+        DEPRECATED: Dense gradient descent - now handled by frame optimizer.
 
-        This is the core innovation: all operations in the loop are dense tensors
-        using einsum for optimal GPU utilization.
-
-        Args:
-            ATb: A^T * b vector (led_count, 3)
-            max_iterations: Maximum iterations
-
-        Returns:
-            Tuple of (LED values (led_count, 3) on GPU, iterations_completed)
+        This method is kept for compatibility but should not be used.
+        The standardized frame optimizer handles optimization internally.
         """
+        logger.warning("_solve_dense_gradient_descent is deprecated - use standardized frame optimizer API")
         max_iters = max_iterations or self.max_iterations
 
         # Verify input shapes and DIA matrix availability
@@ -893,7 +876,7 @@ class DenseLEDOptimizer:
     def get_optimizer_stats(self) -> Dict[str, Any]:
         """Get optimizer statistics."""
         stats = {
-            "optimizer_type": "dense_precomputed_ata",
+            "optimizer_type": "standardized_frame_optimizer",
             "device": str(self.device_info["device"]),
             "matrix_loaded": self._matrix_loaded,
             "optimization_count": self._optimization_count,
@@ -917,12 +900,12 @@ class DenseLEDOptimizer:
                         if self._diagonal_ata_matrix.dia_data_cpu is not None
                         else 0
                     ),
-                    "approach_description": "Precomputed A^T*A DIA sparse format with custom kernels",
+                    "approach_description": "Standardized frame optimizer with mixed tensor and DIA matrix",
                 }
             else:
                 ata_info = {
                     "ata_format": "None",
-                    "approach_description": "No precomputed A^T*A matrices",
+                    "approach_description": "No matrices available",
                 }
 
             stats.update(ata_info)

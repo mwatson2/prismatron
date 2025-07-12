@@ -4,7 +4,7 @@ Standalone frame optimization function for LED displays.
 
 This module provides a clean, standalone function for optimizing LED values
 from target frames using either mixed tensor or DIA matrix formats.
-Extracted from the DenseLEDOptimizer class for modular usage.
+Extracted from the LEDOptimizer class for modular usage.
 """
 
 import logging
