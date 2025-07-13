@@ -56,6 +56,7 @@ class ContentType(Enum):
     IMAGE = "image"
     VIDEO = "video"
     ANIMATION = "animation"
+    TEXT = "text"
     LIVE = "live"
     UNKNOWN = "unknown"
 
@@ -400,14 +401,25 @@ class ContentSourceRegistry:
     @classmethod
     def detect_content_type(cls, filepath: str) -> ContentType:
         """
-        Detect content type from file path.
+        Detect content type from file path or content.
 
         Args:
-            filepath: Path to content file
+            filepath: Path to content file or JSON config for text content
 
         Returns:
             Detected ContentType
         """
+        # Check if this is a JSON text configuration
+        if filepath.startswith("{") and filepath.endswith("}"):
+            try:
+                import json
+
+                config = json.loads(filepath)
+                if "text" in config and isinstance(config["text"], str):
+                    return ContentType.TEXT
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         filepath_lower = filepath.lower()
 
         # Image formats

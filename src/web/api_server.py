@@ -165,6 +165,25 @@ EFFECT_PRESETS = [
         category="retro",
         icon="💚",
     ),
+    EffectPreset(
+        id="text_display",
+        name="Text Display",
+        description="Display custom text with configurable fonts and colors",
+        config={
+            "text": "Hello World",
+            "font_family": "arial",
+            "font_size": 24,
+            "fg_color": "#FFFFFF",
+            "bg_color": "#000000",
+            "animation": "static",
+            "alignment": "center",
+            "vertical_alignment": "center",
+            "duration": 10.0,
+            "fps": 30.0,
+        },
+        category="text",
+        icon="📝",
+    ),
 ]
 
 # Initialize FastAPI app
@@ -401,15 +420,32 @@ async def add_effect_to_playlist(
     if config:
         final_config.update(config)
 
-    # Create playlist item
-    item = PlaylistItem(
-        id=str(uuid.uuid4()),
-        name=name or effect_preset.name,
-        type="effect",
-        effect_config={"effect_id": effect_id, "parameters": final_config},
-        duration=duration or 30.0,  # Default 30 seconds for effects
-        order=len(playlist_state.items),
-    )
+    # Handle text effects specially
+    if effect_id == "text_display":
+        # For text effects, we create a JSON config string as the "file_path"
+        import json
+
+        text_config = json.dumps(final_config)
+
+        # Create playlist item for text content
+        item = PlaylistItem(
+            id=str(uuid.uuid4()),
+            name=name or f"Text: {final_config.get('text', 'Hello World')}",
+            type="text",
+            file_path=text_config,  # JSON config as file path for text content
+            duration=duration or final_config.get("duration", 10.0),
+            order=len(playlist_state.items),
+        )
+    else:
+        # Create standard effect playlist item
+        item = PlaylistItem(
+            id=str(uuid.uuid4()),
+            name=name or effect_preset.name,
+            type="effect",
+            effect_config={"effect_id": effect_id, "parameters": final_config},
+            duration=duration or 30.0,  # Default 30 seconds for effects
+            order=len(playlist_state.items),
+        )
 
     playlist_state.items.append(item)
 

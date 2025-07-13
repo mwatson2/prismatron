@@ -172,60 +172,226 @@ const EffectsPage = () => {
               <div className="mt-4 p-4 bg-dark-800 rounded-retro border border-neon-yellow border-opacity-30">
                 <h5 className="text-sm font-retro text-neon-yellow mb-3">CUSTOMIZE PARAMETERS</h5>
 
-                <div className="space-y-3">
-                  {Object.entries(effect.config).map(([key, defaultValue]) => (
-                    <div key={key} className="space-y-1">
-                      <label className="text-xs text-metal-silver font-mono">
-                        {key.replace('_', ' ').toUpperCase()}
-                      </label>
+                {effect.id === 'text_display' ? (
+                  /* Text Effect Configuration */
+                  <div className="space-y-4">
+                    {/* Text Content */}
+                    <div className="space-y-1">
+                      <label className="text-xs text-metal-silver font-mono">TEXT CONTENT</label>
+                      <textarea
+                        defaultValue={effect.config.text}
+                        onChange={(e) => handleConfigChange('text', e.target.value)}
+                        className="retro-input w-full text-sm h-20 resize-none"
+                        placeholder="Enter your text..."
+                      />
+                    </div>
 
-                      {typeof defaultValue === 'number' ? (
+                    <div className="grid grid-cols-2 gap-4">
+                      {/* Font Selection */}
+                      <div className="space-y-1">
+                        <label className="text-xs text-metal-silver font-mono">FONT FAMILY</label>
+                        <select
+                          defaultValue={effect.config.font_family}
+                          onChange={(e) => handleConfigChange('font_family', e.target.value)}
+                          className="retro-input w-full text-sm"
+                        >
+                          <option value="arial">Arial</option>
+                          <option value="helvetica">Helvetica</option>
+                          <option value="times">Times</option>
+                          <option value="courier">Courier</option>
+                          <option value="roboto">Roboto</option>
+                        </select>
+                      </div>
+
+                      {/* Font Size */}
+                      <div className="space-y-1">
+                        <label className="text-xs text-metal-silver font-mono">FONT SIZE</label>
                         <input
                           type="number"
-                          step="0.1"
-                          defaultValue={defaultValue}
-                          onChange={(e) => handleConfigChange(key, parseFloat(e.target.value))}
+                          min="8"
+                          max="72"
+                          defaultValue={effect.config.font_size}
+                          onChange={(e) => handleConfigChange('font_size', parseInt(e.target.value))}
                           className="retro-input w-full text-sm"
                         />
-                      ) : typeof defaultValue === 'boolean' ? (
-                        <label className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            defaultChecked={defaultValue}
-                            onChange={(e) => handleConfigChange(key, e.target.checked)}
-                            className="w-4 h-4 rounded border-neon-cyan border-opacity-30 bg-dark-700 text-neon-cyan focus:ring-neon-cyan"
-                          />
-                          <span className="text-xs text-metal-silver">Enabled</span>
-                        </label>
-                      ) : (
-                        <input
-                          type="text"
-                          defaultValue={defaultValue}
-                          onChange={(e) => handleConfigChange(key, e.target.value)}
-                          className="retro-input w-full text-sm"
-                        />
-                      )}
+                      </div>
                     </div>
-                  ))}
 
-                  <div className="flex gap-2 pt-2">
-                    <button
-                      onClick={() => handleAddWithConfig(effect)}
-                      className="flex-1 retro-button px-4 py-2 text-neon-green text-sm font-retro font-bold"
-                    >
-                      ADD WITH CUSTOM CONFIG
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowConfig(null)
-                        setCustomConfig({})
-                      }}
-                      className="px-4 py-2 text-metal-silver text-sm font-mono hover:text-neon-cyan"
-                    >
-                      CANCEL
-                    </button>
+                    <div className="grid grid-cols-2 gap-4">
+                      {/* Foreground Color */}
+                      <div className="space-y-1">
+                        <label className="text-xs text-metal-silver font-mono">TEXT COLOR</label>
+                        <div className="flex gap-2">
+                          <input
+                            type="color"
+                            defaultValue={effect.config.fg_color}
+                            onChange={(e) => handleConfigChange('fg_color', e.target.value)}
+                            className="w-12 h-8 rounded border border-neon-cyan border-opacity-30 bg-dark-700"
+                          />
+                          <input
+                            type="text"
+                            defaultValue={effect.config.fg_color}
+                            onChange={(e) => handleConfigChange('fg_color', e.target.value)}
+                            className="retro-input flex-1 text-sm"
+                            placeholder="#FFFFFF"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Background Color */}
+                      <div className="space-y-1">
+                        <label className="text-xs text-metal-silver font-mono">BACKGROUND COLOR</label>
+                        <div className="flex gap-2">
+                          <input
+                            type="color"
+                            defaultValue={effect.config.bg_color}
+                            onChange={(e) => handleConfigChange('bg_color', e.target.value)}
+                            className="w-12 h-8 rounded border border-neon-cyan border-opacity-30 bg-dark-700"
+                          />
+                          <input
+                            type="text"
+                            defaultValue={effect.config.bg_color}
+                            onChange={(e) => handleConfigChange('bg_color', e.target.value)}
+                            className="retro-input flex-1 text-sm"
+                            placeholder="#000000"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-4">
+                      {/* Animation Type */}
+                      <div className="space-y-1">
+                        <label className="text-xs text-metal-silver font-mono">ANIMATION</label>
+                        <select
+                          defaultValue={effect.config.animation}
+                          onChange={(e) => handleConfigChange('animation', e.target.value)}
+                          className="retro-input w-full text-sm"
+                        >
+                          <option value="static">Static</option>
+                          <option value="scroll">Scroll</option>
+                          <option value="fade">Fade</option>
+                        </select>
+                      </div>
+
+                      {/* Text Alignment */}
+                      <div className="space-y-1">
+                        <label className="text-xs text-metal-silver font-mono">HORIZONTAL</label>
+                        <select
+                          defaultValue={effect.config.alignment}
+                          onChange={(e) => handleConfigChange('alignment', e.target.value)}
+                          className="retro-input w-full text-sm"
+                        >
+                          <option value="left">Left</option>
+                          <option value="center">Center</option>
+                          <option value="right">Right</option>
+                        </select>
+                      </div>
+
+                      {/* Vertical Alignment */}
+                      <div className="space-y-1">
+                        <label className="text-xs text-metal-silver font-mono">VERTICAL</label>
+                        <select
+                          defaultValue={effect.config.vertical_alignment}
+                          onChange={(e) => handleConfigChange('vertical_alignment', e.target.value)}
+                          className="retro-input w-full text-sm"
+                        >
+                          <option value="top">Top</option>
+                          <option value="center">Center</option>
+                          <option value="bottom">Bottom</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Duration */}
+                    <div className="space-y-1">
+                      <label className="text-xs text-metal-silver font-mono">DURATION (SECONDS)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="300"
+                        step="0.5"
+                        defaultValue={effect.config.duration}
+                        onChange={(e) => handleConfigChange('duration', parseFloat(e.target.value))}
+                        className="retro-input w-full text-sm"
+                      />
+                    </div>
+
+                    <div className="flex gap-2 pt-2">
+                      <button
+                        onClick={() => handleAddWithConfig(effect)}
+                        className="flex-1 retro-button px-4 py-2 text-neon-green text-sm font-retro font-bold"
+                      >
+                        ADD TEXT TO PLAYLIST
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowConfig(null)
+                          setCustomConfig({})
+                        }}
+                        className="px-4 py-2 text-metal-silver text-sm font-mono hover:text-neon-cyan"
+                      >
+                        CANCEL
+                      </button>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  /* Generic Effect Configuration */
+                  <div className="space-y-3">
+                    {Object.entries(effect.config).map(([key, defaultValue]) => (
+                      <div key={key} className="space-y-1">
+                        <label className="text-xs text-metal-silver font-mono">
+                          {key.replace('_', ' ').toUpperCase()}
+                        </label>
+
+                        {typeof defaultValue === 'number' ? (
+                          <input
+                            type="number"
+                            step="0.1"
+                            defaultValue={defaultValue}
+                            onChange={(e) => handleConfigChange(key, parseFloat(e.target.value))}
+                            className="retro-input w-full text-sm"
+                          />
+                        ) : typeof defaultValue === 'boolean' ? (
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              defaultChecked={defaultValue}
+                              onChange={(e) => handleConfigChange(key, e.target.checked)}
+                              className="w-4 h-4 rounded border-neon-cyan border-opacity-30 bg-dark-700 text-neon-cyan focus:ring-neon-cyan"
+                            />
+                            <span className="text-xs text-metal-silver">Enabled</span>
+                          </label>
+                        ) : (
+                          <input
+                            type="text"
+                            defaultValue={defaultValue}
+                            onChange={(e) => handleConfigChange(key, e.target.value)}
+                            className="retro-input w-full text-sm"
+                          />
+                        )}
+                      </div>
+                    ))}
+
+                    <div className="flex gap-2 pt-2">
+                      <button
+                        onClick={() => handleAddWithConfig(effect)}
+                        className="flex-1 retro-button px-4 py-2 text-neon-green text-sm font-retro font-bold"
+                      >
+                        ADD WITH CUSTOM CONFIG
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowConfig(null)
+                          setCustomConfig({})
+                        }}
+                        className="px-4 py-2 text-metal-silver text-sm font-mono hover:text-neon-cyan"
+                      >
+                        CANCEL
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

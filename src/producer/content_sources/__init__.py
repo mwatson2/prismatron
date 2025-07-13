@@ -15,6 +15,7 @@ from .base import (
     FrameData,
 )
 from .image_source import ImageSource
+from .text_source import TextContentSource
 from .video_source import VideoSource
 
 # Auto-register available content sources
@@ -26,5 +27,6 @@ __all__ = [
     "ContentSourceRegistry",
     "FrameData",
     "ImageSource",
+    "TextContentSource",
     "VideoSource",
 ]
