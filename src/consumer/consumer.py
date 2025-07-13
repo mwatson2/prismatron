@@ -285,7 +285,7 @@ class ConsumerProcess:
     def _try_wled_reconnect(self) -> None:
         """Try to reconnect to WLED controller if not connected."""
         try:
-            if not self._wled_client.is_connected():
+            if not self._wled_client.is_connected:
                 logger.debug("Attempting WLED reconnection...")
                 if self._wled_client.connect():
                     logger.info("WLED controller reconnected successfully")

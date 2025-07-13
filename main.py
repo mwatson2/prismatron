@@ -12,6 +12,7 @@ and handles graceful shutdown coordination.
 """
 
 import argparse
+import atexit
 import logging
 import multiprocessing
 import os
@@ -46,6 +47,9 @@ class ProcessManager:
         self.processes: Dict[str, multiprocessing.Process] = {}
         self.control_state = ControlState()
         self.shutdown_requested = False
+        
+        # Clean up any orphaned shared memory from previous runs
+        self._cleanup_orphaned_shared_memory()
 
         # Process startup coordination
         self.web_server_ready = multiprocessing.Event()
@@ -344,6 +348,34 @@ class ProcessManager:
         except Exception as e:
             logger.error(f"Failed to reboot system: {e}")
 
+    def _cleanup_orphaned_shared_memory(self) -> None:
+        """Clean up any orphaned shared memory from previous runs."""
+        try:
+            from multiprocessing import shared_memory
+            # Try to connect to existing memory and clean it up
+            try:
+                orphaned_memory = shared_memory.SharedMemory(name="prismatron_control")
+                orphaned_memory.close()
+                orphaned_memory.unlink()
+                logger.info("Cleaned up orphaned shared memory 'prismatron_control'")
+            except FileNotFoundError:
+                # No orphaned memory exists, which is good
+                pass
+        except Exception as e:
+            logger.warning(f"Error checking for orphaned shared memory: {e}")
+
+    def cleanup_all_resources(self) -> None:
+        """Comprehensive cleanup of all system resources."""
+        try:
+            logger.info("Performing comprehensive cleanup...")
+            self.stop_all_processes()
+            
+            # Additional cleanup for any remaining shared memory
+            self._cleanup_orphaned_shared_memory()
+            
+        except Exception as e:
+            logger.error(f"Error during comprehensive cleanup: {e}")
+
 
 def setup_logging(debug: bool = False) -> None:
     """Setup logging configuration."""
@@ -374,8 +406,19 @@ def setup_logging(debug: bool = False) -> None:
 def signal_handler(signum, frame, process_manager: ProcessManager) -> None:
     """Handle shutdown signals."""
     logger.info(f"Received signal {signum}, shutting down...")
-    process_manager.stop_all_processes()
+    process_manager.cleanup_all_resources()
     sys.exit(0)
+
+def emergency_cleanup() -> None:
+    """Emergency cleanup function for atexit."""
+    try:
+        from multiprocessing import shared_memory
+        orphaned_memory = shared_memory.SharedMemory(name="prismatron_control")
+        orphaned_memory.close()
+        orphaned_memory.unlink()
+        print("Emergency cleanup: Removed orphaned shared memory")
+    except:
+        pass  # Silently handle any errors during emergency cleanup
 
 
 def main():
@@ -393,6 +436,9 @@ def main():
 
     # Setup logging
     setup_logging(args.debug)
+    
+    # Register emergency cleanup for all exit scenarios
+    atexit.register(emergency_cleanup)
 
     # Create configuration
     config = {
@@ -434,7 +480,7 @@ def main():
         sys.exit(1)
     finally:
         if "manager" in locals():
-            manager.stop_all_processes()
+            manager.cleanup_all_resources()
 
 
 if __name__ == "__main__":

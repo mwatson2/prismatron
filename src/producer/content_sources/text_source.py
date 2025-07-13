@@ -62,6 +62,15 @@ class TextContentSource(ContentSource):
         self.font_size = self.config.get("font_size", 24)
         self.fg_color = self._parse_color(self.config.get("fg_color", "#FFFFFF"))
         self.bg_color = self._parse_color(self.config.get("bg_color", "#000000"))
+        
+        # Handle auto font sizing
+        if self.font_size == "auto":
+            self.font_size = self._calculate_auto_font_size()
+        elif isinstance(self.font_size, str):
+            try:
+                self.font_size = int(self.font_size)
+            except ValueError:
+                self.font_size = 24
 
         # Animation and timing
         self.animation = self.config.get("animation", "static")  # static, scroll, fade
@@ -135,10 +144,54 @@ class TextContentSource(ContentSource):
 
         return named_colors.get(color_str.lower(), (255, 255, 255))
 
-    def _get_font(self) -> ImageFont.ImageFont:
+    def _calculate_auto_font_size(self) -> int:
         """
-        Get PIL font object.
+        Calculate font size to fill width with 10% margins.
+        
+        Returns:
+            Optimal font size in pixels
+        """
+        if not self.text.strip():
+            return 24  # Default size for empty text
+            
+        # Target width is 80% of frame width (10% margins on each side)
+        target_width = int(FRAME_WIDTH * 0.8)
+        
+        # Binary search for optimal font size
+        min_size = 8
+        max_size = 72
+        best_size = 24
+        
+        try:
+            while min_size <= max_size:
+                test_size = (min_size + max_size) // 2
+                
+                # Test this font size
+                test_font = self._get_font_for_size(test_size)
+                temp_img = Image.new("RGB", (1, 1))
+                temp_draw = ImageDraw.Draw(temp_img)
+                bbox = temp_draw.textbbox((0, 0), self.text, font=test_font)
+                text_width = bbox[2] - bbox[0]
+                
+                if text_width <= target_width:
+                    best_size = test_size
+                    min_size = test_size + 1
+                else:
+                    max_size = test_size - 1
+                    
+        except Exception as e:
+            logger.warning(f"Error calculating auto font size: {e}, using default")
+            return 24
+            
+        return max(8, min(72, best_size))  # Clamp to reasonable range
 
+    def _get_font_for_size(self, size: int) -> ImageFont.ImageFont:
+        """
+        Get PIL font object for a specific size.
+        
+        Args:
+            size: Font size in pixels
+            
         Returns:
             PIL font object
         """
@@ -156,7 +209,7 @@ class TextContentSource(ContentSource):
 
             for font_name in font_candidates:
                 try:
-                    return ImageFont.truetype(font_name, self.font_size)
+                    return ImageFont.truetype(font_name, size)
                 except OSError:
                     continue
 
@@ -164,8 +217,17 @@ class TextContentSource(ContentSource):
             return ImageFont.load_default()
 
         except Exception as e:
-            logger.warning(f"Failed to load font {self.font_family}: {e}, using default")
+            logger.warning(f"Failed to load font {self.font_family} size {size}: {e}, using default")
             return ImageFont.load_default()
+
+    def _get_font(self) -> ImageFont.ImageFont:
+        """
+        Get PIL font object.
+
+        Returns:
+            PIL font object
+        """
+        return self._get_font_for_size(self.font_size)
 
     def _render_static_frame(self) -> np.ndarray:
         """

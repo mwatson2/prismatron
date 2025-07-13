@@ -197,7 +197,7 @@ const EffectsPage = () => {
                         >
                           <option value="arial">Arial</option>
                           <option value="helvetica">Helvetica</option>
-                          <option value="times">Times</option>
+                          <option value="times">Times New Roman</option>
                           <option value="courier">Courier</option>
                           <option value="roboto">Roboto</option>
                         </select>
@@ -206,14 +206,29 @@ const EffectsPage = () => {
                       {/* Font Size */}
                       <div className="space-y-1">
                         <label className="text-xs text-metal-silver font-mono">FONT SIZE</label>
-                        <input
-                          type="number"
-                          min="8"
-                          max="72"
-                          defaultValue={effect.config.font_size}
-                          onChange={(e) => handleConfigChange('font_size', parseInt(e.target.value))}
+                        <select
+                          defaultValue={effect.config.font_size === 'auto' ? 'auto' : effect.config.font_size.toString()}
+                          onChange={(e) => handleConfigChange('font_size', e.target.value === 'auto' ? 'auto' : parseInt(e.target.value))}
                           className="retro-input w-full text-sm"
-                        />
+                        >
+                          <option value="auto">Auto (Fill Width)</option>
+                          <option value="8">8px</option>
+                          <option value="10">10px</option>
+                          <option value="12">12px</option>
+                          <option value="14">14px</option>
+                          <option value="16">16px</option>
+                          <option value="18">18px</option>
+                          <option value="20">20px</option>
+                          <option value="24">24px</option>
+                          <option value="28">28px</option>
+                          <option value="32">32px</option>
+                          <option value="36">36px</option>
+                          <option value="42">42px</option>
+                          <option value="48">48px</option>
+                          <option value="56">56px</option>
+                          <option value="64">64px</option>
+                          <option value="72">72px</option>
+                        </select>
                       </div>
                     </div>
 
@@ -221,41 +236,23 @@ const EffectsPage = () => {
                       {/* Foreground Color */}
                       <div className="space-y-1">
                         <label className="text-xs text-metal-silver font-mono">TEXT COLOR</label>
-                        <div className="flex gap-2">
-                          <input
-                            type="color"
-                            defaultValue={effect.config.fg_color}
-                            onChange={(e) => handleConfigChange('fg_color', e.target.value)}
-                            className="w-12 h-8 rounded border border-neon-cyan border-opacity-30 bg-dark-700"
-                          />
-                          <input
-                            type="text"
-                            defaultValue={effect.config.fg_color}
-                            onChange={(e) => handleConfigChange('fg_color', e.target.value)}
-                            className="retro-input flex-1 text-sm"
-                            placeholder="#FFFFFF"
-                          />
-                        </div>
+                        <input
+                          type="color"
+                          defaultValue={effect.config.fg_color}
+                          onChange={(e) => handleConfigChange('fg_color', e.target.value)}
+                          className="w-full h-10 rounded border border-neon-cyan border-opacity-30 bg-dark-700 cursor-pointer"
+                        />
                       </div>
 
                       {/* Background Color */}
                       <div className="space-y-1">
                         <label className="text-xs text-metal-silver font-mono">BACKGROUND COLOR</label>
-                        <div className="flex gap-2">
-                          <input
-                            type="color"
-                            defaultValue={effect.config.bg_color}
-                            onChange={(e) => handleConfigChange('bg_color', e.target.value)}
-                            className="w-12 h-8 rounded border border-neon-cyan border-opacity-30 bg-dark-700"
-                          />
-                          <input
-                            type="text"
-                            defaultValue={effect.config.bg_color}
-                            onChange={(e) => handleConfigChange('bg_color', e.target.value)}
-                            className="retro-input flex-1 text-sm"
-                            placeholder="#000000"
-                          />
-                        </div>
+                        <input
+                          type="color"
+                          defaultValue={effect.config.bg_color}
+                          onChange={(e) => handleConfigChange('bg_color', e.target.value)}
+                          className="w-full h-10 rounded border border-neon-cyan border-opacity-30 bg-dark-700 cursor-pointer"
+                        />
                       </div>
                     </div>
 

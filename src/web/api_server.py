@@ -54,6 +54,12 @@ class PlaylistItem(BaseModel):
     thumbnail: Optional[str] = Field(None, description="Base64 thumbnail")
     created_at: datetime = Field(default_factory=datetime.now)
     order: int = Field(0, description="Display order")
+    
+    def dict_serializable(self):
+        """Return a dictionary with datetime objects converted to ISO strings."""
+        data = self.dict()
+        data['created_at'] = self.created_at.isoformat()
+        return data
 
 
 class PlaylistState(BaseModel):
@@ -64,6 +70,12 @@ class PlaylistState(BaseModel):
     is_playing: bool = Field(False, description="Whether playback is active")
     auto_repeat: bool = Field(True, description="Auto-repeat playlist")
     shuffle: bool = Field(False, description="Shuffle mode")
+    
+    def dict_serializable(self):
+        """Return a dictionary with datetime objects converted to ISO strings."""
+        data = self.dict()
+        data['items'] = [item.dict_serializable() for item in self.items]
+        return data
 
 
 class SystemSettings(BaseModel):
@@ -204,6 +216,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add no-cache middleware for static files
+@app.middleware("http")
+async def add_no_cache_headers(request, call_next):
+    response = await call_next(request)
+    
+    # Add no-cache headers for static files (js, css, html)
+    if (request.url.path.startswith("/static/") or 
+        request.url.path.endswith((".js", ".css", ".html", ".map"))):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    
+    return response
+
 
 # WebSocket connections for live updates
 class ConnectionManager:
@@ -252,7 +278,11 @@ async def root():
     index_file = frontend_dir / "index.html"
 
     if index_file.exists():
-        return FileResponse(str(index_file))
+        response = FileResponse(str(index_file))
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
     else:
         return JSONResponse(
             {
@@ -384,11 +414,11 @@ async def upload_file(
         await manager.broadcast(
             {
                 "type": "playlist_updated",
-                "items": [item.dict() for item in playlist_state.items],
+                "items": [item.dict_serializable() for item in playlist_state.items],
             }
         )
 
-        return {"status": "uploaded", "item": item.dict()}
+        return {"status": "uploaded", "item": item.dict_serializable()}
 
     except Exception as e:
         logger.error(f"Upload failed: {e}")
@@ -453,11 +483,11 @@ async def add_effect_to_playlist(
     await manager.broadcast(
         {
             "type": "playlist_updated",
-            "items": [item.dict() for item in playlist_state.items],
+            "items": [item.dict_serializable() for item in playlist_state.items],
         }
     )
 
-    return {"status": "added", "item": item.dict()}
+    return {"status": "added", "item": item.dict_serializable()}
 
 
 # Playlist endpoints
@@ -509,7 +539,7 @@ async def remove_playlist_item(item_id: str):
         await manager.broadcast(
             {
                 "type": "playlist_updated",
-                "items": [item.dict() for item in playlist_state.items],
+                "items": [item.dict_serializable() for item in playlist_state.items],
             }
         )
 
@@ -608,7 +638,7 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.send_json(
             {
                 "type": "initial_state",
-                "playlist": playlist_state.dict(),
+                "playlist": playlist_state.dict_serializable(),
                 "settings": system_settings.dict(),
                 "timestamp": time.time(),
             }
