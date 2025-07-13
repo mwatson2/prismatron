@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class DenseOptimizationResult:
+class OptimizationResult:
     """Results from dense tensor LED optimization process."""
 
     led_values: np.ndarray  # RGB values for each LED (led_count, 3) - range [0,255]
@@ -541,7 +541,7 @@ class LEDOptimizer:
         initial_values: Optional[np.ndarray] = None,
         max_iterations: Optional[int] = None,
         debug: bool = False,
-    ) -> DenseOptimizationResult:
+    ) -> OptimizationResult:
         """
         Optimize LED values using the standardized frame optimizer API.
 
@@ -552,7 +552,7 @@ class LEDOptimizer:
             debug: If True, compute error metrics and detailed timing (slower)
 
         Returns:
-            DenseOptimizationResult with LED values and optional debug metrics
+            OptimizationResult with LED values and optional debug metrics
         """
 
         try:
@@ -614,8 +614,8 @@ class LEDOptimizer:
             # Frame optimizer returns (3, led_count), we need (led_count, 3)
             led_values_output = result_frame_opt.led_values.T  # (3, led_count) -> (led_count, 3)
 
-            # Create result compatible with our DenseOptimizationResult format
-            result = DenseOptimizationResult(
+            # Create result compatible with our OptimizationResult format
+            result = OptimizationResult(
                 led_values=led_values_output,
                 error_metrics=result_frame_opt.error_metrics,
                 iterations=result_frame_opt.iterations,
@@ -648,7 +648,7 @@ class LEDOptimizer:
             logger.error(f"Frame optimization failed: {e}")
 
             # Return error result
-            return DenseOptimizationResult(
+            return OptimizationResult(
                 led_values=np.zeros((self._actual_led_count, 3), dtype=np.uint8),
                 error_metrics=({"mse": float("inf"), "mae": float("inf")} if debug else {}),
                 iterations=0,

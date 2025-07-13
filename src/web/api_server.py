@@ -35,8 +35,8 @@ from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
-from core.control_state import ControlState
+from src.const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
+from src.core.control_state import ControlState
 
 logger = logging.getLogger(__name__)
 
@@ -596,8 +596,6 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
 
 
-# Serve static files (for production)
-@app.mount("/static", StaticFiles(directory="static"), name="static")
 # System control endpoints
 @app.post("/api/system/restart")
 async def restart_system():
@@ -648,6 +646,13 @@ async def health_check():
 def create_app():
     """Create and configure the FastAPI application."""
     return app
+
+
+# Serve static files (for production)
+frontend_dir = Path(__file__).parent / "frontend" / "dist"
+if frontend_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(frontend_dir / "static")), name="static")
+    app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
 
 
 def run_server(host: str = "0.0.0.0", port: int = 8000, debug: bool = False):

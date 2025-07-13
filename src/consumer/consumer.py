@@ -18,7 +18,7 @@ from ..const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
 from ..core import ControlState, FrameConsumer
 from .frame_renderer import FrameRenderer
 from .led_buffer import LEDBuffer
-from .led_optimizer_dense import LEDOptimizer
+from .led_optimizer import LEDOptimizer
 from .test_renderer import TestRenderer, TestRendererConfig
 from .wled_client import WLEDClient, WLEDConfig
 
@@ -108,6 +108,7 @@ class ConsumerProcess:
         # Process state and threading
         self._running = False
         self._shutdown_requested = False
+        self._initialized = False
         self._stats = ConsumerStats()
         self._optimization_thread: Optional[threading.Thread] = None
         self._renderer_thread: Optional[threading.Thread] = None
@@ -117,6 +118,10 @@ class ConsumerProcess:
         self.use_optimization = True
         self.brightness_scale = 1.0
         self.max_optimization_iterations = 50  # No timing constraints
+
+        # WLED connection management
+        self.wled_reconnect_interval = 10.0  # Try to reconnect every 10 seconds
+        self.last_wled_attempt = 0.0
 
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -137,10 +142,11 @@ class ConsumerProcess:
                 logger.error("Failed to initialize LED optimizer")
                 return False
 
-            # Connect to WLED controller
-            if not self._wled_client.connect():
-                logger.error("Failed to connect to WLED controller")
-                return False
+            # Try to connect to WLED controller (not required for startup)
+            if self._wled_client.connect():
+                logger.info("Connected to WLED controller successfully")
+            else:
+                logger.warning("Failed to connect to WLED controller - will retry periodically")
 
             # Initialize test renderer if enabled
             if self.enable_test_renderer:
@@ -149,6 +155,7 @@ class ConsumerProcess:
             # Configure frame renderer output targets
             self._frame_renderer.set_output_targets(wled_client=self._wled_client, test_renderer=self._test_renderer)
 
+            self._initialized = True
             logger.info("Consumer process initialized successfully")
             return True
 
@@ -168,7 +175,7 @@ class ConsumerProcess:
                 logger.warning("Consumer process already running")
                 return True
 
-            if not self.initialize():
+            if not self._initialized and not self.initialize():
                 return False
 
             # Start optimization and renderer threads
@@ -249,6 +256,12 @@ class ConsumerProcess:
 
         while self._running and not self._shutdown_requested:
             try:
+                # Check for WLED reconnection periodically
+                current_time = time.time()
+                if current_time - self.last_wled_attempt >= self.wled_reconnect_interval:
+                    self._try_wled_reconnect()
+                    self.last_wled_attempt = current_time
+
                 # Get next LED values with timeout
                 led_data = self._led_buffer.read_led_values(timeout=0.1)
 
@@ -268,6 +281,22 @@ class ConsumerProcess:
                 time.sleep(0.01)
 
         logger.info("Renderer thread ended")
+
+    def _try_wled_reconnect(self) -> None:
+        """Try to reconnect to WLED controller if not connected."""
+        try:
+            if not self._wled_client.is_connected():
+                logger.debug("Attempting WLED reconnection...")
+                if self._wled_client.connect():
+                    logger.info("WLED controller reconnected successfully")
+                    # Update frame renderer with new connection
+                    self._frame_renderer.set_output_targets(
+                        wled_client=self._wled_client, test_renderer=self._test_renderer
+                    )
+                else:
+                    logger.debug("WLED reconnection failed - will retry later")
+        except Exception as e:
+            logger.debug(f"Error during WLED reconnection attempt: {e}")
 
     def _process_frame_optimization(self, buffer_info) -> None:
         """

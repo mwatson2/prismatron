@@ -332,9 +332,9 @@ class ProducerProcess:
                 logger.error("Failed to initialize frame buffer")
                 return False
 
-            # Initialize control state
-            if not self._control_state.initialize():
-                logger.error("Failed to initialize control state")
+            # Connect to existing control state (created by main process)
+            if not self._control_state.connect():
+                logger.error("Failed to connect to control state")
                 return False
 
             # Set initial system state

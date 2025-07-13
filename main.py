@@ -166,23 +166,13 @@ class ProcessManager:
                         diffusion_patterns_path=self.config.get("diffusion_patterns_path"),
                     )
 
-                    # Initialize and wait for WLED connection
-                    logger.info("Consumer waiting for WLED connection...")
-                    max_retries = 30  # 30 seconds
-                    retry_count = 0
-
-                    while retry_count < max_retries:
-                        if consumer.initialize():
-                            logger.info("Consumer connected to WLED successfully")
-                            break
-                        else:
-                            retry_count += 1
-                            logger.info(f"WLED connection attempt {retry_count}/{max_retries}")
-                            time.sleep(1)
-
-                    if retry_count >= max_retries:
-                        logger.error("Failed to connect to WLED after maximum retries")
+                    # Initialize consumer (WLED connection not required for startup)
+                    logger.info("Initializing consumer process...")
+                    if not consumer.initialize():
+                        logger.error("Failed to initialize consumer process")
                         return
+
+                    logger.info("Consumer initialized successfully (WLED connection will be retried automatically)")
 
                     # Signal ready
                     self.consumer_ready.set()
@@ -359,12 +349,20 @@ def setup_logging(debug: bool = False) -> None:
     """Setup logging configuration."""
     level = logging.DEBUG if debug else logging.INFO
 
+    # Clear the log file on startup
+    log_file = "prismatron.log"
+    try:
+        with open(log_file, "w") as f:
+            f.write("")  # Clear the file
+    except Exception:
+        pass  # If we can't clear it, continue anyway
+
     logging.basicConfig(
         level=level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=[
             logging.StreamHandler(sys.stdout),
-            logging.FileHandler("prismatron.log"),
+            logging.FileHandler(log_file),
         ],
     )
 
