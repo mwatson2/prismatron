@@ -12,8 +12,8 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from .test_renderer import TestRenderer
-from .wled_client import WLEDClient
+from .test_sink import TestSink
+from .wled_sink import WLEDSink
 
 logger = logging.getLogger(__name__)
 
@@ -52,20 +52,32 @@ class FrameRenderer:
         self.first_frame_received = False
         self.first_frame_timestamp = None
 
-        # Output targets
-        self.wled_client: Optional[WLEDClient] = None
-        self.test_renderer: Optional[TestRenderer] = None
+        # Output sinks (multiple sink support)
+        self.sinks = []  # List of registered sinks
+        self.sink_names = {}  # Map sink instances to names for logging
+
+        # Legacy compatibility - maintain individual references
+        self.wled_sink: Optional[WLEDSink] = None
+        self.test_sink: Optional[TestSink] = None
         self.enable_wled = True
-        self.enable_test_renderer = False
+        self.enable_test_sink = False
 
         # Statistics
         self.frames_rendered = 0
         self.late_frames = 0
         self.early_frames = 0
         self.on_time_frames = 0
+        self.dropped_frames = 0  # For future frame dropping policy
         self.total_wait_time = 0.0
         self.total_late_time = 0.0
         self.start_time = time.time()
+
+        # EWMA statistics for recent performance tracking
+        self.ewma_alpha = 0.1  # EWMA smoothing factor
+        self.ewma_fps = 0.0
+        self.ewma_late_fraction = 0.0
+        self.ewma_dropped_fraction = 0.0
+        self.last_ewma_update = 0.0
 
         # Timing distribution tracking
         self.timing_errors = []  # Track last 100 timing errors for analysis
@@ -75,30 +87,87 @@ class FrameRenderer:
             f"FrameRenderer initialized: delay={first_frame_delay_ms}ms, " f"tolerance=±{timing_tolerance_ms}ms"
         )
 
-    def set_output_targets(
-        self, wled_client: Optional[WLEDClient] = None, test_renderer: Optional[TestRenderer] = None
-    ) -> None:
+    def register_sink(self, sink, name: str, enabled: bool = True) -> None:
         """
-        Set output targets for rendering.
+        Register a new output sink.
 
         Args:
-            wled_client: WLED client for LED output
-            test_renderer: Test renderer for debugging
+            sink: Sink instance that must have a method to receive LED data
+            name: Human-readable name for the sink
+            enabled: Whether the sink is initially enabled
         """
-        self.wled_client = wled_client
-        self.test_renderer = test_renderer
-        self.enable_wled = wled_client is not None
-        self.enable_test_renderer = test_renderer is not None
+        if hasattr(sink, "send_led_data") or hasattr(sink, "render_led_values"):
+            self.sinks.append({"sink": sink, "name": name, "enabled": enabled})
+            self.sink_names[sink] = name
+            logger.info(f"Registered sink: {name} (enabled={enabled})")
+        else:
+            raise ValueError(f"Sink {name} must have 'send_led_data' or 'render_led_values' method")
 
-        logger.info(f"Output targets: WLED={self.enable_wled}, " f"TestRenderer={self.enable_test_renderer}")
+    def unregister_sink(self, sink) -> None:
+        """
+        Unregister an output sink.
+
+        Args:
+            sink: Sink instance to remove
+        """
+        name = self.sink_names.get(sink, "Unknown")
+        self.sinks = [s for s in self.sinks if s["sink"] != sink]
+        if sink in self.sink_names:
+            del self.sink_names[sink]
+        logger.info(f"Unregistered sink: {name}")
+
+    def set_sink_enabled(self, sink, enabled: bool) -> None:
+        """
+        Enable or disable a specific sink.
+
+        Args:
+            sink: Sink instance
+            enabled: Whether to enable the sink
+        """
+        for s in self.sinks:
+            if s["sink"] == sink:
+                s["enabled"] = enabled
+                name = self.sink_names.get(sink, "Unknown")
+                logger.info(f"Set sink {name} enabled={enabled}")
+                break
+
+    def set_output_targets(self, wled_sink: Optional[WLEDSink] = None, test_sink: Optional[TestSink] = None) -> None:
+        """
+        Set output targets for rendering (legacy compatibility method).
+
+        Args:
+            wled_sink: WLED sink for LED output
+            test_sink: Test sink for debugging
+        """
+        # Clear existing sinks
+        self.sinks.clear()
+        self.sink_names.clear()
+
+        # Register provided sinks
+        if wled_sink is not None:
+            self.register_sink(wled_sink, "WLED", enabled=True)
+        if test_sink is not None:
+            self.register_sink(test_sink, "TestSink", enabled=False)
+
+        # Maintain legacy references
+        self.wled_sink = wled_sink
+        self.test_sink = test_sink
+        self.enable_wled = wled_sink is not None
+        self.enable_test_sink = test_sink is not None
+
+        logger.info(f"Output targets: WLED={self.enable_wled}, TestSink={self.enable_test_sink}")
 
     def set_wled_enabled(self, enabled: bool) -> None:
-        """Enable or disable WLED output."""
-        self.enable_wled = enabled and (self.wled_client is not None)
+        """Enable or disable WLED output (legacy compatibility)."""
+        self.enable_wled = enabled and (self.wled_sink is not None)
+        if self.wled_sink is not None:
+            self.set_sink_enabled(self.wled_sink, enabled)
 
-    def set_test_renderer_enabled(self, enabled: bool) -> None:
-        """Enable or disable test renderer output."""
-        self.enable_test_renderer = enabled and (self.test_renderer is not None)
+    def set_test_sink_enabled(self, enabled: bool) -> None:
+        """Enable or disable test sink output (legacy compatibility)."""
+        self.enable_test_sink = enabled and (self.test_sink is not None)
+        if self.test_sink is not None:
+            self.set_sink_enabled(self.test_sink, enabled)
 
     def establish_wallclock_delta(self, first_timestamp: float) -> None:
         """
@@ -180,6 +249,7 @@ class FrameRenderer:
                 self._send_to_outputs(led_values, metadata)
 
             self.frames_rendered += 1
+            self._update_ewma_statistics()
             return True
 
         except Exception as e:
@@ -188,28 +258,37 @@ class FrameRenderer:
 
     def _send_to_outputs(self, led_values: np.ndarray, metadata: Optional[Dict[str, Any]] = None) -> None:
         """
-        Send LED values to all enabled output targets.
+        Send LED values to all enabled output sinks.
 
         Args:
             led_values: LED RGB values, shape (led_count, 3)
             metadata: Optional frame metadata
         """
-        # Send to WLED
-        if self.enable_wled and self.wled_client:
-            try:
-                result = self.wled_client.send_led_data(led_values)
-                if not result.success:
-                    logger.warning(f"WLED transmission failed: {result.errors}")
-            except Exception as e:
-                logger.error(f"WLED output error: {e}")
+        # Send to all registered sinks
+        for sink_info in self.sinks:
+            if not sink_info["enabled"]:
+                continue
 
-        # Send to test renderer
-        if self.enable_test_renderer and self.test_renderer:
+            sink = sink_info["sink"]
+            name = sink_info["name"]
+
             try:
-                if self.test_renderer.is_running:
-                    self.test_renderer.render_led_values(led_values.astype(np.uint8))
+                # Try different sink interfaces
+                if hasattr(sink, "send_led_data"):
+                    # WLED-style sink
+                    result = sink.send_led_data(led_values)
+                    if hasattr(result, "success") and not result.success:
+                        logger.warning(f"{name} transmission failed: {result.errors}")
+                elif hasattr(sink, "render_led_values"):
+                    # Renderer-style sink
+                    if hasattr(sink, "is_running") and not sink.is_running:
+                        continue  # Skip if sink is not running
+                    sink.render_led_values(led_values.astype(np.uint8), metadata)
+                else:
+                    logger.warning(f"Sink {name} has no compatible interface")
+
             except Exception as e:
-                logger.error(f"Test renderer output error: {e}")
+                logger.error(f"{name} sink error: {e}")
 
     def _track_timing_error(self, time_diff: float) -> None:
         """
@@ -223,6 +302,40 @@ class FrameRenderer:
         # Keep only recent history
         if len(self.timing_errors) > self.max_timing_history:
             self.timing_errors = self.timing_errors[-self.max_timing_history :]
+
+    def _update_ewma_statistics(self) -> None:
+        """
+        Update EWMA-based statistics for recent performance tracking.
+        """
+        current_time = time.time()
+
+        # Calculate instantaneous values
+        if self.last_ewma_update > 0:
+            frame_interval = current_time - self.last_ewma_update
+            instant_fps = 1.0 / frame_interval if frame_interval > 0 else 0.0
+
+            # Update EWMA FPS
+            if self.ewma_fps == 0.0:
+                self.ewma_fps = instant_fps
+            else:
+                self.ewma_fps = (1 - self.ewma_alpha) * self.ewma_fps + self.ewma_alpha * instant_fps
+
+        # Update EWMA fractions
+        late_fraction = self.late_frames / max(1, self.frames_rendered)
+        dropped_fraction = self.dropped_frames / max(1, self.frames_rendered)
+
+        if self.frames_rendered == 1:
+            # First frame, initialize EWMA
+            self.ewma_late_fraction = late_fraction
+            self.ewma_dropped_fraction = dropped_fraction
+        else:
+            # Update EWMA
+            self.ewma_late_fraction = (1 - self.ewma_alpha) * self.ewma_late_fraction + self.ewma_alpha * late_fraction
+            self.ewma_dropped_fraction = (
+                1 - self.ewma_alpha
+            ) * self.ewma_dropped_fraction + self.ewma_alpha * dropped_fraction
+
+        self.last_ewma_update = current_time
 
     def get_timing_stats(self) -> Dict[str, Any]:
         """
@@ -253,11 +366,20 @@ class FrameRenderer:
             "late_frames": self.late_frames,
             "early_frames": self.early_frames,
             "on_time_frames": self.on_time_frames,
+            "dropped_frames": self.dropped_frames,
             # Timing statistics
             "avg_render_fps": avg_fps,
             "late_frame_percentage": (self.late_frames / max(1, self.frames_rendered)) * 100,
             "early_frame_percentage": (self.early_frames / max(1, self.frames_rendered)) * 100,
             "on_time_percentage": (self.on_time_frames / max(1, self.frames_rendered)) * 100,
+            "dropped_frame_percentage": (self.dropped_frames / max(1, self.frames_rendered)) * 100,
+            # EWMA statistics (recent performance)
+            "ewma_fps": self.ewma_fps,
+            "ewma_late_fraction": self.ewma_late_fraction,
+            "ewma_dropped_fraction": self.ewma_dropped_fraction,
+            "ewma_late_percentage": self.ewma_late_fraction * 100,
+            "ewma_dropped_percentage": self.ewma_dropped_fraction * 100,
+            "ewma_alpha": self.ewma_alpha,
             # Timing details
             "avg_wait_time_ms": (self.total_wait_time / max(1, self.early_frames)) * 1000,
             "avg_late_time_ms": (self.total_late_time / max(1, self.late_frames)) * 1000,
@@ -268,9 +390,13 @@ class FrameRenderer:
             "timing_tolerance_ms": self.timing_tolerance * 1000,
             "wallclock_delta_s": self.wallclock_delta,
             "first_frame_received": self.first_frame_received,
-            # Output targets
+            # Output sinks
+            "registered_sinks": len(self.sinks),
+            "enabled_sinks": sum(1 for s in self.sinks if s["enabled"]),
+            "sink_names": [s["name"] for s in self.sinks if s["enabled"]],
+            # Legacy compatibility
             "wled_enabled": self.enable_wled,
-            "test_renderer_enabled": self.enable_test_renderer,
+            "test_sink_enabled": self.enable_test_sink,
             # Timing distribution
             **timing_error_stats,
         }
@@ -285,10 +411,17 @@ class FrameRenderer:
         self.late_frames = 0
         self.early_frames = 0
         self.on_time_frames = 0
+        self.dropped_frames = 0
         self.total_wait_time = 0.0
         self.total_late_time = 0.0
         self.timing_errors.clear()
         self.start_time = time.time()
+
+        # Reset EWMA statistics
+        self.ewma_fps = 0.0
+        self.ewma_late_fraction = 0.0
+        self.ewma_dropped_fraction = 0.0
+        self.last_ewma_update = 0.0
 
         logger.debug("Renderer statistics reset")
 
@@ -320,6 +453,50 @@ class FrameRenderer:
             f"tolerance=±{self.timing_tolerance*1000:.1f}ms, "
             f"log_threshold={self.late_frame_log_threshold*1000:.1f}ms"
         )
+
+    def set_ewma_alpha(self, alpha: float) -> None:
+        """
+        Set the EWMA alpha parameter for recent statistics tracking.
+
+        Args:
+            alpha: EWMA alpha parameter (0 < alpha <= 1, smaller = more smoothing)
+        """
+        if not (0 < alpha <= 1):
+            raise ValueError("EWMA alpha must be between 0 and 1")
+
+        self.ewma_alpha = alpha
+        logger.info(f"EWMA alpha set to {alpha:.3f}")
+
+    def mark_frame_dropped(self) -> None:
+        """
+        Mark a frame as dropped (for future frame dropping policies).
+
+        This method should be called when a frame is intentionally dropped
+        due to timing constraints or buffer overruns.
+        """
+        self.dropped_frames += 1
+        self._update_ewma_statistics()
+        logger.debug(f"Frame marked as dropped (total: {self.dropped_frames})")
+
+    def get_recent_performance_summary(self) -> Dict[str, Any]:
+        """
+        Get a summary of recent performance using EWMA statistics.
+
+        Returns:
+            Dictionary with recent performance metrics
+        """
+        return {
+            "recent_fps": self.ewma_fps,
+            "recent_late_percentage": self.ewma_late_fraction * 100,
+            "recent_dropped_percentage": self.ewma_dropped_fraction * 100,
+            "ewma_alpha": self.ewma_alpha,
+            "frames_rendered": self.frames_rendered,
+            "is_performing_well": (
+                self.ewma_fps > 25  # At least 25 FPS
+                and self.ewma_late_fraction < 0.1  # Less than 10% late frames
+                and self.ewma_dropped_fraction < 0.05  # Less than 5% dropped frames
+            ),
+        }
 
     def is_initialized(self) -> bool:
         """Check if renderer is initialized with timing delta."""

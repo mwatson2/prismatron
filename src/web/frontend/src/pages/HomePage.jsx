@@ -12,6 +12,11 @@ import { useWebSocket } from '../hooks/useWebSocket'
 const HomePage = () => {
   const { playlist, isConnected, systemStatus } = useWebSocket()
   const [localStatus, setLocalStatus] = useState(null)
+  const [previewData, setPreviewData] = useState(null)
+  const [ledPositions, setLedPositions] = useState(null)
+
+  const currentItem = playlist.items?.[playlist.current_index]
+  const status = systemStatus || localStatus
 
   useEffect(() => {
     // Fetch initial system status
@@ -33,8 +38,44 @@ const HomePage = () => {
     return () => clearInterval(interval)
   }, [])
 
-  const currentItem = playlist.items?.[playlist.current_index]
-  const status = systemStatus || localStatus
+  // Fetch LED positions once on component mount
+  useEffect(() => {
+    const fetchLedPositions = async () => {
+      try {
+        const response = await fetch('/api/led-positions')
+        if (response.ok) {
+          const data = await response.json()
+          setLedPositions(data)
+          console.log('LED positions loaded:', data.led_count, 'LEDs')
+        }
+      } catch (error) {
+        console.error('Failed to fetch LED positions:', error)
+      }
+    }
+
+    fetchLedPositions()
+  }, [])
+
+  // Fetch LED preview data
+  useEffect(() => {
+    const fetchPreview = async () => {
+      try {
+        const response = await fetch('/api/preview')
+        if (response.ok) {
+          const data = await response.json()
+          console.log('Preview data received:', data.has_frame, data.frame_data?.length)
+          setPreviewData(data)
+        }
+      } catch (error) {
+        console.error('Failed to fetch LED preview:', error)
+      }
+    }
+
+    fetchPreview()
+    const interval = setInterval(fetchPreview, 200) // Update every 200ms for smooth animation
+
+    return () => clearInterval(interval)
+  }, [playlist.is_playing, playlist.current_index])
 
   const handlePlayPause = async () => {
     try {
@@ -92,30 +133,96 @@ const HomePage = () => {
         </h2>
 
         <div className="relative aspect-[5/3] bg-dark-800 rounded-retro border border-neon-cyan border-opacity-20 overflow-hidden">
-          {/* Simulated LED grid */}
-          <div className="absolute inset-0 grid grid-cols-20 gap-1 p-2">
-            {Array.from({ length: 60 }, (_, i) => (
-              <div
-                key={i}
-                className={`aspect-square rounded-full transition-all duration-200 ${
-                  playlist.is_playing
-                    ? 'bg-neon-cyan animate-pulse-neon shadow-neon'
-                    : 'bg-metal-silver opacity-30'
-                }`}
-                style={{
-                  animationDelay: `${(i * 50) % 2000}ms`
-                }}
-              />
-            ))}
-          </div>
+          {/* LED display showing actual LED positions and colors */}
+          {ledPositions && (
+            <div className="absolute inset-0" style={{ position: 'relative' }}>
+              {ledPositions.positions.map((position, i) => {
+                const [x, y] = position
+
+                // Scale positions to fit the preview container (aspect-[5/3] = 800x480 → container size)
+                const scaleX = 100 / ledPositions.frame_dimensions.width  // Convert to percentage
+                const scaleY = 100 / ledPositions.frame_dimensions.height
+
+                let ledStyle = {
+                  position: 'absolute',
+                  left: `${x * scaleX}%`,
+                  top: `${y * scaleY}%`,
+                  width: '4px',
+                  height: '4px',
+                  transform: 'translate(-50%, -50%)', // Center the LED on the position
+                }
+
+                let className = 'rounded-full transition-all duration-200'
+
+                // Use actual frame data if available
+                if (previewData?.has_frame && previewData?.frame_data) {
+                  // The API currently returns only 60 colors but we have 2624 LEDs
+                  // For now, map preview data by sampling/cycling through available colors
+                  const colorIndex = i % previewData.frame_data.length
+                  const colorData = previewData.frame_data[colorIndex]
+
+                  if (colorData && Array.isArray(colorData) && colorData.length >= 3) {
+                    const [r, g, b] = colorData
+                    ledStyle.backgroundColor = `rgb(${r}, ${g}, ${b})`
+
+                    // Add glow effect if color is bright enough
+                    const brightness = (r + g + b) / 3
+                    if (brightness > 100) {
+                      className += ' shadow-neon'
+                      ledStyle.boxShadow = `0 0 4px rgb(${r}, ${g}, ${b})`
+                    }
+
+                    // Debug log for first few LEDs
+                    if (i < 3) {
+                      console.log(`LED ${i} at [${x}, ${y}] color:`, r, g, b, `(using index ${colorIndex})`)
+                    }
+                  } else {
+                    // Invalid color data
+                    ledStyle.backgroundColor = '#666666'
+                    className += ' opacity-30'
+                  }
+                } else {
+                  // Fallback to dim state when no frame data
+                  ledStyle.backgroundColor = '#666666'
+                  className += ' opacity-30'
+
+                  // Debug log for first LED
+                  if (i === 0) {
+                    console.log('LED 0 fallback - has_frame:', previewData?.has_frame, 'frame_data length:', previewData?.frame_data?.length)
+                  }
+                }
+
+                return (
+                  <div
+                    key={i}
+                    className={className}
+                    style={ledStyle}
+                  />
+                )
+              })}
+            </div>
+          )}
+
+          {/* Loading indicator when LED positions not loaded */}
+          {!ledPositions && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="text-center">
+                <div className="w-8 h-8 border-2 border-neon-cyan border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
+                <p className="text-neon-cyan text-sm font-mono">Loading LED layout...</p>
+              </div>
+            </div>
+          )}
 
           {/* Overlay text when not playing */}
-          {!playlist.is_playing && (
-            <div className="absolute inset-0 flex items-center justify-center">
+          {!playlist.is_playing && ledPositions && (
+            <div className="absolute inset-0 flex items-center justify-center bg-dark-800 bg-opacity-50">
               <div className="text-center">
                 <SpeakerXMarkIcon className="w-12 h-12 text-metal-silver mx-auto mb-2 opacity-50" />
                 <p className="text-metal-silver text-sm font-mono">
                   {currentItem ? 'PAUSED' : 'NO CONTENT'}
+                </p>
+                <p className="text-metal-silver text-xs font-mono mt-1 opacity-75">
+                  {ledPositions.led_count} LEDs ready
                 </p>
               </div>
             </div>

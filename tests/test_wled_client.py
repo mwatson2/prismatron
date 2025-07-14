@@ -17,7 +17,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.const import DDP_HEADER_SIZE, LED_COUNT
-from src.consumer.wled_client import TransmissionResult, WLEDClient, WLEDConfig
+from src.consumer.wled_sink import TransmissionResult, WLEDSink, WLEDSinkConfig
 
 
 class TestTransmissionResult(unittest.TestCase):
@@ -65,12 +65,12 @@ class TestTransmissionResult(unittest.TestCase):
         self.assertEqual(result.get_throughput_mbps(), 0.0)
 
 
-class TestWLEDConfig(unittest.TestCase):
-    """Test cases for WLEDConfig class."""
+class TestWLEDSinkConfig(unittest.TestCase):
+    """Test cases for WLEDSinkConfig class."""
 
     def test_default_initialization(self):
         """Test config with default values."""
-        config = WLEDConfig()
+        config = WLEDSinkConfig()
 
         self.assertEqual(config.led_count, LED_COUNT)
         self.assertEqual(config.max_fps, 60.0)
@@ -78,7 +78,7 @@ class TestWLEDConfig(unittest.TestCase):
 
     def test_custom_initialization(self):
         """Test config with custom values."""
-        config = WLEDConfig(
+        config = WLEDSinkConfig(
             host="192.168.1.100",
             port=4048,
             led_count=1000,
@@ -93,13 +93,13 @@ class TestWLEDConfig(unittest.TestCase):
         self.assertTrue(config.persistent_retry)
 
 
-class TestWLEDClient(unittest.TestCase):
-    """Test cases for WLEDClient class."""
+class TestWLEDSink(unittest.TestCase):
+    """Test cases for WLEDSink class."""
 
     def setUp(self):
         """Set up test fixtures."""
-        self.config = WLEDConfig(host="192.168.1.100", port=4048, timeout=1.0)
-        self.client = WLEDClient(self.config)
+        self.config = WLEDSinkConfig(host="192.168.1.100", port=4048, timeout=1.0)
+        self.client = WLEDSink(self.config)
 
     def tearDown(self):
         """Clean up after tests."""
@@ -318,7 +318,7 @@ class TestWLEDClient(unittest.TestCase):
         self.assertGreater(self.client.last_packet_size, 0)
 
 
-class TestWLEDClientIntegration(unittest.TestCase):
+class TestWLEDSinkIntegration(unittest.TestCase):
     """Integration tests for WLED client."""
 
     @patch("socket.socket")
@@ -327,8 +327,8 @@ class TestWLEDClientIntegration(unittest.TestCase):
         mock_socket = Mock()
         mock_socket_class.return_value = mock_socket
 
-        config = WLEDConfig(host="192.168.1.100", port=4048)
-        client = WLEDClient(config)
+        config = WLEDSinkConfig(host="192.168.1.100", port=4048)
+        client = WLEDSink(config)
 
         # Connect and send test data
         with patch.object(client, "_send_query", return_value=(True, {"name": "WLED"})):

@@ -617,7 +617,9 @@ class ControlState:
                     self._shared_memory.close()
                     self._shared_memory.unlink()
                 except Exception as e:
-                    logger.warning(f"Error cleaning up control state memory: {e}")
+                    # Only log if it's not a "file not found" error (normal during shutdown)
+                    if e.errno != 2:  # ENOENT - No such file or directory
+                        logger.warning(f"Error cleaning up control state memory: {e}")
 
             self._initialized = False
             logger.info(f"Cleaned up control state '{self.name}'")

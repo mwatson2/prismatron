@@ -47,7 +47,7 @@ class ProcessManager:
         self.processes: Dict[str, multiprocessing.Process] = {}
         self.control_state = ControlState()
         self.shutdown_requested = False
-        
+
         # Clean up any orphaned shared memory from previous runs
         self._cleanup_orphaned_shared_memory()
 
@@ -352,6 +352,7 @@ class ProcessManager:
         """Clean up any orphaned shared memory from previous runs."""
         try:
             from multiprocessing import shared_memory
+
             # Try to connect to existing memory and clean it up
             try:
                 orphaned_memory = shared_memory.SharedMemory(name="prismatron_control")
@@ -366,13 +367,17 @@ class ProcessManager:
 
     def cleanup_all_resources(self) -> None:
         """Comprehensive cleanup of all system resources."""
+        if self.shutdown_requested:
+            return  # Avoid duplicate cleanup
+
         try:
+            self.shutdown_requested = True
             logger.info("Performing comprehensive cleanup...")
             self.stop_all_processes()
-            
+
             # Additional cleanup for any remaining shared memory
             self._cleanup_orphaned_shared_memory()
-            
+
         except Exception as e:
             logger.error(f"Error during comprehensive cleanup: {e}")
 
@@ -405,18 +410,23 @@ def setup_logging(debug: bool = False) -> None:
 
 def signal_handler(signum, frame, process_manager: ProcessManager) -> None:
     """Handle shutdown signals."""
-    logger.info(f"Received signal {signum}, shutting down...")
-    process_manager.cleanup_all_resources()
+    print(f"Prismatron: Received signal {signum}, shutting down...")
+    try:
+        process_manager.cleanup_all_resources()
+    except Exception as e:
+        print(f"Prismatron: Error during cleanup: {e}")
     sys.exit(0)
+
 
 def emergency_cleanup() -> None:
     """Emergency cleanup function for atexit."""
     try:
         from multiprocessing import shared_memory
+
         orphaned_memory = shared_memory.SharedMemory(name="prismatron_control")
         orphaned_memory.close()
         orphaned_memory.unlink()
-        print("Emergency cleanup: Removed orphaned shared memory")
+        # Removed print to make emergency cleanup silent
     except:
         pass  # Silently handle any errors during emergency cleanup
 
@@ -436,7 +446,7 @@ def main():
 
     # Setup logging
     setup_logging(args.debug)
-    
+
     # Register emergency cleanup for all exit scenarios
     atexit.register(emergency_cleanup)
 

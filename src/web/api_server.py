@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
+import numpy as np
 import uvicorn
 from fastapi import (
     FastAPI,
@@ -54,11 +55,11 @@ class PlaylistItem(BaseModel):
     thumbnail: Optional[str] = Field(None, description="Base64 thumbnail")
     created_at: datetime = Field(default_factory=datetime.now)
     order: int = Field(0, description="Display order")
-    
+
     def dict_serializable(self):
         """Return a dictionary with datetime objects converted to ISO strings."""
         data = self.dict()
-        data['created_at'] = self.created_at.isoformat()
+        data["created_at"] = self.created_at.isoformat()
         return data
 
 
@@ -70,11 +71,11 @@ class PlaylistState(BaseModel):
     is_playing: bool = Field(False, description="Whether playback is active")
     auto_repeat: bool = Field(True, description="Auto-repeat playlist")
     shuffle: bool = Field(False, description="Shuffle mode")
-    
+
     def dict_serializable(self):
         """Return a dictionary with datetime objects converted to ISO strings."""
         data = self.dict()
-        data['items'] = [item.dict_serializable() for item in self.items]
+        data["items"] = [item.dict_serializable() for item in self.items]
         return data
 
 
@@ -117,6 +118,7 @@ class SystemStatus(BaseModel):
 playlist_state = PlaylistState()
 system_settings = SystemSettings()
 control_state: Optional[ControlState] = None
+consumer_process: Optional[object] = None  # Will be set by main process
 
 # File storage paths
 UPLOAD_DIR = Path("uploads")
@@ -216,18 +218,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # Add no-cache middleware for static files
 @app.middleware("http")
 async def add_no_cache_headers(request, call_next):
     response = await call_next(request)
-    
+
     # Add no-cache headers for static files (js, css, html)
-    if (request.url.path.startswith("/static/") or 
-        request.url.path.endswith((".js", ".css", ".html", ".map"))):
+    if request.url.path.startswith("/static/") or request.url.path.endswith((".js", ".css", ".html", ".map")):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
-    
+
     return response
 
 
@@ -365,6 +367,108 @@ async def previous_item():
 
 
 # Upload endpoints
+@app.get("/api/uploads")
+async def list_uploads():
+    """List existing files in the uploads directory."""
+    try:
+        uploads = []
+        if UPLOAD_DIR.exists():
+            for file_path in UPLOAD_DIR.iterdir():
+                if file_path.is_file():
+                    # Determine file type
+                    file_ext = file_path.suffix.lower().lstrip(".")
+                    allowed_types = {
+                        "image": ["jpg", "jpeg", "png", "gif", "bmp", "webp"],
+                        "video": ["mp4", "avi", "mov", "mkv", "webm", "m4v"],
+                    }
+
+                    content_type = None
+                    for type_name, extensions in allowed_types.items():
+                        if file_ext in extensions:
+                            content_type = type_name
+                            break
+
+                    if content_type:
+                        file_stats = file_path.stat()
+                        uploads.append(
+                            {
+                                "id": file_path.stem,  # filename without extension
+                                "name": file_path.name,
+                                "type": content_type,
+                                "size": file_stats.st_size,
+                                "modified": file_stats.st_mtime,
+                                "path": str(file_path),
+                            }
+                        )
+
+        # Sort by modification time (newest first)
+        uploads.sort(key=lambda x: x["modified"], reverse=True)
+        return {"files": uploads}
+
+    except Exception as e:
+        logger.error(f"Failed to list uploads: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/uploads/{file_id}/add")
+async def add_existing_file_to_playlist(file_id: str, name: Optional[str] = None, duration: Optional[float] = None):
+    """Add an existing file from uploads to the playlist."""
+    try:
+        # Find the file in uploads directory
+        file_path = None
+        for candidate in UPLOAD_DIR.iterdir():
+            if candidate.is_file() and candidate.stem == file_id:
+                file_path = candidate
+                break
+
+        if not file_path:
+            raise HTTPException(status_code=404, detail="File not found")
+
+        # Determine file type
+        file_ext = file_path.suffix.lower().lstrip(".")
+        allowed_types = {
+            "image": ["jpg", "jpeg", "png", "gif", "bmp", "webp"],
+            "video": ["mp4", "avi", "mov", "mkv", "webm", "m4v"],
+        }
+
+        content_type = None
+        for type_name, extensions in allowed_types.items():
+            if file_ext in extensions:
+                content_type = type_name
+                break
+
+        if not content_type:
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_ext}")
+
+        # Create playlist item
+        item = PlaylistItem(
+            id=str(uuid.uuid4()),
+            name=name or file_path.name,
+            type=content_type,
+            file_path=str(file_path),
+            duration=duration,
+            order=len(playlist_state.items),
+        )
+
+        playlist_state.items.append(item)
+
+        # Broadcast playlist update
+        await manager.broadcast(
+            {
+                "type": "playlist_updated",
+                "items": [item.dict_serializable() for item in playlist_state.items],
+            }
+        )
+
+        return {"status": "added", "item": item.dict_serializable()}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to add existing file to playlist: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 @app.post("/api/upload")
 async def upload_file(
     file: UploadFile = File(...),  # noqa: B008
@@ -697,6 +801,88 @@ async def reboot_system():
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+# Preview endpoint for LED display
+@app.get("/api/preview")
+async def get_led_preview():
+    """Get current LED preview data for the home page display."""
+    try:
+        preview_data = {
+            "timestamp": time.time(),
+            "is_active": playlist_state.is_playing,
+            "current_item": None,
+            "frame_data": None,
+        }
+
+        if playlist_state.items and 0 <= playlist_state.current_index < len(playlist_state.items):
+            current_item = playlist_state.items[playlist_state.current_index]
+            preview_data["current_item"] = {"name": current_item.name, "type": current_item.type}
+
+        # For demo purposes, always show test pattern
+        preview_data["has_frame"] = True
+        preview_colors = []
+        for i in range(60):  # Test pattern with 60 colors
+            # Simple rainbow pattern
+            r = min(255, (i * 4) % 256)
+            g = min(255, ((i * 8) + 128) % 256)
+            b = min(255, ((i * 12) + 64) % 256)
+            preview_colors.append([r, g, b])
+        preview_data["frame_data"] = preview_colors
+
+        return preview_data
+
+    except Exception as e:
+        logger.error(f"Failed to get LED preview: {e}")
+        return {
+            "timestamp": time.time(),
+            "is_active": False,
+            "has_frame": False,
+            "frame_data": None,
+            "current_item": None,
+        }
+
+
+@app.get("/api/led-positions")
+async def get_led_positions():
+    """Get LED positions for preview rendering."""
+    try:
+        # Load LED positions from diffusion patterns file
+        patterns_path = Path("diffusion_patterns/synthetic_2624_uint8.npz")
+
+        if not patterns_path.exists():
+            raise HTTPException(status_code=404, detail="LED positions data not found")
+
+        # Load the diffusion patterns data
+        data = np.load(patterns_path, allow_pickle=True)
+
+        if "led_positions" not in data:
+            raise HTTPException(status_code=404, detail="LED positions not found in patterns data")
+
+        led_positions = data["led_positions"]  # Shape: (led_count, 2)
+
+        # Convert to list of [x, y] coordinates for JSON response
+        positions_list = led_positions.tolist()
+
+        # Get frame dimensions for scaling/normalization
+        frame_width = FRAME_WIDTH  # 800
+        frame_height = FRAME_HEIGHT  # 480
+
+        return {
+            "led_count": len(positions_list),
+            "positions": positions_list,  # Array of [x, y] coordinates
+            "frame_dimensions": {"width": frame_width, "height": frame_height},
+            "coordinate_system": {
+                "origin": "top-left",
+                "description": "Pixel coordinates where (0,0) is top-left corner",
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get LED positions: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to load LED positions: {str(e)}") from e
+
+
 # Health check endpoint
 @app.get("/api/health")
 async def health_check():
@@ -707,6 +893,12 @@ async def health_check():
         "version": "1.0.0",
         "active_connections": len(manager.active_connections),
     }
+
+
+def set_consumer_process(consumer):
+    """Set the consumer process reference for accessing LED data."""
+    global consumer_process
+    consumer_process = consumer
 
 
 def create_app():

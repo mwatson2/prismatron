@@ -19,7 +19,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
-from src.consumer.led_optimizer_dense import DenseOptimizationResult, LEDOptimizer
+from src.consumer.led_optimizer import LEDOptimizer, OptimizationResult
 
 
 class TestLEDOptimizer:
@@ -71,7 +71,7 @@ class TestLEDOptimizer:
         assert optimizer.diffusion_patterns_path == custom_path
         assert optimizer.timing is None  # Performance timing disabled
 
-    @patch("src.consumer.led_optimizer_dense.Path.exists")
+    @patch("src.consumer.led_optimizer.Path.exists")
     @patch("numpy.load")
     def test_initialization_failure_missing_patterns(self, mock_load, mock_exists):
         """Test initialization failure when pattern files are missing."""
@@ -83,10 +83,10 @@ class TestLEDOptimizer:
         assert not result
         mock_load.assert_not_called()
 
-    @patch("src.consumer.led_optimizer_dense.Path.exists")
+    @patch("src.consumer.led_optimizer.Path.exists")
     @patch("numpy.load")
-    @patch("src.consumer.led_optimizer_dense.SingleBlockMixedSparseTensor.from_dict")
-    @patch("src.consumer.led_optimizer_dense.DiagonalATAMatrix.from_dict")
+    @patch("src.consumer.led_optimizer.SingleBlockMixedSparseTensor.from_dict")
+    @patch("src.consumer.led_optimizer.DiagonalATAMatrix.from_dict")
     def test_initialization_success(self, mock_dia_from_dict, mock_tensor_from_dict, mock_load, mock_exists):
         """Test successful initialization with mock pattern data."""
         mock_exists.return_value = True
@@ -118,7 +118,7 @@ class TestLEDOptimizer:
 
         # Mock the entire optimize_frame method to test API integration
         with patch.object(optimizer, "optimize_frame") as mock_optimize:
-            mock_result = DenseOptimizationResult(
+            mock_result = OptimizationResult(
                 led_values=np.random.randint(0, 255, (100, 3), dtype=np.uint8),
                 error_metrics={"mse": 0.01},
                 iterations=5,
@@ -136,7 +136,7 @@ class TestLEDOptimizer:
             mock_optimize.assert_called_once()
 
             # Verify result
-            assert isinstance(result, DenseOptimizationResult)
+            assert isinstance(result, OptimizationResult)
             assert result.iterations == 5
             assert result.converged
 
@@ -151,7 +151,7 @@ class TestLEDOptimizer:
         result = optimizer.optimize_frame(wrong_frame)
 
         # Should return error result
-        assert isinstance(result, DenseOptimizationResult)
+        assert isinstance(result, OptimizationResult)
         assert result.iterations == 0
         assert not result.converged
         # Error result may have empty error_metrics or may have inf values
@@ -167,7 +167,7 @@ class TestLEDOptimizer:
         result = optimizer.optimize_frame(target_frame)
 
         # Should return error result
-        assert isinstance(result, DenseOptimizationResult)
+        assert isinstance(result, OptimizationResult)
         assert result.iterations == 0
         assert not result.converged
 
@@ -200,7 +200,7 @@ class TestLEDOptimizer:
 
         # Mock the mixed tensor method to avoid AttributeError
         with patch.object(optimizer, "_calculate_atb_mixed_tensor", return_value=Mock()), patch(
-            "src.consumer.led_optimizer_dense.logger"
+            "src.consumer.led_optimizer.logger"
         ) as mock_logger:
             target_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
 
@@ -222,7 +222,7 @@ class TestLEDOptimizer:
         optimizer._ATA_inverse_cpu = np.random.rand(3, 100, 100).astype(np.float32)
         optimizer._has_ata_inverse = True
 
-        with patch("src.consumer.led_optimizer_dense.optimize_frame_led_values") as mock_optimize:
+        with patch("src.consumer.led_optimizer.optimize_frame_led_values") as mock_optimize:
             mock_result = Mock()
             mock_result.led_values = np.random.randint(0, 255, (3, 100), dtype=np.uint8)
             mock_result.error_metrics = {}

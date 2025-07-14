@@ -130,7 +130,7 @@ class OptimizationPipeline:
 
         # Initialize the appropriate optimizer
         if use_dense:
-            from ..consumer.led_optimizer_dense import LEDOptimizer
+            from ..consumer.led_optimizer import LEDOptimizer
 
             self.optimizer = LEDOptimizer(
                 diffusion_patterns_path=self.diffusion_patterns_path,
