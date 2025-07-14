@@ -156,10 +156,21 @@ const HomePage = () => {
 
                 // Use actual frame data if available
                 if (previewData?.has_frame && previewData?.frame_data) {
-                  // The API currently returns only 60 colors but we have 2624 LEDs
-                  // For now, map preview data by sampling/cycling through available colors
-                  const colorIndex = i % previewData.frame_data.length
-                  const colorData = previewData.frame_data[colorIndex]
+                  // Check if we have full LED data or just a sample
+                  const frameDataLength = previewData.frame_data.length
+                  const totalLeds = previewData.total_leds || ledPositions.led_count
+
+                  let colorData = null
+
+                  if (frameDataLength === totalLeds) {
+                    // Full LED data - use direct mapping
+                    colorData = previewData.frame_data[i]
+                  } else if (frameDataLength > 0) {
+                    // Sample data - map position-based for better spatial distribution
+                    // Use position hash for more even distribution across space
+                    const positionHash = (x * 1000 + y) % frameDataLength
+                    colorData = previewData.frame_data[positionHash]
+                  }
 
                   if (colorData && Array.isArray(colorData) && colorData.length >= 3) {
                     const [r, g, b] = colorData
@@ -174,7 +185,7 @@ const HomePage = () => {
 
                     // Debug log for first few LEDs
                     if (i < 3) {
-                      console.log(`LED ${i} at [${x}, ${y}] color:`, r, g, b, `(using index ${colorIndex})`)
+                      console.log(`LED ${i} at [${x}, ${y}] color:`, r, g, b, `(frame data: ${frameDataLength}/${totalLeds})`)
                     }
                   } else {
                     // Invalid color data

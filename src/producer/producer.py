@@ -319,6 +319,11 @@ class ProducerProcess:
         self._frames_produced = 0
         self._start_time = 0.0
 
+        # Periodic logging for pipeline debugging
+        self._last_log_time = 0.0
+        self._log_interval = 2.0  # Log every 2 seconds
+        self._frames_with_content = 0  # Frames with non-zero content
+
     def initialize(self) -> bool:
         """
         Initialize producer process components.
@@ -478,6 +483,11 @@ class ProducerProcess:
                     time.sleep(0.1)
                     continue
 
+                # Log play state changes for debugging
+                if not hasattr(self, "_last_play_state") or self._last_play_state != status.play_state:
+                    logger.info(f"PRODUCER CONTROL STATE: Play state changed to {status.play_state}")
+                    self._last_play_state = status.play_state
+
                 # Handle play state
                 if status.play_state == PlayState.PLAYING:
                     self._handle_playing_state()
@@ -488,6 +498,26 @@ class ProducerProcess:
 
                 # Update frame rate statistics
                 self._update_statistics()
+
+                # Periodic logging for pipeline debugging (only when playing or if there's activity)
+                current_time = time.time()
+                if current_time - self._last_log_time >= self._log_interval:
+                    # Only log if we're playing, or if we have frames produced, or every 10 seconds when idle
+                    should_log = (
+                        (status and status.play_state == PlayState.PLAYING)
+                        or self._frames_produced > 0
+                        or (current_time - self._last_log_time) >= 10.0
+                    )
+
+                    if should_log:
+                        content_ratio = (self._frames_with_content / max(1, self._frames_produced)) * 100
+                        play_state_str = f"[{status.play_state}]" if status else "[UNKNOWN]"
+                        logger.info(
+                            f"PRODUCER PIPELINE {play_state_str}: {self._frames_produced} frames produced, "
+                            f"{self._frames_with_content} with content ({content_ratio:.1f}%), "
+                            f"current: {self._current_item.filepath if self._current_item else 'None'}"
+                        )
+                        self._last_log_time = current_time
 
                 # Brief sleep to prevent busy waiting
                 time.sleep(0.001)
@@ -505,6 +535,7 @@ class ProducerProcess:
             # Ensure we have current content
             if not self._ensure_current_content():
                 # No content available, switch to stopped
+                logger.warning("PRODUCER PLAYING: No current content available, switching to STOPPED")
                 self._control_state.set_play_state(PlayState.STOPPED)
                 return
 
@@ -517,6 +548,10 @@ class ProducerProcess:
             frame_data = self._current_source.get_next_frame()
 
             if frame_data is not None:
+                # Log first frame for debugging
+                if self._frames_produced == 0:
+                    logger.info(f"PRODUCER FRAMES: Got first frame from {self._current_item.filepath}")
+
                 # Render frame to shared memory
                 if self._render_frame_to_buffer(frame_data):
                     self._frames_produced += 1
@@ -524,7 +559,13 @@ class ProducerProcess:
 
             elif self._current_source.is_finished():
                 # Content finished, advance to next
+                logger.info(f"PRODUCER FRAMES: Content finished for {self._current_item.filepath}")
                 self._advance_to_next_content()
+            else:
+                # No frame available yet (but not finished)
+                if not hasattr(self, "_no_frame_logged") or not self._no_frame_logged:
+                    logger.info(f"PRODUCER FRAMES: No frame available from {self._current_item.filepath} (waiting...)")
+                    self._no_frame_logged = True
 
         except Exception as e:
             logger.error(f"Error in playing state: {e}")
@@ -558,7 +599,7 @@ class ProducerProcess:
         # Try to load current playlist item
         current_item = self._playlist.get_current_item()
         if not current_item:
-            logger.debug("No current playlist item")
+            logger.info("PRODUCER CONTENT: No current playlist item available")
             return False
 
         # Load content source if needed
@@ -568,6 +609,7 @@ class ProducerProcess:
                 self._current_source.cleanup()
 
             # Load new content
+            logger.info(f"PRODUCER CONTENT: Loading content source for {current_item.filepath}")
             self._current_source = current_item.get_content_source()
             self._current_item = current_item
 
@@ -576,9 +618,12 @@ class ProducerProcess:
                 return False
 
             # Setup content source
+            logger.info(f"PRODUCER CONTENT: Setting up content source for {current_item.filepath}")
             if not self._current_source.setup():
                 logger.error(f"Failed to setup content: {current_item.filepath}")
                 return False
+
+            logger.info(f"PRODUCER CONTENT: Successfully loaded {current_item.filepath}")
 
             # Update control state with current file
             self._control_state.set_current_file(current_item.filepath)
@@ -636,6 +681,10 @@ class ProducerProcess:
 
             # Scale and copy frame data to buffer (both in planar format)
             self._copy_frame_to_buffer(frame_data, buffer_array)
+
+            # Check if frame has non-zero content for logging
+            if buffer_array.max() > 0:
+                self._frames_with_content += 1
 
             # Advance write buffer
             if not self._frame_buffer.advance_write():

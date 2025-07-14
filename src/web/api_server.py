@@ -119,6 +119,7 @@ playlist_state = PlaylistState()
 system_settings = SystemSettings()
 control_state: Optional[ControlState] = None
 consumer_process: Optional[object] = None  # Will be set by main process
+producer_process: Optional[object] = None  # Will be set by main process
 
 # File storage paths
 UPLOAD_DIR = Path("uploads")
@@ -322,30 +323,87 @@ async def get_system_status():
 
 @app.post("/api/control/play")
 async def play_content():
-    """Start playback."""
-    playlist_state.is_playing = True
-    await manager.broadcast(
-        {
-            "type": "playback_state",
-            "is_playing": True,
-            "current_index": playlist_state.current_index,
-        }
-    )
-    return {"status": "playing"}
+    """Start playbook."""
+    try:
+        logger.info("API PLAY REQUEST: Received play command from web interface")
+
+        # Update local playlist state
+        playlist_state.is_playing = True
+
+        # If we have items in the web playlist, add them to the producer
+        if playlist_state.items and producer_process:
+            current_item = playlist_state.items[playlist_state.current_index]
+            logger.info(f"Adding playlist item to producer: {current_item.name}")
+
+            # Add the current item to producer playlist
+            if current_item.type in ["image", "video"] and current_item.file_path:
+                success = producer_process.add_playlist_item(current_item.file_path, current_item.duration)
+                if success:
+                    logger.info(f"Successfully added {current_item.file_path} to producer playlist")
+                else:
+                    logger.error(f"Failed to add {current_item.file_path} to producer playlist")
+
+        # Signal play to producer via control state
+        # Create a new control state connection since we're in a separate process
+        try:
+            temp_control = ControlState()
+            if temp_control.connect():
+                from src.core.control_state import PlayState
+
+                temp_control.set_play_state(PlayState.PLAYING)
+                temp_control.cleanup()  # Clean up the connection
+                logger.info("API PLAY COMMAND: Sent PLAYING signal to producer via control state")
+            else:
+                logger.warning("API PLAY COMMAND: Failed to connect to control state")
+        except Exception as e:
+            logger.error(f"API PLAY COMMAND: Error communicating with control state: {e}")
+
+        await manager.broadcast(
+            {
+                "type": "playback_state",
+                "is_playing": True,
+                "current_index": playlist_state.current_index,
+            }
+        )
+        return {"status": "playing"}
+
+    except Exception as e:
+        logger.error(f"Failed to start playback: {e}")
+        return {"status": "error", "message": str(e)}
 
 
 @app.post("/api/control/pause")
 async def pause_content():
     """Pause playback."""
-    playlist_state.is_playing = False
-    await manager.broadcast(
-        {
-            "type": "playback_state",
-            "is_playing": False,
-            "current_index": playlist_state.current_index,
-        }
-    )
-    return {"status": "paused"}
+    try:
+        playlist_state.is_playing = False
+
+        # Signal pause to producer via control state
+        try:
+            temp_control = ControlState()
+            if temp_control.connect():
+                from src.core.control_state import PlayState
+
+                temp_control.set_play_state(PlayState.PAUSED)
+                temp_control.cleanup()
+                logger.info("Sent PAUSED signal to producer via control state")
+            else:
+                logger.warning("Failed to connect to control state for pause")
+        except Exception as e:
+            logger.error(f"Error communicating with control state for pause: {e}")
+
+        await manager.broadcast(
+            {
+                "type": "playback_state",
+                "is_playing": False,
+                "current_index": playlist_state.current_index,
+            }
+        )
+        return {"status": "paused"}
+
+    except Exception as e:
+        logger.error(f"Failed to pause playback: {e}")
+        return {"status": "error", "message": str(e)}
 
 
 @app.post("/api/control/next")
@@ -810,6 +868,7 @@ async def get_led_preview():
             "timestamp": time.time(),
             "is_active": playlist_state.is_playing,
             "current_item": None,
+            "has_frame": False,
             "frame_data": None,
         }
 
@@ -817,16 +876,76 @@ async def get_led_preview():
             current_item = playlist_state.items[playlist_state.current_index]
             preview_data["current_item"] = {"name": current_item.name, "type": current_item.type}
 
-        # For demo purposes, always show test pattern
-        preview_data["has_frame"] = True
-        preview_colors = []
-        for i in range(60):  # Test pattern with 60 colors
-            # Simple rainbow pattern
-            r = min(255, (i * 4) % 256)
-            g = min(255, ((i * 8) + 128) % 256)
-            b = min(255, ((i * 12) + 64) % 256)
-            preview_colors.append([r, g, b])
-        preview_data["frame_data"] = preview_colors
+        # Try to get real LED data from shared memory (PreviewSink)
+        try:
+            import mmap
+            import os
+
+            # Try to read from shared memory created by PreviewSink
+            try:
+                shm_fd = os.open("/dev/shm/prismatron_preview", os.O_RDONLY)
+
+                # Read full header (64 bytes): timestamp(8) + frame_counter(8) + led_count(4) + padding(44)
+                header_data = os.read(shm_fd, 64)
+                if len(header_data) == 64:
+                    import struct
+
+                    # Unpack header according to PreviewSink format: "<ddI44x"
+                    timestamp, frame_counter, led_count = struct.unpack("<ddI44x", header_data)
+
+                    if led_count > 0:
+                        # Read LED data starting at offset 64: led_count * 3 bytes (RGB)
+                        os.lseek(shm_fd, 64, os.SEEK_SET)  # Seek to LED data section
+                        led_data = os.read(shm_fd, led_count * 3)
+
+                        if len(led_data) == led_count * 3:
+                            # Convert to list of [r, g, b] arrays
+                            frame_data = []
+                            for i in range(0, len(led_data), 3):
+                                r, g, b = led_data[i], led_data[i + 1], led_data[i + 2]
+                                frame_data.append([r, g, b])
+
+                            preview_data["has_frame"] = True
+                            preview_data["frame_data"] = frame_data
+                            preview_data["total_leds"] = led_count
+                            preview_data["frame_counter"] = frame_counter
+                            logger.debug(
+                                f"Using real LED data from shared memory: {len(frame_data)} LEDs, frame {frame_counter}"
+                            )
+                        else:
+                            logger.debug(
+                                f"Incomplete LED data in shared memory: {len(led_data)} bytes for {led_count} LEDs"
+                            )
+                    else:
+                        logger.debug("No LED count in shared memory header")
+                else:
+                    logger.debug(f"Invalid header size in shared memory: {len(header_data)} bytes, expected 64")
+
+                os.close(shm_fd)
+            except FileNotFoundError:
+                logger.debug("PreviewSink shared memory not found - consumer may not be running with preview sink")
+            except Exception as e:
+                logger.debug(f"Error reading from shared memory: {e}")
+
+        except Exception as e:
+            logger.warning(f"Failed to access preview shared memory: {e}")
+
+        # Fallback to test pattern if no real data available
+        if not preview_data["has_frame"]:
+            preview_data["has_frame"] = True
+            preview_colors = []
+            # Use the actual LED count for test pattern
+            test_led_count = LED_COUNT  # 2624
+            for i in range(test_led_count):
+                # Simple rainbow pattern
+                hue = (i / test_led_count) * 360  # Full rainbow across all LEDs
+                r = int(255 * max(0, min(1, abs((hue / 60) % 6 - 3) - 1)))
+                g = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 2))))
+                b = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 4))))
+                preview_colors.append([r, g, b])
+            preview_data["frame_data"] = preview_colors
+            preview_data["total_leds"] = test_led_count
+            logger.debug(f"Using fallback test pattern with {test_led_count} LEDs")
 
         return preview_data
 
@@ -899,6 +1018,18 @@ def set_consumer_process(consumer):
     """Set the consumer process reference for accessing LED data."""
     global consumer_process
     consumer_process = consumer
+
+
+def set_producer_process(producer):
+    """Set the producer process reference for playlist management."""
+    global producer_process
+    producer_process = producer
+
+
+def set_control_state(control):
+    """Set the control state reference for process communication."""
+    global control_state
+    control_state = control
 
 
 def create_app():

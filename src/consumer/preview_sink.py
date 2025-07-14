@@ -186,6 +186,12 @@ class PreviewSink:
         self.is_running = False
         self.last_update_time = 0.0
 
+        # Periodic logging for pipeline debugging
+        self.last_log_time = 0.0
+        self.log_interval = 2.0  # Log every 2 seconds
+        self.frames_with_content = 0  # Frames with non-zero content
+        self.frames_received = 0  # Total frames received
+
         logger.info(f"Preview sink initialized with shared memory size: {self.shared_memory_size} bytes")
 
     def _calculate_shared_memory_size(self) -> int:
@@ -249,17 +255,24 @@ class PreviewSink:
         """Create and initialize shared memory."""
         try:
             import os
-            import tempfile
 
-            # Create a temporary file for shared memory
-            temp_fd, temp_path = tempfile.mkstemp(prefix=f"{self.config.shared_memory_name}_")
+            # Create shared memory file in /dev/shm
+            shm_path = f"/dev/shm/{self.config.shared_memory_name}"
+
+            # Remove existing file if it exists
+            import contextlib
+
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(shm_path)
+
+            # Create and open the shared memory file
+            self.shared_memory_fd = os.open(shm_path, os.O_CREAT | os.O_RDWR, 0o666)
 
             # Resize file to required size
-            os.ftruncate(temp_fd, self.shared_memory_size)
+            os.ftruncate(self.shared_memory_fd, self.shared_memory_size)
 
             # Create memory map
-            self.shared_memory_map = mmap.mmap(temp_fd, self.shared_memory_size)
-            self.shared_memory_fd = temp_fd
+            self.shared_memory_map = mmap.mmap(self.shared_memory_fd, self.shared_memory_size)
 
             # Initialize header
             self._write_header(timestamp=time.time(), frame_counter=0, led_count=LED_COUNT)
@@ -342,11 +355,16 @@ class PreviewSink:
 
         try:
             start_time = time.time()
+            self.frames_received += 1
 
             # Validate input
             if led_values.ndim != 2 or led_values.shape[1] != 3:
                 logger.error(f"Invalid LED values shape: {led_values.shape}, expected (led_count, 3)")
                 return False
+
+            # Check if LED values have non-zero content for logging
+            if led_values.max() > 0:
+                self.frames_with_content += 1
 
             # Check if frame is late (simple heuristic based on time since last update)
             is_late = False
@@ -376,6 +394,18 @@ class PreviewSink:
                 self._write_statistics()
 
                 self.last_update_time = start_time
+
+            # Periodic logging for pipeline debugging
+            if start_time - self.last_log_time >= self.log_interval:
+                content_ratio = (self.frames_with_content / max(1, self.frames_received)) * 100
+                stats = self.stats.get_statistics()
+
+                logger.info(
+                    f"PREVIEW SINK PIPELINE: {self.frames_received} frames received, "
+                    f"{self.frames_with_content} with content ({content_ratio:.1f}%), "
+                    f"FPS: {stats['ewma_fps']:.1f}, late: {stats['ewma_late_fraction']*100:.1f}%"
+                )
+                self.last_log_time = start_time
 
             logger.debug(f"Updated preview data: frame {frame_counter}, {len(led_data_bytes)} bytes")
             return True

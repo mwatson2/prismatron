@@ -133,6 +133,12 @@ class LEDOptimizer:
         self._flops_per_iteration = 0
         self._dense_flops_per_iteration = 0
 
+        # Periodic logging for pipeline debugging
+        self._last_log_time = 0.0
+        self._log_interval = 2.0  # Log every 2 seconds
+        self._frames_with_content = 0  # Input frames with non-zero content
+        self._optimizations_with_result = 0  # Optimizations that produced non-zero LED values
+
         # Detect compute capability
         self.device_info = self._detect_compute_device()
 
@@ -559,6 +565,11 @@ class LEDOptimizer:
             if not self._matrix_loaded:
                 raise RuntimeError("Dense matrices not loaded")
 
+            # Track input for logging
+            self._optimization_count += 1
+            if target_frame.max() > 0:
+                self._frames_with_content += 1
+
             # Validate input
             if target_frame.shape != (FRAME_HEIGHT, FRAME_WIDTH, 3):
                 raise ValueError(f"Target frame shape {target_frame.shape} != {(FRAME_HEIGHT, FRAME_WIDTH, 3)}")
@@ -638,8 +649,24 @@ class LEDOptimizer:
                 optimization_time=0.0,  # Timing handled by frame optimizer
             )
 
-            # Update statistics
-            self._optimization_count += 1
+            # Track successful optimization with non-zero output for logging
+            if led_values_output.max() > 0:
+                self._optimizations_with_result += 1
+
+            # Periodic logging for pipeline debugging
+            import time
+
+            current_time = time.time()
+            if current_time - self._last_log_time >= self._log_interval:
+                content_ratio = (self._frames_with_content / max(1, self._optimization_count)) * 100
+                result_ratio = (self._optimizations_with_result / max(1, self._optimization_count)) * 100
+
+                logger.info(
+                    f"LED OPTIMIZER PIPELINE: {self._optimization_count} optimizations, "
+                    f"{self._frames_with_content} with input content ({content_ratio:.1f}%), "
+                    f"{self._optimizations_with_result} with LED output ({result_ratio:.1f}%)"
+                )
+                self._last_log_time = current_time
 
             logger.debug("Optimization completed using standardized frame optimizer API")
             return result

@@ -131,13 +131,16 @@ class FrameRenderer:
                 logger.info(f"Set sink {name} enabled={enabled}")
                 break
 
-    def set_output_targets(self, wled_sink: Optional[WLEDSink] = None, test_sink: Optional[TestSink] = None) -> None:
+    def set_output_targets(
+        self, wled_sink: Optional[WLEDSink] = None, test_sink: Optional[TestSink] = None, preview_sink: Optional = None
+    ) -> None:
         """
         Set output targets for rendering (legacy compatibility method).
 
         Args:
             wled_sink: WLED sink for LED output
             test_sink: Test sink for debugging
+            preview_sink: Preview sink for web interface
         """
         # Clear existing sinks
         self.sinks.clear()
@@ -148,6 +151,8 @@ class FrameRenderer:
             self.register_sink(wled_sink, "WLED", enabled=True)
         if test_sink is not None:
             self.register_sink(test_sink, "TestSink", enabled=False)
+        if preview_sink is not None:
+            self.register_sink(preview_sink, "PreviewSink", enabled=True)
 
         # Maintain legacy references
         self.wled_sink = wled_sink
@@ -155,7 +160,9 @@ class FrameRenderer:
         self.enable_wled = wled_sink is not None
         self.enable_test_sink = test_sink is not None
 
-        logger.info(f"Output targets: WLED={self.enable_wled}, TestSink={self.enable_test_sink}")
+        logger.info(
+            f"Output targets: WLED={self.enable_wled}, TestSink={self.enable_test_sink}, Preview={preview_sink is not None}"
+        )
 
     def set_wled_enabled(self, enabled: bool) -> None:
         """Enable or disable WLED output (legacy compatibility)."""

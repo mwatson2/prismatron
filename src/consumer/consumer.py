@@ -19,6 +19,7 @@ from ..core import ControlState, FrameConsumer
 from .frame_renderer import FrameRenderer
 from .led_buffer import LEDBuffer
 from .led_optimizer import LEDOptimizer
+from .preview_sink import PreviewSink, PreviewSinkConfig
 from .test_sink import TestSink, TestSinkConfig
 from .wled_sink import WLEDSink, WLEDSinkConfig
 
@@ -106,15 +107,22 @@ class ConsumerProcess:
         self._test_renderer: Optional[TestSink] = None
         self._test_renderer_config = test_renderer_config or TestSinkConfig()
 
+        # Preview sink for web interface
+        self._preview_sink: Optional[PreviewSink] = None
+        self._preview_sink_config = PreviewSinkConfig()
+
         # Process state and threading
         self._running = False
 
-        # Latest LED data for web preview (store as simplified preview)
-        self._latest_preview_data = None
-        self._preview_lock = threading.Lock()
+        # Preview data is now handled by PreviewSink
         self._shutdown_requested = False
         self._initialized = False
         self._stats = ConsumerStats()
+
+        # Periodic logging for pipeline debugging
+        self._last_consumer_log_time = 0.0
+        self._consumer_log_interval = 2.0  # Log every 2 seconds
+        self._frames_with_content = 0  # Frames with non-zero LED values
         self._optimization_thread: Optional[threading.Thread] = None
         self._renderer_thread: Optional[threading.Thread] = None
 
@@ -168,8 +176,13 @@ class ConsumerProcess:
             if self.enable_test_renderer:
                 self._initialize_test_renderer()
 
+            # Initialize preview sink for web interface
+            self._initialize_preview_sink()
+
             # Configure frame renderer output targets
-            self._frame_renderer.set_output_targets(wled_sink=self._wled_client, test_sink=self._test_renderer)
+            self._frame_renderer.set_output_targets(
+                wled_sink=self._wled_client, test_sink=self._test_renderer, preview_sink=self._preview_sink
+            )
 
             self._initialized = True
             logger.info("Consumer process initialized successfully")
@@ -403,6 +416,11 @@ class ConsumerProcess:
 
             # Store in LED buffer with timestamp
             led_values_uint8 = result.led_values.astype(np.uint8)
+
+            # Check if LED values have non-zero content for logging
+            if led_values_uint8.max() > 0:
+                self._frames_with_content += 1
+
             success = self._led_buffer.write_led_values(
                 led_values_uint8,
                 timestamp,
@@ -414,8 +432,7 @@ class ConsumerProcess:
                 },
             )
 
-            # Update preview data for web interface (simplified RGB values)
-            self._update_preview_data(led_values_uint8)
+            # Preview data is now handled by PreviewSink in frame renderer
 
             if not success:
                 logger.warning("Failed to write LED values to buffer")
@@ -430,13 +447,27 @@ class ConsumerProcess:
             # Update optimization FPS (independent of rendering)
             self._stats.current_optimization_fps = 1.0 / total_time if total_time > 0 else 0.0
 
-            # Log performance periodically
+            # Periodic logging for pipeline debugging (every 2 seconds)
+            current_time = time.time()
+            if current_time - self._last_consumer_log_time >= self._consumer_log_interval:
+                content_ratio = (self._frames_with_content / max(1, self._stats.frames_processed)) * 100
+                avg_fps = self._stats.get_average_fps()
+                avg_opt_time = self._stats.get_average_optimization_time()
+
+                logger.info(
+                    f"CONSUMER PIPELINE: {self._stats.frames_processed} frames optimized, "
+                    f"{self._frames_with_content} with LED content ({content_ratio:.1f}%), "
+                    f"avg FPS: {avg_fps:.1f}, opt time: {avg_opt_time * 1000:.1f}ms"
+                )
+                self._last_consumer_log_time = current_time
+
+            # Log performance periodically (every 100 frames)
             if self._stats.frames_processed % 100 == 0:
                 avg_fps = self._stats.get_average_fps()
                 avg_opt_time = self._stats.get_average_optimization_time()
                 buffer_stats = self._led_buffer.get_buffer_stats()
 
-                logger.info(
+                logger.debug(
                     f"Optimization: {avg_fps:.1f} fps avg, "
                     f"opt: {avg_opt_time * 1000:.1f}ms, "
                     f"buffer: {buffer_stats['utilization']:.1%}, "
@@ -477,6 +508,40 @@ class ConsumerProcess:
         except Exception as e:
             logger.error(f"Failed to initialize test renderer: {e}")
             self._test_renderer = None
+            return False
+
+    def _initialize_preview_sink(self) -> bool:
+        """
+        Initialize the preview sink for web interface.
+
+        Returns:
+            True if initialization successful, False otherwise
+        """
+        try:
+            if not self._led_optimizer:
+                logger.error("LED optimizer not available for preview sink")
+                return False
+
+            # Get spatial mapping from LED optimizer
+            spatial_mapping = getattr(self._led_optimizer, "_led_spatial_mapping", None)
+            if not spatial_mapping:
+                logger.warning("No spatial mapping available - preview sink will use identity mapping")
+
+            # Create preview sink
+            self._preview_sink = PreviewSink(self._preview_sink_config, spatial_mapping)
+
+            # Start preview sink
+            if self._preview_sink.start():
+                logger.info("Preview sink initialized and started successfully")
+                return True
+            else:
+                logger.error("Failed to start preview sink")
+                self._preview_sink = None
+                return False
+
+        except Exception as e:
+            logger.error(f"Error initializing preview sink: {e}")
+            self._preview_sink = None
             return False
 
     def get_stats(self) -> Dict[str, Any]:
@@ -643,55 +708,15 @@ class ConsumerProcess:
 
             os._exit(1)
 
-    def _update_preview_data(self, led_values: np.ndarray) -> None:
-        """
-        Update preview data for web interface.
-
-        Args:
-            led_values: LED RGB values (N, 3) array
-        """
-        try:
-            with self._preview_lock:
-                # Sample to create a 20x3 grid (60 LEDs total) for preview
-                total_leds = len(led_values)
-                preview_colors = []
-
-                for i in range(60):  # 20x3 grid
-                    # Map preview index to LED array index
-                    led_index = int((i / 59) * (total_leds - 1)) if total_leds > 1 else 0
-                    led_index = min(led_index, total_leds - 1)
-
-                    # Get RGB values and ensure they're in valid range
-                    rgb = led_values[led_index]
-                    r, g, b = int(np.clip(rgb[0], 0, 255)), int(np.clip(rgb[1], 0, 255)), int(np.clip(rgb[2], 0, 255))
-                    preview_colors.append([r, g, b])
-
-                # Store preview data
-                self._latest_preview_data = {
-                    "timestamp": time.time(),
-                    "led_values": preview_colors,  # 60 RGB values for 20x3 grid
-                    "total_leds": total_leds,
-                    "sample_count": 60,
-                    "has_frame": True,
-                }
-
-        except Exception as e:
-            logger.warning(f"Failed to update preview data: {e}")
-
-    def get_preview_data(self) -> Optional[dict]:
-        """
-        Get latest preview data for web interface.
-
-        Returns:
-            Dictionary containing preview data or None if not available
-        """
-        with self._preview_lock:
-            return self._latest_preview_data.copy() if self._latest_preview_data else None
+    # Preview data methods removed - now handled by PreviewSink
 
     def _cleanup(self) -> None:
         """Clean up resources."""
         try:
             # Cleanup components in reverse order
+            if hasattr(self, "_preview_sink") and self._preview_sink:
+                self._preview_sink.stop()
+
             if hasattr(self, "_test_renderer") and self._test_renderer:
                 self._test_renderer.stop()
 
