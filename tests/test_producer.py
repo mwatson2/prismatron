@@ -300,7 +300,7 @@ class TestProducerProcess(unittest.TestCase):
         mock_frame_buffer.return_value = mock_buffer
 
         mock_control = Mock()
-        mock_control.initialize.return_value = True
+        mock_control.connect.return_value = True
         mock_control_state.return_value = mock_control
 
         producer = ProducerProcess(self.buffer_name, self.control_name)
@@ -308,7 +308,7 @@ class TestProducerProcess(unittest.TestCase):
 
         self.assertTrue(result)
         mock_buffer.initialize.assert_called_once()
-        mock_control.initialize.assert_called_once()
+        mock_control.connect.assert_called_once()
 
     @patch("src.producer.producer.FrameProducer")
     @patch("src.producer.producer.ControlState")
