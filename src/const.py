@@ -26,7 +26,7 @@ METADATA_DTYPE: np.dtype = np.dtype(
 )
 
 # LED Hardware Configuration
-LED_COUNT = 2600  # Total number of RGB LEDs in the display (from Dig-Octa-32-8L)
+LED_COUNT = 2624  # Total number of RGB LEDs in the display (updated to match diffusion patterns)
 LED_DATA_SIZE = LED_COUNT * 3  # RGB data size in bytes
 
 # WLED Communication Configuration

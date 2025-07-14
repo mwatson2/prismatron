@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from ..const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
+from ..const import FRAME_CHANNELS, FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
 from ..core import ControlState, FrameConsumer
 from .frame_renderer import FrameRenderer
 from .led_buffer import LEDBuffer
@@ -386,11 +386,11 @@ class ConsumerProcess:
 
         try:
             # Extract frame and timestamp
-            frame_array = buffer_info.get_array()
+            frame_array = buffer_info.get_array_interleaved(FRAME_WIDTH, FRAME_HEIGHT, FRAME_CHANNELS)
             timestamp = getattr(buffer_info, "presentation_timestamp", None) or time.time()
 
             # Validate frame shape
-            if frame_array.shape != (FRAME_HEIGHT, FRAME_WIDTH, 4):
+            if frame_array.shape != (FRAME_HEIGHT, FRAME_WIDTH, FRAME_CHANNELS):
                 logger.warning(f"Unexpected frame shape: {frame_array.shape}")
                 return
 
