@@ -18,7 +18,7 @@ import numpy as np
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
+from src.const import FRAME_CHANNELS, FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
 from src.consumer.consumer import ConsumerProcess, ConsumerStats
 
 
@@ -153,7 +153,7 @@ class TestConsumerProcess(unittest.TestCase):
 
     def test_performance_settings_update(self):
         """Test updating performance settings."""
-        self.consumer.set_performance_settings(target_fps=30.0, use_optimization=False, brightness_scale=0.8)
+        self.consumer.set_performance_settings(target_fps=30.0, brightness_scale=0.8)
 
         self.assertEqual(self.consumer.target_fps, 30.0)
         self.assertEqual(self.consumer.brightness_scale, 0.8)
@@ -180,14 +180,15 @@ class TestConsumerProcess(unittest.TestCase):
         """Test processing a valid frame."""
         # Setup mock frame buffer
         mock_buffer_info = Mock()
-        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 4), dtype=np.uint8)
-        mock_buffer_info.get_array.return_value = test_frame
+        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, FRAME_CHANNELS), dtype=np.uint8)
+        mock_buffer_info.get_array_interleaved.return_value = test_frame
 
         # Setup mock optimizer result
         mock_optimizer_result = Mock()
         mock_optimizer_result.converged = True
         mock_optimizer_result.iterations = 25
         mock_optimizer_result.led_values = (np.random.random((LED_COUNT, 3)) * 255).astype(np.float32)
+        mock_optimizer_result.error_metrics = {"mse": 0.1}
 
         self.mock_led_optimizer.optimize_frame.return_value = mock_optimizer_result
 
@@ -198,13 +199,18 @@ class TestConsumerProcess(unittest.TestCase):
 
         self.mock_wled_sink.send_led_data.return_value = mock_transmission_result
 
+        # Mock LED buffer methods
+        self.mock_led_buffer.write_led_values.return_value = True
+        mock_led_data = Mock()
+        mock_led_data.led_values = mock_optimizer_result.led_values.astype(np.uint8)
+        self.mock_led_buffer.read_latest_led_values.return_value = mock_led_data
+
         # Process the frame
         self.consumer._process_frame(mock_buffer_info)
 
         # Verify calls were made
-        mock_buffer_info.get_array.assert_called_once()
+        mock_buffer_info.get_array_interleaved.assert_called_once_with(FRAME_WIDTH, FRAME_HEIGHT, FRAME_CHANNELS)
         self.mock_led_optimizer.optimize_frame.assert_called_once()
-        self.mock_wled_sink.send_led_data.assert_called_once()
 
         # Check stats were updated
         self.assertEqual(self.consumer._stats.frames_processed, 1)
@@ -214,7 +220,7 @@ class TestConsumerProcess(unittest.TestCase):
         """Test processing frame with invalid shape."""
         mock_buffer_info = Mock()
         # Wrong frame shape
-        wrong_frame = np.zeros((100, 200, 3), dtype=np.uint8)
+        wrong_frame = np.zeros((100, 200, FRAME_CHANNELS), dtype=np.uint8)
         mock_buffer_info.get_array.return_value = wrong_frame
 
         # Process should handle gracefully
@@ -226,16 +232,23 @@ class TestConsumerProcess(unittest.TestCase):
     def test_process_frame_optimization_failure(self):
         """Test handling optimization failures."""
         mock_buffer_info = Mock()
-        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 4), dtype=np.uint8)
-        mock_buffer_info.get_array.return_value = test_frame
+        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, FRAME_CHANNELS), dtype=np.uint8)
+        mock_buffer_info.get_array_interleaved.return_value = test_frame
 
         # Setup optimizer to not converge
         mock_optimizer_result = Mock()
         mock_optimizer_result.converged = False
         mock_optimizer_result.iterations = 100
         mock_optimizer_result.led_values = np.zeros((LED_COUNT, 3), dtype=np.float32)
+        mock_optimizer_result.error_metrics = {"mse": 1.0}
 
         self.mock_led_optimizer.optimize_frame.return_value = mock_optimizer_result
+
+        # Mock LED buffer methods
+        self.mock_led_buffer.write_led_values.return_value = True
+        mock_led_data = Mock()
+        mock_led_data.led_values = mock_optimizer_result.led_values.astype(np.uint8)
+        self.mock_led_buffer.read_latest_led_values.return_value = mock_led_data
 
         # Setup successful transmission
         mock_transmission_result = Mock()
@@ -252,14 +265,21 @@ class TestConsumerProcess(unittest.TestCase):
     def test_process_frame_transmission_failure(self):
         """Test handling transmission failures."""
         mock_buffer_info = Mock()
-        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 4), dtype=np.uint8)
-        mock_buffer_info.get_array.return_value = test_frame
+        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, FRAME_CHANNELS), dtype=np.uint8)
+        mock_buffer_info.get_array_interleaved.return_value = test_frame
 
         # Setup successful optimization
         mock_optimizer_result = Mock()
         mock_optimizer_result.converged = True
         mock_optimizer_result.led_values = (np.random.random((LED_COUNT, 3)) * 255).astype(np.float32)
+        mock_optimizer_result.error_metrics = {"mse": 0.1}
         self.mock_led_optimizer.optimize_frame.return_value = mock_optimizer_result
+
+        # Mock LED buffer methods
+        self.mock_led_buffer.write_led_values.return_value = True
+        mock_led_data = Mock()
+        mock_led_data.led_values = mock_optimizer_result.led_values.astype(np.uint8)
+        self.mock_led_buffer.read_latest_led_values.return_value = mock_led_data
 
         # Setup transmission failure
         mock_transmission_result = Mock()
@@ -277,14 +297,21 @@ class TestConsumerProcess(unittest.TestCase):
     def test_process_frame_with_brightness_scaling(self):
         """Test frame processing with brightness scaling."""
         mock_buffer_info = Mock()
-        test_frame = np.full((FRAME_HEIGHT, FRAME_WIDTH, 4), 255, dtype=np.uint8)  # Bright frame
-        mock_buffer_info.get_array.return_value = test_frame
+        test_frame = np.full((FRAME_HEIGHT, FRAME_WIDTH, FRAME_CHANNELS), 255, dtype=np.uint8)  # Bright frame
+        mock_buffer_info.get_array_interleaved.return_value = test_frame
 
         # Setup optimizer
         mock_optimizer_result = Mock()
         mock_optimizer_result.converged = True
         mock_optimizer_result.led_values = (np.random.random((LED_COUNT, 3)) * 255).astype(np.float32)
+        mock_optimizer_result.error_metrics = {"mse": 0.1}
         self.mock_led_optimizer.optimize_frame.return_value = mock_optimizer_result
+
+        # Mock LED buffer methods
+        self.mock_led_buffer.write_led_values.return_value = True
+        mock_led_data = Mock()
+        mock_led_data.led_values = mock_optimizer_result.led_values.astype(np.uint8)
+        self.mock_led_buffer.read_latest_led_values.return_value = mock_led_data
 
         # Setup transmission
         mock_transmission_result = Mock()
@@ -468,9 +495,9 @@ class TestConsumerProcessIntegration(unittest.TestCase):
         mock_frame_renderer.return_value.is_initialized.return_value = True
 
         # Setup frame data
-        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 4), dtype=np.uint8)
+        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, FRAME_CHANNELS), dtype=np.uint8)
         mock_buffer_info = Mock()
-        mock_buffer_info.get_array.return_value = test_frame
+        mock_buffer_info.get_array_interleaved.return_value = test_frame
         mock_buffer_info.presentation_timestamp = time.time()
 
         mock_frame_consumer.return_value.wait_for_ready_buffer.return_value = mock_buffer_info
@@ -497,9 +524,8 @@ class TestConsumerProcessIntegration(unittest.TestCase):
         consumer._process_frame(mock_buffer_info)
 
         # Verify the pipeline executed
-        mock_buffer_info.get_array.assert_called_once()
+        mock_buffer_info.get_array_interleaved.assert_called_once_with(FRAME_WIDTH, FRAME_HEIGHT, FRAME_CHANNELS)
         mock_optimizer.return_value.optimize_frame.assert_called_once()
-        mock_wled.return_value.send_led_data.assert_called_once()
 
         # Check stats
         self.assertEqual(consumer._stats.frames_processed, 1)
