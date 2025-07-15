@@ -100,7 +100,22 @@ class ConsumerProcess:
 
         # New timestamp-based rendering components
         self._led_buffer = LEDBuffer(buffer_size=10)
-        self._frame_renderer = FrameRenderer(first_frame_delay_ms=100.0, timing_tolerance_ms=5.0)
+
+        # Create frame renderer with LED ordering from pattern file if available
+        if diffusion_patterns_path:
+            try:
+                from ..utils.pattern_loader import create_frame_renderer_with_pattern
+
+                self._frame_renderer = create_frame_renderer_with_pattern(
+                    diffusion_patterns_path, first_frame_delay_ms=100.0, timing_tolerance_ms=5.0
+                )
+                logger.info(f"Frame renderer created with LED ordering from {diffusion_patterns_path}")
+            except Exception as e:
+                logger.warning(f"Failed to load LED ordering from pattern file: {e}, using default renderer")
+                self._frame_renderer = FrameRenderer(first_frame_delay_ms=100.0, timing_tolerance_ms=5.0)
+        else:
+            self._frame_renderer = FrameRenderer(first_frame_delay_ms=100.0, timing_tolerance_ms=5.0)
+            logger.info("Frame renderer created without LED ordering (no pattern file specified)")
 
         # Test renderer (optional)
         self.enable_test_renderer = enable_test_renderer
@@ -128,9 +143,8 @@ class ConsumerProcess:
 
         # Performance settings
         self.max_frame_wait_timeout = 1.0
-        self.use_optimization = True
         self.brightness_scale = 1.0
-        self.max_optimization_iterations = 50  # No timing constraints
+        self.optimization_iterations = 5
         self.target_fps = 15.0  # Target processing FPS
 
         # WLED connection management
@@ -386,6 +400,7 @@ class ConsumerProcess:
 
         try:
             # Extract frame and timestamp
+            # TODO: Check get_array_interleaved to ensure this is on the GPU already
             frame_array = buffer_info.get_array_interleaved(FRAME_WIDTH, FRAME_HEIGHT, FRAME_CHANNELS)
             timestamp = getattr(buffer_info, "presentation_timestamp", None) or time.time()
 
@@ -395,17 +410,19 @@ class ConsumerProcess:
                 return
 
             # Convert RGBA to RGB
+            # TODO; Remove this, we only have RGB
             rgb_frame = frame_array[:, :, :3].astype(np.uint8)
 
             # Apply brightness scaling
             if self.brightness_scale != 1.0:
+                # TODO: Do this on the GPU (i.e. don't move data back and forth)
                 rgb_frame = (rgb_frame * self.brightness_scale).clip(0, 255).astype(np.uint8)
 
             # Optimize LED values (no timing constraints)
             optimization_start = time.time()
 
-            # Choose iterations based on optimization mode
-            iterations = self.max_optimization_iterations if self.use_optimization else 5
+            # Set iterations
+            iterations = self.optimization_iterations
             result = self._led_optimizer.optimize_frame(rgb_frame, max_iterations=iterations)
             optimization_time = time.time() - optimization_start
 
@@ -522,13 +539,8 @@ class ConsumerProcess:
                 logger.error("LED optimizer not available for preview sink")
                 return False
 
-            # Get spatial mapping from LED optimizer
-            spatial_mapping = getattr(self._led_optimizer, "_led_spatial_mapping", None)
-            if not spatial_mapping:
-                logger.warning("No spatial mapping available - preview sink will use identity mapping")
-
-            # Create preview sink
-            self._preview_sink = PreviewSink(self._preview_sink_config, spatial_mapping)
+            # Create preview sink (spatial mapping handled by frame renderer now)
+            self._preview_sink = PreviewSink(self._preview_sink_config)
 
             # Start preview sink
             if self._preview_sink.start():
@@ -560,8 +572,7 @@ class ConsumerProcess:
             "average_optimization_time": self._stats.get_average_optimization_time(),
             "optimization_errors": self._stats.optimization_errors,
             "transmission_errors": self._stats.transmission_errors,
-            "max_optimization_iterations": self.max_optimization_iterations,
-            "use_optimization": self.use_optimization,
+            "optimization_iterations": self.optimization_iterations,
             "brightness_scale": self.brightness_scale,
             "target_fps": self.target_fps,
             "led_count": LED_COUNT,
@@ -670,7 +681,6 @@ class ConsumerProcess:
     def set_performance_settings(
         self,
         target_fps: Optional[float] = None,
-        use_optimization: Optional[bool] = None,
         brightness_scale: Optional[float] = None,
     ) -> None:
         """
@@ -685,10 +695,6 @@ class ConsumerProcess:
             # Clamp target_fps to reasonable bounds
             self.target_fps = max(1.0, min(60.0, target_fps))
             logger.info(f"Target FPS set to {self.target_fps}")
-
-        if use_optimization is not None:
-            self.use_optimization = use_optimization
-            logger.info(f"Optimization {'enabled' if use_optimization else 'disabled'}")
 
         if brightness_scale is not None:
             # Clamp brightness to 0.0-1.0

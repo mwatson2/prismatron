@@ -330,24 +330,28 @@ async def play_content():
         # Update local playlist state
         playlist_state.is_playing = True
 
-        # If we have items in the web playlist, add them to the producer
-        if playlist_state.items and producer_process:
-            current_item = playlist_state.items[playlist_state.current_index]
-            logger.info(f"Adding playlist item to producer: {current_item.name}")
-
-            # Add the current item to producer playlist
-            if current_item.type in ["image", "video"] and current_item.file_path:
-                success = producer_process.add_playlist_item(current_item.file_path, current_item.duration)
-                if success:
-                    logger.info(f"Successfully added {current_item.file_path} to producer playlist")
-                else:
-                    logger.error(f"Failed to add {current_item.file_path} to producer playlist")
-
-        # Signal play to producer via control state
-        # Create a new control state connection since we're in a separate process
+        # Send playlist items and play command to producer via control state
+        # Use a single control state connection for both operations
         try:
             temp_control = ControlState()
             if temp_control.connect():
+                # Send playlist item if available
+                if playlist_state.items:
+                    current_item = playlist_state.items[playlist_state.current_index]
+                    logger.info(f"Sending playlist item to producer: {current_item.name}")
+
+                    if current_item.type in ["image", "video"] and current_item.file_path:
+                        command = {
+                            "action": "add_item",
+                            "data": {"filepath": current_item.file_path, "duration": current_item.duration},
+                        }
+                        success = temp_control.send_playlist_command(command)
+                        if success:
+                            logger.info(f"Successfully sent playlist item to producer: {current_item.file_path}")
+                        else:
+                            logger.error(f"Failed to send playlist item to producer: {current_item.file_path}")
+
+                # Signal play state to producer
                 from src.core.control_state import PlayState
 
                 temp_control.set_play_state(PlayState.PLAYING)
@@ -690,9 +694,28 @@ async def reorder_playlist(item_ids: List[str]):
 async def remove_playlist_item(item_id: str):
     """Remove item from playlist."""
     original_length = len(playlist_state.items)
+    removed_item = None
+
+    # Find the item to remove
+    for item in playlist_state.items:
+        if item.id == item_id:
+            removed_item = item
+            break
+
     playlist_state.items = [item for item in playlist_state.items if item.id != item_id]
 
-    if len(playlist_state.items) < original_length:
+    if len(playlist_state.items) < original_length and removed_item:
+        # Send remove command to producer
+        try:
+            temp_control = ControlState()
+            if temp_control.connect():
+                command = {"action": "remove_item", "data": {"filepath": removed_item.file_path}}
+                temp_control.send_playlist_command(command)
+                temp_control.cleanup()
+                logger.info(f"Sent remove command to producer: {removed_item.file_path}")
+        except Exception as e:
+            logger.error(f"Error sending remove command: {e}")
+
         # Adjust current index if needed
         if playlist_state.current_index >= len(playlist_state.items):
             playlist_state.current_index = max(0, len(playlist_state.items) - 1)
@@ -713,6 +736,17 @@ async def remove_playlist_item(item_id: str):
 @app.post("/api/playlist/clear")
 async def clear_playlist():
     """Clear all playlist items."""
+    # Send clear command to producer
+    try:
+        temp_control = ControlState()
+        if temp_control.connect():
+            command = {"action": "clear"}
+            temp_control.send_playlist_command(command)
+            temp_control.cleanup()
+            logger.info("Sent clear command to producer")
+    except Exception as e:
+        logger.error(f"Error sending clear command: {e}")
+
     playlist_state.items.clear()
     playlist_state.current_index = 0
     playlist_state.is_playing = False

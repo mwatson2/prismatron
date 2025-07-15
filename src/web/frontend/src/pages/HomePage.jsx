@@ -141,9 +141,9 @@ const HomePage = () => {
         }
       }
 
-      // Draw LED as a larger circle for better visibility
+      // Draw LED as a much larger circle for better visibility (32px diameter)
       ctx.beginPath()
-      ctx.arc(canvasX, canvasY, 4, 0, 2 * Math.PI)
+      ctx.arc(canvasX, canvasY, 16, 0, 2 * Math.PI)
       ctx.fillStyle = ledColor
       ctx.globalAlpha = brightness
       ctx.fill()
@@ -152,7 +152,7 @@ const HomePage = () => {
       // Add glow effect for bright LEDs
       if (brightness > 0.8) {
         ctx.beginPath()
-        ctx.arc(canvasX, canvasY, 8, 0, 2 * Math.PI)
+        ctx.arc(canvasX, canvasY, 24, 0, 2 * Math.PI)
         ctx.fillStyle = ledColor
         ctx.globalAlpha = 0.2
         ctx.fill()

@@ -64,6 +64,8 @@ class SystemStatus:
     error_message: str = ""
     uptime: float = 0.0
     last_update: float = 0.0
+    playlist_json: str = ""  # JSON-serialized playlist info
+    playlist_command: str = ""  # JSON-serialized playlist command for producer
 
 
 class ControlState:
@@ -87,6 +89,7 @@ class ControlState:
         self._lock = mp.Lock()
         self._initialized = False
         self._start_time = time.time()
+        self._is_creator = False  # Track if this instance created the shared memory
 
         # Events for coordination
         self._shutdown_event = mp.Event()
@@ -157,6 +160,7 @@ class ControlState:
             self._write_status(self._default_status)
 
             self._initialized = True
+            self._is_creator = True  # Mark this instance as the creator
             logger.info(f"Initialized control state '{self.name}' with {self._buffer_size} bytes")
             return True
 
@@ -609,16 +613,93 @@ class ControlState:
             logger.error(f"Failed to update system state: {e}")
             return False
 
+    def update_playlist_info(self, playlist_info: Dict[str, Any]) -> bool:
+        """
+        Update the playlist information in shared state.
+
+        Args:
+            playlist_info: Dictionary containing playlist data
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            current_status = self._read_status()
+            if current_status:
+                current_status.playlist_json = json.dumps(playlist_info)
+                result = self._write_status(current_status)
+                if result:
+                    self._status_updated_event.set()
+                return result
+            return False
+
+        except Exception as e:
+            logger.error(f"Failed to update playlist info: {e}")
+            return False
+
+    def send_playlist_command(self, command: Dict[str, Any]) -> bool:
+        """
+        Send a playlist command to the producer.
+
+        Args:
+            command: Dictionary containing command data
+                    Format: {"action": "add_item", "data": {"filepath": "...", "duration": ...}}
+                           {"action": "remove_item", "data": {"item_id": "..."}}
+                           {"action": "clear"}
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            current_status = self._read_status()
+            if current_status:
+                current_status.playlist_command = json.dumps(command)
+                result = self._write_status(current_status)
+                if result:
+                    self._status_updated_event.set()
+                return result
+            return False
+
+        except Exception as e:
+            logger.error(f"Failed to send playlist command: {e}")
+            return False
+
+    def get_playlist_command(self) -> Optional[Dict[str, Any]]:
+        """
+        Get and clear the current playlist command.
+
+        Returns:
+            Command dictionary or None if no command available
+        """
+        try:
+            current_status = self._read_status()
+            if current_status and current_status.playlist_command:
+                command_json = current_status.playlist_command
+                # Clear the command after reading
+                current_status.playlist_command = ""
+                self._write_status(current_status)
+                return json.loads(command_json)
+            return None
+
+        except Exception as e:
+            logger.error(f"Failed to get playlist command: {e}")
+            return None
+
     def cleanup(self) -> None:
         """Clean up shared memory resources."""
         try:
             if self._shared_memory:
                 try:
                     self._shared_memory.close()
-                    self._shared_memory.unlink()
+                    # Only unlink if this instance created the shared memory
+                    if self._is_creator:
+                        self._shared_memory.unlink()
+                        logger.info(f"Unlinked shared memory '{self.name}' (creator cleanup)")
+                    else:
+                        logger.debug(f"Closed connection to shared memory '{self.name}' (non-creator cleanup)")
                 except Exception as e:
                     # Only log if it's not a "file not found" error (normal during shutdown)
-                    if e.errno != 2:  # ENOENT - No such file or directory
+                    if hasattr(e, "errno") and e.errno != 2:  # ENOENT - No such file or directory
                         logger.warning(f"Error cleaning up control state memory: {e}")
 
             self._initialized = False

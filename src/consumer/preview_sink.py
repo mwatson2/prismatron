@@ -17,7 +17,6 @@ from typing import Any, Dict, Optional
 import numpy as np
 
 from ..const import LED_COUNT, LED_DATA_SIZE
-from ..utils.spatial_ordering import reorder_block_values
 
 logger = logging.getLogger(__name__)
 
@@ -151,25 +150,18 @@ class PreviewSink:
     """
     Preview sink that receives LED values and shares them with web server via shared memory.
 
-    This sink converts LED values from spatial order (used by optimization) to physical order
-    (needed for display preview) and stores them in shared memory for the web server to read.
+    This sink receives LED values in physical order (already converted by frame renderer)
+    and stores them in shared memory for the web server to read.
     """
 
-    def __init__(self, config: Optional[PreviewSinkConfig] = None, spatial_mapping: Optional[Dict[int, int]] = None):
+    def __init__(self, config: Optional[PreviewSinkConfig] = None):
         """
         Initialize preview sink.
 
         Args:
             config: Preview sink configuration
-            spatial_mapping: Mapping from physical LED ID to spatial order index
         """
         self.config = config or PreviewSinkConfig()
-        self.spatial_mapping = spatial_mapping or {}
-
-        # Create reverse mapping if spatial mapping provided
-        self.reverse_spatial_mapping = {}
-        if self.spatial_mapping:
-            self.reverse_spatial_mapping = {v: k for k, v in self.spatial_mapping.items()}
 
         # Statistics tracking
         self.stats = PreviewSinkStatistics(alpha=self.config.update_ewma_alpha)
@@ -344,7 +336,7 @@ class PreviewSink:
         Receive LED values from frame renderer and update shared memory.
 
         Args:
-            led_values: LED RGB values, shape (led_count, 3) in spatial order
+            led_values: LED RGB values, shape (led_count, 3) in physical order
             metadata: Optional frame metadata
 
         Returns:
@@ -372,9 +364,7 @@ class PreviewSink:
                 time_since_last = (start_time - self.last_update_time) * 1000  # ms
                 is_late = time_since_last > self.config.late_frame_threshold_ms
 
-            # Convert from spatial order to physical order
-            physical_led_values = self._convert_to_physical_order(led_values)
-
+            # LED values are already in physical order from frame renderer
             # Update shared memory with new LED data
             with self._lock:
                 # Update header
@@ -383,7 +373,7 @@ class PreviewSink:
                 self._write_header(start_time, frame_counter, LED_COUNT)
 
                 # Write LED data (convert to uint8 and flatten)
-                led_data_uint8 = np.clip(physical_led_values, 0, 255).astype(np.uint8)
+                led_data_uint8 = np.clip(led_values, 0, 255).astype(np.uint8)
                 led_data_bytes = led_data_uint8.flatten().tobytes()
 
                 led_data_offset = 64
@@ -416,33 +406,6 @@ class PreviewSink:
             self.stats.update_frame_timing(is_late=False, is_dropped=True)
             return False
 
-    def _convert_to_physical_order(self, spatial_led_values: np.ndarray) -> np.ndarray:
-        """
-        Convert LED values from spatial order to physical order.
-
-        Args:
-            spatial_led_values: LED values in spatial order, shape (led_count, 3)
-
-        Returns:
-            LED values in physical order, shape (led_count, 3)
-        """
-        if not self.reverse_spatial_mapping:
-            # No spatial mapping available, assume already in physical order
-            logger.debug("No spatial mapping available, assuming physical order")
-            return spatial_led_values
-
-        led_count = spatial_led_values.shape[0]
-        physical_led_values = np.zeros_like(spatial_led_values)
-
-        # Convert each spatial index to physical index
-        for spatial_idx in range(led_count):
-            physical_idx = self.reverse_spatial_mapping.get(spatial_idx, spatial_idx)
-            # Ensure physical_idx is within bounds
-            if 0 <= physical_idx < led_count:
-                physical_led_values[physical_idx] = spatial_led_values[spatial_idx]
-
-        return physical_led_values
-
     def get_statistics(self) -> Dict[str, Any]:
         """
         Get preview sink statistics.
@@ -461,8 +424,6 @@ class PreviewSink:
                     "update_ewma_alpha": self.config.update_ewma_alpha,
                     "late_frame_threshold_ms": self.config.late_frame_threshold_ms,
                 },
-                "has_spatial_mapping": bool(self.spatial_mapping),
-                "spatial_mapping_size": len(self.spatial_mapping),
             }
         )
         return stats
@@ -490,17 +451,6 @@ class PreviewSink:
             "led_count": LED_COUNT,
         }
 
-    def set_spatial_mapping(self, spatial_mapping: Dict[int, int]) -> None:
-        """
-        Update the spatial mapping.
-
-        Args:
-            spatial_mapping: Mapping from physical LED ID to spatial order index
-        """
-        self.spatial_mapping = spatial_mapping.copy()
-        self.reverse_spatial_mapping = {v: k for k, v in self.spatial_mapping.items()}
-        logger.info(f"Updated spatial mapping: {len(self.spatial_mapping)} LEDs")
-
     def __enter__(self):
         """Context manager entry."""
         if self.start():
@@ -527,19 +477,11 @@ def create_preview_sink_from_pattern(
         PreviewSink instance or None if failed to load
     """
     try:
-        # Load pattern data
+        # Load pattern data (spatial mapping no longer needed)
         data = np.load(pattern_file_path, allow_pickle=True)
 
-        # Extract spatial mapping if available
-        spatial_mapping = None
-        if "led_spatial_mapping" in data:
-            spatial_mapping = data["led_spatial_mapping"].item()
-            logger.info(f"Loaded spatial mapping with {len(spatial_mapping)} LEDs from pattern")
-        else:
-            logger.warning("No spatial mapping found in pattern file")
-
-        # Create preview sink
-        sink = PreviewSink(config, spatial_mapping)
+        # Create preview sink (no spatial mapping needed)
+        sink = PreviewSink(config)
 
         logger.info(f"Created preview sink from pattern: {pattern_file_path}")
         return sink

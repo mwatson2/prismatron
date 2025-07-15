@@ -110,7 +110,6 @@ class TestConsumerProcess(unittest.TestCase):
         self.assertFalse(self.consumer._running)
         self.assertFalse(self.consumer._shutdown_requested)
         self.assertEqual(self.consumer.target_fps, 15.0)
-        self.assertTrue(self.consumer.use_optimization)
 
     @patch("src.consumer.consumer.FrameConsumer")
     @patch("src.consumer.consumer.ControlState")
@@ -157,7 +156,6 @@ class TestConsumerProcess(unittest.TestCase):
         self.consumer.set_performance_settings(target_fps=30.0, use_optimization=False, brightness_scale=0.8)
 
         self.assertEqual(self.consumer.target_fps, 30.0)
-        self.assertFalse(self.consumer.use_optimization)
         self.assertEqual(self.consumer.brightness_scale, 0.8)
 
     def test_performance_settings_bounds(self):
@@ -306,42 +304,6 @@ class TestConsumerProcess(unittest.TestCase):
 
         # Frame should be scaled down (255 * 0.5 = 127.5 -> 127)
         self.assertTrue(np.all(processed_frame <= 127))
-
-    def test_optimization_vs_speed_mode(self):
-        """Test switching between full optimization and speed modes."""
-        mock_buffer_info = Mock()
-        test_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 4), dtype=np.uint8)
-        mock_buffer_info.get_array.return_value = test_frame
-
-        # Setup mock results
-        mock_optimizer_result = Mock()
-        mock_optimizer_result.converged = True
-        mock_optimizer_result.led_values = (np.random.random((LED_COUNT, 3)) * 255).astype(np.float32)
-
-        self.mock_led_optimizer.optimize_frame.return_value = mock_optimizer_result
-
-        mock_transmission_result = Mock()
-        mock_transmission_result.success = True
-        self.mock_wled_sink.send_led_data.return_value = mock_transmission_result
-
-        # Test full optimization mode (50 iterations)
-        self.consumer.use_optimization = True
-        self.consumer._process_frame(mock_buffer_info)
-
-        # Check that optimize_frame was called with higher max_iterations
-        call_args = self.mock_led_optimizer.optimize_frame.call_args
-        self.assertEqual(call_args[1]["max_iterations"], 50)
-
-        # Reset mocks
-        self.mock_led_optimizer.reset_mock()
-
-        # Test speed mode (5 iterations)
-        self.consumer.use_optimization = False
-        self.consumer._process_frame(mock_buffer_info)
-
-        # Check that optimize_frame was called with lower max_iterations
-        call_args = self.mock_led_optimizer.optimize_frame.call_args
-        self.assertEqual(call_args[1]["max_iterations"], 5)
 
     def test_get_stats(self):
         """Test getting consumer statistics."""

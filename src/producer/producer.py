@@ -178,6 +178,27 @@ class ContentPlaylist:
                 logger.error(f"Failed to remove playlist item: {e}")
                 return False
 
+    def remove_item_by_filepath(self, filepath: str) -> bool:
+        """
+        Remove item from playlist by filepath.
+
+        Args:
+            filepath: Path of item to remove
+
+        Returns:
+            True if removed successfully, False otherwise
+        """
+        with self._lock:
+            try:
+                for i, item in enumerate(self._items):
+                    if item.filepath == filepath:
+                        return self.remove_item(i)
+                return False
+
+            except Exception as e:
+                logger.error(f"Error removing playlist item by filepath: {e}")
+                return False
+
     def clear(self) -> None:
         """Clear all items from playlist."""
         with self._lock:
@@ -365,7 +386,10 @@ class ProducerProcess:
         Returns:
             True if added successfully, False otherwise
         """
-        return self._playlist.add_item(filepath, duration, repeat)
+        result = self._playlist.add_item(filepath, duration, repeat)
+        if result:
+            self._sync_playlist_to_control_state()
+        return result
 
     def load_playlist_from_directory(self, directory: str) -> int:
         """
@@ -412,6 +436,8 @@ class ProducerProcess:
                     added_count += 1
 
             logger.info(f"Loaded {added_count} files from {directory}")
+            if added_count > 0:
+                self._sync_playlist_to_control_state()
             return added_count
 
         except Exception as e:
@@ -482,6 +508,9 @@ class ProducerProcess:
                 if not status:
                     time.sleep(0.1)
                     continue
+
+                # Process playlist commands from web server
+                self._process_playlist_commands()
 
                 # Log play state changes for debugging
                 if not hasattr(self, "_last_play_state") or self._last_play_state != status.play_state:
@@ -645,6 +674,7 @@ class ProducerProcess:
             if self._playlist.advance_to_next():
                 # Next content available
                 logger.debug("Advanced to next content")
+                self._sync_playlist_to_control_state()
             else:
                 # End of playlist
                 logger.info("End of playlist reached")
@@ -1046,6 +1076,54 @@ class ProducerProcess:
             Number of playlist items
         """
         return len(self._playlist)
+
+    def _sync_playlist_to_control_state(self) -> None:
+        """Synchronize playlist information to shared control state."""
+        try:
+            playlist_info = self.get_playlist_info()
+            self._control_state.update_playlist_info(playlist_info)
+        except Exception as e:
+            logger.warning(f"Failed to sync playlist to control state: {e}")
+
+    def _process_playlist_commands(self) -> None:
+        """Process playlist commands from web server via control state."""
+        try:
+            command = self._control_state.get_playlist_command()
+            if command:
+                action = command.get("action")
+                data = command.get("data", {})
+
+                if action == "add_item":
+                    filepath = data.get("filepath")
+                    duration = data.get("duration")
+                    if filepath:
+                        success = self._playlist.add_item(filepath, duration)
+                        if success:
+                            logger.info(f"PRODUCER PLAYLIST: Added item from web server: {filepath}")
+                            self._sync_playlist_to_control_state()
+                        else:
+                            logger.error(f"PRODUCER PLAYLIST: Failed to add item: {filepath}")
+
+                elif action == "remove_item":
+                    filepath = data.get("filepath")
+                    if filepath:
+                        success = self._playlist.remove_item_by_filepath(filepath)
+                        if success:
+                            logger.info(f"PRODUCER PLAYLIST: Removed item from web server: {filepath}")
+                            self._sync_playlist_to_control_state()
+                        else:
+                            logger.error(f"PRODUCER PLAYLIST: Failed to remove item: {filepath}")
+
+                elif action == "clear":
+                    self._playlist.clear()
+                    logger.info("PRODUCER PLAYLIST: Cleared playlist from web server")
+                    self._sync_playlist_to_control_state()
+
+                else:
+                    logger.warning(f"PRODUCER PLAYLIST: Unknown command action: {action}")
+
+        except Exception as e:
+            logger.error(f"Error processing playlist commands: {e}")
 
     def cleanup(self) -> None:
         """Clean up producer resources."""

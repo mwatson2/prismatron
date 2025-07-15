@@ -340,6 +340,17 @@ class SyntheticPatternGenerator:
         # Create reverse mapping: rcm_ordered_matrix_index -> physical_led_id
         self.reverse_spatial_mapping = dict(enumerate(rcm_order))
 
+        # Create led_ordering array: spatial_index -> physical_led_id
+        # This is what the frame renderer will use to convert from spatial to physical order
+        self.led_ordering = np.array(rcm_order, dtype=np.int32)
+
+        # Validate the LED ordering
+        unique_vals = np.unique(self.led_ordering)
+        expected_range = np.arange(len(self.led_ordering))
+        if not np.array_equal(np.sort(unique_vals), expected_range):
+            raise ValueError(f"Invalid LED ordering: not a permutation of 0 to {len(self.led_ordering)-1}")
+        logger.info(f"✅ Validated LED ordering: proper permutation of {len(self.led_ordering)} LEDs")
+
         # Calculate chunk parameters
         num_chunks = (led_count + chunk_size - 1) // chunk_size
         pixels_per_channel = self.frame_height * self.frame_width
@@ -722,6 +733,7 @@ class SyntheticPatternGenerator:
                 # LED information
                 "led_positions": self.led_positions,
                 "led_spatial_mapping": led_spatial_mapping,
+                "led_ordering": self.led_ordering,  # New: spatial_index -> physical_led_id
                 # Metadata
                 "metadata": save_metadata,
                 # Mixed tensor stored as nested element using to_dict()

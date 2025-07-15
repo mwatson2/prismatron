@@ -27,6 +27,7 @@ class FrameRenderer:
     - Renders frames at their designated timestamps
     - Handles late/early frame timing
     - Supports multiple output targets (WLED, test renderer)
+    - Converts LED values from spatial to physical order before output
     """
 
     def __init__(
@@ -34,6 +35,7 @@ class FrameRenderer:
         first_frame_delay_ms: float = 100.0,
         timing_tolerance_ms: float = 5.0,
         late_frame_log_threshold_ms: float = 50.0,
+        led_ordering: Optional[np.ndarray] = None,
     ):
         """
         Initialize frame renderer.
@@ -42,10 +44,14 @@ class FrameRenderer:
             first_frame_delay_ms: Default delay for first frame buffering
             timing_tolerance_ms: Acceptable timing deviation
             late_frame_log_threshold_ms: Log late frames above this threshold
+            led_ordering: Array mapping spatial indices to physical LED IDs
         """
         self.first_frame_delay = first_frame_delay_ms / 1000.0
         self.timing_tolerance = timing_tolerance_ms / 1000.0
         self.late_frame_log_threshold = late_frame_log_threshold_ms / 1000.0
+
+        # LED ordering for spatial to physical conversion
+        self.led_ordering = led_ordering
 
         # Timing state
         self.wallclock_delta = None  # Established from first frame
@@ -268,9 +274,12 @@ class FrameRenderer:
         Send LED values to all enabled output sinks.
 
         Args:
-            led_values: LED RGB values, shape (led_count, 3)
+            led_values: LED RGB values in spatial order, shape (led_count, 3)
             metadata: Optional frame metadata
         """
+        # Convert from spatial to physical order before sending to sinks
+        physical_led_values = self._convert_spatial_to_physical(led_values)
+
         # Send to all registered sinks
         for sink_info in self.sinks:
             if not sink_info["enabled"]:
@@ -283,14 +292,14 @@ class FrameRenderer:
                 # Try different sink interfaces
                 if hasattr(sink, "send_led_data"):
                     # WLED-style sink
-                    result = sink.send_led_data(led_values)
+                    result = sink.send_led_data(physical_led_values)
                     if hasattr(result, "success") and not result.success:
                         logger.warning(f"{name} transmission failed: {result.errors}")
                 elif hasattr(sink, "render_led_values"):
                     # Renderer-style sink
                     if hasattr(sink, "is_running") and not sink.is_running:
                         continue  # Skip if sink is not running
-                    sink.render_led_values(led_values.astype(np.uint8), metadata)
+                    sink.render_led_values(physical_led_values.astype(np.uint8), metadata)
                 else:
                     logger.warning(f"Sink {name} has no compatible interface")
 
@@ -343,6 +352,50 @@ class FrameRenderer:
             ) * self.ewma_dropped_fraction + self.ewma_alpha * dropped_fraction
 
         self.last_ewma_update = current_time
+
+    def _convert_spatial_to_physical(self, led_values: np.ndarray) -> np.ndarray:
+        """
+        Convert LED values from spatial order to physical order using fancy indexing.
+
+        Args:
+            led_values: LED values in spatial order, shape (led_count, 3)
+
+        Returns:
+            LED values in physical order, shape (led_count, 3)
+        """
+        if self.led_ordering is None:
+            # No ordering available, assume already in physical order
+            return led_values
+
+        # LED ordering should have been validated at load time
+        # led_ordering maps spatial_index -> physical_led_id
+        # We want to place spatial_led_values[spatial_idx] at physical_led_values[physical_led_id]
+        physical_led_values = np.zeros_like(led_values)
+
+        # Use fancy indexing for efficient conversion
+        # self.led_ordering[i] gives the physical LED ID for spatial index i
+        physical_led_values[self.led_ordering] = led_values
+
+        return physical_led_values
+
+    def set_led_ordering(self, led_ordering: np.ndarray) -> None:
+        """
+        Set the LED ordering array for spatial to physical conversion.
+
+        Args:
+            led_ordering: Array mapping spatial indices to physical LED IDs
+        """
+        # Import validation function
+        from ..utils.pattern_loader import validate_led_ordering
+
+        # Validate the LED ordering
+        is_valid, error_msg = validate_led_ordering(led_ordering)
+        if not is_valid:
+            logger.error(f"Invalid LED ordering: {error_msg}")
+            raise ValueError(f"Invalid LED ordering: {error_msg}")
+
+        self.led_ordering = led_ordering
+        logger.info(f"Updated LED ordering: {len(led_ordering)} LEDs")
 
     def get_timing_stats(self) -> Dict[str, Any]:
         """

@@ -137,7 +137,7 @@ class TestSink:
         Render LED values to the display using the mixed sparse tensor.
 
         Args:
-            led_values: LED values array (led_count, 3) in range [0, 255]
+            led_values: LED values array (led_count, 3) in physical order, range [0, 255]
 
         Returns:
             True if rendered successfully, False otherwise
