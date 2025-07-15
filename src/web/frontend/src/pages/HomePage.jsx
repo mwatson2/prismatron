@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
   PlayIcon,
   PauseIcon,
@@ -14,6 +14,7 @@ const HomePage = () => {
   const [localStatus, setLocalStatus] = useState(null)
   const [previewData, setPreviewData] = useState(null)
   const [ledPositions, setLedPositions] = useState(null)
+  const canvasRef = useRef(null)
 
   const currentItem = playlist.items?.[playlist.current_index]
   const status = systemStatus || localStatus
@@ -47,6 +48,9 @@ const HomePage = () => {
           const data = await response.json()
           setLedPositions(data)
           console.log('LED positions loaded:', data.led_count, 'LEDs')
+          console.log('Debug stats:', data.debug)
+          console.log('Frame dimensions:', data.frame_dimensions)
+          console.log('First 3 positions:', data.positions.slice(0, 3))
         }
       } catch (error) {
         console.error('Failed to fetch LED positions:', error)
@@ -76,6 +80,91 @@ const HomePage = () => {
 
     return () => clearInterval(interval)
   }, [playlist.is_playing, playlist.current_index])
+
+  // Canvas-based LED rendering function
+  const drawLEDs = () => {
+    if (!canvasRef.current || !ledPositions) return
+
+    const canvas = canvasRef.current
+    const ctx = canvas.getContext('2d')
+
+    // Clear canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+    // Calculate scaling to fit LED coordinate space (800x480) into canvas
+    const scaleX = canvas.width / ledPositions.frame_dimensions.width
+    const scaleY = canvas.height / ledPositions.frame_dimensions.height
+
+    console.log(`Canvas rendering: ${canvas.width}x${canvas.height}, scale: ${scaleX.toFixed(3)}x${scaleY.toFixed(3)}`)
+
+    // Draw each LED
+    ledPositions.positions.forEach((position, i) => {
+      const [x, y] = position
+
+      // Scale coordinates to canvas size
+      const canvasX = x * scaleX
+      const canvasY = y * scaleY
+
+      // Log first few LEDs for debugging
+      if (i < 5) {
+        console.log(`LED ${i}: raw pos [${x}, ${y}] -> canvas [${canvasX.toFixed(1)}, ${canvasY.toFixed(1)}]`)
+      }
+
+      // Determine LED color
+      let ledColor = '#666666' // Default dim color
+      let brightness = 0.3 // Default dim brightness
+
+      if (previewData?.has_frame && previewData?.frame_data) {
+        const frameDataLength = previewData.frame_data.length
+        const totalLeds = previewData.total_leds || ledPositions.led_count
+
+        let colorData = null
+
+        if (frameDataLength === totalLeds) {
+          // Full LED data - use direct mapping
+          colorData = previewData.frame_data[i]
+        } else if (frameDataLength > 0) {
+          // Sample data - map position-based for better spatial distribution
+          const positionHash = (x * 1000 + y) % frameDataLength
+          colorData = previewData.frame_data[positionHash]
+        }
+
+        if (colorData && Array.isArray(colorData) && colorData.length >= 3) {
+          const [r, g, b] = colorData
+          ledColor = `rgb(${r}, ${g}, ${b})`
+          brightness = 1.0
+
+          // Debug log for first few LEDs
+          if (i < 3) {
+            console.log(`LED ${i} color: rgb(${r}, ${g}, ${b})`)
+          }
+        }
+      }
+
+      // Draw LED as a larger circle for better visibility
+      ctx.beginPath()
+      ctx.arc(canvasX, canvasY, 4, 0, 2 * Math.PI)
+      ctx.fillStyle = ledColor
+      ctx.globalAlpha = brightness
+      ctx.fill()
+      ctx.globalAlpha = 1.0
+
+      // Add glow effect for bright LEDs
+      if (brightness > 0.8) {
+        ctx.beginPath()
+        ctx.arc(canvasX, canvasY, 8, 0, 2 * Math.PI)
+        ctx.fillStyle = ledColor
+        ctx.globalAlpha = 0.2
+        ctx.fill()
+        ctx.globalAlpha = 1.0
+      }
+    })
+  }
+
+  // Redraw LEDs when data changes
+  useEffect(() => {
+    drawLEDs()
+  }, [ledPositions, previewData])
 
   const handlePlayPause = async () => {
     try {
@@ -133,86 +222,14 @@ const HomePage = () => {
         </h2>
 
         <div className="relative aspect-[5/3] bg-dark-800 rounded-retro border border-neon-cyan border-opacity-20 overflow-hidden">
-          {/* LED display showing actual LED positions and colors */}
-          {ledPositions && (
-            <div className="absolute inset-0" style={{ position: 'relative' }}>
-              {ledPositions.positions.map((position, i) => {
-                const [x, y] = position
-
-                // Scale positions to fit the preview container (aspect-[5/3] = 800x480 → container size)
-                const scaleX = 100 / ledPositions.frame_dimensions.width  // Convert to percentage
-                const scaleY = 100 / ledPositions.frame_dimensions.height
-
-                let ledStyle = {
-                  position: 'absolute',
-                  left: `${x * scaleX}%`,
-                  top: `${y * scaleY}%`,
-                  width: '4px',
-                  height: '4px',
-                  transform: 'translate(-50%, -50%)', // Center the LED on the position
-                }
-
-                let className = 'rounded-full transition-all duration-200'
-
-                // Use actual frame data if available
-                if (previewData?.has_frame && previewData?.frame_data) {
-                  // Check if we have full LED data or just a sample
-                  const frameDataLength = previewData.frame_data.length
-                  const totalLeds = previewData.total_leds || ledPositions.led_count
-
-                  let colorData = null
-
-                  if (frameDataLength === totalLeds) {
-                    // Full LED data - use direct mapping
-                    colorData = previewData.frame_data[i]
-                  } else if (frameDataLength > 0) {
-                    // Sample data - map position-based for better spatial distribution
-                    // Use position hash for more even distribution across space
-                    const positionHash = (x * 1000 + y) % frameDataLength
-                    colorData = previewData.frame_data[positionHash]
-                  }
-
-                  if (colorData && Array.isArray(colorData) && colorData.length >= 3) {
-                    const [r, g, b] = colorData
-                    ledStyle.backgroundColor = `rgb(${r}, ${g}, ${b})`
-
-                    // Add glow effect if color is bright enough
-                    const brightness = (r + g + b) / 3
-                    if (brightness > 100) {
-                      className += ' shadow-neon'
-                      ledStyle.boxShadow = `0 0 4px rgb(${r}, ${g}, ${b})`
-                    }
-
-                    // Debug log for first few LEDs
-                    if (i < 3) {
-                      console.log(`LED ${i} at [${x}, ${y}] color:`, r, g, b, `(frame data: ${frameDataLength}/${totalLeds})`)
-                    }
-                  } else {
-                    // Invalid color data
-                    ledStyle.backgroundColor = '#666666'
-                    className += ' opacity-30'
-                  }
-                } else {
-                  // Fallback to dim state when no frame data
-                  ledStyle.backgroundColor = '#666666'
-                  className += ' opacity-30'
-
-                  // Debug log for first LED
-                  if (i === 0) {
-                    console.log('LED 0 fallback - has_frame:', previewData?.has_frame, 'frame_data length:', previewData?.frame_data?.length)
-                  }
-                }
-
-                return (
-                  <div
-                    key={i}
-                    className={className}
-                    style={ledStyle}
-                  />
-                )
-              })}
-            </div>
-          )}
+          {/* Canvas-based LED display */}
+          <canvas
+            ref={canvasRef}
+            className="absolute inset-0 w-full h-full"
+            width={800}
+            height={480}
+            style={{ imageRendering: 'pixelated' }}
+          />
 
           {/* Loading indicator when LED positions not loaded */}
           {!ledPositions && (
