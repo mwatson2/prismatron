@@ -132,27 +132,30 @@ const HomePage = () => {
         if (colorData && Array.isArray(colorData) && colorData.length >= 3) {
           const [r, g, b] = colorData
           ledColor = `rgb(${r}, ${g}, ${b})`
-          brightness = 1.0
+
+          // Calculate luminance-based brightness (ITU-R BT.709 standard)
+          const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
+          brightness = Math.max(0.1, luminance) // Minimum 10% opacity for visibility
 
           // Debug log for first few LEDs
           if (i < 3) {
-            console.log(`LED ${i} color: rgb(${r}, ${g}, ${b})`)
+            console.log(`LED ${i} color: rgb(${r}, ${g}, ${b}), luminance: ${luminance.toFixed(3)}`)
           }
         }
       }
 
-      // Draw LED as a much larger circle for better visibility (32px diameter)
+      // Draw LED as a 24px diameter circle (12px radius)
       ctx.beginPath()
-      ctx.arc(canvasX, canvasY, 16, 0, 2 * Math.PI)
+      ctx.arc(canvasX, canvasY, 12, 0, 2 * Math.PI)
       ctx.fillStyle = ledColor
       ctx.globalAlpha = brightness
       ctx.fill()
       ctx.globalAlpha = 1.0
 
-      // Add glow effect for bright LEDs
+      // Add glow effect for bright LEDs (luminance > 0.8)
       if (brightness > 0.8) {
         ctx.beginPath()
-        ctx.arc(canvasX, canvasY, 24, 0, 2 * Math.PI)
+        ctx.arc(canvasX, canvasY, 18, 0, 2 * Math.PI)
         ctx.fillStyle = ledColor
         ctx.globalAlpha = 0.2
         ctx.fill()

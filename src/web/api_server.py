@@ -1010,32 +1010,11 @@ async def get_led_positions():
         if "led_positions" not in data:
             raise HTTPException(status_code=404, detail="LED positions not found in patterns data")
 
-        led_positions = data["led_positions"]  # Shape: (led_count, 2) - in spatial order
-        led_spatial_mapping = data.get("led_spatial_mapping", {})
+        led_positions = data["led_positions"]  # Shape: (led_count, 2) - in physical order
 
-        # Convert spatial mapping to correct format if needed
-        if hasattr(led_spatial_mapping, "item"):
-            led_spatial_mapping = led_spatial_mapping.item()
-
-        # Convert positions from spatial order to physical order to match preview data
-        if led_spatial_mapping:
-            # Create reverse mapping: spatial_index -> physical_index
-            reverse_mapping = {v: k for k, v in led_spatial_mapping.items()}
-
-            # Reorder positions to physical order
-            physical_positions = np.zeros_like(led_positions)
-            for spatial_idx in range(len(led_positions)):
-                physical_idx = reverse_mapping.get(spatial_idx, spatial_idx)
-                if 0 <= physical_idx < len(led_positions):
-                    physical_positions[physical_idx] = led_positions[spatial_idx]
-
-            positions_list = physical_positions.tolist()
-            logger.info(
-                f"Converted LED positions from spatial to physical order using mapping with {len(led_spatial_mapping)} entries"
-            )
-        else:
-            positions_list = led_positions.tolist()
-            logger.warning("No spatial mapping found, assuming positions are already in physical order")
+        # LED positions are already in physical order, do not modify
+        positions_list = led_positions.tolist()
+        logger.info(f"Loaded LED positions in physical order: {len(positions_list)} LEDs")
 
         # Get frame dimensions for scaling/normalization
         frame_width = FRAME_WIDTH  # 800
