@@ -130,6 +130,10 @@ class WLEDSink:
 
         # Calculate packet fragmentation info
         self._calculate_fragmentation()
+        
+        # Track error message timing to silence after 1 minute
+        self._error_message_start_time = time.time()
+        self._silent_after_minutes = 1.0
 
     def _calculate_fragmentation(self) -> None:
         """Calculate how to fragment LED data into DDP packets."""
@@ -202,7 +206,10 @@ class WLEDSink:
                     return True
                 else:
                     if not self.config.persistent_retry:
-                        logger.error(f"Failed to connect to WLED controller at {self.config.host}:{self.config.port}")
+                        # Only log connection failure if within first minute
+                        elapsed_minutes = (time.time() - self._error_message_start_time) / 60.0
+                        if elapsed_minutes < self._silent_after_minutes:
+                            logger.error(f"Failed to connect to WLED controller at {self.config.host}:{self.config.port}")
                         self.disconnect()
                         return False
 
@@ -255,7 +262,10 @@ class WLEDSink:
                 self.socket = None
 
         self.is_connected = False
-        logger.info("Disconnected from WLED controller")
+        # Only log disconnect message if within first minute
+        elapsed_minutes = (time.time() - self._error_message_start_time) / 60.0
+        if elapsed_minutes < self._silent_after_minutes:
+            logger.info("Disconnected from WLED controller")
 
     def _send_query(self) -> Tuple[bool, Optional[Dict[str, Any]]]:
         """
@@ -323,13 +333,22 @@ class WLEDSink:
                 return False, None
 
         except requests.exceptions.Timeout:
-            logger.warning(f"HTTP request to WLED timed out after {self.config.timeout}s")
+            # Only log timeout warnings if within first minute
+            elapsed_minutes = (time.time() - self._error_message_start_time) / 60.0
+            if elapsed_minutes < self._silent_after_minutes:
+                logger.warning(f"HTTP request to WLED timed out after {self.config.timeout}s")
             return False, None
         except requests.exceptions.ConnectionError:
-            logger.warning(f"Failed to connect to WLED at {self.config.host}")
+            # Only log connection errors if within first minute
+            elapsed_minutes = (time.time() - self._error_message_start_time) / 60.0
+            if elapsed_minutes < self._silent_after_minutes:
+                logger.warning(f"Failed to connect to WLED at {self.config.host}")
             return False, None
         except Exception as e:
-            logger.error(f"WLED HTTP query error: {e}")
+            # Only log general errors if within first minute
+            elapsed_minutes = (time.time() - self._error_message_start_time) / 60.0
+            if elapsed_minutes < self._silent_after_minutes:
+                logger.error(f"WLED HTTP query error: {e}")
             return False, None
 
     def _test_udp_connectivity(self) -> bool:
@@ -381,7 +400,10 @@ class WLEDSink:
         errors = []
         if not self.is_connected or not self.socket:
             error_msg = "Not connected to WLED controller"
-            logger.error(error_msg)
+            # Only log error if within first minute
+            elapsed_minutes = (time.time() - self._error_message_start_time) / 60.0
+            if elapsed_minutes < self._silent_after_minutes:
+                logger.error(error_msg)
             return TransmissionResult(
                 success=False,
                 packets_sent=0,

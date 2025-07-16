@@ -16,6 +16,7 @@ export const WebSocketProvider = ({ children }) => {
   const [systemStatus, setSystemStatus] = useState(null)
   const [playlist, setPlaylist] = useState({ items: [], current_index: 0, is_playing: false })
   const [settings, setSettings] = useState(null)
+  const [previewData, setPreviewData] = useState(null)
 
   const connect = useCallback(() => {
     const wsUrl = import.meta.env.DEV
@@ -110,6 +111,10 @@ export const WebSocketProvider = ({ children }) => {
         setSystemStatus(data)
         break
 
+      case 'preview_data':
+        setPreviewData(data)
+        break
+
       default:
         console.log('Unknown WebSocket message type:', data.type)
     }
@@ -138,6 +143,7 @@ export const WebSocketProvider = ({ children }) => {
     systemStatus,
     playlist,
     settings,
+    previewData,
     sendMessage,
     // Convenience methods for common operations
     updatePlaylist: (newPlaylist) => setPlaylist(newPlaylist),

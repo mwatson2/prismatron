@@ -8,6 +8,7 @@ to multiple targets (WLED, test renderer).
 
 import logging
 import time
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -88,6 +89,16 @@ class FrameRenderer:
         # Timing distribution tracking
         self.timing_errors = []  # Track last 100 timing errors for analysis
         self.max_timing_history = 100
+
+        # Debug LED value writing (first 10 frames)
+        self._debug_led_count = 0
+        self._debug_max_leds = 10
+        self._debug_led_dir = Path("/tmp/prismatron_debug_leds")
+        self._debug_led_dir.mkdir(exist_ok=True)
+        
+        # Track error message timing to silence after 1 minute
+        self._error_message_start_time = time.time()
+        self._silent_after_minutes = 1.0
 
         logger.info(
             f"FrameRenderer initialized: delay={first_frame_delay_ms}ms, " f"tolerance=±{timing_tolerance_ms}ms"
@@ -280,6 +291,21 @@ class FrameRenderer:
         # Convert from spatial to physical order before sending to sinks
         physical_led_values = self._convert_spatial_to_physical(led_values)
 
+        # Debug: Write first 10 LED value sets to temporary files for analysis
+        if self._debug_led_count < self._debug_max_leds:
+            try:
+                # Save both spatial and physical LED values for comparison
+                debug_spatial_file = self._debug_led_dir / f"led_spatial_{self._debug_led_count:03d}.npy"
+                debug_physical_file = self._debug_led_dir / f"led_physical_{self._debug_led_count:03d}.npy"
+                np.save(debug_spatial_file, led_values)
+                np.save(debug_physical_file, physical_led_values)
+                logger.info(
+                    f"DEBUG: Wrote LED values {self._debug_led_count} to {debug_spatial_file} and {debug_physical_file}"
+                )
+                self._debug_led_count += 1
+            except Exception as e:
+                logger.warning(f"DEBUG: Failed to write LED values {self._debug_led_count}: {e}")
+
         # Send to all registered sinks
         for sink_info in self.sinks:
             if not sink_info["enabled"]:
@@ -294,7 +320,10 @@ class FrameRenderer:
                     # WLED-style sink
                     result = sink.send_led_data(physical_led_values)
                     if hasattr(result, "success") and not result.success:
-                        logger.warning(f"{name} transmission failed: {result.errors}")
+                        # Only log transmission failures if within first minute
+                        elapsed_minutes = (time.time() - self._error_message_start_time) / 60.0
+                        if elapsed_minutes < self._silent_after_minutes:
+                            logger.warning(f"{name} transmission failed: {result.errors}")
                 elif hasattr(sink, "render_led_values"):
                     # Renderer-style sink
                     if hasattr(sink, "is_running") and not sink.is_running:
