@@ -25,6 +25,7 @@ import numpy as np
 
 try:
     from PIL import Image, ImageDraw
+
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
@@ -58,7 +59,7 @@ class DebugFrameAnalyzer:
         self.patterns_file = patterns_file
         self.mixed_tensor: Optional[SingleBlockMixedSparseTensor] = None
         self.metadata: Dict = {}
-        
+
         # Debug directories
         self.frame_dir = Path("/tmp/prismatron_debug_frames")
         self.led_dir = Path("/tmp/prismatron_debug_leds")
@@ -67,7 +68,7 @@ class DebugFrameAnalyzer:
 
         # Load patterns
         self._load_patterns()
-        
+
         # Frame dimensions (from metadata or default)
         self.frame_width = 800  # Default
         self.frame_height = 480  # Default
@@ -75,7 +76,7 @@ class DebugFrameAnalyzer:
             self.frame_width = self.metadata["frame_width"]
         if "frame_height" in self.metadata:
             self.frame_height = self.metadata["frame_height"]
-        
+
         # LED positions for preview rendering
         self.led_positions: Optional[np.ndarray] = None
         self.led_ordering: Optional[np.ndarray] = None
@@ -95,7 +96,9 @@ class DebugFrameAnalyzer:
             if "mixed_tensor" in data:
                 mixed_tensor_dict = data["mixed_tensor"].item()
                 self.mixed_tensor = SingleBlockMixedSparseTensor.from_dict(mixed_tensor_dict)
-                logger.info(f"Loaded mixed tensor: batch_size={self.mixed_tensor.batch_size}, block_size={self.mixed_tensor.block_size}")
+                logger.info(
+                    f"Loaded mixed tensor: batch_size={self.mixed_tensor.batch_size}, block_size={self.mixed_tensor.block_size}"
+                )
             else:
                 raise ValueError("No mixed_tensor found in patterns file")
 
@@ -172,7 +175,7 @@ class DebugFrameAnalyzer:
         try:
             # Load source frame and LED values
             source_frame = np.load(frame_file)  # Shape: (H, W, 3)
-            led_values = np.load(led_file)      # Shape: (led_count, 3)
+            led_values = np.load(led_file)  # Shape: (led_count, 3)
 
             logger.info(f"Frame {index}: source_frame.shape={source_frame.shape}, led_values.shape={led_values.shape}")
             logger.info(f"Frame {index}: source range=[{source_frame.min()}, {source_frame.max()}]")
@@ -187,10 +190,12 @@ class DebugFrameAnalyzer:
 
             # Reconstruct image from LED values using mixed tensor
             reconstructed_frame = self._reconstruct_from_led_values(led_values)
-            
+
             if reconstructed_frame is not None:
                 logger.info(f"Frame {index}: reconstructed.shape={reconstructed_frame.shape}")
-                logger.info(f"Frame {index}: reconstructed range=[{reconstructed_frame.min()}, {reconstructed_frame.max()}]")
+                logger.info(
+                    f"Frame {index}: reconstructed range=[{reconstructed_frame.min()}, {reconstructed_frame.max()}]"
+                )
 
                 # Save reconstructed frame as PNG
                 if PIL_AVAILABLE:
@@ -201,7 +206,7 @@ class DebugFrameAnalyzer:
 
                 # Calculate difference
                 diff_frame = np.abs(source_frame.astype(np.float32) - reconstructed_frame.astype(np.float32))
-                mse = np.mean(diff_frame ** 2)
+                mse = np.mean(diff_frame**2)
                 logger.info(f"Frame {index}: MSE between source and reconstructed = {mse:.2f}")
 
                 # Save difference frame
@@ -222,13 +227,13 @@ class DebugFrameAnalyzer:
 
             # Save LED values as CSV for inspection
             led_csv = self.output_dir / f"frame_{index:03d}_led_values.csv"
-            np.savetxt(led_csv, led_values, delimiter=",", fmt="%.1f", 
-                      header="R,G,B", comments="")
+            np.savetxt(led_csv, led_values, delimiter=",", fmt="%.1f", header="R,G,B", comments="")
             logger.info(f"Saved LED values to {led_csv}")
 
         except Exception as e:
             logger.error(f"Failed to analyze frame {index}: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
 
     def _reconstruct_from_led_values(self, led_values: np.ndarray) -> Optional[np.ndarray]:
@@ -245,14 +250,18 @@ class DebugFrameAnalyzer:
             # Convert LED values from [0, 255] to [0, 1] range for mixed tensor
             led_values_float = led_values.astype(np.float32) / 255.0
 
-            logger.info(f"LED values for reconstruction: shape={led_values_float.shape}, range=[{led_values_float.min():.3f}, {led_values_float.max():.3f}]")
+            logger.info(
+                f"LED values for reconstruction: shape={led_values_float.shape}, range=[{led_values_float.min():.3f}, {led_values_float.max():.3f}]"
+            )
 
             # Use forward_pass_3d to render all LEDs and channels at once
             # This matches the approach in visualize_diffusion_patterns.py
             output_frame = self.mixed_tensor.forward_pass_3d(led_values_float)
 
             # output_frame should be shape (3, height, width) in range [0, 1]
-            logger.info(f"Forward pass output: shape={output_frame.shape}, range=[{output_frame.min():.3f}, {output_frame.max():.3f}]")
+            logger.info(
+                f"Forward pass output: shape={output_frame.shape}, range=[{output_frame.min():.3f}, {output_frame.max():.3f}]"
+            )
 
             # Convert from planar (3, H, W) to interleaved (H, W, 3) format
             if output_frame.shape[0] == 3:
@@ -267,12 +276,15 @@ class DebugFrameAnalyzer:
                 # It's a CuPy array - convert to NumPy
                 output_frame = output_frame.get()
 
-            logger.info(f"Final reconstructed frame: shape={output_frame.shape}, range=[{output_frame.min()}, {output_frame.max()}]")
+            logger.info(
+                f"Final reconstructed frame: shape={output_frame.shape}, range=[{output_frame.min()}, {output_frame.max()}]"
+            )
             return output_frame
 
         except Exception as e:
             logger.error(f"Failed to reconstruct frame from LED values: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
             return None
 
@@ -292,7 +304,7 @@ class DebugFrameAnalyzer:
                 return None
 
             # Create black canvas
-            canvas = Image.new('RGB', (self.frame_width, self.frame_height), color=(0, 0, 0))
+            canvas = Image.new("RGB", (self.frame_width, self.frame_height), color=(0, 0, 0))
             draw = ImageDraw.Draw(canvas)
 
             # Circle radius (32-pixel diameter = 16-pixel radius)
@@ -309,7 +321,7 @@ class DebugFrameAnalyzer:
 
                 # Get physical LED ID for this spatial index
                 physical_led_id = self.led_ordering[spatial_idx]
-                
+
                 # Skip if physical LED ID is out of range
                 if physical_led_id >= len(self.led_positions):
                     continue
@@ -336,34 +348,35 @@ class DebugFrameAnalyzer:
         except Exception as e:
             logger.error(f"Failed to render preview style: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
             return None
 
     def generate_report(self) -> None:
         """Generate a summary report of the analysis."""
         report_file = self.output_dir / "analysis_report.txt"
-        
+
         with open(report_file, "w") as f:
             f.write("Prismatron Debug Frame Analysis Report\n")
             f.write("=" * 40 + "\n\n")
-            
+
             f.write(f"Patterns file: {self.patterns_file}\n")
             f.write(f"Metadata keys: {list(self.metadata.keys())}\n")
-            
+
             if self.mixed_tensor:
                 f.write(f"Mixed tensor batch_size: {self.mixed_tensor.batch_size}\n")
                 f.write(f"Mixed tensor block_size: {self.mixed_tensor.block_size}\n")
-            
+
             f.write(f"\nFrame files: {len(list(self.frame_dir.glob('frame_*.npy')))}\n")
             f.write(f"LED files: {len(list(self.led_dir.glob('led_spatial_*.npy')))}\n")
-            
+
             f.write(f"\nOutput files saved to: {self.output_dir}\n")
             f.write("\nFiles generated:\n")
             for png_file in sorted(self.output_dir.glob("*.png")):
                 f.write(f"  {png_file.name}\n")
             for csv_file in sorted(self.output_dir.glob("*.csv")):
                 f.write(f"  {csv_file.name}\n")
-            
+
             # Report LED position loading status
             f.write(f"\nLED position data loaded: {self.led_positions is not None}\n")
             if self.led_positions is not None:
@@ -399,10 +412,7 @@ Examples:
 
     # Setup logging
     log_level = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
+    logging.basicConfig(level=log_level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
     if not args.patterns.exists():
         logger.error(f"Patterns file not found: {args.patterns}")
