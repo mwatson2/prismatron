@@ -73,14 +73,14 @@ Examples:
 
     try:
         global service_instance
-        
+
         # Create and start the service
         service_instance = PlaylistSyncService(socket_path=args.socket)
-        
+
         logger.info(f"Starting playlist synchronization service on {args.socket}")
         if service_instance.start():
             logger.info("Playlist synchronization service started successfully")
-            
+
             # Keep the service running
             try:
                 while service_instance.running:
@@ -94,6 +94,7 @@ Examples:
     except Exception as e:
         logger.error(f"Error running playlist synchronization service: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
         sys.exit(1)
     finally:

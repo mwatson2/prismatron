@@ -15,6 +15,8 @@ from typing import Any, Dict, List, Optional, Union
 
 from ..const import FRAME_CHANNELS, FRAME_HEIGHT, FRAME_WIDTH
 from ..core.control_state import ControlState, PlayState, SystemState
+from ..core.playlist_sync import PlaylistState as SyncPlaylistState
+from ..core.playlist_sync import PlaylistSyncClient
 from ..core.shared_buffer import FrameProducer
 from .content_sources import (
     ContentSource,
@@ -321,6 +323,7 @@ class ProducerProcess:
         self._frame_buffer = FrameProducer(buffer_name)
         self._control_state = ControlState(control_name)
         self._playlist = ContentPlaylist()
+        self._playlist_sync_client: Optional[PlaylistSyncClient] = None
 
         # Current content and state
         self._current_source: Optional[ContentSource] = None
@@ -367,6 +370,14 @@ class ProducerProcess:
             self._control_state.update_system_state(SystemState.RUNNING)
             self._control_state.set_play_state(PlayState.STOPPED)
 
+            # Connect to playlist synchronization service
+            self._playlist_sync_client = PlaylistSyncClient(client_name="producer")
+            self._playlist_sync_client.on_playlist_update = self._on_playlist_sync_update
+            if self._playlist_sync_client.connect():
+                logger.info("Producer connected to playlist synchronization service")
+            else:
+                logger.warning("Producer failed to connect to playlist synchronization service - using fallback")
+
             logger.info("Producer process initialized successfully")
             return True
 
@@ -386,10 +397,39 @@ class ProducerProcess:
         Returns:
             True if added successfully, False otherwise
         """
-        result = self._playlist.add_item(filepath, duration, repeat)
-        if result:
-            self._sync_playlist_to_control_state()
-        return result
+        # If connected to sync service, add through sync service
+        if self._playlist_sync_client and self._playlist_sync_client.connected:
+            import uuid
+
+            from ..core.playlist_sync import PlaylistItem as SyncPlaylistItem
+
+            # Determine content type
+            file_path = Path(filepath)
+            file_ext = file_path.suffix.lower()
+            if file_ext in {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp", ".gif"}:
+                content_type = "image"
+            elif file_ext in {".mp4", ".avi", ".mkv", ".mov", ".wmv", ".webm"}:
+                content_type = "video"
+            else:
+                content_type = "image"  # Default
+
+            sync_item = SyncPlaylistItem(
+                id=str(uuid.uuid4()),
+                name=file_path.name,
+                type=content_type,
+                file_path=filepath,
+                duration=duration,
+                created_at=time.time(),
+                order=len(self._playlist._items),  # Current playlist length as order
+            )
+
+            return self._playlist_sync_client.add_item(sync_item)
+        else:
+            # Fallback to local playlist
+            result = self._playlist.add_item(filepath, duration, repeat)
+            if result:
+                self._sync_playlist_to_control_state()
+            return result
 
     def load_playlist_from_directory(self, directory: str) -> int:
         """
@@ -426,17 +466,47 @@ class ProducerProcess:
                 ".gif",  # Animations
             }
 
-            # Scan directory
+            # Scan directory and populate sync service
+            import uuid
+
+            from ..core.playlist_sync import PlaylistItem as SyncPlaylistItem
+
             for file_path in directory_path.rglob("*"):
-                if (
-                    file_path.is_file()
-                    and file_path.suffix.lower() in supported_extensions
-                    and self._playlist.add_item(str(file_path))
-                ):
-                    added_count += 1
+                if file_path.is_file() and file_path.suffix.lower() in supported_extensions:
+                    # Determine content type
+                    file_ext = file_path.suffix.lower()
+                    if file_ext in {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp", ".gif"}:
+                        content_type = "image"
+                    elif file_ext in {".mp4", ".avi", ".mkv", ".mov", ".wmv", ".webm"}:
+                        content_type = "video"
+                    else:
+                        content_type = "image"  # Default
+
+                    # Create sync playlist item
+                    sync_item = SyncPlaylistItem(
+                        id=str(uuid.uuid4()),
+                        name=file_path.name,
+                        type=content_type,
+                        file_path=str(file_path),
+                        duration=None,
+                        created_at=time.time(),
+                        order=added_count,
+                    )
+
+                    # Add to sync service if available
+                    if self._playlist_sync_client and self._playlist_sync_client.connected:
+                        if self._playlist_sync_client.add_item(sync_item):
+                            added_count += 1
+                        else:
+                            logger.warning(f"Failed to add {file_path} to sync service")
+                    else:
+                        # Fallback to local playlist
+                        if self._playlist.add_item(str(file_path)):
+                            added_count += 1
 
             logger.info(f"Loaded {added_count} files from {directory}")
-            if added_count > 0:
+            if added_count > 0 and not (self._playlist_sync_client and self._playlist_sync_client.connected):
+                # Only sync to control state if using fallback mode
                 self._sync_playlist_to_control_state()
             return added_count
 
@@ -671,14 +741,23 @@ class ProducerProcess:
     def _advance_to_next_content(self) -> None:
         """Advance to next content in playlist."""
         try:
-            if self._playlist.advance_to_next():
-                # Next content available
-                logger.debug("Advanced to next content")
-                self._sync_playlist_to_control_state()
+            # If connected to sync service, send next command instead of advancing locally
+            if self._playlist_sync_client and self._playlist_sync_client.connected:
+                logger.info("Requesting next item from sync service")
+                success = self._playlist_sync_client.next_item()
+                if not success:
+                    logger.warning("Failed to send next command to sync service")
+                    # Note: Don't advance locally - let sync service handle it
             else:
-                # End of playlist
-                logger.info("End of playlist reached")
-                self._control_state.set_play_state(PlayState.STOPPED)
+                # Fallback: advance locally
+                if self._playlist.advance_to_next():
+                    # Next content available
+                    logger.debug("Advanced to next content (fallback mode)")
+                    self._sync_playlist_to_control_state()
+                else:
+                    # End of playlist
+                    logger.info("End of playlist reached")
+                    self._control_state.set_play_state(PlayState.STOPPED)
 
         except Exception as e:
             logger.error(f"Failed to advance to next content: {e}")
@@ -1085,9 +1164,58 @@ class ProducerProcess:
         except Exception as e:
             logger.warning(f"Failed to sync playlist to control state: {e}")
 
-    def _process_playlist_commands(self) -> None:
-        """Process playlist commands from web server via control state."""
+    def _on_playlist_sync_update(self, sync_state: SyncPlaylistState) -> None:
+        """Handle playlist updates from synchronization service."""
         try:
+            logger.info(f"Producer received playlist update: {len(sync_state.items)} items")
+
+            # Clear current playlist
+            self._playlist.clear()
+
+            # Convert sync playlist items to producer playlist items
+            for sync_item in sync_state.items:
+                if sync_item.type in ["image", "video"] and sync_item.file_path:
+                    # Add regular media files
+                    self._playlist.add_item(filepath=sync_item.file_path, duration=sync_item.duration, repeat=1)
+                elif sync_item.type == "text" and sync_item.file_path:
+                    # Handle text content (file_path contains JSON config)
+                    self._playlist.add_item(
+                        filepath=sync_item.file_path, duration=sync_item.duration, repeat=1  # JSON config as filepath
+                    )
+                elif sync_item.type == "effect" and sync_item.effect_config:
+                    # Handle effect content (for future implementation)
+                    logger.info(f"Effect content not yet supported: {sync_item.effect_config}")
+
+            # Update current index and playback state
+            self._playlist._current_index = sync_state.current_index
+
+            # Update play state based on sync state
+            if sync_state.is_playing:
+                self._control_state.set_play_state(PlayState.PLAYING)
+            else:
+                self._control_state.set_play_state(PlayState.PAUSED)
+
+            # Sync to control state for status reporting
+            self._sync_playlist_to_control_state()
+
+            logger.info(
+                f"Producer playlist synchronized: {len(self._playlist._items)} items, current_index={self._playlist._current_index}, playing={sync_state.is_playing}"
+            )
+
+        except Exception as e:
+            logger.error(f"Error handling playlist sync update: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+
+    def _process_playlist_commands(self) -> None:
+        """Process playlist commands from web server via control state (fallback mode only)."""
+        try:
+            # Only process control state commands if not connected to sync service
+            if self._playlist_sync_client and self._playlist_sync_client.connected:
+                # Skip processing - sync service handles all playlist commands
+                return
+
             command = self._control_state.get_playlist_command()
             if command:
                 action = command.get("action")
@@ -1133,6 +1261,11 @@ class ProducerProcess:
 
             # Clean up playlist
             self._playlist.clear()
+
+            # Disconnect from playlist sync service
+            if self._playlist_sync_client:
+                self._playlist_sync_client.disconnect()
+                logger.info("Producer disconnected from playlist synchronization service")
 
             # Clean up shared resources
             self._frame_buffer.cleanup()

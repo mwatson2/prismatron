@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PlaylistItem:
     """Playlist item data structure."""
-    
+
     id: str
     name: str
     type: str  # "image", "video", "effect", "text"
@@ -52,7 +52,7 @@ class PlaylistItem:
 @dataclass
 class PlaylistState:
     """Complete playlist state."""
-    
+
     items: List[PlaylistItem]
     current_index: int = 0
     is_playing: bool = False
@@ -92,7 +92,7 @@ class PlaylistState:
 @dataclass
 class PlaylistMessage:
     """Message structure for playlist operations."""
-    
+
     type: str  # "update", "add", "remove", "reorder", "clear", "play", "pause", "next", "prev"
     operation: Optional[str] = None  # Specific operation for update type
     data: Optional[Dict[str, Any]] = None
@@ -120,7 +120,7 @@ class PlaylistMessage:
 class PlaylistSyncService:
     """
     Playlist synchronization service using Unix domain sockets.
-    
+
     This service acts as the single source of truth for playlist state,
     managing updates from multiple clients (web interface, producer, etc.)
     and broadcasting changes to all connected clients.
@@ -133,14 +133,14 @@ class PlaylistSyncService:
         self.server_socket: Optional[socket.socket] = None
         self.running = False
         self.server_thread: Optional[threading.Thread] = None
-        
+
         # Event callbacks
         self.on_playlist_changed: Optional[Callable[[PlaylistState], None]] = None
         self.on_playback_changed: Optional[Callable[[bool, int], None]] = None
-        
+
         # Thread safety
         self._lock = threading.Lock()
-        
+
         logger.info(f"Playlist sync service initialized with socket: {self.socket_path}")
 
     def start(self) -> bool:
@@ -158,7 +158,7 @@ class PlaylistSyncService:
             self.server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             self.server_socket.bind(self.socket_path)
             self.server_socket.listen(5)
-            
+
             # Set socket permissions
             os.chmod(self.socket_path, 0o666)
 
@@ -177,17 +177,17 @@ class PlaylistSyncService:
         """Stop the playlist synchronization service."""
         try:
             self.running = False
-            
+
             if self.server_socket:
                 self.server_socket.close()
-                
+
             if self.server_thread and self.server_thread.is_alive():
                 self.server_thread.join(timeout=5.0)
-                
+
             # Clean up socket file
             if os.path.exists(self.socket_path):
                 os.unlink(self.socket_path)
-                
+
             logger.info("Playlist sync service stopped")
 
         except Exception as e:
@@ -196,51 +196,47 @@ class PlaylistSyncService:
     def _server_loop(self):
         """Main server loop handling client connections."""
         logger.info("Playlist sync server loop started")
-        
+
         while self.running:
             try:
                 if not self.server_socket:
                     break
-                    
+
                 # Accept new client connections
                 client_socket, _ = self.server_socket.accept()
                 client_id = str(uuid4())
-                
+
                 # Handle client in separate thread
                 client_thread = threading.Thread(
-                    target=self._handle_client,
-                    args=(client_socket, client_id),
-                    daemon=True
+                    target=self._handle_client, args=(client_socket, client_id), daemon=True
                 )
                 client_thread.start()
-                
+
             except OSError:
                 # Socket closed or other OS error
                 break
             except Exception as e:
                 logger.error(f"Error in server loop: {e}")
-                
+
         logger.info("Playlist sync server loop ended")
 
     def _handle_client(self, client_socket: socket.socket, client_id: str):
         """Handle individual client connection."""
         logger.info(f"New playlist sync client connected: {client_id}")
-        
+
         with self._lock:
             self.clients[client_id] = {
                 "socket": client_socket,
                 "connected_at": time.time(),
                 "last_seen": time.time(),
             }
-        
+
         try:
             # Send current playlist state to new client
-            self._send_to_client(client_id, PlaylistMessage(
-                type="state_sync",
-                data=self.playlist_state.to_dict(),
-                client_id="server"
-            ))
-            
+            self._send_to_client(
+                client_id, PlaylistMessage(type="full_state", data=self.playlist_state.to_dict(), client_id="server")
+            )
+
             # Handle client messages
             while self.running:
                 try:
@@ -248,24 +244,24 @@ class PlaylistSyncService:
                     data = client_socket.recv(4096)
                     if not data:
                         break
-                        
-                    message_str = data.decode('utf-8')
+
+                    message_str = data.decode("utf-8")
                     message = PlaylistMessage.from_json(message_str)
                     message.client_id = client_id
-                    
+
                     # Update last seen
                     with self._lock:
                         if client_id in self.clients:
                             self.clients[client_id]["last_seen"] = time.time()
-                    
+
                     # Process message
                     self._process_message(message)
-                    
+
                 except json.JSONDecodeError as e:
                     logger.error(f"Invalid JSON from client {client_id}: {e}")
                 except Exception as e:
                     logger.error(f"Error handling client {client_id} message: {e}")
-                    
+
         except Exception as e:
             logger.error(f"Error handling client {client_id}: {e}")
         finally:
@@ -273,19 +269,19 @@ class PlaylistSyncService:
             with self._lock:
                 if client_id in self.clients:
                     del self.clients[client_id]
-            
-            try:
+
+            import contextlib
+
+            with contextlib.suppress(Exception):
                 client_socket.close()
-            except:
-                pass
-                
+
             logger.info(f"Playlist sync client disconnected: {client_id}")
 
     def _process_message(self, message: PlaylistMessage):
         """Process incoming message and update playlist state."""
         try:
             logger.debug(f"Processing message: {message.type} from {message.client_id}")
-            
+
             with self._lock:
                 if message.type == "add_item":
                     self._handle_add_item(message)
@@ -308,21 +304,19 @@ class PlaylistSyncService:
                 else:
                     logger.warning(f"Unknown message type: {message.type}")
                     return
-                
+
                 # Update timestamp
                 self.playlist_state.last_updated = time.time()
-                
-                # Broadcast update to all clients except sender
-                self._broadcast_update(exclude_client=message.client_id)
-                
+
+                # Broadcast update to all clients (including sender for consistency)
+                self._broadcast_update(exclude_client=None)
+
                 # Trigger callbacks
-                if message.type in ["add_item", "remove_item", "reorder", "clear"]:
-                    if self.on_playlist_changed:
-                        self.on_playlist_changed(self.playlist_state)
-                        
-                if message.type in ["play", "pause", "next", "previous", "set_position"]:
-                    if self.on_playback_changed:
-                        self.on_playback_changed(self.playlist_state.is_playing, self.playlist_state.current_index)
+                if message.type in ["add_item", "remove_item", "reorder", "clear"] and self.on_playlist_changed:
+                    self.on_playlist_changed(self.playlist_state)
+
+                if message.type in ["play", "pause", "next", "previous", "set_position"] and self.on_playback_changed:
+                    self.on_playback_changed(self.playlist_state.is_playing, self.playlist_state.current_index)
 
         except Exception as e:
             logger.error(f"Error processing message {message.type}: {e}")
@@ -332,10 +326,10 @@ class PlaylistSyncService:
         if not message.data or "item" not in message.data:
             logger.error("Add item message missing item data")
             return
-            
+
         item_data = message.data["item"]
         item = PlaylistItem.from_dict(item_data)
-        
+
         # Add to end or specific position
         position = message.data.get("position")
         if position is not None and 0 <= position <= len(self.playlist_state.items):
@@ -346,7 +340,7 @@ class PlaylistSyncService:
         else:
             item.order = len(self.playlist_state.items)
             self.playlist_state.items.append(item)
-            
+
         logger.info(f"Added playlist item: {item.name} at position {item.order}")
 
     def _handle_remove_item(self, message: PlaylistMessage):
@@ -354,22 +348,22 @@ class PlaylistSyncService:
         if not message.data or "item_id" not in message.data:
             logger.error("Remove item message missing item_id")
             return
-            
+
         item_id = message.data["item_id"]
         original_length = len(self.playlist_state.items)
-        
+
         # Remove item
         self.playlist_state.items = [item for item in self.playlist_state.items if item.id != item_id]
-        
+
         if len(self.playlist_state.items) < original_length:
             # Update order for remaining items
             for i, item in enumerate(self.playlist_state.items):
                 item.order = i
-                
+
             # Adjust current index if needed
             if self.playlist_state.current_index >= len(self.playlist_state.items):
                 self.playlist_state.current_index = max(0, len(self.playlist_state.items) - 1)
-                
+
             logger.info(f"Removed playlist item: {item_id}")
         else:
             logger.warning(f"Item not found for removal: {item_id}")
@@ -379,12 +373,12 @@ class PlaylistSyncService:
         if not message.data or "item_ids" not in message.data:
             logger.error("Reorder message missing item_ids")
             return
-            
+
         item_ids = message.data["item_ids"]
-        
+
         # Create mapping of id to item
         item_map = {item.id: item for item in self.playlist_state.items}
-        
+
         # Reorder items
         reordered_items = []
         for i, item_id in enumerate(item_ids):
@@ -392,7 +386,7 @@ class PlaylistSyncService:
                 item = item_map[item_id]
                 item.order = i
                 reordered_items.append(item)
-                
+
         self.playlist_state.items = reordered_items
         logger.info(f"Reordered playlist: {len(reordered_items)} items")
 
@@ -430,7 +424,7 @@ class PlaylistSyncService:
         if not message.data or "index" not in message.data:
             logger.error("Set position message missing index")
             return
-            
+
         index = message.data["index"]
         if 0 <= index < len(self.playlist_state.items):
             self.playlist_state.current_index = index
@@ -439,38 +433,38 @@ class PlaylistSyncService:
             logger.warning(f"Invalid playlist index: {index}")
 
     def _broadcast_update(self, exclude_client: Optional[str] = None):
-        """Broadcast playlist update to all clients."""
-        update_message = PlaylistMessage(
-            type="playlist_update",
-            data=self.playlist_state.to_dict(),
-            client_id="server"
-        )
-        
-        with self._lock:
-            clients_to_remove = []
-            for client_id in list(self.clients.keys()):
-                if client_id == exclude_client:
-                    continue
-                    
-                if not self._send_to_client(client_id, update_message):
-                    clients_to_remove.append(client_id)
-                    
-            # Remove disconnected clients
-            for client_id in clients_to_remove:
-                if client_id in self.clients:
-                    del self.clients[client_id]
+        """Broadcast full playlist state to all clients. Must be called with lock held."""
+        state_message = PlaylistMessage(type="full_state", data=self.playlist_state.to_dict(), client_id="server")
+
+        logger.debug(f"Broadcasting to {len(self.clients)} clients (exclude: {exclude_client})")
+        clients_to_remove = []
+        for client_id in list(self.clients.keys()):
+            if exclude_client == client_id:
+                continue
+
+            logger.debug(f"Sending update to client {client_id}")
+            if not self._send_to_client(client_id, state_message):
+                logger.warning(f"Failed to send to client {client_id}")
+                clients_to_remove.append(client_id)
+            else:
+                logger.debug(f"Successfully sent update to client {client_id}")
+
+        # Remove disconnected clients
+        for client_id in clients_to_remove:
+            if client_id in self.clients:
+                del self.clients[client_id]
 
     def _send_to_client(self, client_id: str, message: PlaylistMessage) -> bool:
         """Send message to specific client."""
         try:
             if client_id not in self.clients:
                 return False
-                
+
             client_socket = self.clients[client_id]["socket"]
             message_json = message.to_json()
-            client_socket.send(message_json.encode('utf-8'))
+            client_socket.send(message_json.encode("utf-8"))
             return True
-            
+
         except Exception as e:
             logger.warning(f"Failed to send message to client {client_id}: {e}")
             return False
@@ -489,7 +483,7 @@ class PlaylistSyncService:
 class PlaylistSyncClient:
     """
     Client for connecting to the playlist synchronization service.
-    
+
     Used by web interface and producer process to send/receive playlist updates.
     """
 
@@ -500,11 +494,11 @@ class PlaylistSyncClient:
         self.connected = False
         self.listener_thread: Optional[threading.Thread] = None
         self.running = False
-        
+
         # Event callbacks
         self.on_playlist_update: Optional[Callable[[PlaylistState], None]] = None
         self.on_connection_lost: Optional[Callable[[], None]] = None
-        
+
         logger.info(f"Playlist sync client '{client_name}' initialized")
 
     def connect(self) -> bool:
@@ -517,14 +511,14 @@ class PlaylistSyncClient:
             # Create Unix domain socket
             self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             self.socket.connect(self.socket_path)
-            
+
             self.connected = True
             self.running = True
-            
+
             # Start listener thread
             self.listener_thread = threading.Thread(target=self._listener_loop, daemon=True)
             self.listener_thread.start()
-            
+
             logger.info(f"Playlist sync client '{self.client_name}' connected")
             return True
 
@@ -538,14 +532,14 @@ class PlaylistSyncClient:
         try:
             self.running = False
             self.connected = False
-            
+
             if self.socket:
                 self.socket.close()
                 self.socket = None
-                
+
             if self.listener_thread and self.listener_thread.is_alive():
                 self.listener_thread.join(timeout=5.0)
-                
+
             logger.info(f"Playlist sync client '{self.client_name}' disconnected")
 
         except Exception as e:
@@ -554,44 +548,43 @@ class PlaylistSyncClient:
     def _listener_loop(self):
         """Listen for messages from the server."""
         logger.info(f"Playlist sync client '{self.client_name}' listener started")
-        
+
         try:
             while self.running and self.connected:
                 if not self.socket:
                     break
-                    
+
                 # Receive message
                 data = self.socket.recv(4096)
                 if not data:
                     break
-                    
+
                 try:
-                    message_str = data.decode('utf-8')
+                    message_str = data.decode("utf-8")
                     message = PlaylistMessage.from_json(message_str)
                     self._handle_message(message)
-                    
+
                 except json.JSONDecodeError as e:
                     logger.error(f"Invalid JSON received by client '{self.client_name}': {e}")
                 except Exception as e:
                     logger.error(f"Error handling message in client '{self.client_name}': {e}")
-                    
+
         except Exception as e:
             logger.error(f"Error in listener loop for client '{self.client_name}': {e}")
         finally:
             self.connected = False
             if self.on_connection_lost:
                 self.on_connection_lost()
-                
+
         logger.info(f"Playlist sync client '{self.client_name}' listener ended")
 
     def _handle_message(self, message: PlaylistMessage):
         """Handle incoming message from server."""
         try:
-            if message.type in ["playlist_update", "state_sync"]:
-                if message.data and self.on_playlist_update:
-                    playlist_state = PlaylistState.from_dict(message.data)
-                    self.on_playlist_update(playlist_state)
-                    
+            if message.type == "full_state" and message.data and self.on_playlist_update:
+                playlist_state = PlaylistState.from_dict(message.data)
+                self.on_playlist_update(playlist_state)
+
         except Exception as e:
             logger.error(f"Error handling message in client '{self.client_name}': {e}")
 
@@ -601,11 +594,11 @@ class PlaylistSyncClient:
             if not self.connected or not self.socket:
                 logger.warning(f"Client '{self.client_name}' not connected")
                 return False
-                
+
             message_json = message.to_json()
-            self.socket.send(message_json.encode('utf-8'))
+            self.socket.send(message_json.encode("utf-8"))
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to send message from client '{self.client_name}': {e}")
             return False
@@ -616,7 +609,7 @@ class PlaylistSyncClient:
         data = {"item": item.to_dict()}
         if position is not None:
             data["position"] = position
-            
+
         return self.send_message(PlaylistMessage(type="add_item", data=data))
 
     def remove_item(self, item_id: str) -> bool:

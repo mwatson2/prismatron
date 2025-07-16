@@ -40,7 +40,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT, LED_DATA_SIZE
 from src.core.control_state import ControlState
-from src.core.playlist_sync import PlaylistSyncClient, PlaylistItem as SyncPlaylistItem, PlaylistState as SyncPlaylistState
+from src.core.playlist_sync import PlaylistItem as SyncPlaylistItem
+from src.core.playlist_sync import PlaylistState as SyncPlaylistState
+from src.core.playlist_sync import (
+    PlaylistSyncClient,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -276,11 +280,11 @@ def sync_state_to_api_state(sync_state: SyncPlaylistState) -> PlaylistState:
 async def on_playlist_sync_update(sync_state: SyncPlaylistState) -> None:
     """Handle playlist updates from synchronization service."""
     global playlist_state
-    
+
     try:
         # Convert sync state to API state
         playlist_state = sync_state_to_api_state(sync_state)
-        
+
         # Broadcast update to connected WebSocket clients
         await manager.broadcast(
             {
@@ -292,12 +296,13 @@ async def on_playlist_sync_update(sync_state: SyncPlaylistState) -> None:
                 "shuffle": playlist_state.shuffle,
             }
         )
-        
+
         logger.debug(f"Updated playlist from sync service: {len(playlist_state.items)} items")
-        
+
     except Exception as e:
         logger.error(f"Error handling playlist sync update: {e}")
         import traceback
+
         logger.error(traceback.format_exc())
 
 
@@ -305,7 +310,7 @@ async def on_playlist_sync_update(sync_state: SyncPlaylistState) -> None:
 async def startup_event():
     """Start background tasks on application startup."""
     global preview_task, playlist_sync_client
-    
+
     # Start playlist synchronization client
     playlist_sync_client = PlaylistSyncClient(client_name="web_interface")
     playlist_sync_client.on_playlist_update = on_playlist_sync_update
@@ -313,7 +318,7 @@ async def startup_event():
         logger.info("Connected to playlist synchronization service")
     else:
         logger.warning("Failed to connect to playlist synchronization service")
-    
+
     preview_task = asyncio.create_task(preview_broadcast_task())
     logger.info("Started preview data broadcasting task")
 
@@ -324,12 +329,12 @@ async def shutdown_event():
     import contextlib
 
     global preview_task, playlist_sync_client
-    
+
     # Disconnect playlist sync client
     if playlist_sync_client:
         playlist_sync_client.disconnect()
         logger.info("Disconnected from playlist synchronization service")
-    
+
     if preview_task:
         preview_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -711,13 +716,14 @@ async def play_content():
                 return {"status": "playing"}
             else:
                 logger.warning("Failed to send play command via sync service")
-                
+
         # Fallback to control state
         logger.warning("Using control state fallback for play command")
         try:
             temp_control = ControlState()
             if temp_control.connect():
                 from src.core.control_state import PlayState
+
                 temp_control.set_play_state(PlayState.PLAYING)
                 temp_control.cleanup()
                 logger.info("Sent PLAYING signal to producer via control state")
@@ -753,13 +759,14 @@ async def pause_content():
                 return {"status": "paused"}
             else:
                 logger.warning("Failed to send pause command via sync service")
-                
+
         # Fallback to control state
         logger.warning("Using control state fallback for pause command")
         try:
             temp_control = ControlState()
             if temp_control.connect():
                 from src.core.control_state import PlayState
+
                 temp_control.set_play_state(PlayState.PAUSED)
                 temp_control.cleanup()
                 logger.info("Sent PAUSED signal to producer via control state")
@@ -794,7 +801,7 @@ async def next_item():
             return {"current_index": playlist_state.current_index}
         else:
             logger.warning("Failed to send next command via sync service")
-            
+
     # Fallback to local handling
     if playlist_state.items:
         playlist_state.current_index = (playlist_state.current_index + 1) % len(playlist_state.items)
@@ -812,7 +819,7 @@ async def previous_item():
             return {"current_index": playlist_state.current_index}
         else:
             logger.warning("Failed to send previous command via sync service")
-            
+
     # Fallback to local handling
     if playlist_state.items:
         playlist_state.current_index = (playlist_state.current_index - 1) % len(playlist_state.items)
@@ -1107,7 +1114,7 @@ async def remove_playlist_item(item_id: str):
             raise HTTPException(status_code=500, detail="Failed to remove item")
     else:
         logger.warning("Playlist sync service not available")
-        
+
         # Fallback to local removal
         original_length = len(playlist_state.items)
         removed_item = None
@@ -1143,7 +1150,7 @@ async def clear_playlist():
             raise HTTPException(status_code=500, detail="Failed to clear playlist")
     else:
         logger.warning("Playlist sync service not available")
-        
+
         # Fallback to local clear
         playlist_state.items.clear()
         playlist_state.current_index = 0
