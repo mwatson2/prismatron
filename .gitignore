@@ -200,3 +200,4 @@ patterns_*.npz
 
 # Test images
 test_images/
+uploads/*.png
