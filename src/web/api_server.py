@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT, LED_DATA_SIZE
 from src.core.control_state import ControlState
+from src.core.playlist_sync import PlaylistSyncClient, PlaylistItem as SyncPlaylistItem, PlaylistState as SyncPlaylistState
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +126,9 @@ system_settings = SystemSettings()
 control_state: Optional[ControlState] = None
 consumer_process: Optional[object] = None  # Will be set by main process
 producer_process: Optional[object] = None  # Will be set by main process
+
+# Playlist synchronization client
+playlist_sync_client: Optional[PlaylistSyncClient] = None
 
 # File storage paths
 UPLOAD_DIR = Path("uploads")
@@ -228,10 +232,88 @@ app.add_middleware(
 preview_task: Optional[asyncio.Task] = None
 
 
+def sync_item_to_api_item(sync_item: SyncPlaylistItem) -> PlaylistItem:
+    """Convert sync playlist item to API playlist item."""
+    return PlaylistItem(
+        id=sync_item.id,
+        name=sync_item.name,
+        type=sync_item.type,
+        file_path=sync_item.file_path,
+        effect_config=sync_item.effect_config,
+        duration=sync_item.duration,
+        thumbnail=sync_item.thumbnail,
+        created_at=datetime.fromtimestamp(sync_item.created_at),
+        order=sync_item.order,
+    )
+
+
+def api_item_to_sync_item(api_item: PlaylistItem) -> SyncPlaylistItem:
+    """Convert API playlist item to sync playlist item."""
+    return SyncPlaylistItem(
+        id=api_item.id,
+        name=api_item.name,
+        type=api_item.type,
+        file_path=api_item.file_path,
+        effect_config=api_item.effect_config,
+        duration=api_item.duration,
+        thumbnail=api_item.thumbnail,
+        created_at=api_item.created_at.timestamp(),
+        order=api_item.order,
+    )
+
+
+def sync_state_to_api_state(sync_state: SyncPlaylistState) -> PlaylistState:
+    """Convert sync playlist state to API playlist state."""
+    return PlaylistState(
+        items=[sync_item_to_api_item(item) for item in sync_state.items],
+        current_index=sync_state.current_index,
+        is_playing=sync_state.is_playing,
+        auto_repeat=sync_state.auto_repeat,
+        shuffle=sync_state.shuffle,
+    )
+
+
+async def on_playlist_sync_update(sync_state: SyncPlaylistState) -> None:
+    """Handle playlist updates from synchronization service."""
+    global playlist_state
+    
+    try:
+        # Convert sync state to API state
+        playlist_state = sync_state_to_api_state(sync_state)
+        
+        # Broadcast update to connected WebSocket clients
+        await manager.broadcast(
+            {
+                "type": "playlist_updated",
+                "items": [item.dict_serializable() for item in playlist_state.items],
+                "current_index": playlist_state.current_index,
+                "is_playing": playlist_state.is_playing,
+                "auto_repeat": playlist_state.auto_repeat,
+                "shuffle": playlist_state.shuffle,
+            }
+        )
+        
+        logger.debug(f"Updated playlist from sync service: {len(playlist_state.items)} items")
+        
+    except Exception as e:
+        logger.error(f"Error handling playlist sync update: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+
 @app.on_event("startup")
 async def startup_event():
     """Start background tasks on application startup."""
-    global preview_task
+    global preview_task, playlist_sync_client
+    
+    # Start playlist synchronization client
+    playlist_sync_client = PlaylistSyncClient(client_name="web_interface")
+    playlist_sync_client.on_playlist_update = on_playlist_sync_update
+    if playlist_sync_client.connect():
+        logger.info("Connected to playlist synchronization service")
+    else:
+        logger.warning("Failed to connect to playlist synchronization service")
+    
     preview_task = asyncio.create_task(preview_broadcast_task())
     logger.info("Started preview data broadcasting task")
 
@@ -241,7 +323,13 @@ async def shutdown_event():
     """Clean up background tasks on application shutdown."""
     import contextlib
 
-    global preview_task
+    global preview_task, playlist_sync_client
+    
+    # Disconnect playlist sync client
+    if playlist_sync_client:
+        playlist_sync_client.disconnect()
+        logger.info("Disconnected from playlist synchronization service")
+    
     if preview_task:
         preview_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -612,45 +700,34 @@ async def get_system_status():
 
 @app.post("/api/control/play")
 async def play_content():
-    """Start playbook."""
+    """Start playback."""
     try:
         logger.info("API PLAY REQUEST: Received play command from web interface")
 
-        # Update local playlist state
-        playlist_state.is_playing = True
-
-        # Send playlist items and play command to producer via control state
-        # Use a single control state connection for both operations
+        # Send play command to playlist sync service
+        if playlist_sync_client and playlist_sync_client.connected:
+            success = playlist_sync_client.play()
+            if success:
+                return {"status": "playing"}
+            else:
+                logger.warning("Failed to send play command via sync service")
+                
+        # Fallback to control state
+        logger.warning("Using control state fallback for play command")
         try:
             temp_control = ControlState()
             if temp_control.connect():
-                # Send playlist item if available
-                if playlist_state.items:
-                    current_item = playlist_state.items[playlist_state.current_index]
-                    logger.info(f"Sending playlist item to producer: {current_item.name}")
-
-                    if current_item.type in ["image", "video"] and current_item.file_path:
-                        command = {
-                            "action": "add_item",
-                            "data": {"filepath": current_item.file_path, "duration": current_item.duration},
-                        }
-                        success = temp_control.send_playlist_command(command)
-                        if success:
-                            logger.info(f"Successfully sent playlist item to producer: {current_item.file_path}")
-                        else:
-                            logger.error(f"Failed to send playlist item to producer: {current_item.file_path}")
-
-                # Signal play state to producer
                 from src.core.control_state import PlayState
-
                 temp_control.set_play_state(PlayState.PLAYING)
-                temp_control.cleanup()  # Clean up the connection
-                logger.info("API PLAY COMMAND: Sent PLAYING signal to producer via control state")
+                temp_control.cleanup()
+                logger.info("Sent PLAYING signal to producer via control state")
             else:
-                logger.warning("API PLAY COMMAND: Failed to connect to control state")
+                logger.warning("Failed to connect to control state")
         except Exception as e:
-            logger.error(f"API PLAY COMMAND: Error communicating with control state: {e}")
+            logger.error(f"Error communicating with control state: {e}")
 
+        # Update local state and broadcast
+        playlist_state.is_playing = True
         await manager.broadcast(
             {
                 "type": "playback_state",
@@ -669,14 +746,20 @@ async def play_content():
 async def pause_content():
     """Pause playback."""
     try:
-        playlist_state.is_playing = False
-
-        # Signal pause to producer via control state
+        # Send pause command to playlist sync service
+        if playlist_sync_client and playlist_sync_client.connected:
+            success = playlist_sync_client.pause()
+            if success:
+                return {"status": "paused"}
+            else:
+                logger.warning("Failed to send pause command via sync service")
+                
+        # Fallback to control state
+        logger.warning("Using control state fallback for pause command")
         try:
             temp_control = ControlState()
             if temp_control.connect():
                 from src.core.control_state import PlayState
-
                 temp_control.set_play_state(PlayState.PAUSED)
                 temp_control.cleanup()
                 logger.info("Sent PAUSED signal to producer via control state")
@@ -685,6 +768,8 @@ async def pause_content():
         except Exception as e:
             logger.error(f"Error communicating with control state for pause: {e}")
 
+        # Update local state and broadcast
+        playlist_state.is_playing = False
         await manager.broadcast(
             {
                 "type": "playback_state",
@@ -702,6 +787,15 @@ async def pause_content():
 @app.post("/api/control/next")
 async def next_item():
     """Skip to next playlist item."""
+    # Send next command to playlist sync service
+    if playlist_sync_client and playlist_sync_client.connected:
+        success = playlist_sync_client.next_item()
+        if success:
+            return {"current_index": playlist_state.current_index}
+        else:
+            logger.warning("Failed to send next command via sync service")
+            
+    # Fallback to local handling
     if playlist_state.items:
         playlist_state.current_index = (playlist_state.current_index + 1) % len(playlist_state.items)
         await manager.broadcast({"type": "playlist_position", "current_index": playlist_state.current_index})
@@ -711,6 +805,15 @@ async def next_item():
 @app.post("/api/control/previous")
 async def previous_item():
     """Skip to previous playlist item."""
+    # Send previous command to playlist sync service
+    if playlist_sync_client and playlist_sync_client.connected:
+        success = playlist_sync_client.previous_item()
+        if success:
+            return {"current_index": playlist_state.current_index}
+        else:
+            logger.warning("Failed to send previous command via sync service")
+            
+    # Fallback to local handling
     if playlist_state.items:
         playlist_state.current_index = (playlist_state.current_index - 1) % len(playlist_state.items)
         await manager.broadcast({"type": "playlist_position", "current_index": playlist_state.current_index})
@@ -801,16 +904,18 @@ async def add_existing_file_to_playlist(file_id: str, name: Optional[str] = None
             order=len(playlist_state.items),
         )
 
-        playlist_state.items.append(item)
+        # Send to playlist sync service
+        if playlist_sync_client and playlist_sync_client.connected:
+            sync_item = api_item_to_sync_item(item)
+            success = playlist_sync_client.add_item(sync_item)
+            if not success:
+                logger.warning("Failed to add item to playlist sync service, adding locally")
+                playlist_state.items.append(item)
+        else:
+            logger.warning("Playlist sync service not available, adding locally")
+            playlist_state.items.append(item)
 
-        # Broadcast playlist update
-        await manager.broadcast(
-            {
-                "type": "playlist_updated",
-                "items": [item.dict_serializable() for item in playlist_state.items],
-            }
-        )
-
+        # Note: WebSocket broadcast will happen via sync service callback
         return {"status": "added", "item": item.dict_serializable()}
 
     except HTTPException:
@@ -863,16 +968,18 @@ async def upload_file(
             order=len(playlist_state.items),
         )
 
-        playlist_state.items.append(item)
+        # Send to playlist sync service
+        if playlist_sync_client and playlist_sync_client.connected:
+            sync_item = api_item_to_sync_item(item)
+            success = playlist_sync_client.add_item(sync_item)
+            if not success:
+                logger.warning("Failed to add item to playlist sync service, adding locally")
+                playlist_state.items.append(item)
+        else:
+            logger.warning("Playlist sync service not available, adding locally")
+            playlist_state.items.append(item)
 
-        # Broadcast playlist update
-        await manager.broadcast(
-            {
-                "type": "playlist_updated",
-                "items": [item.dict_serializable() for item in playlist_state.items],
-            }
-        )
-
+        # Note: WebSocket broadcast will happen via sync service callback
         return {"status": "uploaded", "item": item.dict_serializable()}
 
     except Exception as e:
@@ -932,16 +1039,18 @@ async def add_effect_to_playlist(
             order=len(playlist_state.items),
         )
 
-    playlist_state.items.append(item)
+    # Send to playlist sync service
+    if playlist_sync_client and playlist_sync_client.connected:
+        sync_item = api_item_to_sync_item(item)
+        success = playlist_sync_client.add_item(sync_item)
+        if not success:
+            logger.warning("Failed to add item to playlist sync service, adding locally")
+            playlist_state.items.append(item)
+    else:
+        logger.warning("Playlist sync service not available, adding locally")
+        playlist_state.items.append(item)
 
-    # Broadcast playlist update
-    await manager.broadcast(
-        {
-            "type": "playlist_updated",
-            "items": [item.dict_serializable() for item in playlist_state.items],
-        }
-    )
-
+    # Note: WebSocket broadcast will happen via sync service callback
     return {"status": "added", "item": item.dict_serializable()}
 
 
@@ -955,94 +1064,92 @@ async def get_playlist():
 @app.post("/api/playlist/reorder")
 async def reorder_playlist(item_ids: List[str]):
     """Reorder playlist items."""
-    # Create mapping of id to item
-    item_map = {item.id: item for item in playlist_state.items}
+    # Send reorder command to playlist sync service
+    if playlist_sync_client and playlist_sync_client.connected:
+        success = playlist_sync_client.reorder_items(item_ids)
+        if not success:
+            logger.warning("Failed to reorder items via sync service, applying locally")
+            # Fallback to local reordering
+            item_map = {item.id: item for item in playlist_state.items}
+            reordered_items = []
+            for i, item_id in enumerate(item_ids):
+                if item_id in item_map:
+                    item = item_map[item_id]
+                    item.order = i
+                    reordered_items.append(item)
+            playlist_state.items = reordered_items
+    else:
+        logger.warning("Playlist sync service not available, applying reorder locally")
+        # Fallback to local reordering
+        item_map = {item.id: item for item in playlist_state.items}
+        reordered_items = []
+        for i, item_id in enumerate(item_ids):
+            if item_id in item_map:
+                item = item_map[item_id]
+                item.order = i
+                reordered_items.append(item)
+        playlist_state.items = reordered_items
 
-    # Reorder items
-    reordered_items = []
-    for i, item_id in enumerate(item_ids):
-        if item_id in item_map:
-            item = item_map[item_id]
-            item.order = i
-            reordered_items.append(item)
-
-    playlist_state.items = reordered_items
-
-    # Broadcast update
-    await manager.broadcast(
-        {
-            "type": "playlist_updated",
-            "items": [item.dict() for item in playlist_state.items],
-        }
-    )
-
+    # Note: WebSocket broadcast will happen via sync service callback
     return {"status": "reordered"}
 
 
 @app.delete("/api/playlist/{item_id}")
 async def remove_playlist_item(item_id: str):
     """Remove item from playlist."""
-    original_length = len(playlist_state.items)
-    removed_item = None
-
-    # Find the item to remove
-    for item in playlist_state.items:
-        if item.id == item_id:
-            removed_item = item
-            break
-
-    playlist_state.items = [item for item in playlist_state.items if item.id != item_id]
-
-    if len(playlist_state.items) < original_length and removed_item:
-        # Send remove command to producer
-        try:
-            temp_control = ControlState()
-            if temp_control.connect():
-                command = {"action": "remove_item", "data": {"filepath": removed_item.file_path}}
-                temp_control.send_playlist_command(command)
-                temp_control.cleanup()
-                logger.info(f"Sent remove command to producer: {removed_item.file_path}")
-        except Exception as e:
-            logger.error(f"Error sending remove command: {e}")
-
-        # Adjust current index if needed
-        if playlist_state.current_index >= len(playlist_state.items):
-            playlist_state.current_index = max(0, len(playlist_state.items) - 1)
-
-        # Broadcast update
-        await manager.broadcast(
-            {
-                "type": "playlist_updated",
-                "items": [item.dict_serializable() for item in playlist_state.items],
-            }
-        )
-
-        return {"status": "removed"}
+    # Send remove command to playlist sync service
+    if playlist_sync_client and playlist_sync_client.connected:
+        success = playlist_sync_client.remove_item(item_id)
+        if success:
+            return {"status": "removed"}
+        else:
+            logger.warning("Failed to remove item via sync service")
+            raise HTTPException(status_code=500, detail="Failed to remove item")
     else:
-        raise HTTPException(status_code=404, detail="Item not found")
+        logger.warning("Playlist sync service not available")
+        
+        # Fallback to local removal
+        original_length = len(playlist_state.items)
+        removed_item = None
+
+        # Find the item to remove
+        for item in playlist_state.items:
+            if item.id == item_id:
+                removed_item = item
+                break
+
+        playlist_state.items = [item for item in playlist_state.items if item.id != item_id]
+
+        if len(playlist_state.items) < original_length and removed_item:
+            # Adjust current index if needed
+            if playlist_state.current_index >= len(playlist_state.items):
+                playlist_state.current_index = max(0, len(playlist_state.items) - 1)
+
+            return {"status": "removed"}
+        else:
+            raise HTTPException(status_code=404, detail="Item not found")
 
 
 @app.post("/api/playlist/clear")
 async def clear_playlist():
     """Clear all playlist items."""
-    # Send clear command to producer
-    try:
-        temp_control = ControlState()
-        if temp_control.connect():
-            command = {"action": "clear"}
-            temp_control.send_playlist_command(command)
-            temp_control.cleanup()
-            logger.info("Sent clear command to producer")
-    except Exception as e:
-        logger.error(f"Error sending clear command: {e}")
+    # Send clear command to playlist sync service
+    if playlist_sync_client and playlist_sync_client.connected:
+        success = playlist_sync_client.clear_playlist()
+        if success:
+            return {"status": "cleared"}
+        else:
+            logger.warning("Failed to clear playlist via sync service")
+            raise HTTPException(status_code=500, detail="Failed to clear playlist")
+    else:
+        logger.warning("Playlist sync service not available")
+        
+        # Fallback to local clear
+        playlist_state.items.clear()
+        playlist_state.current_index = 0
+        playlist_state.is_playing = False
 
-    playlist_state.items.clear()
-    playlist_state.current_index = 0
-    playlist_state.is_playing = False
-
-    await manager.broadcast({"type": "playlist_updated", "items": []})
-
-    return {"status": "cleared"}
+        return {"status": "cleared"}
 
 
 @app.post("/api/playlist/shuffle")
