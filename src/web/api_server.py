@@ -240,7 +240,7 @@ async def startup_event():
 async def shutdown_event():
     """Clean up background tasks on application shutdown."""
     import contextlib
-    
+
     global preview_task
     if preview_task:
         preview_task.cancel()
