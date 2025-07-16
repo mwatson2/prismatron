@@ -1374,7 +1374,27 @@ def create_app():
 frontend_dir = Path(__file__).parent / "frontend" / "dist"
 if frontend_dir.exists():
     app.mount("/static", StaticFiles(directory=str(frontend_dir / "static")), name="static")
-    app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
+
+# Catch-all route for SPA routing - must be after all API routes
+@app.get("/{path:path}")
+async def catch_all(path: str):
+    """Catch-all route to serve React app for SPA routing."""
+    # Don't interfere with API routes
+    if path.startswith("api/") or path.startswith("ws") or path == "docs" or path == "redoc":
+        raise HTTPException(status_code=404, detail="Not found")
+    
+    # Serve the React app for all other routes
+    frontend_dir = Path(__file__).parent / "frontend" / "dist"
+    index_file = frontend_dir / "index.html"
+    
+    if index_file.exists():
+        response = FileResponse(str(index_file))
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+    else:
+        raise HTTPException(status_code=404, detail="Frontend not found")
 
 
 def run_server(host: str = "0.0.0.0", port: int = 8000, debug: bool = False):
