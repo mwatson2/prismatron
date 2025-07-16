@@ -10,34 +10,14 @@ import {
 import { useWebSocket } from '../hooks/useWebSocket'
 
 const HomePage = () => {
-  const { playlist, isConnected, systemStatus } = useWebSocket()
-  const [localStatus, setLocalStatus] = useState(null)
-  const [previewData, setPreviewData] = useState(null)
+  const { playlist, isConnected, systemStatus, previewData: wsPreviewData } = useWebSocket()
   const [ledPositions, setLedPositions] = useState(null)
   const canvasRef = useRef(null)
 
   const currentItem = playlist.items?.[playlist.current_index]
-  const status = systemStatus || localStatus
+  const status = systemStatus
 
-  useEffect(() => {
-    // Fetch initial system status
-    const fetchStatus = async () => {
-      try {
-        const response = await fetch('/api/status')
-        if (response.ok) {
-          const status = await response.json()
-          setLocalStatus(status)
-        }
-      } catch (error) {
-        console.error('Failed to fetch system status:', error)
-      }
-    }
-
-    fetchStatus()
-    const interval = setInterval(fetchStatus, 5000) // Update every 5 seconds
-
-    return () => clearInterval(interval)
-  }, [])
+  // System status is now received via WebSocket, no need for HTTP polling
 
   // Fetch LED positions once on component mount
   useEffect(() => {
@@ -60,26 +40,8 @@ const HomePage = () => {
     fetchLedPositions()
   }, [])
 
-  // Fetch LED preview data
-  useEffect(() => {
-    const fetchPreview = async () => {
-      try {
-        const response = await fetch('/api/preview')
-        if (response.ok) {
-          const data = await response.json()
-          console.log('Preview data received:', data.has_frame, data.frame_data?.length)
-          setPreviewData(data)
-        }
-      } catch (error) {
-        console.error('Failed to fetch LED preview:', error)
-      }
-    }
-
-    fetchPreview()
-    const interval = setInterval(fetchPreview, 200) // Update every 200ms for smooth animation
-
-    return () => clearInterval(interval)
-  }, [playlist.is_playing, playlist.current_index])
+  // Use WebSocket preview data (no need for HTTP polling)
+  const previewData = wsPreviewData
 
   // Canvas-based LED rendering function
   const drawLEDs = () => {
@@ -206,15 +168,40 @@ const HomePage = () => {
         </p>
 
         {/* Connection status */}
-        <div className={`inline-flex items-center gap-2 mt-2 px-3 py-1 rounded-retro text-xs font-mono ${
-          isConnected
-            ? 'text-neon-green border border-neon-green border-opacity-30 bg-neon-green bg-opacity-5'
-            : 'text-metal-silver border border-metal-silver border-opacity-30 bg-dark-800'
-        }`}>
-          <div className={`w-2 h-2 rounded-full ${
-            isConnected ? 'bg-neon-green animate-pulse-neon' : 'bg-metal-silver'
-          }`} />
-          {isConnected ? 'ONLINE' : 'OFFLINE'}
+        <div className="flex flex-wrap justify-center gap-3 mt-2">
+          <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-retro text-xs font-mono ${
+            isConnected
+              ? 'text-neon-green border border-neon-green border-opacity-30 bg-neon-green bg-opacity-5'
+              : 'text-metal-silver border border-metal-silver border-opacity-30 bg-dark-800'
+          }`}>
+            <div className={`w-2 h-2 rounded-full ${
+              isConnected ? 'bg-neon-green animate-pulse-neon' : 'bg-metal-silver'
+            }`} />
+            {isConnected ? 'ONLINE' : 'OFFLINE'}
+          </div>
+
+          {/* LED Panel status */}
+          <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-retro text-xs font-mono ${
+            status?.led_panel_connected
+              ? 'text-neon-cyan border border-neon-cyan border-opacity-30 bg-neon-cyan bg-opacity-5'
+              : status?.led_panel_status === 'connecting'
+              ? 'text-neon-orange border border-neon-orange border-opacity-30 bg-neon-orange bg-opacity-5'
+              : 'text-metal-silver border border-metal-silver border-opacity-30 bg-dark-800'
+          }`}>
+            <div className={`w-2 h-2 rounded-full ${
+              status?.led_panel_connected
+                ? 'bg-neon-cyan animate-pulse-neon'
+                : status?.led_panel_status === 'connecting'
+                ? 'bg-neon-orange animate-pulse'
+                : 'bg-metal-silver'
+            }`} />
+            {status?.led_panel_connected 
+              ? 'CONNECTED' 
+              : status?.led_panel_status === 'connecting' 
+              ? 'CONNECTING...'
+              : 'DISCONNECTED'
+            }
+          </div>
         </div>
       </div>
 
@@ -343,17 +330,15 @@ const HomePage = () => {
             </div>
             <div>
               <span className="text-metal-silver">Memory:</span>
-              <span className="text-neon-cyan ml-2">{status.memory_usage?.toFixed(1)}%</span>
+              <span className="text-neon-cyan ml-2">{status.memory_usage?.toFixed(1)}% ({status.memory_usage_gb?.toFixed(1)}GB)</span>
             </div>
             <div>
               <span className="text-metal-silver">FPS:</span>
               <span className="text-neon-cyan ml-2">{status.frame_rate?.toFixed(1)}</span>
             </div>
             <div>
-              <span className="text-metal-silver">Uptime:</span>
-              <span className="text-neon-cyan ml-2">
-                {Math.floor((status.uptime || 0) / 3600)}h
-              </span>
+              <span className="text-metal-silver">Late Frames:</span>
+              <span className="text-neon-cyan ml-2">{status.late_frame_percentage?.toFixed(1)}%</span>
             </div>
           </div>
         </div>

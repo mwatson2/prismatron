@@ -5,6 +5,7 @@ FastAPI-based backend for the Prismatron web interface with retro-futurism desig
 Provides endpoints for home, upload, effects, playlist management, and settings.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union
 
 import numpy as np
+import psutil
 import uvicorn
 from fastapi import (
     FastAPI,
@@ -36,7 +38,7 @@ from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
+from src.const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT, LED_DATA_SIZE
 from src.core.control_state import ControlState
 
 logger = logging.getLogger(__name__)
@@ -111,7 +113,10 @@ class SystemStatus(BaseModel):
     frame_rate: float = Field(0.0, description="Current frame rate")
     uptime: float = Field(0.0, description="System uptime in seconds")
     memory_usage: float = Field(0.0, description="Memory usage percentage")
+    memory_usage_gb: float = Field(0.0, description="Memory usage in GB")
     cpu_usage: float = Field(0.0, description="CPU usage percentage")
+    led_panel_connected: bool = Field(False, description="LED panel connection status")
+    led_panel_status: str = Field("disconnected", description="LED panel status (connected/connecting/disconnected)")
 
 
 # Global state
@@ -219,6 +224,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Background task for preview data broadcasting
+preview_task: Optional[asyncio.Task] = None
+
+@app.on_event("startup")
+async def startup_event():
+    """Start background tasks on application startup."""
+    global preview_task
+    preview_task = asyncio.create_task(preview_broadcast_task())
+    logger.info("Started preview data broadcasting task")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up background tasks on application shutdown."""
+    global preview_task
+    if preview_task:
+        preview_task.cancel()
+        try:
+            await preview_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Stopped preview data broadcasting task")
+
 
 # Add no-cache middleware for static files
 @app.middleware("http")
@@ -271,6 +298,192 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Preview data broadcasting task
+async def preview_broadcast_task():
+    """Background task to broadcast preview data and system status at 5fps via WebSocket."""
+    while True:
+        try:
+            if manager.active_connections:
+                current_time = time.time()
+                
+                # Get LED panel connection status from consumer process
+                led_panel_connected = False
+                led_panel_status = "disconnected"
+                
+                if consumer_process and hasattr(consumer_process, 'get_statistics'):
+                    try:
+                        consumer_stats = consumer_process.get_statistics()
+                        wled_stats = consumer_stats.get('wled_stats', {})
+                        led_panel_connected = wled_stats.get('is_connected', False)
+                        
+                        # Determine status string based on connection state
+                        if led_panel_connected:
+                            led_panel_status = "connected"
+                        elif consumer_process.is_running and not led_panel_connected:
+                            led_panel_status = "connecting"
+                        else:
+                            led_panel_status = "disconnected"
+                    except Exception as e:
+                        logger.warning(f"Failed to get LED panel status: {e}")
+                
+                # Get real system resource usage
+                try:
+                    # CPU usage (non-blocking, use cached value or 0.1s interval)
+                    cpu_percent = psutil.cpu_percent(interval=0.1)
+                    
+                    # Memory usage
+                    mem_info = psutil.virtual_memory()
+                    mem_percent = mem_info.percent
+                    mem_used_gb = round(mem_info.used / 1e9, 2)  # RAM used in GB
+                    
+                    # TODO: Get actual uptime from system start
+                    uptime = current_time  # Placeholder
+                except Exception as e:
+                    logger.warning(f"Failed to get system resources: {e}")
+                    cpu_percent = 0.0
+                    mem_percent = 0.0
+                    mem_used_gb = 0.0
+                    uptime = current_time
+                
+                # Broadcast system status
+                status_data = {
+                    "type": "system_status",
+                    "is_online": True,
+                    "current_file": (
+                        playlist_state.items[playlist_state.current_index].file_path
+                        if playlist_state.items and 0 <= playlist_state.current_index < len(playlist_state.items)
+                        else None
+                    ),
+                    "playlist_position": playlist_state.current_index,
+                    "brightness": system_settings.brightness,
+                    "frame_rate": 30.0,  # Will be updated from shared memory below
+                    "uptime": uptime,
+                    "memory_usage": mem_percent,
+                    "memory_usage_gb": mem_used_gb,
+                    "cpu_usage": cpu_percent,
+                    "led_panel_connected": led_panel_connected,
+                    "led_panel_status": led_panel_status,
+                    "timestamp": current_time,
+                }
+                
+                # Get preview data (same logic as /api/preview endpoint)
+                preview_data = {
+                    "type": "preview_data", 
+                    "timestamp": current_time,
+                    "is_active": playlist_state.is_playing,
+                    "current_item": None,
+                    "has_frame": False,
+                    "frame_data": None,
+                }
+
+                if playlist_state.items and 0 <= playlist_state.current_index < len(playlist_state.items):
+                    current_item = playlist_state.items[playlist_state.current_index]
+                    preview_data["current_item"] = {"name": current_item.name, "type": current_item.type}
+
+                # Try to get real LED data from shared memory (PreviewSink)
+                try:
+                    import mmap
+                    import os
+
+                    # Try to read from shared memory created by PreviewSink
+                    try:
+                        shm_fd = os.open("/dev/shm/prismatron_preview", os.O_RDONLY)
+
+                        # Read full header (64 bytes): timestamp(8) + frame_counter(8) + led_count(4) + padding(44)
+                        header_data = os.read(shm_fd, 64)
+                        if len(header_data) == 64:
+                            import struct
+
+                            # Unpack header according to PreviewSink format: "<ddI44x"
+                            timestamp, frame_counter, led_count = struct.unpack("<ddI44x", header_data)
+
+                            if led_count > 0:
+                                # Read LED data starting at offset 64: led_count * 3 bytes (RGB)
+                                os.lseek(shm_fd, 64, os.SEEK_SET)  # Seek to LED data section
+                                led_data = os.read(shm_fd, led_count * 3)
+
+                                if len(led_data) == led_count * 3:
+                                    # Convert to list of [r, g, b] arrays
+                                    frame_data = []
+                                    for i in range(0, len(led_data), 3):
+                                        r, g, b = led_data[i], led_data[i + 1], led_data[i + 2]
+                                        frame_data.append([r, g, b])
+
+                                    preview_data["has_frame"] = True
+                                    preview_data["frame_data"] = frame_data
+                                    preview_data["total_leds"] = led_count
+                                    preview_data["frame_counter"] = frame_counter
+
+                        # Try to read statistics from shared memory
+                        try:
+                            import json
+                            # Read statistics from shared memory (last 1024 bytes)
+                            file_size = os.lseek(shm_fd, 0, os.SEEK_END)
+                            stats_offset = file_size - 1024
+                            os.lseek(shm_fd, stats_offset, os.SEEK_SET)
+                            stats_data = os.read(shm_fd, 1024)
+                            
+                            logger.debug(f"Read stats data: first 50 bytes = {stats_data[:50]}")
+                            
+                            # Find null terminator
+                            null_pos = stats_data.find(b'\x00')
+                            if null_pos > 0:
+                                stats_json = stats_data[:null_pos].decode('utf-8')
+                                stats = json.loads(stats_json)
+                                
+                                logger.debug(f"Parsed stats: renderer_fps={stats.get('renderer_fps', 'missing')}")
+                                
+                                # Extract FPS and frame statistics
+                                # Try renderer_fps first (if available), otherwise use ewma_fps (preview sink FPS)
+                                frame_rate = stats.get("renderer_fps", stats.get("ewma_fps", 30.0))
+                                status_data.update({
+                                    "frame_rate": frame_rate,
+                                    "late_frame_percentage": stats.get("renderer_late_percentage", stats.get("ewma_late_fraction", 0.0) * 100),
+                                    "dropped_frame_percentage": stats.get("renderer_dropped_percentage", stats.get("ewma_dropped_fraction", 0.0) * 100),
+                                    "frames_processed": stats.get("total_frames_rendered", stats.get("frames_processed", 0)),
+                                })
+                            else:
+                                logger.debug(f"No null terminator found in stats data, length={len(stats_data)}")
+                        except Exception as e:
+                            logger.warning(f"Failed to read statistics from shared memory: {e}")
+
+                        os.close(shm_fd)
+                    except FileNotFoundError:
+                        pass  # PreviewSink shared memory not found
+                    except Exception:
+                        pass  # Other errors accessing shared memory
+
+                except Exception:
+                    pass  # Failed to access preview shared memory
+
+                # Broadcast system status with updated statistics
+                await manager.broadcast(status_data)
+
+                # Fallback to test pattern if no real data available
+                if not preview_data["has_frame"]:
+                    preview_data["has_frame"] = True
+                    preview_colors = []
+                    # Use the actual LED count for test pattern
+                    test_led_count = LED_COUNT  # 2624
+                    for i in range(test_led_count):
+                        # Simple rainbow pattern
+                        hue = (i / test_led_count) * 360  # Full rainbow across all LEDs
+                        r = int(255 * max(0, min(1, abs((hue / 60) % 6 - 3) - 1)))
+                        g = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 2))))
+                        b = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 4))))
+                        preview_colors.append([r, g, b])
+                    preview_data["frame_data"] = preview_colors
+                    preview_data["total_leds"] = test_led_count
+
+                # Broadcast preview data to all connected clients
+                await manager.broadcast(preview_data)
+
+        except Exception as e:
+            logger.warning(f"Preview broadcast error: {e}")
+
+        # Wait for 200ms (5fps) 
+        await asyncio.sleep(0.2)
+
 # API Routes
 
 
@@ -304,7 +517,67 @@ async def root():
 @app.get("/api/status", response_model=SystemStatus)
 async def get_system_status():
     """Get current system status."""
-    # TODO: Integrate with actual system monitoring
+    # Get LED panel connection status from consumer process
+    led_panel_connected = False
+    led_panel_status = "disconnected"
+    
+    if consumer_process and hasattr(consumer_process, 'get_statistics'):
+        try:
+            consumer_stats = consumer_process.get_statistics()
+            wled_stats = consumer_stats.get('wled_stats', {})
+            led_panel_connected = wled_stats.get('is_connected', False)
+            
+            # Determine status string based on connection state
+            if led_panel_connected:
+                led_panel_status = "connected"
+            elif consumer_process.is_running and not led_panel_connected:
+                led_panel_status = "connecting"
+            else:
+                led_panel_status = "disconnected"
+        except Exception as e:
+            logger.warning(f"Failed to get LED panel status: {e}")
+    
+    # Get real system resource usage
+    try:
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        mem_info = psutil.virtual_memory()
+        mem_percent = mem_info.percent
+        mem_used_gb = round(mem_info.used / 1e9, 2)  # RAM used in GB
+        uptime = time.time()  # TODO: Get actual uptime
+    except Exception as e:
+        logger.warning(f"Failed to get system resources: {e}")
+        cpu_percent = 0.0
+        mem_percent = 0.0
+        mem_used_gb = 0.0
+        uptime = time.time()
+    
+    # Get actual frame rate from shared memory
+    frame_rate = 30.0  # Default fallback
+    try:
+        import os
+        import json
+        import struct
+        
+        shm_fd = os.open("/dev/shm/prismatron_preview", os.O_RDONLY)
+        # Read statistics from shared memory (last 1024 bytes)
+        file_size = os.lseek(shm_fd, 0, os.SEEK_END)
+        stats_offset = file_size - 1024
+        os.lseek(shm_fd, stats_offset, os.SEEK_SET)
+        stats_data = os.read(shm_fd, 1024)
+        
+        # Find null terminator
+        null_pos = stats_data.find(b'\x00')
+        if null_pos > 0:
+            stats_json = stats_data[:null_pos].decode('utf-8')
+            stats = json.loads(stats_json)
+            
+            # Try renderer_fps first (if available), otherwise use ewma_fps (preview sink FPS)
+            frame_rate = stats.get("renderer_fps", stats.get("ewma_fps", 30.0))
+        
+        os.close(shm_fd)
+    except Exception:
+        pass  # Use default frame_rate if shared memory not available
+    
     return SystemStatus(
         is_online=True,
         current_file=(
@@ -314,10 +587,13 @@ async def get_system_status():
         ),
         playlist_position=playlist_state.current_index,
         brightness=system_settings.brightness,
-        frame_rate=30.0,  # TODO: Get actual frame rate
-        uptime=time.time(),  # TODO: Get actual uptime
-        memory_usage=45.2,  # TODO: Get actual memory usage
-        cpu_usage=23.1,  # TODO: Get actual CPU usage
+        frame_rate=frame_rate,
+        uptime=uptime,
+        memory_usage=mem_percent,
+        memory_usage_gb=mem_used_gb,
+        cpu_usage=cpu_percent,
+        led_panel_connected=led_panel_connected,
+        led_panel_status=led_panel_status,
     )
 
 

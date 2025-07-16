@@ -10,6 +10,7 @@ import signal
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -134,6 +135,12 @@ class ConsumerProcess:
         self._initialized = False
         self._stats = ConsumerStats()
 
+        # Debug frame writing (first 10 frames)
+        self._debug_frame_count = 0
+        self._debug_max_frames = 10
+        self._debug_frame_dir = Path("/tmp/prismatron_debug_frames")
+        self._debug_frame_dir.mkdir(exist_ok=True)
+
         # Periodic logging for pipeline debugging
         self._last_consumer_log_time = 0.0
         self._consumer_log_interval = 2.0  # Log every 2 seconds
@@ -197,6 +204,10 @@ class ConsumerProcess:
             self._frame_renderer.set_output_targets(
                 wled_sink=self._wled_client, test_sink=self._test_renderer, preview_sink=self._preview_sink
             )
+            
+            # Connect preview sink to frame renderer for statistics
+            if self._preview_sink:
+                self._preview_sink.set_frame_renderer(self._frame_renderer)
 
             self._initialized = True
             logger.info("Consumer process initialized successfully")
@@ -412,6 +423,16 @@ class ConsumerProcess:
             # Convert RGBA to RGB
             # TODO; Remove this, we only have RGB
             rgb_frame = frame_array[:, :, :3].astype(np.uint8)
+
+            # Debug: Write first 10 frames to temporary files for analysis
+            if self._debug_frame_count < self._debug_max_frames:
+                try:
+                    debug_file = self._debug_frame_dir / f"frame_{self._debug_frame_count:03d}.npy"
+                    np.save(debug_file, rgb_frame)
+                    logger.info(f"DEBUG: Wrote frame {self._debug_frame_count} to {debug_file}")
+                    self._debug_frame_count += 1
+                except Exception as e:
+                    logger.warning(f"DEBUG: Failed to write frame {self._debug_frame_count}: {e}")
 
             # Apply brightness scaling
             if self.brightness_scale != 1.0:
