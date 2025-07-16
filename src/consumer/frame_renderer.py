@@ -33,10 +33,10 @@ class FrameRenderer:
 
     def __init__(
         self,
+        led_ordering: np.ndarray,
         first_frame_delay_ms: float = 100.0,
         timing_tolerance_ms: float = 5.0,
         late_frame_log_threshold_ms: float = 50.0,
-        led_ordering: Optional[np.ndarray] = None,
     ):
         """
         Initialize frame renderer.
@@ -90,11 +90,12 @@ class FrameRenderer:
         self.timing_errors = []  # Track last 100 timing errors for analysis
         self.max_timing_history = 100
 
-        # Debug LED value writing (first 10 frames)
+        # Debug LED value writing (first 10 different frames)
         self._debug_led_count = 0
         self._debug_max_leds = 10
         self._debug_led_dir = Path("/tmp/prismatron_debug_leds")
         self._debug_led_dir.mkdir(exist_ok=True)
+        self._debug_previous_led_values = None  # Track previous frame for uniqueness
 
         # Track error message timing to silence after 1 minute
         self._error_message_start_time = time.time()
@@ -291,18 +292,39 @@ class FrameRenderer:
         # Convert from spatial to physical order before sending to sinks
         physical_led_values = self._convert_spatial_to_physical(led_values)
 
-        # Debug: Write first 10 LED value sets to temporary files for analysis
+        # Debug: Write first 10 different LED value sets to temporary files for analysis
         if self._debug_led_count < self._debug_max_leds:
             try:
-                # Save both spatial and physical LED values for comparison
-                debug_spatial_file = self._debug_led_dir / f"led_spatial_{self._debug_led_count:03d}.npy"
-                debug_physical_file = self._debug_led_dir / f"led_physical_{self._debug_led_count:03d}.npy"
-                np.save(debug_spatial_file, led_values)
-                np.save(debug_physical_file, physical_led_values)
-                logger.info(
-                    f"DEBUG: Wrote LED values {self._debug_led_count} to {debug_spatial_file} and {debug_physical_file}"
-                )
-                self._debug_led_count += 1
+                # Check if this frame is different from the previous one
+                is_different = True
+                if self._debug_previous_led_values is not None:
+                    # Compare with previous frame (use spatial values for comparison)
+                    diff = np.abs(led_values.astype(np.float32) - self._debug_previous_led_values.astype(np.float32))
+                    max_diff = np.max(diff)
+                    mean_diff = np.mean(diff)
+
+                    # Consider frames different if max difference > 1 or mean difference > 0.1
+                    is_different = max_diff > 1.0 or mean_diff > 0.1
+
+                    if not is_different:
+                        logger.debug(
+                            f"DEBUG: Skipping identical frame (max_diff={max_diff:.3f}, mean_diff={mean_diff:.3f})"
+                        )
+
+                if is_different:
+                    # Save both spatial and physical LED values for comparison
+                    debug_spatial_file = self._debug_led_dir / f"led_spatial_{self._debug_led_count:03d}.npy"
+                    debug_physical_file = self._debug_led_dir / f"led_physical_{self._debug_led_count:03d}.npy"
+                    np.save(debug_spatial_file, led_values)
+                    np.save(debug_physical_file, physical_led_values)
+                    logger.info(
+                        f"DEBUG: Wrote unique LED values {self._debug_led_count} to {debug_spatial_file} and {debug_physical_file}"
+                    )
+
+                    # Update previous frame and increment counter
+                    self._debug_previous_led_values = led_values.copy()
+                    self._debug_led_count += 1
+
             except Exception as e:
                 logger.warning(f"DEBUG: Failed to write LED values {self._debug_led_count}: {e}")
 
@@ -384,7 +406,7 @@ class FrameRenderer:
 
     def _convert_spatial_to_physical(self, led_values: np.ndarray) -> np.ndarray:
         """
-        Convert LED values from spatial order to physical order using fancy indexing.
+        Convert LED values from spatial order to physical order using explicit element copying.
 
         Args:
             led_values: LED values in spatial order, shape (led_count, 3)
@@ -392,39 +414,18 @@ class FrameRenderer:
         Returns:
             LED values in physical order, shape (led_count, 3)
         """
-        if self.led_ordering is None:
-            # No ordering available, assume already in physical order
-            return led_values
-
         # LED ordering should have been validated at load time
         # led_ordering maps spatial_index -> physical_led_id
         # We want to place spatial_led_values[spatial_idx] at physical_led_values[physical_led_id]
         physical_led_values = np.zeros_like(led_values)
 
-        # Use fancy indexing for efficient conversion
+        # Use explicit element-by-element copy to ensure proper memory reordering
         # self.led_ordering[i] gives the physical LED ID for spatial index i
-        physical_led_values[self.led_ordering] = led_values
+        for spatial_idx in range(len(led_values)):
+            physical_led_id = self.led_ordering[spatial_idx]
+            physical_led_values[physical_led_id] = led_values[spatial_idx].copy()
 
         return physical_led_values
-
-    def set_led_ordering(self, led_ordering: np.ndarray) -> None:
-        """
-        Set the LED ordering array for spatial to physical conversion.
-
-        Args:
-            led_ordering: Array mapping spatial indices to physical LED IDs
-        """
-        # Import validation function
-        from ..utils.pattern_loader import validate_led_ordering
-
-        # Validate the LED ordering
-        is_valid, error_msg = validate_led_ordering(led_ordering)
-        if not is_valid:
-            logger.error(f"Invalid LED ordering: {error_msg}")
-            raise ValueError(f"Invalid LED ordering: {error_msg}")
-
-        self.led_ordering = led_ordering
-        logger.info(f"Updated LED ordering: {len(led_ordering)} LEDs")
 
     def get_timing_stats(self) -> Dict[str, Any]:
         """

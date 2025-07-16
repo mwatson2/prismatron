@@ -50,8 +50,12 @@ const HomePage = () => {
     const canvas = canvasRef.current
     const ctx = canvas.getContext('2d')
 
-    // Clear canvas
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    // Clear canvas with black background
+    ctx.fillStyle = '#000000'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+    // Set additive blending mode for LED rendering
+    ctx.globalCompositeOperation = 'lighter'
 
     // Calculate scaling to fit LED coordinate space (800x480) into canvas
     const scaleX = canvas.width / ledPositions.frame_dimensions.width
@@ -72,58 +76,51 @@ const HomePage = () => {
         console.log(`LED ${i}: raw pos [${x}, ${y}] -> canvas [${canvasX.toFixed(1)}, ${canvasY.toFixed(1)}]`)
       }
 
-      // Determine LED color
-      let ledColor = '#666666' // Default dim color
-      let brightness = 0.3 // Default dim brightness
-
+      // Determine LED color and skip dark LEDs
       if (previewData?.has_frame && previewData?.frame_data) {
-        const frameDataLength = previewData.frame_data.length
-        const totalLeds = previewData.total_leds || ledPositions.led_count
-
-        let colorData = null
-
-        if (frameDataLength === totalLeds) {
-          // Full LED data - use direct mapping
-          colorData = previewData.frame_data[i]
-        } else if (frameDataLength > 0) {
-          // Sample data - map position-based for better spatial distribution
-          const positionHash = (x * 1000 + y) % frameDataLength
-          colorData = previewData.frame_data[positionHash]
-        }
+        let colorData = previewData.frame_data[i]
 
         if (colorData && Array.isArray(colorData) && colorData.length >= 3) {
           const [r, g, b] = colorData
-          ledColor = `rgb(${r}, ${g}, ${b})`
 
-          // Calculate luminance-based brightness (ITU-R BT.709 standard)
-          const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
-          brightness = Math.max(0.1, luminance) // Minimum 10% opacity for visibility
+          // Skip completely dark LEDs to avoid unnecessary computation
+          if (r === 0 && g === 0 && b === 0) {
+            return
+          }
+
+          // Use direct RGB values for additive blending
+          const ledColor = `rgb(${r}, ${g}, ${b})`
 
           // Debug log for first few LEDs
-          if (i < 3) {
-            console.log(`LED ${i} color: rgb(${r}, ${g}, ${b}), luminance: ${luminance.toFixed(3)}`)
+          if (i < 5 && (r > 0 || g > 0 || b > 0)) {
+            console.log(`LED ${i} color: rgb(${r}, ${g}, ${b})`)
+          }
+
+          // Draw LED circle with additive blending
+          ctx.beginPath()
+          ctx.arc(canvasX, canvasY, 8, 0, 2 * Math.PI)
+          ctx.fillStyle = ledColor
+          ctx.fill()
+
+          // Add glow effect for bright LEDs (any channel > 200)
+          if (r > 200 || g > 200 || b > 200) {
+            ctx.beginPath()
+            ctx.arc(canvasX, canvasY, 12, 0, 2 * Math.PI)
+            ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.3)`
+            ctx.fill()
           }
         }
-      }
-
-      // Draw LED as a 24px diameter circle (12px radius)
-      ctx.beginPath()
-      ctx.arc(canvasX, canvasY, 12, 0, 2 * Math.PI)
-      ctx.fillStyle = ledColor
-      ctx.globalAlpha = brightness
-      ctx.fill()
-      ctx.globalAlpha = 1.0
-
-      // Add glow effect for bright LEDs (luminance > 0.8)
-      if (brightness > 0.8) {
+      } else {
+        // Fallback: draw dim LEDs when no preview data
         ctx.beginPath()
-        ctx.arc(canvasX, canvasY, 18, 0, 2 * Math.PI)
-        ctx.fillStyle = ledColor
-        ctx.globalAlpha = 0.2
+        ctx.arc(canvasX, canvasY, 8, 0, 2 * Math.PI)
+        ctx.fillStyle = 'rgba(102, 102, 102, 0.3)'
         ctx.fill()
-        ctx.globalAlpha = 1.0
       }
     })
+
+    // Reset composite operation for any future drawing
+    ctx.globalCompositeOperation = 'source-over'
   }
 
   // Redraw LEDs when data changes

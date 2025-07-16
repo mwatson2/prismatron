@@ -3,6 +3,7 @@
 Prismatron System Orchestrator.
 
 Main entry point that coordinates startup and management of all system processes:
+- Playlist Synchronization Service (Unix domain sockets)
 - Web API Server (FastAPI)
 - Producer Process (Content rendering)
 - Consumer Process (LED optimization and WLED communication)
@@ -27,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from src.consumer.consumer import ConsumerProcess
 from src.core.control_state import ControlState, PlayState, SystemState
+from src.core.playlist_sync import PlaylistSyncService
 from src.producer.producer import ProducerProcess
 from src.web.api_server import run_server
 
@@ -51,7 +53,11 @@ class ProcessManager:
         # Clean up any orphaned shared memory from previous runs
         self._cleanup_orphaned_shared_memory()
 
+        # Clean up any orphaned Unix domain socket from previous runs
+        self._cleanup_orphaned_socket()
+
         # Process startup coordination
+        self.playlist_sync_ready = multiprocessing.Event()
         self.web_server_ready = multiprocessing.Event()
         self.producer_ready = multiprocessing.Event()
         self.consumer_ready = multiprocessing.Event()
@@ -73,7 +79,11 @@ class ProcessManager:
 
             self.control_state.update_system_state(SystemState.STARTING)
 
-            # Start web server first (API needed for producer control)
+            # Start playlist sync service first (required by web server and producer)
+            if not self._start_playlist_sync():
+                return False
+
+            # Start web server (API needed for producer control)
             if not self._start_web_server():
                 return False
 
@@ -87,6 +97,11 @@ class ProcessManager:
 
             # Wait for all processes to be ready
             logger.info("Waiting for all processes to initialize...")
+
+            # Playlist sync service should be ready quickly
+            if not self.playlist_sync_ready.wait(timeout=15):
+                logger.error("Playlist sync service startup timeout")
+                return False
 
             # Web server should be ready quickly
             if not self.web_server_ready.wait(timeout=30):
@@ -110,6 +125,46 @@ class ProcessManager:
         except Exception as e:
             logger.error(f"Failed to start processes: {e}")
             self.stop_all_processes()
+            return False
+
+    def _start_playlist_sync(self) -> bool:
+        """Start the playlist synchronization service."""
+        try:
+            logger.info("Starting playlist synchronization service...")
+
+            def playlist_sync_worker():
+                """Playlist sync service worker."""
+                try:
+                    # Setup logging for subprocess
+                    logging.basicConfig(
+                        level=logging.INFO,
+                        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                    )
+
+                    # Create and start playlist sync service
+                    service = PlaylistSyncService()
+                    if not service.start():
+                        logger.error("Failed to start playlist sync service")
+                        return
+
+                    # Signal ready
+                    self.playlist_sync_ready.set()
+
+                    # Keep running until shutdown
+                    while service.running:
+                        time.sleep(1)
+
+                except Exception as e:
+                    logger.error(f"Playlist sync service error: {e}")
+
+            process = multiprocessing.Process(target=playlist_sync_worker, name="PlaylistSync")
+            process.start()
+            self.processes["playlist_sync"] = process
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to start playlist sync service: {e}")
             return False
 
     def _start_web_server(self) -> bool:
@@ -269,7 +324,7 @@ class ProcessManager:
             self.control_state.signal_shutdown()
 
             # Stop processes in reverse order
-            process_order = ["producer", "consumer", "web_server"]
+            process_order = ["producer", "consumer", "web_server", "playlist_sync"]
 
             for process_name in process_order:
                 if process_name in self.processes:
@@ -365,6 +420,18 @@ class ProcessManager:
         except Exception as e:
             logger.warning(f"Error checking for orphaned shared memory: {e}")
 
+    def _cleanup_orphaned_socket(self) -> None:
+        """Clean up any orphaned Unix domain socket from previous runs."""
+        try:
+            import os
+
+            socket_path = "/tmp/prismatron_playlist.sock"
+            if os.path.exists(socket_path):
+                os.unlink(socket_path)
+                logger.info("Cleaned up orphaned playlist socket")
+        except Exception as e:
+            logger.warning(f"Error cleaning up orphaned socket: {e}")
+
     def cleanup_all_resources(self) -> None:
         """Comprehensive cleanup of all system resources."""
         if self.shutdown_requested:
@@ -377,6 +444,9 @@ class ProcessManager:
 
             # Additional cleanup for any remaining shared memory
             self._cleanup_orphaned_shared_memory()
+
+            # Additional cleanup for any remaining sockets
+            self._cleanup_orphaned_socket()
 
         except Exception as e:
             logger.error(f"Error during comprehensive cleanup: {e}")
@@ -429,6 +499,16 @@ def emergency_cleanup() -> None:
         # Removed print to make emergency cleanup silent
     except:
         pass  # Silently handle any errors during emergency cleanup
+
+    # Clean up socket
+    try:
+        import os
+
+        socket_path = "/tmp/prismatron_playlist.sock"
+        if os.path.exists(socket_path):
+            os.unlink(socket_path)
+    except:
+        pass  # Silently handle any errors
 
 
 def main():

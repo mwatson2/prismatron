@@ -224,6 +224,9 @@ class PlaylistSyncService:
         """Handle individual client connection."""
         logger.info(f"New playlist sync client connected: {client_id}")
 
+        # Message buffering for proper framing
+        message_buffer = ""
+
         with self._lock:
             self.clients[client_id] = {
                 "socket": client_socket,
@@ -245,22 +248,35 @@ class PlaylistSyncService:
                     if not data:
                         break
 
-                    message_str = data.decode("utf-8")
-                    message = PlaylistMessage.from_json(message_str)
-                    message.client_id = client_id
+                    try:
+                        # Add new data to buffer
+                        message_buffer += data.decode("utf-8")
 
-                    # Update last seen
-                    with self._lock:
-                        if client_id in self.clients:
-                            self.clients[client_id]["last_seen"] = time.time()
+                        # Process complete messages (delimited by newlines)
+                        while "\n" in message_buffer:
+                            message_str, message_buffer = message_buffer.split("\n", 1)
 
-                    # Process message
-                    self._process_message(message)
+                            if message_str.strip():  # Skip empty messages
+                                message = PlaylistMessage.from_json(message_str)
+                                message.client_id = client_id
 
-                except json.JSONDecodeError as e:
-                    logger.error(f"Invalid JSON from client {client_id}: {e}")
+                                # Update last seen
+                                with self._lock:
+                                    if client_id in self.clients:
+                                        self.clients[client_id]["last_seen"] = time.time()
+
+                                # Process message
+                                self._process_message(message)
+
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Invalid JSON from client {client_id}: {e}")
+                        # Clear buffer on JSON error to prevent cascade failures
+                        message_buffer = ""
+                    except Exception as e:
+                        logger.error(f"Error handling client {client_id} message: {e}")
+
                 except Exception as e:
-                    logger.error(f"Error handling client {client_id} message: {e}")
+                    logger.error(f"Error in client {client_id} message loop: {e}")
 
         except Exception as e:
             logger.error(f"Error handling client {client_id}: {e}")
@@ -455,14 +471,17 @@ class PlaylistSyncService:
                 del self.clients[client_id]
 
     def _send_to_client(self, client_id: str, message: PlaylistMessage) -> bool:
-        """Send message to specific client."""
+        """Send message to specific client with proper framing."""
         try:
             if client_id not in self.clients:
                 return False
 
             client_socket = self.clients[client_id]["socket"]
             message_json = message.to_json()
-            client_socket.send(message_json.encode("utf-8"))
+
+            # Add newline delimiter for proper message framing
+            message_data = (message_json + "\n").encode("utf-8")
+            client_socket.send(message_data)
             return True
 
         except Exception as e:
@@ -494,6 +513,9 @@ class PlaylistSyncClient:
         self.connected = False
         self.listener_thread: Optional[threading.Thread] = None
         self.running = False
+
+        # Message buffering for proper framing
+        self._message_buffer = ""
 
         # Event callbacks
         self.on_playlist_update: Optional[Callable[[PlaylistState], None]] = None
@@ -560,12 +582,21 @@ class PlaylistSyncClient:
                     break
 
                 try:
-                    message_str = data.decode("utf-8")
-                    message = PlaylistMessage.from_json(message_str)
-                    self._handle_message(message)
+                    # Add new data to buffer
+                    self._message_buffer += data.decode("utf-8")
+
+                    # Process complete messages (delimited by newlines)
+                    while "\n" in self._message_buffer:
+                        message_str, self._message_buffer = self._message_buffer.split("\n", 1)
+
+                        if message_str.strip():  # Skip empty messages
+                            message = PlaylistMessage.from_json(message_str)
+                            self._handle_message(message)
 
                 except json.JSONDecodeError as e:
                     logger.error(f"Invalid JSON received by client '{self.client_name}': {e}")
+                    # Clear buffer on JSON error to prevent cascade failures
+                    self._message_buffer = ""
                 except Exception as e:
                     logger.error(f"Error handling message in client '{self.client_name}': {e}")
 
@@ -596,7 +627,9 @@ class PlaylistSyncClient:
                 return False
 
             message_json = message.to_json()
-            self.socket.send(message_json.encode("utf-8"))
+            # Add newline delimiter for proper message framing
+            message_data = (message_json + "\n").encode("utf-8")
+            self.socket.send(message_data)
             return True
 
         except Exception as e:

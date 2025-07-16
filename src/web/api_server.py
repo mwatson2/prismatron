@@ -297,13 +297,34 @@ async def on_playlist_sync_update(sync_state: SyncPlaylistState) -> None:
             }
         )
 
-        logger.debug(f"Updated playlist from sync service: {len(playlist_state.items)} items")
-
     except Exception as e:
-        logger.error(f"Error handling playlist sync update: {e}")
-        import traceback
+        logger.error(f"Error in async playlist sync update: {e}")
 
-        logger.error(traceback.format_exc())
+
+def sync_playlist_update_handler(sync_state: SyncPlaylistState) -> None:
+    """Sync wrapper for playlist update handler."""
+    try:
+        # Create a task for the async function
+        import asyncio
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If there's already a running loop, schedule as a task
+                loop.create_task(on_playlist_sync_update(sync_state))
+            else:
+                # If no running loop, run the async function
+                loop.run_until_complete(on_playlist_sync_update(sync_state))
+        except RuntimeError:
+            # No event loop in current thread, create a new one
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(on_playlist_sync_update(sync_state))
+            finally:
+                loop.close()
+    except Exception as e:
+        logger.error(f"Error in playlist sync update handler: {e}")
 
 
 @app.on_event("startup")
@@ -313,7 +334,7 @@ async def startup_event():
 
     # Start playlist synchronization client
     playlist_sync_client = PlaylistSyncClient(client_name="web_interface")
-    playlist_sync_client.on_playlist_update = on_playlist_sync_update
+    playlist_sync_client.on_playlist_update = sync_playlist_update_handler
     if playlist_sync_client.connect():
         logger.info("Connected to playlist synchronization service")
     else:
