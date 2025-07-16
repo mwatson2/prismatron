@@ -95,7 +95,7 @@ class FrameRenderer:
         self._debug_max_leds = 10
         self._debug_led_dir = Path("/tmp/prismatron_debug_leds")
         self._debug_led_dir.mkdir(exist_ok=True)
-        
+
         # Track error message timing to silence after 1 minute
         self._error_message_start_time = time.time()
         self._silent_after_minutes = 1.0

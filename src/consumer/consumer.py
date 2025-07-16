@@ -204,7 +204,7 @@ class ConsumerProcess:
             self._frame_renderer.set_output_targets(
                 wled_sink=self._wled_client, test_sink=self._test_renderer, preview_sink=self._preview_sink
             )
-            
+
             # Connect preview sink to frame renderer for statistics
             if self._preview_sink:
                 self._preview_sink.set_frame_renderer(self._frame_renderer)

@@ -195,9 +195,9 @@ const HomePage = () => {
                 ? 'bg-neon-orange animate-pulse'
                 : 'bg-metal-silver'
             }`} />
-            {status?.led_panel_connected 
-              ? 'CONNECTED' 
-              : status?.led_panel_status === 'connecting' 
+            {status?.led_panel_connected
+              ? 'CONNECTED'
+              : status?.led_panel_status === 'connecting'
               ? 'CONNECTING...'
               : 'DISCONNECTED'
             }

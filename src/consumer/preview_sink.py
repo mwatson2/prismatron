@@ -165,7 +165,7 @@ class PreviewSink:
 
         # Statistics tracking
         self.stats = PreviewSinkStatistics(alpha=self.config.update_ewma_alpha)
-        
+
         # Reference to frame renderer for statistics
         self.frame_renderer = None
 
@@ -321,25 +321,31 @@ class PreviewSink:
 
             # Combine preview sink stats with frame renderer stats
             stats = self.stats.get_statistics()
-            
+
             # Add frame renderer statistics if available
-            if self.frame_renderer and hasattr(self.frame_renderer, 'get_timing_stats'):
+            if self.frame_renderer and hasattr(self.frame_renderer, "get_timing_stats"):
                 try:
                     renderer_stats = self.frame_renderer.get_timing_stats()
-                    logger.debug(f"Renderer stats: fps={renderer_stats.get('ewma_fps', 0.0):.1f}, frames={renderer_stats.get('frames_rendered', 0)}")
-                    stats.update({
-                        "renderer_fps": renderer_stats.get("ewma_fps", 0.0),
-                        "renderer_late_percentage": renderer_stats.get("ewma_late_fraction", 0.0) * 100,
-                        "renderer_dropped_percentage": renderer_stats.get("ewma_dropped_fraction", 0.0) * 100,
-                        "total_frames_rendered": renderer_stats.get("frames_rendered", 0),
-                        "total_late_frames": renderer_stats.get("late_frames", 0),
-                        "total_dropped_frames": renderer_stats.get("dropped_frames", 0),
-                    })
+                    logger.debug(
+                        f"Renderer stats: fps={renderer_stats.get('ewma_fps', 0.0):.1f}, frames={renderer_stats.get('frames_rendered', 0)}"
+                    )
+                    stats.update(
+                        {
+                            "renderer_fps": renderer_stats.get("ewma_fps", 0.0),
+                            "renderer_late_percentage": renderer_stats.get("ewma_late_fraction", 0.0) * 100,
+                            "renderer_dropped_percentage": renderer_stats.get("ewma_dropped_fraction", 0.0) * 100,
+                            "total_frames_rendered": renderer_stats.get("frames_rendered", 0),
+                            "total_late_frames": renderer_stats.get("late_frames", 0),
+                            "total_dropped_frames": renderer_stats.get("dropped_frames", 0),
+                        }
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to get renderer stats: {e}")
             else:
-                logger.debug(f"No frame renderer available: frame_renderer={self.frame_renderer}, has_method={hasattr(self.frame_renderer, 'get_timing_stats') if self.frame_renderer else False}")
-            
+                logger.debug(
+                    f"No frame renderer available: frame_renderer={self.frame_renderer}, has_method={hasattr(self.frame_renderer, 'get_timing_stats') if self.frame_renderer else False}"
+                )
+
             stats_json = json.dumps(stats).encode("utf-8")
 
             # Truncate if too long
@@ -348,7 +354,9 @@ class PreviewSink:
 
             # Write to shared memory (last 1024 bytes)
             stats_offset = self.shared_memory_size - 1024
-            logger.debug(f"Writing stats to offset {stats_offset}, length {len(stats_json)}: {stats_json[:100].decode('utf-8')}")
+            logger.debug(
+                f"Writing stats to offset {stats_offset}, length {len(stats_json)}: {stats_json[:100].decode('utf-8')}"
+            )
             self.shared_memory_map[stats_offset : stats_offset + len(stats_json)] = stats_json
             self.shared_memory_map[stats_offset + len(stats_json)] = 0  # Null terminator
 
@@ -489,7 +497,7 @@ class PreviewSink:
     def set_frame_renderer(self, frame_renderer) -> None:
         """
         Set the frame renderer reference for accessing statistics.
-        
+
         Args:
             frame_renderer: Frame renderer instance
         """

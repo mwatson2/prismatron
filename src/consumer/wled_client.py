@@ -214,7 +214,7 @@ class WLEDClient:
                             f"{self.config.host}:{self.config.port} "
                             f"(persistent retry enabled, interval: {self.config.retry_interval}s)"
                         )
-                    else:
+                    elif elapsed < 60.0:  # Only log retry messages for first minute
                         logger.info(
                             f"Connection attempt {attempt} failed after {elapsed:.1f}s, "
                             f"retrying in {self.config.retry_interval}s..."
@@ -235,9 +235,10 @@ class WLEDClient:
 
                 # Persistent retry mode
                 elapsed = time.time() - start_time
-                logger.warning(
-                    f"Connection error after {elapsed:.1f}s: {e}, retrying in {self.config.retry_interval}s..."
-                )
+                if elapsed < 60.0:  # Only log retry messages for first minute
+                    logger.warning(
+                        f"Connection error after {elapsed:.1f}s: {e}, retrying in {self.config.retry_interval}s..."
+                    )
                 self.disconnect()
                 time.sleep(self.config.retry_interval)
 

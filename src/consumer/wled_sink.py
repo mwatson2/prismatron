@@ -130,7 +130,7 @@ class WLEDSink:
 
         # Calculate packet fragmentation info
         self._calculate_fragmentation()
-        
+
         # Track error message timing to silence after 1 minute
         self._error_message_start_time = time.time()
         self._silent_after_minutes = 1.0
@@ -209,7 +209,9 @@ class WLEDSink:
                         # Only log connection failure if within first minute
                         elapsed_minutes = (time.time() - self._error_message_start_time) / 60.0
                         if elapsed_minutes < self._silent_after_minutes:
-                            logger.error(f"Failed to connect to WLED controller at {self.config.host}:{self.config.port}")
+                            logger.error(
+                                f"Failed to connect to WLED controller at {self.config.host}:{self.config.port}"
+                            )
                         self.disconnect()
                         return False
 

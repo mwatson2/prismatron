@@ -227,6 +227,7 @@ app.add_middleware(
 # Background task for preview data broadcasting
 preview_task: Optional[asyncio.Task] = None
 
+
 @app.on_event("startup")
 async def startup_event():
     """Start background tasks on application startup."""
@@ -234,16 +235,17 @@ async def startup_event():
     preview_task = asyncio.create_task(preview_broadcast_task())
     logger.info("Started preview data broadcasting task")
 
+
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up background tasks on application shutdown."""
+    import contextlib
+    
     global preview_task
     if preview_task:
         preview_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await preview_task
-        except asyncio.CancelledError:
-            pass
         logger.info("Stopped preview data broadcasting task")
 
 
@@ -298,6 +300,7 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+
 # Preview data broadcasting task
 async def preview_broadcast_task():
     """Background task to broadcast preview data and system status at 5fps via WebSocket."""
@@ -305,17 +308,17 @@ async def preview_broadcast_task():
         try:
             if manager.active_connections:
                 current_time = time.time()
-                
+
                 # Get LED panel connection status from consumer process
                 led_panel_connected = False
                 led_panel_status = "disconnected"
-                
-                if consumer_process and hasattr(consumer_process, 'get_statistics'):
+
+                if consumer_process and hasattr(consumer_process, "get_statistics"):
                     try:
                         consumer_stats = consumer_process.get_statistics()
-                        wled_stats = consumer_stats.get('wled_stats', {})
-                        led_panel_connected = wled_stats.get('is_connected', False)
-                        
+                        wled_stats = consumer_stats.get("wled_stats", {})
+                        led_panel_connected = wled_stats.get("is_connected", False)
+
                         # Determine status string based on connection state
                         if led_panel_connected:
                             led_panel_status = "connected"
@@ -325,17 +328,17 @@ async def preview_broadcast_task():
                             led_panel_status = "disconnected"
                     except Exception as e:
                         logger.warning(f"Failed to get LED panel status: {e}")
-                
+
                 # Get real system resource usage
                 try:
                     # CPU usage (non-blocking, use cached value or 0.1s interval)
                     cpu_percent = psutil.cpu_percent(interval=0.1)
-                    
+
                     # Memory usage
                     mem_info = psutil.virtual_memory()
                     mem_percent = mem_info.percent
                     mem_used_gb = round(mem_info.used / 1e9, 2)  # RAM used in GB
-                    
+
                     # TODO: Get actual uptime from system start
                     uptime = current_time  # Placeholder
                 except Exception as e:
@@ -344,7 +347,7 @@ async def preview_broadcast_task():
                     mem_percent = 0.0
                     mem_used_gb = 0.0
                     uptime = current_time
-                
+
                 # Broadcast system status
                 status_data = {
                     "type": "system_status",
@@ -365,10 +368,10 @@ async def preview_broadcast_task():
                     "led_panel_status": led_panel_status,
                     "timestamp": current_time,
                 }
-                
+
                 # Get preview data (same logic as /api/preview endpoint)
                 preview_data = {
-                    "type": "preview_data", 
+                    "type": "preview_data",
                     "timestamp": current_time,
                     "is_active": playlist_state.is_playing,
                     "current_item": None,
@@ -417,31 +420,40 @@ async def preview_broadcast_task():
                         # Try to read statistics from shared memory
                         try:
                             import json
+
                             # Read statistics from shared memory (last 1024 bytes)
                             file_size = os.lseek(shm_fd, 0, os.SEEK_END)
                             stats_offset = file_size - 1024
                             os.lseek(shm_fd, stats_offset, os.SEEK_SET)
                             stats_data = os.read(shm_fd, 1024)
-                            
+
                             logger.debug(f"Read stats data: first 50 bytes = {stats_data[:50]}")
-                            
+
                             # Find null terminator
-                            null_pos = stats_data.find(b'\x00')
+                            null_pos = stats_data.find(b"\x00")
                             if null_pos > 0:
-                                stats_json = stats_data[:null_pos].decode('utf-8')
+                                stats_json = stats_data[:null_pos].decode("utf-8")
                                 stats = json.loads(stats_json)
-                                
+
                                 logger.debug(f"Parsed stats: renderer_fps={stats.get('renderer_fps', 'missing')}")
-                                
+
                                 # Extract FPS and frame statistics
                                 # Try renderer_fps first (if available), otherwise use ewma_fps (preview sink FPS)
                                 frame_rate = stats.get("renderer_fps", stats.get("ewma_fps", 30.0))
-                                status_data.update({
-                                    "frame_rate": frame_rate,
-                                    "late_frame_percentage": stats.get("renderer_late_percentage", stats.get("ewma_late_fraction", 0.0) * 100),
-                                    "dropped_frame_percentage": stats.get("renderer_dropped_percentage", stats.get("ewma_dropped_fraction", 0.0) * 100),
-                                    "frames_processed": stats.get("total_frames_rendered", stats.get("frames_processed", 0)),
-                                })
+                                status_data.update(
+                                    {
+                                        "frame_rate": frame_rate,
+                                        "late_frame_percentage": stats.get(
+                                            "renderer_late_percentage", stats.get("ewma_late_fraction", 0.0) * 100
+                                        ),
+                                        "dropped_frame_percentage": stats.get(
+                                            "renderer_dropped_percentage", stats.get("ewma_dropped_fraction", 0.0) * 100
+                                        ),
+                                        "frames_processed": stats.get(
+                                            "total_frames_rendered", stats.get("frames_processed", 0)
+                                        ),
+                                    }
+                                )
                             else:
                                 logger.debug(f"No null terminator found in stats data, length={len(stats_data)}")
                         except Exception as e:
@@ -481,8 +493,9 @@ async def preview_broadcast_task():
         except Exception as e:
             logger.warning(f"Preview broadcast error: {e}")
 
-        # Wait for 200ms (5fps) 
+        # Wait for 200ms (5fps)
         await asyncio.sleep(0.2)
+
 
 # API Routes
 
@@ -520,13 +533,13 @@ async def get_system_status():
     # Get LED panel connection status from consumer process
     led_panel_connected = False
     led_panel_status = "disconnected"
-    
-    if consumer_process and hasattr(consumer_process, 'get_statistics'):
+
+    if consumer_process and hasattr(consumer_process, "get_statistics"):
         try:
             consumer_stats = consumer_process.get_statistics()
-            wled_stats = consumer_stats.get('wled_stats', {})
-            led_panel_connected = wled_stats.get('is_connected', False)
-            
+            wled_stats = consumer_stats.get("wled_stats", {})
+            led_panel_connected = wled_stats.get("is_connected", False)
+
             # Determine status string based on connection state
             if led_panel_connected:
                 led_panel_status = "connected"
@@ -536,7 +549,7 @@ async def get_system_status():
                 led_panel_status = "disconnected"
         except Exception as e:
             logger.warning(f"Failed to get LED panel status: {e}")
-    
+
     # Get real system resource usage
     try:
         cpu_percent = psutil.cpu_percent(interval=0.1)
@@ -550,34 +563,34 @@ async def get_system_status():
         mem_percent = 0.0
         mem_used_gb = 0.0
         uptime = time.time()
-    
+
     # Get actual frame rate from shared memory
     frame_rate = 30.0  # Default fallback
     try:
-        import os
         import json
+        import os
         import struct
-        
+
         shm_fd = os.open("/dev/shm/prismatron_preview", os.O_RDONLY)
         # Read statistics from shared memory (last 1024 bytes)
         file_size = os.lseek(shm_fd, 0, os.SEEK_END)
         stats_offset = file_size - 1024
         os.lseek(shm_fd, stats_offset, os.SEEK_SET)
         stats_data = os.read(shm_fd, 1024)
-        
+
         # Find null terminator
-        null_pos = stats_data.find(b'\x00')
+        null_pos = stats_data.find(b"\x00")
         if null_pos > 0:
-            stats_json = stats_data[:null_pos].decode('utf-8')
+            stats_json = stats_data[:null_pos].decode("utf-8")
             stats = json.loads(stats_json)
-            
+
             # Try renderer_fps first (if available), otherwise use ewma_fps (preview sink FPS)
             frame_rate = stats.get("renderer_fps", stats.get("ewma_fps", 30.0))
-        
+
         os.close(shm_fd)
     except Exception:
         pass  # Use default frame_rate if shared memory not available
-    
+
     return SystemStatus(
         is_online=True,
         current_file=(
