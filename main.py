@@ -189,6 +189,7 @@ class ProcessManager:
                         host=self.config.get("web_host", "0.0.0.0"),
                         port=self.config.get("web_port", 8000),
                         debug=self.config.get("debug", False),
+                        patterns_path=self.config.get("diffusion_patterns_path"),
                     )
 
                 except Exception as e:
