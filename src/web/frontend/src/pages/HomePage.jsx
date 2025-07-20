@@ -12,6 +12,7 @@ import { useWebSocket } from '../hooks/useWebSocket'
 const HomePage = () => {
   const { playlist, isConnected, systemStatus, previewData: wsPreviewData } = useWebSocket()
   const [ledPositions, setLedPositions] = useState(null)
+  const [previewBrightness, setPreviewBrightness] = useState(0.5)
   const canvasRef = useRef(null)
   const ledStampRef = useRef(null)
 
@@ -125,15 +126,20 @@ const HomePage = () => {
             return
           }
 
+          // Apply brightness factor to reduce saturation
+          const adjustedR = Math.round(r * previewBrightness)
+          const adjustedG = Math.round(g * previewBrightness)
+          const adjustedB = Math.round(b * previewBrightness)
+
           // Debug log for first few LEDs
           if (i < 5 && (r > 0 || g > 0 || b > 0)) {
-            console.log(`LED ${i} color: rgb(${r}, ${g}, ${b})`)
+            console.log(`LED ${i} color: rgb(${r}, ${g}, ${b}) -> rgb(${adjustedR}, ${adjustedG}, ${adjustedB}) (brightness: ${previewBrightness})`)
           }
 
           // Draw LED using stamp technique
           ctx.save()
           ctx.globalCompositeOperation = 'screen' // Additive-like blending
-          ctx.fillStyle = `rgb(${r}, ${g}, ${b})`
+          ctx.fillStyle = `rgb(${adjustedR}, ${adjustedG}, ${adjustedB})`
           ctx.fillRect(
             canvasX - ledStamp.width / 2,
             canvasY - ledStamp.height / 2,
@@ -174,7 +180,7 @@ const HomePage = () => {
   // Redraw LEDs when data changes
   useEffect(() => {
     drawLEDs()
-  }, [ledPositions, previewData])
+  }, [ledPositions, previewData, previewBrightness])
 
   const handlePlayPause = async () => {
     try {
@@ -399,6 +405,47 @@ const HomePage = () => {
           </div>
         </div>
       )}
+
+      {/* Preview Brightness Control */}
+      <div className="retro-container">
+        <h3 className="text-sm font-retro text-neon-purple mb-3">PREVIEW BRIGHTNESS</h3>
+        <div className="space-y-3">
+          <div className="flex items-center gap-4">
+            <span className="text-xs text-metal-silver font-mono w-8">0%</span>
+            <div className="flex-1 relative">
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={previewBrightness}
+                onChange={(e) => setPreviewBrightness(parseFloat(e.target.value))}
+                className="w-full h-2 bg-dark-700 rounded-retro appearance-none cursor-pointer slider"
+                style={{
+                  background: `linear-gradient(to right,
+                    #333 0%,
+                    #333 ${previewBrightness * 100}%,
+                    #1a1a1a ${previewBrightness * 100}%,
+                    #1a1a1a 100%)`
+                }}
+              />
+              <div
+                className="absolute top-0 h-2 bg-gradient-to-r from-neon-purple to-neon-cyan rounded-retro pointer-events-none"
+                style={{ width: `${previewBrightness * 100}%` }}
+              />
+            </div>
+            <span className="text-xs text-metal-silver font-mono w-12">100%</span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-xs text-metal-silver font-mono">
+              Reduces LED saturation for clearer preview
+            </span>
+            <span className="text-sm text-neon-cyan font-mono">
+              {Math.round(previewBrightness * 100)}%
+            </span>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
