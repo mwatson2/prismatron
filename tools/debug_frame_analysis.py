@@ -291,26 +291,31 @@ class DebugFrameAnalyzer:
     def _render_preview_style(self, led_values: np.ndarray) -> Optional[Image.Image]:
         """
         Render LED values as circles at spatial positions (like website preview).
+        Uses additive blending matching test_frontend_rendering.py approach.
 
         Args:
             led_values: LED values in spatial order, shape (led_count, 3), range [0, 255]
 
         Returns:
-            PIL Image with LED values rendered as 32-pixel circles, or None if failed
+            PIL Image with LED values rendered with additive blending, or None if failed
         """
         try:
             if not PIL_AVAILABLE:
                 logger.warning("PIL not available - cannot render preview style")
                 return None
 
-            # Create black canvas
-            canvas = Image.new("RGB", (self.frame_width, self.frame_height), color=(0, 0, 0))
-            draw = ImageDraw.Draw(canvas)
+            # Create canvas with black background using additive blending array
+            canvas_array = np.zeros((self.frame_height, self.frame_width, 3), dtype=np.float32)
 
-            # Circle radius (32-pixel diameter = 16-pixel radius)
-            radius = 16
+            # LED circle radius (48px diameter = 24px radius)
+            led_radius = 24
+            # Glow effect radius for bright LEDs (64px diameter = 32px radius)
+            glow_radius = 32
+            bright_threshold = 200
 
-            logger.info(f"Rendering {len(led_values)} LEDs as preview circles")
+            logger.info(f"Rendering {len(led_values)} LEDs as preview circles with additive blending")
+
+            leds_drawn = 0
 
             # LED values are in spatial order, positions are in physical order
             # We need to map from spatial index to physical LED position
@@ -333,16 +338,35 @@ class DebugFrameAnalyzer:
                 x, y = int(round(x)), int(round(y))
 
                 # Skip if position is outside frame bounds
-                if x < radius or y < radius or x >= self.frame_width - radius or y >= self.frame_height - radius:
+                if (
+                    x < led_radius
+                    or y < led_radius
+                    or x >= self.frame_width - led_radius
+                    or y >= self.frame_height - led_radius
+                ):
                     continue
 
-                # Convert LED values to integer RGB
-                color = (int(r), int(g), int(b))
+                # Skip completely dark LEDs (matching frontend)
+                if r == 0 and g == 0 and b == 0:
+                    continue
 
-                # Draw filled circle at LED position
-                draw.ellipse([x - radius, y - radius, x + radius, y + radius], fill=color)
+                # Draw LED circle with additive blending
+                self._add_circle_to_canvas(canvas_array, x, y, led_radius, r, g, b)
 
-            logger.info("Preview-style rendering complete")
+                # Add glow effect for bright LEDs (using larger Gaussian diffusion)
+                if r > bright_threshold or g > bright_threshold or b > bright_threshold:
+                    # Glow with 30% opacity (matching frontend rgba(r,g,b,0.3))
+                    glow_r, glow_g, glow_b = r * 0.3, g * 0.3, b * 0.3
+                    self._add_circle_to_canvas(canvas_array, x, y, glow_radius, glow_r, glow_g, glow_b)
+
+                leds_drawn += 1
+
+            # Convert additive array back to PIL Image
+            # Clamp values to [0, 255] and convert to uint8
+            canvas_array = np.clip(canvas_array, 0, 255).astype(np.uint8)
+            canvas = Image.fromarray(canvas_array)
+
+            logger.info(f"Preview-style rendering complete: drew {leds_drawn} LED circles with additive blending")
             return canvas
 
         except Exception as e:
@@ -351,6 +375,42 @@ class DebugFrameAnalyzer:
 
             logger.error(traceback.format_exc())
             return None
+
+    def _add_circle_to_canvas(
+        self, canvas: np.ndarray, cx: int, cy: int, radius: int, r: float, g: float, b: float
+    ) -> None:
+        """
+        Add a colored Gaussian diffusion pattern to the canvas using additive blending.
+
+        This creates a more realistic LED diffusion pattern similar to the synthetic
+        patterns but without randomness - using a clean Gaussian falloff.
+        """
+        # Calculate bounds with extended area for Gaussian falloff
+        sigma = radius * 0.8  # Gaussian sigma based on radius
+        falloff_radius = int(radius * 2.5)  # Extend beyond circle for smooth falloff
+
+        y1 = max(0, cy - falloff_radius)
+        y2 = min(canvas.shape[0], cy + falloff_radius + 1)
+        x1 = max(0, cx - falloff_radius)
+        x2 = min(canvas.shape[1], cx + falloff_radius + 1)
+
+        # Create Gaussian diffusion pattern
+        for y in range(y1, y2):
+            for x in range(x1, x2):
+                # Calculate distance from center
+                dx = x - cx
+                dy = y - cy
+                dist_sq = dx * dx + dy * dy
+
+                # Gaussian falloff (similar to synthetic patterns)
+                intensity = np.exp(-dist_sq / (2 * sigma * sigma))
+
+                # Apply intensity threshold to match synthetic patterns
+                if intensity > 0.01:  # Similar to sparsity threshold
+                    # Add color values with Gaussian intensity (additive blending)
+                    canvas[y, x, 0] += r * intensity
+                    canvas[y, x, 1] += g * intensity
+                    canvas[y, x, 2] += b * intensity
 
     def generate_report(self) -> None:
         """Generate a summary report of the analysis."""

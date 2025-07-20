@@ -329,6 +329,7 @@ class SyntheticPatternGenerator:
 
         # Compute RCM ordering directly from block positions
         logger.info("Computing RCM ordering for optimal bandwidth...")
+        # rcm_order[i] = physical LED ID at spatial index i
         rcm_order, inverse_order, expected_ata_diagonals = compute_rcm_ordering(block_positions, self.block_size)
         logger.info(f"Expected A^T A diagonals (from adjacency): {expected_ata_diagonals}")
 
