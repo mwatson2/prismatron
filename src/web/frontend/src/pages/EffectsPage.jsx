@@ -64,7 +64,11 @@ const EffectsPage = () => {
 
   const handleAddWithConfig = (effect) => {
     const config = { ...effect.config, ...customConfig }
-    addEffectToPlaylist(effect.id, null, 30, config)
+    // For text effects, use the text content as the name
+    const customName = effect.id === 'text_display' && config.text
+      ? config.text
+      : null
+    addEffectToPlaylist(effect.id, customName, 30, config)
     setShowConfig(null)
     setCustomConfig({})
   }
@@ -151,7 +155,13 @@ const EffectsPage = () => {
             {/* Action Buttons */}
             <div className="flex gap-2">
               <button
-                onClick={() => addEffectToPlaylist(effect.id)}
+                onClick={() => {
+                  // For text effects, use the default text as the name
+                  const customName = effect.id === 'text_display' && effect.config.text
+                    ? effect.config.text
+                    : null
+                  addEffectToPlaylist(effect.id, customName)
+                }}
                 className="flex-1 retro-button px-4 py-2 text-neon-green text-sm font-retro font-bold"
               >
                 <PlusIcon className="w-4 h-4 inline mr-2" />

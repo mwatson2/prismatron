@@ -1029,14 +1029,22 @@ async def get_effects():
     return EFFECT_PRESETS
 
 
+class AddEffectRequest(BaseModel):
+    """Request model for adding an effect to playlist."""
+
+    name: Optional[str] = None
+    duration: Optional[float] = None
+    config: Optional[Dict] = None
+
+
 @app.post("/api/effects/{effect_id}/add")
 async def add_effect_to_playlist(
     effect_id: str,
-    name: Optional[str] = None,
-    duration: Optional[float] = None,
-    config: Optional[Dict] = None,
+    request: AddEffectRequest,
 ):
     """Add an effect to the playlist."""
+    logger.info(f"Adding effect {effect_id} with request: name='{request.name}', config={request.config}")
+
     # Find effect preset
     effect_preset = next((e for e in EFFECT_PRESETS if e.id == effect_id), None)
     if not effect_preset:
@@ -1044,8 +1052,10 @@ async def add_effect_to_playlist(
 
     # Merge custom config with preset
     final_config = effect_preset.config.copy()
-    if config:
-        final_config.update(config)
+    if request.config:
+        final_config.update(request.config)
+
+    logger.info(f"Final config for {effect_id}: {final_config}")
 
     # Handle text effects specially
     if effect_id == "text_display":
@@ -1055,22 +1065,27 @@ async def add_effect_to_playlist(
         text_config = json.dumps(final_config)
 
         # Create playlist item for text content
+        final_name = request.name or f"Text: {final_config.get('text', 'Hello World')}"
+        logger.info(
+            f"Creating text effect with name: '{final_name}' (request.name='{request.name}', text='{final_config.get('text')}')"
+        )
+
         item = PlaylistItem(
             id=str(uuid.uuid4()),
-            name=name or f"Text: {final_config.get('text', 'Hello World')}",
+            name=final_name,
             type="text",
             file_path=text_config,  # JSON config as file path for text content
-            duration=duration or final_config.get("duration", 10.0),
+            duration=request.duration or final_config.get("duration", 10.0),
             order=len(playlist_state.items),
         )
     else:
         # Create standard effect playlist item
         item = PlaylistItem(
             id=str(uuid.uuid4()),
-            name=name or effect_preset.name,
+            name=request.name or effect_preset.name,
             type="effect",
             effect_config={"effect_id": effect_id, "parameters": final_config},
-            duration=duration or 30.0,  # Default 30 seconds for effects
+            duration=request.duration or 30.0,  # Default 30 seconds for effects
             order=len(playlist_state.items),
         )
 
