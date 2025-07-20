@@ -52,9 +52,19 @@ class TextContentSource(ContentSource):
 
         # Parse configuration
         try:
-            self.config = json.loads(config_str)
+            parsed_config = json.loads(config_str)
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid text configuration JSON: {e}") from e
+
+        # Check if config is nested in a "config" key (from web API)
+        if "config" in parsed_config and isinstance(parsed_config["config"], dict):
+            logger.debug("Using nested config from web API")
+            self.config = parsed_config["config"]
+        else:
+            logger.debug("Using direct config format")
+            self.config = parsed_config
+
+        logger.info(f"Text source config: {self.config}")
 
         # Text content and appearance
         self.text = self.config.get("text", "Hello World")
@@ -156,11 +166,17 @@ class TextContentSource(ContentSource):
 
         # Target width is 80% of frame width (10% margins on each side)
         target_width = int(FRAME_WIDTH * 0.8)
+        # Also consider height constraint (80% of frame height)
+        target_height = int(FRAME_HEIGHT * 0.8)
 
         # Binary search for optimal font size
         min_size = 8
-        max_size = 72
+        max_size = min(200, target_height)  # Use reasonable upper limit
         best_size = 24
+
+        logger.debug(
+            f"Auto font sizing for text '{self.text}': target_width={target_width}, target_height={target_height}"
+        )
 
         try:
             while min_size <= max_size:
@@ -168,12 +184,16 @@ class TextContentSource(ContentSource):
 
                 # Test this font size
                 test_font = self._get_font_for_size(test_size)
-                temp_img = Image.new("RGB", (1, 1))
+                temp_img = Image.new("RGB", (FRAME_WIDTH, FRAME_HEIGHT))
                 temp_draw = ImageDraw.Draw(temp_img)
                 bbox = temp_draw.textbbox((0, 0), self.text, font=test_font)
                 text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
 
-                if text_width <= target_width:
+                logger.debug(f"Testing font size {test_size}: text_width={text_width}, text_height={text_height}")
+
+                # Check both width and height constraints
+                if text_width <= target_width and text_height <= target_height:
                     best_size = test_size
                     min_size = test_size + 1
                 else:
@@ -183,7 +203,9 @@ class TextContentSource(ContentSource):
             logger.warning(f"Error calculating auto font size: {e}, using default")
             return 24
 
-        return max(8, min(72, best_size))  # Clamp to reasonable range
+        final_size = max(8, min(200, best_size))  # Clamp to reasonable range
+        logger.info(f"Auto font size calculated: {final_size}px for text '{self.text}'")
+        return final_size
 
     def _get_font_for_size(self, size: int) -> ImageFont.ImageFont:
         """
@@ -198,23 +220,60 @@ class TextContentSource(ContentSource):
         try:
             # Try to load system font
             font_paths = {
-                "arial": ["arial.ttf", "Arial.ttf", "DejaVuSans.ttf"],
-                "helvetica": ["helvetica.ttf", "Helvetica.ttf", "DejaVuSans.ttf"],
-                "times": ["times.ttf", "Times.ttf", "DejaVuSerif.ttf"],
-                "courier": ["courier.ttf", "Courier.ttf", "DejaVuSansMono.ttf"],
-                "roboto": ["Roboto-Regular.ttf", "DejaVuSans.ttf"],
+                "arial": [
+                    "arial.ttf",
+                    "Arial.ttf",
+                    "DejaVuSans.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                ],
+                "helvetica": [
+                    "helvetica.ttf",
+                    "Helvetica.ttf",
+                    "DejaVuSans.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                ],
+                "times": [
+                    "times.ttf",
+                    "Times.ttf",
+                    "DejaVuSerif.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+                ],
+                "courier": [
+                    "courier.ttf",
+                    "Courier.ttf",
+                    "DejaVuSansMono.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+                ],
+                "roboto": ["Roboto-Regular.ttf", "DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"],
             }
 
-            font_candidates = font_paths.get(self.font_family.lower(), ["DejaVuSans.ttf"])
+            font_candidates = font_paths.get(
+                self.font_family.lower(),
+                [
+                    "DejaVuSans.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                    "/System/Library/Fonts/Arial.ttf",  # macOS
+                    "/Windows/Fonts/arial.ttf",  # Windows
+                ],
+            )
 
             for font_name in font_candidates:
                 try:
-                    return ImageFont.truetype(font_name, size)
+                    font = ImageFont.truetype(font_name, size)
+                    logger.debug(f"Successfully loaded font {font_name} at size {size}")
+                    return font
                 except OSError:
                     continue
 
-            # Fallback to default font
-            return ImageFont.load_default()
+            # Try to get a default font with the specified size
+            try:
+                # PIL's default font is very small, try to get a bigger default
+                default_font = ImageFont.load_default()
+                logger.warning(f"Using PIL default font for size {size} (font family {self.font_family} not found)")
+                return default_font
+            except Exception:
+                logger.error(f"Failed to load any font for size {size}")
+                return ImageFont.load_default()
 
         except Exception as e:
             logger.warning(f"Failed to load font {self.font_family} size {size}: {e}, using default")
