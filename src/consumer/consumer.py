@@ -103,20 +103,12 @@ class ConsumerProcess:
         self._led_buffer = LEDBuffer(buffer_size=10)
 
         # Create frame renderer with LED ordering from pattern file if available
-        if diffusion_patterns_path:
-            try:
-                from ..utils.pattern_loader import create_frame_renderer_with_pattern
+        from ..utils.pattern_loader import create_frame_renderer_with_pattern
 
-                self._frame_renderer = create_frame_renderer_with_pattern(
-                    diffusion_patterns_path, first_frame_delay_ms=100.0, timing_tolerance_ms=5.0
-                )
-                logger.info(f"Frame renderer created with LED ordering from {diffusion_patterns_path}")
-            except Exception as e:
-                logger.warning(f"Failed to load LED ordering from pattern file: {e}, using default renderer")
-                self._frame_renderer = FrameRenderer(first_frame_delay_ms=100.0, timing_tolerance_ms=5.0)
-        else:
-            self._frame_renderer = FrameRenderer(first_frame_delay_ms=100.0, timing_tolerance_ms=5.0)
-            logger.info("Frame renderer created without LED ordering (no pattern file specified)")
+        self._frame_renderer = create_frame_renderer_with_pattern(
+            diffusion_patterns_path, first_frame_delay_ms=100.0, timing_tolerance_ms=5.0
+        )
+        logger.info(f"Frame renderer created with LED ordering from {diffusion_patterns_path}")
 
         # Test renderer (optional)
         self.enable_test_renderer = enable_test_renderer

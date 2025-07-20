@@ -125,7 +125,7 @@ class ContentPlaylist:
         Add item to playlist.
 
         Args:
-            filepath: Path to content file
+            filepath: Path to content file or JSON config for text content
             duration: Override duration
             repeat: Repeat count
             metadata: Additional metadata
@@ -135,13 +135,36 @@ class ContentPlaylist:
         """
         with self._lock:
             try:
-                if not os.path.exists(filepath):
-                    logger.error(f"Content file not found: {filepath}")
-                    return False
+                # Detect content type to handle text content vs file content
+                content_type = ContentSourceRegistry.detect_content_type(filepath)
+
+                # For text content, filepath contains JSON config, not a file path
+                if content_type == ContentType.TEXT:
+                    # Validate JSON text configuration
+                    import json
+
+                    try:
+                        config = json.loads(filepath)
+                        if not ("text" in config and isinstance(config["text"], str)):
+                            logger.error(f"Invalid text configuration: {filepath}")
+                            return False
+                        logger.debug(f"Adding text content: {config.get('text', '')[:50]}...")
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Invalid JSON text configuration: {e}")
+                        return False
+                else:
+                    # For file-based content, validate file exists
+                    if not os.path.exists(filepath):
+                        logger.error(f"Content file not found: {filepath}")
+                        return False
 
                 item = PlaylistItem(filepath, duration, repeat, metadata)
                 self._items.append(item)
-                logger.info(f"Added to playlist: {filepath}")
+
+                if content_type == ContentType.TEXT:
+                    logger.info("Added text content to playlist")
+                else:
+                    logger.info(f"Added to playlist: {filepath}")
                 return True
 
             except Exception as e:

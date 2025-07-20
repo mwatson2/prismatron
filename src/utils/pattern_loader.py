@@ -84,10 +84,10 @@ def create_frame_renderer_with_pattern(
 
     # Create frame renderer
     renderer = FrameRenderer(
+        led_ordering=led_ordering,
         first_frame_delay_ms=first_frame_delay_ms,
         timing_tolerance_ms=timing_tolerance_ms,
         late_frame_log_threshold_ms=late_frame_log_threshold_ms,
-        led_ordering=led_ordering,
     )
 
     if led_ordering is not None:
