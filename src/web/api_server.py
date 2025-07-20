@@ -130,6 +130,7 @@ system_settings = SystemSettings()
 control_state: Optional[ControlState] = None
 consumer_process: Optional[object] = None  # Will be set by main process
 producer_process: Optional[object] = None  # Will be set by main process
+diffusion_patterns_path: Optional[str] = None  # Will be set by main process
 
 # Playlist synchronization client
 playlist_sync_client: Optional[PlaylistSyncClient] = None
@@ -417,7 +418,7 @@ manager = ConnectionManager()
 
 # Preview data broadcasting task
 async def preview_broadcast_task():
-    """Background task to broadcast preview data and system status at 5fps via WebSocket."""
+    """Background task to broadcast preview data and system status at 1fps via WebSocket."""
     while True:
         try:
             if manager.active_connections:
@@ -520,10 +521,15 @@ async def preview_broadcast_task():
                                 led_data = os.read(shm_fd, led_count * 3)
 
                                 if len(led_data) == led_count * 3:
-                                    # Convert to list of [r, g, b] arrays
+                                    # Convert to list of [r, g, b] arrays with brightness factor for preview
                                     frame_data = []
+                                    brightness_factor = 0.5  # Reduce saturation due to overlapping LEDs
                                     for i in range(0, len(led_data), 3):
                                         r, g, b = led_data[i], led_data[i + 1], led_data[i + 2]
+                                        # Apply brightness factor to reduce saturation
+                                        r = int(r * brightness_factor)
+                                        g = int(g * brightness_factor)
+                                        b = int(b * brightness_factor)
                                         frame_data.append([r, g, b])
 
                                     preview_data["has_frame"] = True
@@ -589,14 +595,15 @@ async def preview_broadcast_task():
                 if not preview_data["has_frame"]:
                     preview_data["has_frame"] = True
                     preview_colors = []
+                    brightness_factor = 0.5  # Reduce saturation due to overlapping LEDs
                     # Use the actual LED count for test pattern
                     test_led_count = LED_COUNT  # 2624
                     for i in range(test_led_count):
                         # Simple rainbow pattern
                         hue = (i / test_led_count) * 360  # Full rainbow across all LEDs
-                        r = int(255 * max(0, min(1, abs((hue / 60) % 6 - 3) - 1)))
-                        g = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 2))))
-                        b = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 4))))
+                        r = int(255 * max(0, min(1, abs((hue / 60) % 6 - 3) - 1)) * brightness_factor)
+                        g = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 2))) * brightness_factor)
+                        b = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 4))) * brightness_factor)
                         preview_colors.append([r, g, b])
                     preview_data["frame_data"] = preview_colors
                     preview_data["total_leds"] = test_led_count
@@ -607,8 +614,8 @@ async def preview_broadcast_task():
         except Exception as e:
             logger.warning(f"Preview broadcast error: {e}")
 
-        # Wait for 200ms (5fps)
-        await asyncio.sleep(0.2)
+        # Wait for 1 second (1fps)
+        await asyncio.sleep(1.0)
 
 
 # API Routes
@@ -1357,10 +1364,15 @@ async def get_led_preview():
                         led_data = os.read(shm_fd, led_count * 3)
 
                         if len(led_data) == led_count * 3:
-                            # Convert to list of [r, g, b] arrays
+                            # Convert to list of [r, g, b] arrays with brightness factor for preview
                             frame_data = []
+                            brightness_factor = 0.5  # Reduce saturation due to overlapping LEDs
                             for i in range(0, len(led_data), 3):
                                 r, g, b = led_data[i], led_data[i + 1], led_data[i + 2]
+                                # Apply brightness factor to reduce saturation
+                                r = int(r * brightness_factor)
+                                g = int(g * brightness_factor)
+                                b = int(b * brightness_factor)
                                 frame_data.append([r, g, b])
 
                             preview_data["has_frame"] = True
@@ -1392,14 +1404,15 @@ async def get_led_preview():
         if not preview_data["has_frame"]:
             preview_data["has_frame"] = True
             preview_colors = []
+            brightness_factor = 0.5  # Reduce saturation due to overlapping LEDs
             # Use the actual LED count for test pattern
             test_led_count = LED_COUNT  # 2624
             for i in range(test_led_count):
                 # Simple rainbow pattern
                 hue = (i / test_led_count) * 360  # Full rainbow across all LEDs
-                r = int(255 * max(0, min(1, abs((hue / 60) % 6 - 3) - 1)))
-                g = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 2))))
-                b = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 4))))
+                r = int(255 * max(0, min(1, abs((hue / 60) % 6 - 3) - 1)) * brightness_factor)
+                g = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 2))) * brightness_factor)
+                b = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 4))) * brightness_factor)
                 preview_colors.append([r, g, b])
             preview_data["frame_data"] = preview_colors
             preview_data["total_leds"] = test_led_count
@@ -1423,10 +1436,13 @@ async def get_led_positions():
     """Get LED positions for preview rendering."""
     try:
         # Load LED positions from diffusion patterns file
-        patterns_path = Path("diffusion_patterns/synthetic_2624_uint8.npz")
+        if diffusion_patterns_path is None:
+            raise HTTPException(status_code=500, detail="No diffusion patterns file configured")
+
+        patterns_path = Path(diffusion_patterns_path)
 
         if not patterns_path.exists():
-            raise HTTPException(status_code=404, detail="LED positions data not found")
+            raise HTTPException(status_code=404, detail=f"LED positions data not found at {patterns_path}")
 
         # Load the diffusion patterns data
         data = np.load(patterns_path, allow_pickle=True)
@@ -1533,8 +1549,11 @@ async def catch_all(path: str):
         raise HTTPException(status_code=404, detail="Frontend not found")
 
 
-def run_server(host: str = "0.0.0.0", port: int = 8000, debug: bool = False):
+def run_server(host: str = "0.0.0.0", port: int = 8000, debug: bool = False, patterns_path: Optional[str] = None):
     """Run the API server."""
+    global diffusion_patterns_path
+    diffusion_patterns_path = patterns_path
+
     uvicorn.run(
         "src.web.api_server:app",
         host=host,

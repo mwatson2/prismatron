@@ -87,7 +87,11 @@ export const WebSocketProvider = ({ children }) => {
       case 'playlist_updated':
         setPlaylist(prev => ({
           ...prev,
-          items: data.items || []
+          items: data.items || [],
+          current_index: data.current_index ?? prev.current_index,
+          is_playing: data.is_playing ?? prev.is_playing,
+          auto_repeat: data.auto_repeat ?? prev.auto_repeat,
+          shuffle: data.shuffle ?? prev.shuffle
         }))
         break
 

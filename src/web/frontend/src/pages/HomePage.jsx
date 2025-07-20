@@ -13,13 +13,24 @@ const HomePage = () => {
   const { playlist, isConnected, systemStatus, previewData: wsPreviewData } = useWebSocket()
   const [ledPositions, setLedPositions] = useState(null)
   const canvasRef = useRef(null)
+  const ledStampRef = useRef(null)
 
   const currentItem = playlist.items?.[playlist.current_index]
   const status = systemStatus
 
+  // Debug logging for playlist state updates
+  useEffect(() => {
+    console.log('Playlist state updated:', {
+      itemCount: playlist.items?.length || 0,
+      currentIndex: playlist.current_index,
+      isPlaying: playlist.is_playing,
+      currentItemName: currentItem?.name || 'none'
+    })
+  }, [playlist, currentItem])
+
   // System status is now received via WebSocket, no need for HTTP polling
 
-  // Fetch LED positions once on component mount
+  // Fetch LED positions and create stamps once on component mount
   useEffect(() => {
     const fetchLedPositions = async () => {
       try {
@@ -37,33 +48,59 @@ const HomePage = () => {
       }
     }
 
+    // Create LED stamp for fast rendering
+    createLEDStamp()
     fetchLedPositions()
   }, [])
 
   // Use WebSocket preview data (no need for HTTP polling)
   const previewData = wsPreviewData
 
-  // Canvas-based LED rendering function
+  // Create pre-rendered LED stamp for fast rendering
+  const createLEDStamp = () => {
+    // LED stamp (24px radius = 48px diameter)
+    const ledRadius = 24
+    const ledSize = ledRadius * 2.5 * 2 // Extended for Gaussian falloff
+    const ledCanvas = document.createElement('canvas')
+    ledCanvas.width = ledCanvas.height = ledSize
+    const ledCtx = ledCanvas.getContext('2d')
+
+    // Create Gaussian falloff pattern
+    const centerX = ledSize / 2
+    const centerY = ledSize / 2
+
+    // Create gradient that approximates Gaussian falloff
+    const ledGradient = ledCtx.createRadialGradient(centerX, centerY, 0, centerX, centerY, ledRadius * 2.5)
+    ledGradient.addColorStop(0, 'rgba(255, 255, 255, 1.0)')     // Center: full intensity
+    ledGradient.addColorStop(0.32, 'rgba(255, 255, 255, 0.8)')  // ~1 sigma: 80%
+    ledGradient.addColorStop(0.6, 'rgba(255, 255, 255, 0.4)')   // ~2 sigma: 40%
+    ledGradient.addColorStop(0.85, 'rgba(255, 255, 255, 0.1)')  // ~2.5 sigma: 10%
+    ledGradient.addColorStop(1, 'rgba(255, 255, 255, 0)')       // Edge: transparent
+
+    ledCtx.fillStyle = ledGradient
+    ledCtx.fillRect(0, 0, ledSize, ledSize)
+    ledStampRef.current = ledCanvas
+  }
+
+  // Fast canvas-based LED rendering using pre-rendered stamp
   const drawLEDs = () => {
-    if (!canvasRef.current || !ledPositions) return
+    if (!canvasRef.current || !ledPositions || !ledStampRef.current) return
 
     const canvas = canvasRef.current
     const ctx = canvas.getContext('2d')
+    const ledStamp = ledStampRef.current
 
     // Clear canvas with black background
     ctx.fillStyle = '#000000'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-    // Set additive blending mode for LED rendering
-    ctx.globalCompositeOperation = 'lighter'
-
     // Calculate scaling to fit LED coordinate space (800x480) into canvas
     const scaleX = canvas.width / ledPositions.frame_dimensions.width
     const scaleY = canvas.height / ledPositions.frame_dimensions.height
 
-    console.log(`Canvas rendering: ${canvas.width}x${canvas.height}, scale: ${scaleX.toFixed(3)}x${scaleY.toFixed(3)}`)
+    console.log(`Fast LED rendering: ${canvas.width}x${canvas.height}, scale: ${scaleX.toFixed(3)}x${scaleY.toFixed(3)}`)
 
-    // Draw each LED
+    // Draw each LED using pre-rendered stamp
     ledPositions.positions.forEach((position, i) => {
       const [x, y] = position
 
@@ -88,39 +125,50 @@ const HomePage = () => {
             return
           }
 
-          // Use direct RGB values for additive blending
-          const ledColor = `rgb(${r}, ${g}, ${b})`
-
           // Debug log for first few LEDs
           if (i < 5 && (r > 0 || g > 0 || b > 0)) {
             console.log(`LED ${i} color: rgb(${r}, ${g}, ${b})`)
           }
 
-          // Draw LED circle with additive blending
-          ctx.beginPath()
-          ctx.arc(canvasX, canvasY, 8, 0, 2 * Math.PI)
-          ctx.fillStyle = ledColor
-          ctx.fill()
-
-          // Add glow effect for bright LEDs (any channel > 200)
-          if (r > 200 || g > 200 || b > 200) {
-            ctx.beginPath()
-            ctx.arc(canvasX, canvasY, 12, 0, 2 * Math.PI)
-            ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.3)`
-            ctx.fill()
-          }
+          // Draw LED using stamp technique
+          ctx.save()
+          ctx.globalCompositeOperation = 'screen' // Additive-like blending
+          ctx.fillStyle = `rgb(${r}, ${g}, ${b})`
+          ctx.fillRect(
+            canvasX - ledStamp.width / 2,
+            canvasY - ledStamp.height / 2,
+            ledStamp.width,
+            ledStamp.height
+          )
+          ctx.globalCompositeOperation = 'multiply'
+          ctx.drawImage(
+            ledStamp,
+            canvasX - ledStamp.width / 2,
+            canvasY - ledStamp.height / 2
+          )
+          ctx.restore()
         }
       } else {
-        // Fallback: draw dim LEDs when no preview data
-        ctx.beginPath()
-        ctx.arc(canvasX, canvasY, 8, 0, 2 * Math.PI)
-        ctx.fillStyle = 'rgba(102, 102, 102, 0.3)'
-        ctx.fill()
+        // Fallback: draw dim LEDs when no preview data using stamp
+        ctx.save()
+        ctx.globalCompositeOperation = 'screen'
+        ctx.fillStyle = 'rgb(102, 102, 102)'
+        ctx.fillRect(
+          canvasX - ledStamp.width / 2,
+          canvasY - ledStamp.height / 2,
+          ledStamp.width,
+          ledStamp.height
+        )
+        ctx.globalCompositeOperation = 'multiply'
+        ctx.globalAlpha = 0.3
+        ctx.drawImage(
+          ledStamp,
+          canvasX - ledStamp.width / 2,
+          canvasY - ledStamp.height / 2
+        )
+        ctx.restore()
       }
     })
-
-    // Reset composite operation for any future drawing
-    ctx.globalCompositeOperation = 'source-over'
   }
 
   // Redraw LEDs when data changes
@@ -234,7 +282,7 @@ const HomePage = () => {
               <div className="text-center">
                 <SpeakerXMarkIcon className="w-12 h-12 text-metal-silver mx-auto mb-2 opacity-50" />
                 <p className="text-metal-silver text-sm font-mono">
-                  {currentItem ? 'PAUSED' : 'NO CONTENT'}
+                  {(currentItem || status?.current_file) ? 'PAUSED' : 'NO CONTENT'}
                 </p>
                 <p className="text-metal-silver text-xs font-mono mt-1 opacity-75">
                   {ledPositions.led_count} LEDs ready
@@ -246,16 +294,27 @@ const HomePage = () => {
       </div>
 
       {/* Now Playing Info */}
-      {currentItem && (
+      {(currentItem || status?.current_file) && (
         <div className="retro-container">
           <h3 className="text-sm font-retro text-neon-pink mb-2">NOW PLAYING</h3>
           <div className="space-y-2">
-            <p className="text-neon-cyan font-medium truncate">{currentItem.name}</p>
+            <p className="text-neon-cyan font-medium truncate">
+              {currentItem?.name || status?.current_file || 'Unknown'}
+            </p>
             <div className="flex justify-between text-xs text-metal-silver font-mono">
-              <span className="uppercase">{currentItem.type}</span>
-              {currentItem.duration && (
-                <span>{Math.round(currentItem.duration)}s</span>
-              )}
+              <span className="uppercase">{currentItem?.type || 'content'}</span>
+              <div className="flex items-center gap-2">
+                {currentItem?.duration && (
+                  <span>{Math.round(currentItem.duration)}s</span>
+                )}
+                <span className={`px-2 py-1 rounded text-xs ${
+                  playlist.is_playing
+                    ? 'bg-neon-green bg-opacity-20 text-neon-green'
+                    : 'bg-metal-silver bg-opacity-20 text-metal-silver'
+                }`}>
+                  {playlist.is_playing ? 'PLAYING' : 'PAUSED'}
+                </span>
+              </div>
             </div>
           </div>
         </div>
