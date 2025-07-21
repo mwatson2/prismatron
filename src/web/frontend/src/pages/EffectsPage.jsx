@@ -222,7 +222,7 @@ const EffectsPage = () => {
                         >
                           {systemFonts.length > 0 ? (
                             systemFonts.map(font => (
-                              <option key={font.name} value={font.name.toLowerCase().replace(/\s+/g, '_')}>
+                              <option key={font.name} value={font.name}>
                                 {font.name}
                               </option>
                             ))

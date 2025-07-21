@@ -232,7 +232,7 @@ EFFECT_PRESETS = [
         description="Display custom text with configurable fonts and colors",
         config={
             "text": "Hello World",
-            "font_family": "dejavu_sans",
+            "font_family": "DejaVu Sans",
             "font_style": "normal",
             "font_size": "auto",
             "fg_color": "#FFFFFF",

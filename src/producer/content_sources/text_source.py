@@ -376,6 +376,9 @@ class TextContentSource(ContentSource):
         text_width = bbox[2] - bbox[0]
         text_height = bbox[3] - bbox[1]
 
+        # Get the bbox offset (this accounts for ascenders/descenders)
+        bbox_offset_y = bbox[1]  # Top offset from baseline
+
         # Calculate position based on alignment (no borders)
         if self.alignment == "left":
             x = 0
@@ -385,13 +388,14 @@ class TextContentSource(ContentSource):
             x = (FRAME_WIDTH - text_width) // 2
 
         if self.vertical_alignment == "top":
-            y = 0
+            y = -bbox_offset_y  # Compensate for bbox offset
         elif self.vertical_alignment == "bottom":
-            y = FRAME_HEIGHT - text_height
+            y = FRAME_HEIGHT - text_height - bbox_offset_y  # Compensate for bbox offset
         else:  # center
-            y = (FRAME_HEIGHT - text_height) // 2
+            y = (FRAME_HEIGHT - text_height) // 2 - bbox_offset_y  # Compensate for bbox offset
 
         # Draw text
+        logger.info(f"Rendering static text frame: '{self.text}' at ({x}, {y}) with size {self.font_size}")
         draw.text((x, y), self.text, font=font, fill=self.fg_color)
 
         # Convert to numpy array and planar format
@@ -415,6 +419,9 @@ class TextContentSource(ContentSource):
         text_width = bbox[2] - bbox[0]
         text_height = bbox[3] - bbox[1]
 
+        # Get the bbox offset (this accounts for ascenders/descenders)
+        bbox_offset_y = bbox[1]  # Top offset from baseline
+
         # Calculate scroll range (text moves from right to left)
         start_x = FRAME_WIDTH
         end_x = -text_width
@@ -422,11 +429,11 @@ class TextContentSource(ContentSource):
 
         # Calculate vertical position (no borders)
         if self.vertical_alignment == "top":
-            y = 0
+            y = -bbox_offset_y  # Compensate for bbox offset
         elif self.vertical_alignment == "bottom":
-            y = FRAME_HEIGHT - text_height
+            y = FRAME_HEIGHT - text_height - bbox_offset_y  # Compensate for bbox offset
         else:  # center
-            y = (FRAME_HEIGHT - text_height) // 2
+            y = (FRAME_HEIGHT - text_height) // 2 - bbox_offset_y  # Compensate for bbox offset
 
         # Generate frames
         for frame_idx in range(self.frame_count):

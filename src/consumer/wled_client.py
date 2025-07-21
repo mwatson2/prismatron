@@ -382,7 +382,6 @@ class WLEDClient:
         errors = []
         if not self.is_connected or not self.socket:
             error_msg = "Not connected to WLED controller"
-            logger.error(error_msg)
             return TransmissionResult(
                 success=False,
                 packets_sent=0,
