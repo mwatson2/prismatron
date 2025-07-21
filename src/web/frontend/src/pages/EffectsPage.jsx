@@ -3,6 +3,7 @@ import { PlusIcon, AdjustmentsHorizontalIcon } from '@heroicons/react/24/outline
 
 const EffectsPage = () => {
   const [effects, setEffects] = useState([])
+  const [systemFonts, setSystemFonts] = useState([])
   const [loading, setLoading] = useState(true)
   const [selectedCategory, setSelectedCategory] = useState('all')
   const [showConfig, setShowConfig] = useState(null)
@@ -10,6 +11,7 @@ const EffectsPage = () => {
 
   useEffect(() => {
     fetchEffects()
+    fetchSystemFonts()
   }, [])
 
   const fetchEffects = async () => {
@@ -23,6 +25,19 @@ const EffectsPage = () => {
       console.error('Failed to fetch effects:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const fetchSystemFonts = async () => {
+    try {
+      const response = await fetch('/api/system-fonts')
+      if (response.ok) {
+        const data = await response.json()
+        console.log('Loaded system fonts:', data.count)
+        setSystemFonts(data.fonts || [])
+      }
+    } catch (error) {
+      console.error('Failed to fetch system fonts:', error)
     }
   }
 
@@ -196,7 +211,7 @@ const EffectsPage = () => {
                       />
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-3 gap-4">
                       {/* Font Selection */}
                       <div className="space-y-1">
                         <label className="text-xs text-metal-silver font-mono">FONT FAMILY</label>
@@ -205,11 +220,36 @@ const EffectsPage = () => {
                           onChange={(e) => handleConfigChange('font_family', e.target.value)}
                           className="retro-input w-full text-sm"
                         >
-                          <option value="arial">Arial</option>
-                          <option value="helvetica">Helvetica</option>
-                          <option value="times">Times New Roman</option>
-                          <option value="courier">Courier</option>
-                          <option value="roboto">Roboto</option>
+                          {systemFonts.length > 0 ? (
+                            systemFonts.map(font => (
+                              <option key={font.name} value={font.name.toLowerCase().replace(/\s+/g, '_')}>
+                                {font.name}
+                              </option>
+                            ))
+                          ) : (
+                            <>
+                              <option value="arial">Arial</option>
+                              <option value="helvetica">Helvetica</option>
+                              <option value="times">Times New Roman</option>
+                              <option value="courier">Courier</option>
+                              <option value="dejavu_sans">DejaVu Sans</option>
+                            </>
+                          )}
+                        </select>
+                      </div>
+
+                      {/* Font Style */}
+                      <div className="space-y-1">
+                        <label className="text-xs text-metal-silver font-mono">FONT STYLE</label>
+                        <select
+                          defaultValue={effect.config.font_style || 'normal'}
+                          onChange={(e) => handleConfigChange('font_style', e.target.value)}
+                          className="retro-input w-full text-sm"
+                        >
+                          <option value="normal">Normal</option>
+                          <option value="bold">Bold</option>
+                          <option value="italic">Italic</option>
+                          <option value="bold-italic">Bold Italic</option>
                         </select>
                       </div>
 
@@ -221,7 +261,7 @@ const EffectsPage = () => {
                           onChange={(e) => handleConfigChange('font_size', e.target.value === 'auto' ? 'auto' : parseInt(e.target.value))}
                           className="retro-input w-full text-sm"
                         >
-                          <option value="auto">Auto (Fill Width)</option>
+                          <option value="auto">Auto (Fill Frame)</option>
                           <option value="8">8px</option>
                           <option value="10">10px</option>
                           <option value="12">12px</option>

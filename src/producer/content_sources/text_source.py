@@ -69,6 +69,7 @@ class TextContentSource(ContentSource):
         # Text content and appearance
         self.text = self.config.get("text", "Hello World")
         self.font_family = self.config.get("font_family", "arial")
+        self.font_style = self.config.get("font_style", "normal")  # normal, bold, italic, bold-italic
         self.font_size = self.config.get("font_size", 24)
         self.fg_color = self._parse_color(self.config.get("fg_color", "#FFFFFF"))
         self.bg_color = self._parse_color(self.config.get("bg_color", "#000000"))
@@ -111,6 +112,7 @@ class TextContentSource(ContentSource):
         self.content_info.metadata = {
             "text": self.text,
             "font_family": self.font_family,
+            "font_style": self.font_style,
             "font_size": self.font_size,
             "animation": self.animation,
             "fg_color": self.fg_color,
@@ -154,9 +156,71 @@ class TextContentSource(ContentSource):
 
         return named_colors.get(color_str.lower(), (255, 255, 255))
 
+    def _get_font_paths_with_style(self) -> Dict[str, list]:
+        """
+        Get font path candidates based on font family and style.
+
+        Returns:
+            Dictionary mapping font family to list of candidate paths
+        """
+        # Base font paths by font name (converted to lowercase with underscores)
+        font_name_lower = self.font_family.lower()
+        base_paths = {
+            "arial": ["arial.ttf", "Arial.ttf", "DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"],
+            "helvetica": [
+                "helvetica.ttf",
+                "Helvetica.ttf",
+                "DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            ],
+            "times": ["times.ttf", "Times.ttf", "DejaVuSerif.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"],
+            "courier": [
+                "courier.ttf",
+                "Courier.ttf",
+                "DejaVuSansMono.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+            ],
+            "roboto": ["Roboto-Regular.ttf", "DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"],
+            "dejavu_sans": ["DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"],
+            "ubuntu": [
+                "Ubuntu-Regular.ttf",
+                "/usr/share/fonts/truetype/ubuntu/Ubuntu-Regular.ttf",
+                "DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            ],
+            "liberation_serif": [
+                "LiberationSerif-Regular.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
+                "DejaVuSerif.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+            ],
+        }
+
+        # Apply style variations - use font_name_lower as key
+        styled_candidates = []
+        paths = base_paths.get(font_name_lower, base_paths.get("dejavu_sans", []))
+
+        # Add style-specific variants first
+        if self.font_style == "bold":
+            styled_candidates.extend([path.replace(".ttf", "-Bold.ttf") for path in paths])
+            styled_candidates.extend([path.replace(".ttf", "b.ttf") for path in paths])  # Arial bold = arialb.ttf
+        elif self.font_style == "italic":
+            styled_candidates.extend([path.replace(".ttf", "-Italic.ttf") for path in paths])
+            styled_candidates.extend([path.replace(".ttf", "i.ttf") for path in paths])  # Arial italic = ariali.ttf
+        elif self.font_style == "bold-italic":
+            styled_candidates.extend([path.replace(".ttf", "-BoldItalic.ttf") for path in paths])
+            styled_candidates.extend(
+                [path.replace(".ttf", "bi.ttf") for path in paths]  # Arial bold-italic = arialbi.ttf
+            )
+
+        # Add regular variants as fallback
+        styled_candidates.extend(paths)
+
+        return {font_name_lower: styled_candidates}
+
     def _calculate_auto_font_size(self) -> int:
         """
-        Calculate font size to fill width with 10% margins.
+        Calculate font size to fill the frame without any border.
 
         Returns:
             Optimal font size in pixels
@@ -164,17 +228,16 @@ class TextContentSource(ContentSource):
         if not self.text.strip():
             return 24  # Default size for empty text
 
-        # Target width is 80% of frame width (10% margins on each side)
-        target_width = int(FRAME_WIDTH * 0.8)
-        # Also consider height constraint (80% of frame height)
-        target_height = int(FRAME_HEIGHT * 0.8)
+        # Target width and height to fill the frame without any border
+        target_width = FRAME_WIDTH
+        target_height = FRAME_HEIGHT
 
         # Binary search for optimal font size
         min_size = 8
-        max_size = min(200, target_height)  # Use reasonable upper limit
+        max_size = target_height
         best_size = 24
 
-        logger.debug(
+        logger.info(
             f"Auto font sizing for text '{self.text}': target_width={target_width}, target_height={target_height}"
         )
 
@@ -190,7 +253,7 @@ class TextContentSource(ContentSource):
                 text_width = bbox[2] - bbox[0]
                 text_height = bbox[3] - bbox[1]
 
-                logger.debug(f"Testing font size {test_size}: text_width={text_width}, text_height={text_height}")
+                logger.info(f"Testing font size {test_size}: text_width={text_width}, text_height={text_height}")
 
                 # Check both width and height constraints
                 if text_width <= target_width and text_height <= target_height:
@@ -203,7 +266,7 @@ class TextContentSource(ContentSource):
             logger.warning(f"Error calculating auto font size: {e}, using default")
             return 24
 
-        final_size = max(8, min(200, best_size))  # Clamp to reasonable range
+        final_size = best_size
         logger.info(f"Auto font size calculated: {final_size}px for text '{self.text}'")
         return final_size
 
@@ -218,37 +281,45 @@ class TextContentSource(ContentSource):
             PIL font object
         """
         try:
-            # Try to load system font
-            font_paths = {
-                "arial": [
-                    "arial.ttf",
-                    "Arial.ttf",
-                    "DejaVuSans.ttf",
-                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                ],
-                "helvetica": [
-                    "helvetica.ttf",
-                    "Helvetica.ttf",
-                    "DejaVuSans.ttf",
-                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                ],
-                "times": [
-                    "times.ttf",
-                    "Times.ttf",
-                    "DejaVuSerif.ttf",
-                    "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
-                ],
-                "courier": [
-                    "courier.ttf",
-                    "Courier.ttf",
-                    "DejaVuSansMono.ttf",
-                    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-                ],
-                "roboto": ["Roboto-Regular.ttf", "DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"],
-            }
+            # First, try to find system fonts using matplotlib if available
+            try:
+                import matplotlib.font_manager as fm
+
+                # Map font style to matplotlib properties
+                weight = "normal"
+                style = "normal"
+
+                if self.font_style == "bold":
+                    weight = "bold"
+                elif self.font_style == "italic":
+                    style = "italic"
+                elif self.font_style == "bold-italic":
+                    weight = "bold"
+                    style = "italic"
+
+                # Try to find font using matplotlib font manager with font name
+                # First try by name (since font_family now contains the actual font name)
+                font_prop = fm.FontProperties(fname=None)
+                font_prop.set_name(self.font_family)
+                font_prop.set_weight(weight)
+                font_prop.set_style(style)
+                font_file = fm.findfont(font_prop)
+
+                if font_file:
+                    logger.debug(f"Found font via matplotlib: {font_file}")
+                    return ImageFont.truetype(font_file, size)
+
+            except ImportError:
+                logger.debug("Matplotlib not available for font detection, using fallback")
+            except Exception as e:
+                logger.debug(f"Matplotlib font detection failed: {e}, using fallback")
+
+            # Fallback: Try to load system font with style variants
+            font_paths = self._get_font_paths_with_style()
+            font_name_lower = self.font_family.lower()
 
             font_candidates = font_paths.get(
-                self.font_family.lower(),
+                font_name_lower,
                 [
                     "DejaVuSans.ttf",
                     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -305,18 +376,18 @@ class TextContentSource(ContentSource):
         text_width = bbox[2] - bbox[0]
         text_height = bbox[3] - bbox[1]
 
-        # Calculate position based on alignment
+        # Calculate position based on alignment (no borders)
         if self.alignment == "left":
-            x = 5
+            x = 0
         elif self.alignment == "right":
-            x = FRAME_WIDTH - text_width - 5
+            x = FRAME_WIDTH - text_width
         else:  # center
             x = (FRAME_WIDTH - text_width) // 2
 
         if self.vertical_alignment == "top":
-            y = 5
+            y = 0
         elif self.vertical_alignment == "bottom":
-            y = FRAME_HEIGHT - text_height - 5
+            y = FRAME_HEIGHT - text_height
         else:  # center
             y = (FRAME_HEIGHT - text_height) // 2
 
@@ -349,11 +420,11 @@ class TextContentSource(ContentSource):
         end_x = -text_width
         total_distance = start_x - end_x
 
-        # Calculate vertical position
+        # Calculate vertical position (no borders)
         if self.vertical_alignment == "top":
-            y = 5
+            y = 0
         elif self.vertical_alignment == "bottom":
-            y = FRAME_HEIGHT - text_height - 5
+            y = FRAME_HEIGHT - text_height
         else:  # center
             y = (FRAME_HEIGHT - text_height) // 2
 

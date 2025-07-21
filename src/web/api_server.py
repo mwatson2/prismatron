@@ -232,8 +232,9 @@ EFFECT_PRESETS = [
         description="Display custom text with configurable fonts and colors",
         config={
             "text": "Hello World",
-            "font_family": "arial",
-            "font_size": 24,
+            "font_family": "dejavu_sans",
+            "font_style": "normal",
+            "font_size": "auto",
             "fg_color": "#FFFFFF",
             "bg_color": "#000000",
             "animation": "static",
@@ -1577,6 +1578,97 @@ async def get_led_positions():
     except Exception as e:
         logger.error(f"Failed to get LED positions: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to load LED positions: {str(e)}") from e
+
+
+# System fonts endpoint
+@app.get("/api/system-fonts")
+async def get_system_fonts():
+    """Get list of available system fonts."""
+    try:
+        import matplotlib.font_manager as fm
+
+        # Get all TTF font files
+        font_files = fm.findSystemFonts(fontpaths=None, fontext="ttf")
+
+        # Extract font names and organize them
+        fonts = []
+        seen_names = set()
+
+        for font_path in font_files:
+            try:
+                # Get font properties
+                font_prop = fm.FontProperties(fname=font_path)
+                font_name = font_prop.get_name()
+                font_family = font_prop.get_family()[0] if font_prop.get_family() else font_name
+                font_style = font_prop.get_style()
+                font_weight = font_prop.get_weight()
+
+                # Use font name as the unique identifier since family is always 'sans-serif'
+                font_key = font_name
+
+                logger.debug(
+                    f"Found font: {font_name}, family: {font_family}, style: {font_style}, weight: {font_weight}, path: {font_path}"
+                )
+
+                if font_key not in seen_names:
+                    fonts.append(
+                        {
+                            "name": font_name,
+                            "family": font_family,
+                            "style": font_style,
+                            "weight": font_weight,
+                            "path": font_path,
+                        }
+                    )
+                    seen_names.add(font_key)
+
+            except Exception as e:
+                # Skip fonts that can't be processed
+                logger.warning(f"Skipping font {font_path}: {e}")
+                continue
+
+        # Sort fonts by name
+        fonts.sort(key=lambda x: x["name"].lower())
+
+        # Group by name for easier frontend usage (since family is always 'sans-serif')
+        font_families = {}
+        for font in fonts:
+            name = font["name"]
+            font_families[name] = [font]  # Each font name gets its own entry
+
+        return {"fonts": fonts, "families": font_families, "count": len(fonts)}
+
+    except ImportError:
+        # Fallback to basic font list if matplotlib not available
+        logger.warning("matplotlib not available for font detection, using fallback list")
+        basic_fonts = [
+            {"name": "Arial", "family": "Arial", "style": "normal", "weight": "normal", "path": "arial.ttf"},
+            {
+                "name": "Helvetica",
+                "family": "Helvetica",
+                "style": "normal",
+                "weight": "normal",
+                "path": "helvetica.ttf",
+            },
+            {"name": "Times New Roman", "family": "Times", "style": "normal", "weight": "normal", "path": "times.ttf"},
+            {"name": "Courier New", "family": "Courier", "style": "normal", "weight": "normal", "path": "courier.ttf"},
+            {
+                "name": "DejaVu Sans",
+                "family": "DejaVu Sans",
+                "style": "normal",
+                "weight": "normal",
+                "path": "DejaVuSans.ttf",
+            },
+        ]
+        return {
+            "fonts": basic_fonts,
+            "families": {font["family"]: [font] for font in basic_fonts},
+            "count": len(basic_fonts),
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get system fonts: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve system fonts: {str(e)}") from e
 
 
 # Health check endpoint
