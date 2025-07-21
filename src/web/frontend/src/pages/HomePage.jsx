@@ -395,12 +395,22 @@ const HomePage = () => {
               <span className="text-neon-cyan ml-2">{status.memory_usage?.toFixed(1)}% ({status.memory_usage_gb?.toFixed(1)}GB)</span>
             </div>
             <div>
-              <span className="text-metal-silver">FPS:</span>
-              <span className="text-neon-cyan ml-2">{status.frame_rate?.toFixed(1)}</span>
+              <span className="text-metal-silver">Input FPS:</span>
+              <span className="text-neon-cyan ml-2">{status.consumer_input_fps?.toFixed(1) || 'N/A'}</span>
+            </div>
+            <div>
+              <span className="text-metal-silver">Output FPS:</span>
+              <span className="text-neon-cyan ml-2">{status.renderer_output_fps?.toFixed(1) || 'N/A'}</span>
             </div>
             <div>
               <span className="text-metal-silver">Late Frames:</span>
               <span className="text-neon-cyan ml-2">{status.late_frame_percentage?.toFixed(1)}%</span>
+            </div>
+            <div>
+              <span className="text-metal-silver">Dropped Frames:</span>
+              <span className={`ml-2 ${status.dropped_frames_percentage > 5 ? 'text-neon-orange' : 'text-neon-cyan'}`}>
+                {status.dropped_frames_percentage?.toFixed(1) || '0.0'}%
+              </span>
             </div>
           </div>
         </div>

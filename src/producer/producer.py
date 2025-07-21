@@ -448,11 +448,8 @@ class ProducerProcess:
 
             return self._playlist_sync_client.add_item(sync_item)
         else:
-            # Fallback to local playlist
-            result = self._playlist.add_item(filepath, duration, repeat)
-            if result:
-                self._sync_playlist_to_control_state()
-            return result
+            logger.error("Playlist sync client not connected - cannot add content")
+            return False
 
     def load_playlist_from_directory(self, directory: str) -> int:
         """
@@ -523,14 +520,9 @@ class ProducerProcess:
                         else:
                             logger.warning(f"Failed to add {file_path} to sync service")
                     else:
-                        # Fallback to local playlist
-                        if self._playlist.add_item(str(file_path)):
-                            added_count += 1
+                        logger.warning(f"Playlist sync client not connected - skipping {file_path}")
 
             logger.info(f"Loaded {added_count} files from {directory}")
-            if added_count > 0 and not (self._playlist_sync_client and self._playlist_sync_client.connected):
-                # Only sync to control state if using fallback mode
-                self._sync_playlist_to_control_state()
             return added_count
 
         except Exception as e:
@@ -602,8 +594,7 @@ class ProducerProcess:
                     time.sleep(0.1)
                     continue
 
-                # Process playlist commands from web server
-                self._process_playlist_commands()
+                # Playlist commands now handled through playlist sync service only
 
                 # Log play state changes for debugging
                 if not hasattr(self, "_last_play_state") or self._last_play_state != status.play_state:
@@ -772,15 +763,8 @@ class ProducerProcess:
                     logger.warning("Failed to send next command to sync service")
                     # Note: Don't advance locally - let sync service handle it
             else:
-                # Fallback: advance locally
-                if self._playlist.advance_to_next():
-                    # Next content available
-                    logger.debug("Advanced to next content (fallback mode)")
-                    self._sync_playlist_to_control_state()
-                else:
-                    # End of playlist
-                    logger.info("End of playlist reached")
-                    self._control_state.set_play_state(PlayState.STOPPED)
+                logger.warning("Playlist sync client not connected - cannot advance to next content")
+                self._control_state.set_play_state(PlayState.STOPPED)
 
         except Exception as e:
             logger.error(f"Failed to advance to next content: {e}")
@@ -1179,14 +1163,6 @@ class ProducerProcess:
         """
         return len(self._playlist)
 
-    def _sync_playlist_to_control_state(self) -> None:
-        """Synchronize playlist information to shared control state."""
-        try:
-            playlist_info = self.get_playlist_info()
-            self._control_state.update_playlist_info(playlist_info)
-        except Exception as e:
-            logger.warning(f"Failed to sync playlist to control state: {e}")
-
     def _on_playlist_sync_update(self, sync_state: SyncPlaylistState) -> None:
         """Handle playlist updates from synchronization service."""
         try:
@@ -1218,8 +1194,7 @@ class ProducerProcess:
             else:
                 self._control_state.set_play_state(PlayState.PAUSED)
 
-            # Sync to control state for status reporting
-            self._sync_playlist_to_control_state()
+            # Playlist state now managed through sync service only
 
             logger.info(
                 f"Producer playlist synchronized: {len(self._playlist._items)} items, current_index={self._playlist._current_index}, playing={sync_state.is_playing}"
@@ -1230,51 +1205,6 @@ class ProducerProcess:
             import traceback
 
             logger.error(traceback.format_exc())
-
-    def _process_playlist_commands(self) -> None:
-        """Process playlist commands from web server via control state (fallback mode only)."""
-        try:
-            # Only process control state commands if not connected to sync service
-            if self._playlist_sync_client and self._playlist_sync_client.connected:
-                # Skip processing - sync service handles all playlist commands
-                return
-
-            command = self._control_state.get_playlist_command()
-            if command:
-                action = command.get("action")
-                data = command.get("data", {})
-
-                if action == "add_item":
-                    filepath = data.get("filepath")
-                    duration = data.get("duration")
-                    if filepath:
-                        success = self._playlist.add_item(filepath, duration)
-                        if success:
-                            logger.info(f"PRODUCER PLAYLIST: Added item from web server: {filepath}")
-                            self._sync_playlist_to_control_state()
-                        else:
-                            logger.error(f"PRODUCER PLAYLIST: Failed to add item: {filepath}")
-
-                elif action == "remove_item":
-                    filepath = data.get("filepath")
-                    if filepath:
-                        success = self._playlist.remove_item_by_filepath(filepath)
-                        if success:
-                            logger.info(f"PRODUCER PLAYLIST: Removed item from web server: {filepath}")
-                            self._sync_playlist_to_control_state()
-                        else:
-                            logger.error(f"PRODUCER PLAYLIST: Failed to remove item: {filepath}")
-
-                elif action == "clear":
-                    self._playlist.clear()
-                    logger.info("PRODUCER PLAYLIST: Cleared playlist from web server")
-                    self._sync_playlist_to_control_state()
-
-                else:
-                    logger.warning(f"PRODUCER PLAYLIST: Unknown command action: {action}")
-
-        except Exception as e:
-            logger.error(f"Error processing playlist commands: {e}")
 
     def cleanup(self) -> None:
         """Clean up producer resources."""

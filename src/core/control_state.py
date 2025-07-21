@@ -64,8 +64,12 @@ class SystemStatus:
     error_message: str = ""
     uptime: float = 0.0
     last_update: float = 0.0
-    playlist_json: str = ""  # JSON-serialized playlist info
-    playlist_command: str = ""  # JSON-serialized playlist command for producer
+
+    # New consumer statistics for multi-process IPC
+    consumer_input_fps: float = 0.0
+    renderer_output_fps: float = 0.0
+    dropped_frames_percentage: float = 0.0
+    late_frame_percentage: float = 0.0
 
 
 class ControlState:
@@ -613,77 +617,43 @@ class ControlState:
             logger.error(f"Failed to update system state: {e}")
             return False
 
-    def update_playlist_info(self, playlist_info: Dict[str, Any]) -> bool:
+    def update_status(self, **updates) -> bool:
         """
-        Update the playlist information in shared state.
+        Update specific fields in the system status.
+
+        This method allows updating individual status fields without overwriting
+        the entire status object. It uses the same read-modify-write pattern as
+        other methods, so it's subject to the same race condition limitations.
 
         Args:
-            playlist_info: Dictionary containing playlist data
+            **updates: Keyword arguments for status fields to update
+                      Valid fields: consumer_input_fps, renderer_output_fps,
+                      dropped_frames_percentage, late_frame_percentage, etc.
 
         Returns:
             True if successful, False otherwise
         """
         try:
             current_status = self._read_status()
-            if current_status:
-                current_status.playlist_json = json.dumps(playlist_info)
-                result = self._write_status(current_status)
-                if result:
-                    self._status_updated_event.set()
-                return result
-            return False
+            if not current_status:
+                return False
+
+            # Update only the provided fields
+            for field_name, value in updates.items():
+                if hasattr(current_status, field_name):
+                    setattr(current_status, field_name, value)
+                    logger.info(f"Updated status field '{field_name}' to {value}")
+                else:
+                    logger.warning(f"Unknown status field: {field_name}")
+
+            result = self._write_status(current_status)
+            if result:
+                self._status_updated_event.set()
+            return result
 
         except Exception as e:
-            logger.error(f"Failed to update playlist info: {e}")
+            logger.error(f"Failed to update status fields: {e}")
             return False
-
-    def send_playlist_command(self, command: Dict[str, Any]) -> bool:
-        """
-        Send a playlist command to the producer.
-
-        Args:
-            command: Dictionary containing command data
-                    Format: {"action": "add_item", "data": {"filepath": "...", "duration": ...}}
-                           {"action": "remove_item", "data": {"item_id": "..."}}
-                           {"action": "clear"}
-
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            current_status = self._read_status()
-            if current_status:
-                current_status.playlist_command = json.dumps(command)
-                result = self._write_status(current_status)
-                if result:
-                    self._status_updated_event.set()
-                return result
-            return False
-
-        except Exception as e:
-            logger.error(f"Failed to send playlist command: {e}")
-            return False
-
-    def get_playlist_command(self) -> Optional[Dict[str, Any]]:
-        """
-        Get and clear the current playlist command.
-
-        Returns:
-            Command dictionary or None if no command available
-        """
-        try:
-            current_status = self._read_status()
-            if current_status and current_status.playlist_command:
-                command_json = current_status.playlist_command
-                # Clear the command after reading
-                current_status.playlist_command = ""
-                self._write_status(current_status)
-                return json.loads(command_json)
-            return None
-
-        except Exception as e:
-            logger.error(f"Failed to get playlist command: {e}")
-            return None
 
     def cleanup(self) -> None:
         """Clean up shared memory resources."""

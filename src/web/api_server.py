@@ -821,33 +821,11 @@ async def play_content():
             if success:
                 return {"status": "playing"}
             else:
-                logger.warning("Failed to send play command via sync service")
-
-        # Fallback to control state
-        logger.warning("Using control state fallback for play command")
-        try:
-            temp_control = ControlState()
-            if temp_control.connect():
-                from src.core.control_state import PlayState
-
-                temp_control.set_play_state(PlayState.PLAYING)
-                temp_control.cleanup()
-                logger.info("Sent PLAYING signal to producer via control state")
-            else:
-                logger.warning("Failed to connect to control state")
-        except Exception as e:
-            logger.error(f"Error communicating with control state: {e}")
-
-        # Update local state and broadcast
-        playlist_state.is_playing = True
-        await manager.broadcast(
-            {
-                "type": "playback_state",
-                "is_playing": True,
-                "current_index": playlist_state.current_index,
-            }
-        )
-        return {"status": "playing"}
+                logger.error("Failed to send play command via sync service")
+                return {"status": "error", "message": "Playlist sync service unavailable"}
+        else:
+            logger.error("Playlist sync service not connected")
+            return {"status": "error", "message": "Playlist sync service not connected"}
 
     except Exception as e:
         logger.error(f"Failed to start playback: {e}")
@@ -864,33 +842,11 @@ async def pause_content():
             if success:
                 return {"status": "paused"}
             else:
-                logger.warning("Failed to send pause command via sync service")
-
-        # Fallback to control state
-        logger.warning("Using control state fallback for pause command")
-        try:
-            temp_control = ControlState()
-            if temp_control.connect():
-                from src.core.control_state import PlayState
-
-                temp_control.set_play_state(PlayState.PAUSED)
-                temp_control.cleanup()
-                logger.info("Sent PAUSED signal to producer via control state")
-            else:
-                logger.warning("Failed to connect to control state for pause")
-        except Exception as e:
-            logger.error(f"Error communicating with control state for pause: {e}")
-
-        # Update local state and broadcast
-        playlist_state.is_playing = False
-        await manager.broadcast(
-            {
-                "type": "playback_state",
-                "is_playing": False,
-                "current_index": playlist_state.current_index,
-            }
-        )
-        return {"status": "paused"}
+                logger.error("Failed to send pause command via sync service")
+                return {"status": "error", "message": "Playlist sync service unavailable"}
+        else:
+            logger.error("Playlist sync service not connected")
+            return {"status": "error", "message": "Playlist sync service not connected"}
 
     except Exception as e:
         logger.error(f"Failed to pause playback: {e}")
@@ -900,37 +856,43 @@ async def pause_content():
 @app.post("/api/control/next")
 async def next_item():
     """Skip to next playlist item."""
-    # Send next command to playlist sync service
-    if playlist_sync_client and playlist_sync_client.connected:
-        success = playlist_sync_client.next_item()
-        if success:
-            return {"current_index": playlist_state.current_index}
+    try:
+        # Send next command to playlist sync service
+        if playlist_sync_client and playlist_sync_client.connected:
+            success = playlist_sync_client.next_item()
+            if success:
+                return {"current_index": playlist_state.current_index}
+            else:
+                logger.error("Failed to send next command via sync service")
+                return {"status": "error", "message": "Playlist sync service unavailable"}
         else:
-            logger.warning("Failed to send next command via sync service")
+            logger.error("Playlist sync service not connected")
+            return {"status": "error", "message": "Playlist sync service not connected"}
 
-    # Fallback to local handling
-    if playlist_state.items:
-        playlist_state.current_index = (playlist_state.current_index + 1) % len(playlist_state.items)
-        await manager.broadcast({"type": "playlist_position", "current_index": playlist_state.current_index})
-    return {"current_index": playlist_state.current_index}
+    except Exception as e:
+        logger.error(f"Failed to skip to next item: {e}")
+        return {"status": "error", "message": str(e)}
 
 
 @app.post("/api/control/previous")
 async def previous_item():
     """Skip to previous playlist item."""
-    # Send previous command to playlist sync service
-    if playlist_sync_client and playlist_sync_client.connected:
-        success = playlist_sync_client.previous_item()
-        if success:
-            return {"current_index": playlist_state.current_index}
+    try:
+        # Send previous command to playlist sync service
+        if playlist_sync_client and playlist_sync_client.connected:
+            success = playlist_sync_client.previous_item()
+            if success:
+                return {"current_index": playlist_state.current_index}
+            else:
+                logger.error("Failed to send previous command via sync service")
+                return {"status": "error", "message": "Playlist sync service unavailable"}
         else:
-            logger.warning("Failed to send previous command via sync service")
+            logger.error("Playlist sync service not connected")
+            return {"status": "error", "message": "Playlist sync service not connected"}
 
-    # Fallback to local handling
-    if playlist_state.items:
-        playlist_state.current_index = (playlist_state.current_index - 1) % len(playlist_state.items)
-        await manager.broadcast({"type": "playlist_position", "current_index": playlist_state.current_index})
-    return {"current_index": playlist_state.current_index}
+    except Exception as e:
+        logger.error(f"Failed to skip to previous item: {e}")
+        return {"status": "error", "message": str(e)}
 
 
 # Upload endpoints
@@ -1022,11 +984,11 @@ async def add_existing_file_to_playlist(file_id: str, name: Optional[str] = None
             sync_item = api_item_to_sync_item(item)
             success = playlist_sync_client.add_item(sync_item)
             if not success:
-                logger.warning("Failed to add item to playlist sync service, adding locally")
-                playlist_state.items.append(item)
+                logger.error("Failed to add item to playlist sync service")
+                raise HTTPException(status_code=500, detail="Failed to add item to playlist")
         else:
-            logger.warning("Playlist sync service not available, adding locally")
-            playlist_state.items.append(item)
+            logger.error("Playlist sync service not available")
+            raise HTTPException(status_code=503, detail="Playlist sync service not available")
 
         # Note: WebSocket broadcast will happen via sync service callback
         return {"status": "added", "item": item.dict_serializable()}

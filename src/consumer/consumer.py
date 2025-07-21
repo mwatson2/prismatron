@@ -32,12 +32,23 @@ class ConsumerStats:
     """Consumer process statistics."""
 
     frames_processed: int = 0
+    frames_dropped_early: int = 0  # Dropped before optimization
     total_processing_time: float = 0.0
     total_optimization_time: float = 0.0
     optimization_errors: int = 0
     transmission_errors: int = 0
     last_frame_time: float = 0.0
     current_optimization_fps: float = 0.0
+
+    # New FPS tracking
+    consumer_input_fps: float = 0.0  # Last measured input FPS from producer
+    renderer_output_fps_ewma: float = 0.0  # EWMA of renderer output FPS
+    dropped_frames_percentage_ewma: float = 0.0  # EWMA of dropped frame percentage
+
+    # Internal tracking for FPS calculations
+    _last_frame_timestamp: float = 0.0
+    _last_render_time: float = 0.0
+    _render_count: int = 0
 
     def get_average_fps(self) -> float:
         """Get average FPS since start."""
@@ -50,6 +61,40 @@ class ConsumerStats:
         if self.frames_processed > 0:
             return self.total_optimization_time / self.frames_processed
         return 0.0
+
+    def update_consumer_input_fps(self, frame_timestamp: float) -> None:
+        """Update consumer input FPS based on frame timestamps."""
+        if self._last_frame_timestamp > 0:
+            time_diff = frame_timestamp - self._last_frame_timestamp
+            if time_diff > 0:
+                self.consumer_input_fps = 1.0 / time_diff
+        self._last_frame_timestamp = frame_timestamp
+
+    def update_renderer_output_fps(self, alpha: float = 0.1) -> None:
+        """Update renderer output FPS using EWMA."""
+        current_time = time.time()
+        if self._last_render_time > 0:
+            time_diff = current_time - self._last_render_time
+            if time_diff > 0:
+                current_fps = 1.0 / time_diff
+                if self.renderer_output_fps_ewma == 0:
+                    self.renderer_output_fps_ewma = current_fps
+                else:
+                    self.renderer_output_fps_ewma = (1 - alpha) * self.renderer_output_fps_ewma + alpha * current_fps
+        self._last_render_time = current_time
+        self._render_count += 1
+
+    def update_dropped_frames_ewma(self, alpha: float = 0.1) -> None:
+        """Update dropped frames percentage using EWMA."""
+        total_frames = self.frames_processed + self.frames_dropped_early
+        if total_frames > 0:
+            current_drop_rate = self.frames_dropped_early / total_frames
+            if self.dropped_frames_percentage_ewma == 0:
+                self.dropped_frames_percentage_ewma = current_drop_rate
+            else:
+                self.dropped_frames_percentage_ewma = (
+                    1 - alpha
+                ) * self.dropped_frames_percentage_ewma + alpha * current_drop_rate
 
 
 class ConsumerProcess:
@@ -323,6 +368,10 @@ class ConsumerProcess:
                 # Render with timestamp-based timing
                 success = self._frame_renderer.render_frame_at_timestamp(led_values, timestamp, metadata)
 
+                # Update renderer output FPS tracking
+                if success:
+                    self._stats.update_renderer_output_fps()
+
                 if not success:
                     logger.warning("Frame rendering failed")
 
@@ -407,6 +456,17 @@ class ConsumerProcess:
             frame_array = buffer_info.get_array_interleaved(FRAME_WIDTH, FRAME_HEIGHT, FRAME_CHANNELS)
             timestamp = getattr(buffer_info, "presentation_timestamp", None) or time.time()
 
+            # Update consumer input FPS tracking
+            self._stats.update_consumer_input_fps(timestamp)
+
+            # Check if LED buffer is full - drop frame early to reduce optimization workload
+            buffer_stats = self._led_buffer.get_buffer_stats()
+            if buffer_stats["is_full"]:
+                logger.debug("LED buffer full - dropping frame before optimization to catch up")
+                self._stats.frames_dropped_early += 1
+                self._stats.update_dropped_frames_ewma()
+                return
+
             # Validate frame shape
             if frame_array.shape != (FRAME_HEIGHT, FRAME_WIDTH, FRAME_CHANNELS):
                 logger.warning(f"Unexpected frame shape: {frame_array.shape}")
@@ -477,6 +537,9 @@ class ConsumerProcess:
             # Update optimization FPS (independent of rendering)
             self._stats.current_optimization_fps = 1.0 / total_time if total_time > 0 else 0.0
 
+            # Update dropped frames EWMA (includes both early drops and successful processing)
+            self._stats.update_dropped_frames_ewma()
+
             # Periodic logging for pipeline debugging (every 2 seconds)
             current_time = time.time()
             if current_time - self._last_consumer_log_time >= self._consumer_log_interval:
@@ -486,10 +549,17 @@ class ConsumerProcess:
 
                 logger.info(
                     f"CONSUMER PIPELINE: {self._stats.frames_processed} frames optimized, "
+                    f"{self._stats.frames_dropped_early} dropped early, "
                     f"{self._frames_with_content} with LED content ({content_ratio:.1f}%), "
-                    f"avg FPS: {avg_fps:.1f}, opt time: {avg_opt_time * 1000:.1f}ms"
+                    f"input FPS: {self._stats.consumer_input_fps:.1f}, "
+                    f"output FPS: {self._stats.renderer_output_fps_ewma:.1f}, "
+                    f"drop rate: {self._stats.dropped_frames_percentage_ewma * 100:.1f}%, "
+                    f"opt time: {avg_opt_time * 1000:.1f}ms"
                 )
                 self._last_consumer_log_time = current_time
+
+                # Update consumer statistics in ControlState for IPC with web server
+                self._update_consumer_statistics_in_control_state()
 
             # Log performance periodically (every 100 frames)
             if self._stats.frames_processed % 100 == 0:
@@ -579,8 +649,12 @@ class ConsumerProcess:
         return {
             "running": self._running,
             "frames_processed": self._stats.frames_processed,
+            "frames_dropped_early": self._stats.frames_dropped_early,
             "current_optimization_fps": self._stats.current_optimization_fps,
             "average_optimization_fps": self._stats.get_average_fps(),
+            "consumer_input_fps": self._stats.consumer_input_fps,
+            "renderer_output_fps": self._stats.renderer_output_fps_ewma,
+            "dropped_frames_percentage": self._stats.dropped_frames_percentage_ewma * 100,  # Convert to percentage
             "total_processing_time": self._stats.total_processing_time,
             "average_optimization_time": self._stats.get_average_optimization_time(),
             "optimization_errors": self._stats.optimization_errors,
@@ -597,6 +671,15 @@ class ConsumerProcess:
             "led_buffer_stats": self._led_buffer.get_buffer_stats(),
             "renderer_stats": self._frame_renderer.get_renderer_stats(),
         }
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """
+        Get consumer process statistics (backward compatibility method).
+
+        Returns:
+            Dictionary with process statistics
+        """
+        return self.get_stats()
 
     def set_test_renderer_enabled(self, enabled: bool) -> bool:
         """
@@ -728,6 +811,27 @@ class ConsumerProcess:
             os._exit(1)
 
     # Preview data methods removed - now handled by PreviewSink
+
+    def _update_consumer_statistics_in_control_state(self) -> None:
+        """Update consumer statistics in ControlState for multi-process IPC."""
+        try:
+            # Get renderer statistics for late frame percentage
+            renderer_stats = self._frame_renderer.get_renderer_stats()
+            late_frame_percentage = renderer_stats.get("late_frame_percentage", 0.0)
+
+            # Update the control state with consumer statistics
+            status_updates = {
+                "consumer_input_fps": self._stats.consumer_input_fps,
+                "renderer_output_fps": self._stats.renderer_output_fps_ewma,
+                "dropped_frames_percentage": self._stats.dropped_frames_percentage_ewma * 100,  # Convert to percentage
+                "late_frame_percentage": late_frame_percentage,
+            }
+
+            # Update ControlState with new statistics
+            self._control_state.update_status(**status_updates)
+
+        except Exception as e:
+            logger.warning(f"Failed to update consumer statistics in ControlState: {e}")
 
     def _cleanup(self) -> None:
         """Clean up resources."""
