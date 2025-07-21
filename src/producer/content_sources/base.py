@@ -25,6 +25,7 @@ class FrameData:
     height: int  # Actual frame height
     channels: int  # Number of channels (typically 3 for RGB)
     presentation_timestamp: Optional[float] = None  # When this frame should be displayed
+    duration: Optional[float] = None  # Duration for this item in seconds
 
     def __post_init__(self):
         """Validate that frame data is in correct planar format."""

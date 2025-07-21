@@ -283,16 +283,17 @@ class VideoSource(ContentSource):
                 # Convert to planar format (3, H, W) for system consistency
                 frame_array_planar = FrameData.convert_interleaved_to_planar(frame_array_interleaved)
 
-                # Calculate presentation timestamp
+                # Calculate local presentation timestamp (from zero)
                 presentation_timestamp = frame_number / self._frame_rate if self._frame_rate > 0 else 0
 
-                # Create frame data with planar format
+                # Create frame data with planar format and duration metadata
                 frame_data = FrameData(
                     array=frame_array_planar,  # Now in planar format (3, H, W)
                     width=self._frame_width,
                     height=self._frame_height,
                     channels=3,
-                    presentation_timestamp=presentation_timestamp,
+                    presentation_timestamp=presentation_timestamp,  # Local timestamp from zero
+                    duration=self.content_info.duration,  # Total duration of this video item
                 )
 
                 # Queue frame (with timeout to avoid blocking)

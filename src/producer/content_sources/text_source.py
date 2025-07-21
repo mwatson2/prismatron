@@ -536,13 +536,14 @@ class TextContentSource(ContentSource):
         self.current_time = elapsed_time
         self.current_frame = frame_index
 
-        # Create FrameData object
+        # Create FrameData object with local timestamp (starting from zero)
         frame_data = FrameData(
             array=self._frames[frame_index],
             width=FRAME_WIDTH,
             height=FRAME_HEIGHT,
             channels=3,
-            presentation_timestamp=self.start_time + (frame_index * self.frame_interval),
+            presentation_timestamp=frame_index * self.frame_interval,  # Local timestamp from zero
+            duration=self.duration,  # Total duration of this text item
         )
 
         return frame_data

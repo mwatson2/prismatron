@@ -245,6 +245,33 @@ class ContentPlaylist:
                 return self._items[self._current_index]
             return None
 
+    def get_current_index(self) -> Optional[int]:
+        """
+        Get current playlist index.
+
+        Returns:
+            Current index or None if playlist is empty
+        """
+        with self._lock:
+            if 0 <= self._current_index < len(self._items):
+                return self._current_index
+            return None
+
+    def get_item_at_index(self, index: int) -> Optional[PlaylistItem]:
+        """
+        Get playlist item at specific index.
+
+        Args:
+            index: Index of item to get
+
+        Returns:
+            PlaylistItem at index or None if invalid index
+        """
+        with self._lock:
+            if 0 <= index < len(self._items):
+                return self._items[index]
+            return None
+
     def advance_to_next(self) -> bool:
         """
         Advance to next item in playlist.
@@ -370,6 +397,11 @@ class ProducerProcess:
         self._last_log_time = 0.0
         self._log_interval = 2.0  # Log every 2 seconds
         self._frames_with_content = 0  # Frames with non-zero content
+
+        # Global timestamp mapping state
+        self._playlist_start_time = 0.0  # When the playlist started playing
+        self._item_start_times: List[float] = []  # Cumulative start times for each item
+        self._current_item_global_offset = 0.0  # Global offset for current item
 
     def initialize(self) -> bool:
         """
@@ -726,6 +758,9 @@ class ProducerProcess:
             self._current_source = current_item.get_content_source()
             self._current_item = current_item
 
+            # Calculate global timestamp offset for this item
+            self._update_global_timestamp_offset()
+
             if not self._current_source:
                 logger.error(f"Failed to create content source: {current_item.filepath}")
                 return False
@@ -769,6 +804,39 @@ class ProducerProcess:
         except Exception as e:
             logger.error(f"Failed to advance to next content: {e}")
 
+    def _update_global_timestamp_offset(self) -> None:
+        """
+        Update the global timestamp offset for the current item.
+
+        This calculates the cumulative duration of all preceding playlist items
+        to determine where the current item should start in the global timeline.
+        """
+        try:
+            # Get current playlist position
+            current_index = self._playlist.get_current_index()
+            if current_index is None:
+                self._current_item_global_offset = 0.0
+                return
+
+            # Calculate cumulative duration of all preceding items
+            cumulative_duration = 0.0
+            for i in range(current_index):
+                item = self._playlist.get_item_at_index(i)
+                if item:
+                    item_duration = item.get_effective_duration()
+                    # Clamp duration to be at least one frame interval if it's invalid
+                    if item_duration <= 0:
+                        item_duration = self._frame_interval
+                    cumulative_duration += item_duration
+
+            self._current_item_global_offset = cumulative_duration
+
+            logger.debug(f"Global timestamp offset for item {current_index}: {self._current_item_global_offset:.3f}s")
+
+        except Exception as e:
+            logger.warning(f"Failed to update global timestamp offset: {e}")
+            self._current_item_global_offset = 0.0
+
     def _render_frame_to_buffer(self, frame_data: FrameData) -> bool:
         """
         Render frame data to shared memory buffer.
@@ -780,10 +848,24 @@ class ProducerProcess:
             True if rendered successfully, False otherwise
         """
         try:
-            # Get write buffer
+            # Calculate global presentation timestamp
+            local_timestamp = frame_data.presentation_timestamp or 0.0
+            global_timestamp = self._current_item_global_offset + local_timestamp
+
+            # Apply duration clamping for robustness
+            if frame_data.duration is not None:
+                # Ensure duration is at least one frame interval longer than the last frame timestamp
+                min_duration = local_timestamp + self._frame_interval
+                if frame_data.duration < min_duration:
+                    logger.debug(f"Clamping item duration from {frame_data.duration:.3f}s to {min_duration:.3f}s")
+                    # Update the current item's effective duration for future items
+                    if self._current_item:
+                        self._current_item.duration_override = min_duration
+
+            # Get write buffer with global timestamp
             buffer_info = self._frame_buffer.get_write_buffer(
                 timeout=0.1,  # Short timeout to avoid blocking
-                presentation_timestamp=frame_data.presentation_timestamp,
+                presentation_timestamp=global_timestamp,  # Use global timestamp
                 source_width=frame_data.width,
                 source_height=frame_data.height,
             )

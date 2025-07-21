@@ -226,13 +226,15 @@ class ImageSource(ContentSource):
             # Convert from interleaved (H, W, C) to planar (C, H, W)
             planar_image = FrameData.convert_interleaved_to_planar(image_copy)
 
-            # Create frame data with planar format
+            # Create frame data with planar format and local timestamp
+            local_timestamp = self.current_time  # This already tracks time from start
             frame_data = FrameData(
                 array=planar_image,  # Now in planar format (3, H, W)
                 width=self.content_info.width,
                 height=self.content_info.height,
                 channels=3,  # RGB
-                presentation_timestamp=self.current_time,
+                presentation_timestamp=local_timestamp,  # Local timestamp from zero
+                duration=self.duration,  # Total duration of this image item
             )
 
             # Update timing (simulate minimal frame rate)
