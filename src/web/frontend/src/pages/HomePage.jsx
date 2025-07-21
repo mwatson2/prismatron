@@ -12,9 +12,11 @@ import { useWebSocket } from '../hooks/useWebSocket'
 const HomePage = () => {
   const { playlist, isConnected, systemStatus, previewData: wsPreviewData } = useWebSocket()
   const [ledPositions, setLedPositions] = useState(null)
-  const [previewBrightness, setPreviewBrightness] = useState(0.5)
+  const [previewBrightness, setPreviewBrightness] = useState(0.8)
   const canvasRef = useRef(null)
-  const ledStampRef = useRef(null)
+  const ledStampRRef = useRef(null)
+  const ledStampGRef = useRef(null)
+  const ledStampBRef = useRef(null)
 
   const currentItem = playlist.items?.[playlist.current_index]
   const status = systemStatus
@@ -49,47 +51,56 @@ const HomePage = () => {
       }
     }
 
-    // Create LED stamp for fast rendering
-    createLEDStamp()
+    // Create LED stamps for fast rendering
+    createLEDStamps()
     fetchLedPositions()
   }, [])
 
   // Use WebSocket preview data (no need for HTTP polling)
   const previewData = wsPreviewData
 
-  // Create pre-rendered LED stamp for fast rendering
-  const createLEDStamp = () => {
-    // LED stamp (24px radius = 48px diameter)
+  // Create pre-rendered LED stamps for fast rendering with proper Gaussian shape
+  const createLEDStamps = () => {
+    // LED stamp dimensions
     const ledRadius = 24
     const ledSize = ledRadius * 2.5 * 2 // Extended for Gaussian falloff
-    const ledCanvas = document.createElement('canvas')
-    ledCanvas.width = ledCanvas.height = ledSize
-    const ledCtx = ledCanvas.getContext('2d')
-
-    // Create Gaussian falloff pattern
     const centerX = ledSize / 2
     const centerY = ledSize / 2
 
-    // Create gradient that approximates Gaussian falloff
-    const ledGradient = ledCtx.createRadialGradient(centerX, centerY, 0, centerX, centerY, ledRadius * 2.5)
-    ledGradient.addColorStop(0, 'rgba(255, 255, 255, 1.0)')     // Center: full intensity
-    ledGradient.addColorStop(0.32, 'rgba(255, 255, 255, 0.8)')  // ~1 sigma: 80%
-    ledGradient.addColorStop(0.6, 'rgba(255, 255, 255, 0.4)')   // ~2 sigma: 40%
-    ledGradient.addColorStop(0.85, 'rgba(255, 255, 255, 0.1)')  // ~2.5 sigma: 10%
-    ledGradient.addColorStop(1, 'rgba(255, 255, 255, 0)')       // Edge: transparent
+    // Helper function to create a stamp for a specific color channel
+    const createColorStamp = (red, green, blue) => {
+      const canvas = document.createElement('canvas')
+      canvas.width = canvas.height = ledSize
+      const ctx = canvas.getContext('2d')
 
-    ledCtx.fillStyle = ledGradient
-    ledCtx.fillRect(0, 0, ledSize, ledSize)
-    ledStampRef.current = ledCanvas
+      // Create radial gradient with Gaussian-like falloff
+      const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, ledRadius * 2.5)
+      gradient.addColorStop(0, `rgba(${red}, ${green}, ${blue}, 1.0)`)     // Center: full intensity
+      gradient.addColorStop(0.32, `rgba(${red}, ${green}, ${blue}, 0.8)`)  // ~1 sigma: 80%
+      gradient.addColorStop(0.6, `rgba(${red}, ${green}, ${blue}, 0.4)`)   // ~2 sigma: 40%
+      gradient.addColorStop(0.85, `rgba(${red}, ${green}, ${blue}, 0.1)`)  // ~2.5 sigma: 10%
+      gradient.addColorStop(1, `rgba(${red}, ${green}, ${blue}, 0)`)       // Edge: transparent
+
+      ctx.fillStyle = gradient
+      ctx.fillRect(0, 0, ledSize, ledSize)
+      return canvas
+    }
+
+    // Create separate stamps for R, G, B channels
+    ledStampRRef.current = createColorStamp(255, 0, 0)  // Pure red
+    ledStampGRef.current = createColorStamp(0, 255, 0)  // Pure green
+    ledStampBRef.current = createColorStamp(0, 0, 255)  // Pure blue
   }
 
-  // Fast canvas-based LED rendering using pre-rendered stamp
+  // Fast canvas-based LED rendering using pre-rendered RGB stamps
   const drawLEDs = () => {
-    if (!canvasRef.current || !ledPositions || !ledStampRef.current) return
+    if (!canvasRef.current || !ledPositions || !ledStampRRef.current || !ledStampGRef.current || !ledStampBRef.current) return
 
     const canvas = canvasRef.current
     const ctx = canvas.getContext('2d')
-    const ledStamp = ledStampRef.current
+    const stampR = ledStampRRef.current
+    const stampG = ledStampGRef.current
+    const stampB = ledStampBRef.current
 
     // Clear canvas with black background
     ctx.fillStyle = '#000000'
@@ -99,20 +110,18 @@ const HomePage = () => {
     const scaleX = canvas.width / ledPositions.frame_dimensions.width
     const scaleY = canvas.height / ledPositions.frame_dimensions.height
 
-    console.log(`Fast LED rendering: ${canvas.width}x${canvas.height}, scale: ${scaleX.toFixed(3)}x${scaleY.toFixed(3)}`)
+    console.log(`RGB Stamp LED rendering: ${canvas.width}x${canvas.height}, scale: ${scaleX.toFixed(3)}x${scaleY.toFixed(3)}`)
 
-    // Draw each LED using pre-rendered stamp
+    // Use additive blending to properly composite RGB stamps
+    ctx.globalCompositeOperation = 'lighter'
+
+    // Draw each LED using RGB stamps with alpha blending
     ledPositions.positions.forEach((position, i) => {
       const [x, y] = position
 
       // Scale coordinates to canvas size
       const canvasX = x * scaleX
       const canvasY = y * scaleY
-
-      // Log first few LEDs for debugging
-      if (i < 5) {
-        console.log(`LED ${i}: raw pos [${x}, ${y}] -> canvas [${canvasX.toFixed(1)}, ${canvasY.toFixed(1)}]`)
-      }
 
       // Determine LED color and skip dark LEDs
       if (previewData?.has_frame && previewData?.frame_data) {
@@ -126,55 +135,53 @@ const HomePage = () => {
             return
           }
 
-          // Apply brightness factor to reduce saturation
-          const adjustedR = Math.round(r * previewBrightness)
-          const adjustedG = Math.round(g * previewBrightness)
-          const adjustedB = Math.round(b * previewBrightness)
+          // Apply brightness factor and normalize to [0,1] for alpha
+          const alphaR = (r * previewBrightness) / 255
+          const alphaG = (g * previewBrightness) / 255
+          const alphaB = (b * previewBrightness) / 255
 
-          // Debug log for first few LEDs
-          if (i < 5 && (r > 0 || g > 0 || b > 0)) {
-            console.log(`LED ${i} color: rgb(${r}, ${g}, ${b}) -> rgb(${adjustedR}, ${adjustedG}, ${adjustedB}) (brightness: ${previewBrightness})`)
+          const stampX = canvasX - stampR.width / 2
+          const stampY = canvasY - stampR.height / 2
+
+          // Draw each color channel with appropriate alpha
+          if (alphaR > 0) {
+            ctx.save()
+            ctx.globalAlpha = alphaR
+            ctx.drawImage(stampR, stampX, stampY)
+            ctx.restore()
           }
 
-          // Draw LED using stamp technique
-          ctx.save()
-          ctx.globalCompositeOperation = 'screen' // Additive-like blending
-          ctx.fillStyle = `rgb(${adjustedR}, ${adjustedG}, ${adjustedB})`
-          ctx.fillRect(
-            canvasX - ledStamp.width / 2,
-            canvasY - ledStamp.height / 2,
-            ledStamp.width,
-            ledStamp.height
-          )
-          ctx.globalCompositeOperation = 'multiply'
-          ctx.drawImage(
-            ledStamp,
-            canvasX - ledStamp.width / 2,
-            canvasY - ledStamp.height / 2
-          )
-          ctx.restore()
+          if (alphaG > 0) {
+            ctx.save()
+            ctx.globalAlpha = alphaG
+            ctx.drawImage(stampG, stampX, stampY)
+            ctx.restore()
+          }
+
+          if (alphaB > 0) {
+            ctx.save()
+            ctx.globalAlpha = alphaB
+            ctx.drawImage(stampB, stampX, stampY)
+            ctx.restore()
+          }
         }
       } else {
-        // Fallback: draw dim LEDs when no preview data using stamp
+        // Fallback: draw dim white LEDs when no preview data
+        const stampX = canvasX - stampR.width / 2
+        const stampY = canvasY - stampR.height / 2
+        const dimAlpha = 0.1
+
         ctx.save()
-        ctx.globalCompositeOperation = 'screen'
-        ctx.fillStyle = 'rgb(102, 102, 102)'
-        ctx.fillRect(
-          canvasX - ledStamp.width / 2,
-          canvasY - ledStamp.height / 2,
-          ledStamp.width,
-          ledStamp.height
-        )
-        ctx.globalCompositeOperation = 'multiply'
-        ctx.globalAlpha = 0.3
-        ctx.drawImage(
-          ledStamp,
-          canvasX - ledStamp.width / 2,
-          canvasY - ledStamp.height / 2
-        )
+        ctx.globalAlpha = dimAlpha
+        ctx.drawImage(stampR, stampX, stampY)
+        ctx.drawImage(stampG, stampX, stampY)
+        ctx.drawImage(stampB, stampX, stampY)
         ctx.restore()
       }
     })
+
+    // Reset composite operation
+    ctx.globalCompositeOperation = 'source-over'
   }
 
   // Redraw LEDs when data changes
@@ -410,6 +417,18 @@ const HomePage = () => {
               <span className="text-metal-silver">Dropped Frames:</span>
               <span className={`ml-2 ${status.dropped_frames_percentage > 5 ? 'text-neon-orange' : 'text-neon-cyan'}`}>
                 {status.dropped_frames_percentage?.toFixed(1) || '0.0'}%
+              </span>
+            </div>
+            <div>
+              <span className="text-metal-silver">CPU Temp:</span>
+              <span className={`ml-2 ${status.cpu_temperature > 99 ? 'text-neon-red' : status.cpu_temperature > 80 ? 'text-neon-orange' : 'text-neon-cyan'}`}>
+                {status.cpu_temperature?.toFixed(1) || 'N/A'}°C
+              </span>
+            </div>
+            <div>
+              <span className="text-metal-silver">GPU Temp:</span>
+              <span className={`ml-2 ${status.gpu_temperature > 99 ? 'text-neon-red' : status.gpu_temperature > 80 ? 'text-neon-orange' : 'text-neon-cyan'}`}>
+                {status.gpu_temperature?.toFixed(1) || 'N/A'}°C
               </span>
             </div>
           </div>

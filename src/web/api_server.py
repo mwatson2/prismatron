@@ -49,6 +49,28 @@ from src.core.playlist_sync import (
 logger = logging.getLogger(__name__)
 
 
+def get_cpu_temperature():
+    """Get CPU temperature in Celsius from thermal zone."""
+    try:
+        with open("/sys/devices/virtual/thermal/thermal_zone0/temp") as f:
+            temp_microcelsius = int(f.read().strip())
+            return temp_microcelsius / 1000.0  # Convert microcelsius to celsius
+    except Exception as e:
+        logger.warning(f"Failed to read CPU temperature: {e}")
+        return 0.0
+
+
+def get_gpu_temperature():
+    """Get GPU temperature in Celsius from thermal zone."""
+    try:
+        with open("/sys/devices/virtual/thermal/thermal_zone1/temp") as f:
+            temp_microcelsius = int(f.read().strip())
+            return temp_microcelsius / 1000.0  # Convert microcelsius to celsius
+    except Exception as e:
+        logger.warning(f"Failed to read GPU temperature: {e}")
+        return 0.0
+
+
 # Pydantic models for API requests/responses
 class PlaylistItem(BaseModel):
     """Playlist item model."""
@@ -122,6 +144,10 @@ class SystemStatus(BaseModel):
     cpu_usage: float = Field(0.0, description="CPU usage percentage")
     led_panel_connected: bool = Field(False, description="LED panel connection status")
     led_panel_status: str = Field("disconnected", description="LED panel status (connected/connecting/disconnected)")
+
+    # Temperature metrics
+    cpu_temperature: float = Field(0.0, description="CPU temperature in Celsius")
+    gpu_temperature: float = Field(0.0, description="GPU temperature in Celsius")
 
     # New FPS and frame dropping metrics
     consumer_input_fps: float = Field(0.0, description="Consumer input FPS from producer")
@@ -500,6 +526,10 @@ async def preview_broadcast_task():
                     mem_used_gb = 0.0
                     uptime = current_time
 
+                # Get temperature readings
+                cpu_temp = get_cpu_temperature()
+                gpu_temp = get_gpu_temperature()
+
                 # Broadcast system status
                 status_data = {
                     "type": "system_status",
@@ -516,6 +546,8 @@ async def preview_broadcast_task():
                     "memory_usage": mem_percent,
                     "memory_usage_gb": mem_used_gb,
                     "cpu_usage": cpu_percent,
+                    "cpu_temperature": cpu_temp,
+                    "gpu_temperature": gpu_temp,
                     "led_panel_connected": led_panel_connected,
                     "led_panel_status": led_panel_status,
                     "consumer_input_fps": consumer_input_fps,
@@ -759,6 +791,10 @@ async def get_system_status():
         mem_used_gb = 0.0
         uptime = time.time()
 
+    # Get temperature readings
+    cpu_temp = get_cpu_temperature()
+    gpu_temp = get_gpu_temperature()
+
     # Get actual frame rate from shared memory
     frame_rate = 30.0  # Default fallback
     try:
@@ -800,6 +836,8 @@ async def get_system_status():
         memory_usage=mem_percent,
         memory_usage_gb=mem_used_gb,
         cpu_usage=cpu_percent,
+        cpu_temperature=cpu_temp,
+        gpu_temperature=gpu_temp,
         led_panel_connected=led_panel_connected,
         led_panel_status=led_panel_status,
         consumer_input_fps=consumer_input_fps,
