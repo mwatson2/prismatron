@@ -123,6 +123,12 @@ class SystemStatus(BaseModel):
     led_panel_connected: bool = Field(False, description="LED panel connection status")
     led_panel_status: str = Field("disconnected", description="LED panel status (connected/connecting/disconnected)")
 
+    # New FPS and frame dropping metrics
+    consumer_input_fps: float = Field(0.0, description="Consumer input FPS from producer")
+    renderer_output_fps: float = Field(0.0, description="Renderer output FPS (EWMA)")
+    dropped_frames_percentage: float = Field(0.0, description="Percentage of frames dropped early")
+    late_frame_percentage: float = Field(0.0, description="Percentage of late frames")
+
 
 # Global state
 playlist_state = PlaylistState()
@@ -424,12 +430,39 @@ async def preview_broadcast_task():
             if manager.active_connections:
                 current_time = time.time()
 
-                # Get LED panel connection status from consumer process
+                # Get LED panel connection status and new metrics from ControlState (IPC)
                 led_panel_connected = False
                 led_panel_status = "disconnected"
+                consumer_input_fps = 0.0
+                renderer_output_fps = 0.0
+                dropped_frames_percentage = 0.0
+                late_frame_percentage = 0.0
 
-                if consumer_process and hasattr(consumer_process, "get_statistics"):
-                    try:
+                # Get consumer statistics from ControlState (shared memory IPC)
+                try:
+                    if control_state:
+                        system_status = control_state.get_status_dict()
+
+                        # Extract consumer statistics from ControlState
+                        consumer_input_fps = system_status.get("consumer_input_fps", 0.0)
+                        renderer_output_fps = system_status.get("renderer_output_fps", 0.0)
+                        dropped_frames_percentage = system_status.get("dropped_frames_percentage", 0.0)
+                        late_frame_percentage = system_status.get("late_frame_percentage", 0.0)
+
+                        # Debug log every 10 seconds to verify values
+                        if hasattr(get_system_status, "_last_debug_log"):
+                            if current_time - get_system_status._last_debug_log > 10.0:
+                                logger.info(
+                                    f"API DEBUG (ControlState): input_fps={consumer_input_fps:.1f}, output_fps={renderer_output_fps:.1f}, dropped={dropped_frames_percentage:.1f}%"
+                                )
+                                get_system_status._last_debug_log = current_time
+                        else:
+                            get_system_status._last_debug_log = current_time
+                    else:
+                        logger.warning("API DEBUG (ControlState): no control state available")
+
+                    # Try to get LED panel connection status from consumer process if available (fallback)
+                    if consumer_process and hasattr(consumer_process, "get_statistics"):
                         consumer_stats = consumer_process.get_statistics()
                         wled_stats = consumer_stats.get("wled_stats", {})
                         led_panel_connected = wled_stats.get("is_connected", False)
@@ -441,8 +474,12 @@ async def preview_broadcast_task():
                             led_panel_status = "connecting"
                         else:
                             led_panel_status = "disconnected"
-                    except Exception as e:
-                        logger.warning(f"Failed to get LED panel status: {e}")
+                    else:
+                        # Default status when no consumer process reference
+                        led_panel_status = "unknown"
+
+                except Exception as e:
+                    logger.warning(f"Failed to get consumer statistics from ControlState: {e}")
 
                 # Get real system resource usage
                 try:
@@ -481,6 +518,10 @@ async def preview_broadcast_task():
                     "cpu_usage": cpu_percent,
                     "led_panel_connected": led_panel_connected,
                     "led_panel_status": led_panel_status,
+                    "consumer_input_fps": consumer_input_fps,
+                    "renderer_output_fps": renderer_output_fps,
+                    "dropped_frames_percentage": dropped_frames_percentage,
+                    "late_frame_percentage": late_frame_percentage,
                     "timestamp": current_time,
                 }
 
@@ -651,10 +692,40 @@ async def root():
 @app.get("/api/status", response_model=SystemStatus)
 async def get_system_status():
     """Get current system status."""
-    # Get LED panel connection status from consumer process
+    # Get LED panel connection status and new metrics from consumer process
     led_panel_connected = False
     led_panel_status = "disconnected"
+    consumer_input_fps = 0.0
+    renderer_output_fps = 0.0
+    dropped_frames_percentage = 0.0
+    late_frame_percentage = 0.0
 
+    # Get consumer statistics from ControlState (shared memory IPC)
+    try:
+        if control_state:
+            system_status = control_state.get_status_dict()
+
+            # Extract consumer statistics from ControlState
+            consumer_input_fps = system_status.get("consumer_input_fps", 0.0)
+            renderer_output_fps = system_status.get("renderer_output_fps", 0.0)
+            dropped_frames_percentage = system_status.get("dropped_frames_percentage", 0.0)
+            late_frame_percentage = system_status.get("late_frame_percentage", 0.0)
+
+            # Debug log every 10 seconds to verify values
+            current_time = time.time()
+            if hasattr(get_system_status, "_last_status_debug_log"):
+                if current_time - get_system_status._last_status_debug_log > 10.0:
+                    logger.info(
+                        f"STATUS API DEBUG (ControlState): input_fps={consumer_input_fps:.1f}, output_fps={renderer_output_fps:.1f}, dropped={dropped_frames_percentage:.1f}%"
+                    )
+                    get_system_status._last_status_debug_log = current_time
+            else:
+                get_system_status._last_status_debug_log = current_time
+
+    except Exception as e:
+        logger.warning(f"Failed to get consumer statistics from ControlState: {e}")
+
+    # Try to get LED panel connection status from consumer process if available (fallback)
     if consumer_process and hasattr(consumer_process, "get_statistics"):
         try:
             consumer_stats = consumer_process.get_statistics()
@@ -670,6 +741,9 @@ async def get_system_status():
                 led_panel_status = "disconnected"
         except Exception as e:
             logger.warning(f"Failed to get LED panel status: {e}")
+    else:
+        # Default status when no consumer process reference
+        led_panel_status = "unknown"
 
     # Get real system resource usage
     try:
@@ -728,6 +802,10 @@ async def get_system_status():
         cpu_usage=cpu_percent,
         led_panel_connected=led_panel_connected,
         led_panel_status=led_panel_status,
+        consumer_input_fps=consumer_input_fps,
+        renderer_output_fps=renderer_output_fps,
+        dropped_frames_percentage=dropped_frames_percentage,
+        late_frame_percentage=late_frame_percentage,
     )
 
 
@@ -1568,6 +1646,14 @@ def run_server(host: str = "0.0.0.0", port: int = 8000, debug: bool = False, pat
     """Run the API server."""
     global diffusion_patterns_path
     diffusion_patterns_path = patterns_path
+
+    # Create and connect to control state (shared memory created by main process)
+    api_control_state = ControlState()
+    if api_control_state.connect():
+        set_control_state(api_control_state)
+        logger.info("API server connected to control state")
+    else:
+        logger.warning("API server failed to connect to control state - FPS metrics will be unavailable")
 
     uvicorn.run(
         "src.web.api_server:app",
