@@ -182,6 +182,12 @@ class ConsumerProcess:
         self._last_consumer_log_time = 0.0
         self._consumer_log_interval = 2.0  # Log every 2 seconds
         self._frames_with_content = 0  # Frames with non-zero LED values
+
+        # Frame gap tracking for debugging
+        self._last_frame_timestamp = 0.0  # Last frame timestamp received
+        self._last_frame_receive_time = 0.0  # Last real-time when frame was received
+        self._frame_timestamp_gap_threshold = 0.1  # 100ms threshold for frame timestamp gaps
+        self._realtime_gap_threshold = 0.2  # 200ms threshold for real-time gaps
         self._optimization_thread: Optional[threading.Thread] = None
         self._renderer_thread: Optional[threading.Thread] = None
 
@@ -318,6 +324,39 @@ class ConsumerProcess:
         except Exception as e:
             logger.error(f"Error stopping consumer process: {e}")
 
+    def _track_frame_gaps(
+        self, frame_timestamp: float, receive_time: float, has_presentation_timestamp: bool = True
+    ) -> None:
+        """
+        Track and log gaps in frame timestamps and real-time frame reception.
+
+        Args:
+            frame_timestamp: Presentation timestamp of the current frame (or receive time if no presentation timestamp)
+            receive_time: Wall-clock time when frame was received
+            has_presentation_timestamp: Whether frame_timestamp is a real presentation timestamp or fallback
+        """
+        # Check for frame timestamp gaps (content timing) - only if we have real presentation timestamps
+        if has_presentation_timestamp and self._last_frame_timestamp > 0:
+            timestamp_gap = frame_timestamp - self._last_frame_timestamp
+            if timestamp_gap > self._frame_timestamp_gap_threshold:
+                logger.warning(
+                    f"Large frame timestamp gap: {timestamp_gap*1000:.1f}ms "
+                    f"(previous: {self._last_frame_timestamp:.3f}, current: {frame_timestamp:.3f})"
+                )
+
+        # Check for real-time gaps (processing timing) - always track
+        if self._last_frame_receive_time > 0:
+            realtime_gap = receive_time - self._last_frame_receive_time
+            if realtime_gap > self._realtime_gap_threshold:
+                logger.warning(
+                    f"Large real-time gap between frames: {realtime_gap*1000:.1f}ms "
+                    f"(previous: {self._last_frame_receive_time:.3f}, current: {receive_time:.3f})"
+                )
+
+        # Update tracking variables
+        self._last_frame_timestamp = frame_timestamp
+        self._last_frame_receive_time = receive_time
+
     def _optimization_loop(self) -> None:
         """Optimization thread - processes frames as fast as possible."""
         logger.info("Optimization thread started")
@@ -340,7 +379,7 @@ class ConsumerProcess:
                 self._process_frame_optimization(buffer_info)
 
             except Exception as e:
-                logger.error(f"Error in optimization loop: {e}")
+                logger.error(f"Error in optimization loop: {e}", exc_info=True)
                 time.sleep(0.1)  # Brief pause before retrying
 
         logger.info("Optimization thread ended")
@@ -365,6 +404,16 @@ class ConsumerProcess:
 
                 led_values, timestamp, metadata = led_data
 
+                # Debug logging for high FPS investigation
+                frame_count = self._stats.frames_processed
+                if frame_count % 100 == 0:  # Log every 100th frame
+                    buffer_stats = self._led_buffer.get_buffer_stats()
+                    logger.debug(
+                        f"Renderer pulling frame {frame_count}: timestamp={timestamp:.3f}, "
+                        f"buffer_depth={buffer_stats['current_count']}, "
+                        f"current_time={current_time:.3f}"
+                    )
+
                 # Render with timestamp-based timing
                 success = self._frame_renderer.render_frame_at_timestamp(led_values, timestamp, metadata)
 
@@ -376,7 +425,7 @@ class ConsumerProcess:
                     logger.warning("Frame rendering failed")
 
             except Exception as e:
-                logger.error(f"Error in rendering loop: {e}")
+                logger.error(f"Error in rendering loop: {e}", exc_info=True)
                 time.sleep(0.01)
 
         logger.info("Renderer thread ended")
@@ -454,7 +503,20 @@ class ConsumerProcess:
             # Extract frame and timestamp
             # TODO: Check get_array_interleaved to ensure this is on the GPU already
             frame_array = buffer_info.get_array_interleaved(FRAME_WIDTH, FRAME_HEIGHT, FRAME_CHANNELS)
-            timestamp = getattr(buffer_info, "presentation_timestamp", None) or time.time()
+
+            # Separate presentation timestamp from receive time for proper gap tracking
+            current_receive_time = time.time()
+            presentation_timestamp = getattr(buffer_info, "presentation_timestamp", None)
+            if presentation_timestamp is None:
+                # Use receive time as fallback, but track gaps separately
+                logger.warning(
+                    f"Frame missing presentation timestamp, using receive time {current_receive_time} for processing"
+                )
+                timestamp = current_receive_time
+                self._track_frame_gaps(timestamp, current_receive_time, has_presentation_timestamp=False)
+            else:
+                timestamp = presentation_timestamp
+                self._track_frame_gaps(timestamp, current_receive_time, has_presentation_timestamp=True)
 
             # Update consumer input FPS tracking
             self._stats.update_consumer_input_fps(timestamp)
@@ -547,6 +609,10 @@ class ConsumerProcess:
                 avg_fps = self._stats.get_average_fps()
                 avg_opt_time = self._stats.get_average_optimization_time()
 
+                # Get LED buffer stats
+                buffer_stats = self._led_buffer.get_buffer_stats()
+                buffer_depth = buffer_stats["current_count"]
+
                 logger.info(
                     f"CONSUMER PIPELINE: {self._stats.frames_processed} frames optimized, "
                     f"{self._stats.frames_dropped_early} dropped early, "
@@ -554,7 +620,8 @@ class ConsumerProcess:
                     f"input FPS: {self._stats.consumer_input_fps:.1f}, "
                     f"output FPS: {self._stats.renderer_output_fps_ewma:.1f}, "
                     f"drop rate: {self._stats.dropped_frames_percentage_ewma * 100:.1f}%, "
-                    f"opt time: {avg_opt_time * 1000:.1f}ms"
+                    f"opt time: {avg_opt_time * 1000:.1f}ms, "
+                    f"LED buffer depth: {buffer_depth}"
                 )
                 self._last_consumer_log_time = current_time
 
@@ -575,7 +642,7 @@ class ConsumerProcess:
                 )
 
         except Exception as e:
-            logger.error(f"Error in optimization: {e}")
+            logger.error(f"Error in optimization: {e}", exc_info=True)
             self._stats.optimization_errors += 1
 
     def _initialize_test_renderer(self) -> bool:

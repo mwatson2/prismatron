@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 import numpy as np
 
+from ...const import DEFAULT_CONTENT_FPS
 from .base import (
     ContentSource,
     ContentSourceRegistry,
@@ -67,7 +68,7 @@ class ImageSource(ContentSource):
         self.duration = duration
         self.content_info.content_type = ContentType.IMAGE
         self.content_info.duration = duration
-        self.content_info.fps = 1.0  # Static image, minimal fps
+        self.content_info.fps = DEFAULT_CONTENT_FPS  # Use global default fps for consistency
 
         self._image_data: Optional[np.ndarray] = None
         self._display_start_time: float = 0.0

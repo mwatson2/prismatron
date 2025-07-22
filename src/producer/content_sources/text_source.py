@@ -19,7 +19,7 @@ try:
 except ImportError:
     PIL_AVAILABLE = False
 
-from ...const import FRAME_HEIGHT, FRAME_WIDTH
+from ...const import DEFAULT_CONTENT_FPS, FRAME_HEIGHT, FRAME_WIDTH
 from .base import ContentInfo, ContentSource, ContentStatus, ContentType, FrameData
 
 logger = logging.getLogger(__name__)
@@ -86,7 +86,7 @@ class TextContentSource(ContentSource):
         # Animation and timing
         self.animation = self.config.get("animation", "static")  # static, scroll, fade
         self.duration = self.config.get("duration", 10.0)  # seconds
-        self.fps = self.config.get("fps", 30.0)
+        self.fps = self.config.get("fps", DEFAULT_CONTENT_FPS)
 
         # Text positioning
         self.alignment = self.config.get("alignment", "center")  # left, center, right

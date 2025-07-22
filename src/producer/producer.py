@@ -402,6 +402,8 @@ class ProducerProcess:
         self._playlist_start_time = 0.0  # When the playlist started playing
         self._item_start_times: List[float] = []  # Cumulative start times for each item
         self._current_item_global_offset = 0.0  # Global offset for current item
+        self._accumulated_duration = 0.0  # Accumulated actual durations from completed items
+        self._last_frame_duration: Optional[float] = None  # Duration from last frame for accumulation
 
     def initialize(self) -> bool:
         """
@@ -684,10 +686,9 @@ class ProducerProcess:
                 self._control_state.set_play_state(PlayState.STOPPED)
                 return
 
-            # Check frame timing
+            # Producer should output frames as fast as possible
+            # Frame rate is determined by content timestamps, not throttling
             current_time = time.time()
-            if current_time - self._last_frame_time < self._frame_interval:
-                return  # Not time for next frame yet
 
             # Get next frame from content source
             frame_data = self._current_source.get_next_frame()
@@ -703,7 +704,14 @@ class ProducerProcess:
                     self._last_frame_time = current_time
 
             elif self._current_source.is_finished():
-                # Content finished, advance to next
+                # Content finished, accumulate actual duration and advance to next
+                if self._last_frame_duration is not None:
+                    self._accumulated_duration += self._last_frame_duration
+                    logger.debug(
+                        f"Item completed - accumulated {self._last_frame_duration:.3f}s, total now {self._accumulated_duration:.3f}s"
+                    )
+                    self._last_frame_duration = None  # Reset for next item
+
                 logger.info(f"PRODUCER FRAMES: Content finished for {self._current_item.filepath}")
                 self._advance_to_next_content()
             else:
@@ -808,29 +816,14 @@ class ProducerProcess:
         """
         Update the global timestamp offset for the current item.
 
-        This calculates the cumulative duration of all preceding playlist items
-        to determine where the current item should start in the global timeline.
+        Uses accumulated actual durations from completed items rather than
+        playlist metadata to handle duration variations.
         """
         try:
-            # Get current playlist position
+            # Simply use the accumulated duration from completed items
+            self._current_item_global_offset = self._accumulated_duration
+
             current_index = self._playlist.get_current_index()
-            if current_index is None:
-                self._current_item_global_offset = 0.0
-                return
-
-            # Calculate cumulative duration of all preceding items
-            cumulative_duration = 0.0
-            for i in range(current_index):
-                item = self._playlist.get_item_at_index(i)
-                if item:
-                    item_duration = item.get_effective_duration()
-                    # Clamp duration to be at least one frame interval if it's invalid
-                    if item_duration <= 0:
-                        item_duration = self._frame_interval
-                    cumulative_duration += item_duration
-
-            self._current_item_global_offset = cumulative_duration
-
             logger.debug(f"Global timestamp offset for item {current_index}: {self._current_item_global_offset:.3f}s")
 
         except Exception as e:
@@ -861,6 +854,9 @@ class ProducerProcess:
                     # Update the current item's effective duration for future items
                     if self._current_item:
                         self._current_item.duration_override = min_duration
+
+                # Track the last frame duration for accumulation when item completes
+                self._last_frame_duration = max(frame_data.duration, min_duration)
 
             # Get write buffer with global timestamp
             buffer_info = self._frame_buffer.get_write_buffer(

@@ -46,3 +46,6 @@ WLED_MAX_FPS = 60  # Maximum frame rate for WLED updates
 WLED_MIN_FRAME_INTERVAL = 1.0 / WLED_MAX_FPS  # Minimum time between frames
 WLED_TIMEOUT_SECONDS = 5.0  # Network timeout for WLED communication
 WLED_RETRY_COUNT = 3  # Number of retries for failed transmissions
+
+# Content Source Frame Rate Configuration
+DEFAULT_CONTENT_FPS = 15.0  # Default frame rate for static content (images, text effects)

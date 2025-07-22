@@ -85,6 +85,8 @@ class FrameRenderer:
         self.ewma_late_fraction = 0.0
         self.ewma_dropped_fraction = 0.0
         self.last_ewma_update = 0.0
+        self.last_frame_timestamp = 0.0  # Last frame timestamp for interval calculation
+        self.large_timestamp_gap_threshold = 2.0  # Log gaps larger than 2 seconds
 
         # Timing distribution tracking
         self.timing_errors = []  # Track last 100 timing errors for analysis
@@ -247,6 +249,14 @@ class FrameRenderer:
         # Track timing error for statistics
         self._track_timing_error(time_diff)
 
+        # Debug logging for high FPS investigation
+        if self.frames_rendered % 1 == 0:  # Log every frame
+            logger.debug(
+                f"Frame {self.frames_rendered}: timestamp={frame_timestamp:.3f}, "
+                f"target_wall={target_wallclock:.3f}, current_wall={current_wallclock:.3f}, "
+                f"time_diff={time_diff*1000:.1f}ms, ewma_fps={self.ewma_fps:.1f}"
+            )
+
         try:
             if time_diff > self.timing_tolerance:
                 # Late frame - render immediately
@@ -274,7 +284,7 @@ class FrameRenderer:
                 self._send_to_outputs(led_values, metadata)
 
             self.frames_rendered += 1
-            self._update_ewma_statistics()
+            self._update_ewma_statistics(frame_timestamp)
             return True
 
         except Exception as e:
@@ -370,18 +380,30 @@ class FrameRenderer:
         if len(self.timing_errors) > self.max_timing_history:
             self.timing_errors = self.timing_errors[-self.max_timing_history :]
 
-    def _update_ewma_statistics(self) -> None:
+    def _update_ewma_statistics(self, frame_timestamp: float) -> None:
         """
         Update EWMA-based statistics for recent performance tracking.
+
+        Args:
+            frame_timestamp: Current frame's presentation timestamp
         """
         current_time = time.time()
 
-        # Calculate instantaneous values
-        if self.last_ewma_update > 0:
-            frame_interval = current_time - self.last_ewma_update
-            instant_fps = 1.0 / frame_interval if frame_interval > 0 else 0.0
+        # Log large timestamp gaps that might indicate transitions
+        if self.last_frame_timestamp > 0:
+            frame_interval = frame_timestamp - self.last_frame_timestamp
+            if frame_interval > self.large_timestamp_gap_threshold:
+                logger.warning(
+                    f"Large frame timestamp gap detected: {frame_interval:.3f}s "
+                    f"(previous: {self.last_frame_timestamp:.3f}, current: {frame_timestamp:.3f})"
+                )
 
-            # Update EWMA FPS
+        # Calculate instantaneous values based on wall-clock render timing
+        if self.last_ewma_update > 0:
+            wall_clock_interval = current_time - self.last_ewma_update
+            instant_fps = 1.0 / wall_clock_interval if wall_clock_interval > 0 else 0.0
+
+            # Update EWMA FPS based on actual render timing
             if self.ewma_fps == 0.0:
                 self.ewma_fps = instant_fps
             else:
@@ -403,6 +425,7 @@ class FrameRenderer:
             ) * self.ewma_dropped_fraction + self.ewma_alpha * dropped_fraction
 
         self.last_ewma_update = current_time
+        self.last_frame_timestamp = frame_timestamp
 
     def _convert_spatial_to_physical(self, led_values: np.ndarray) -> np.ndarray:
         """
@@ -512,6 +535,7 @@ class FrameRenderer:
         self.ewma_late_fraction = 0.0
         self.ewma_dropped_fraction = 0.0
         self.last_ewma_update = 0.0
+        self.last_frame_timestamp = 0.0
 
         logger.debug("Renderer statistics reset")
 

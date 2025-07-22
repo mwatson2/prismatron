@@ -241,7 +241,7 @@ EFFECT_PRESETS = [
             "alignment": "center",
             "vertical_alignment": "center",
             "duration": 10.0,
-            "fps": 30.0,
+            "fps": 30.0,  # Note: This will be overridden by DEFAULT_CONTENT_FPS in text_source.py
         },
         category="text",
         icon="📝",
@@ -1747,11 +1747,12 @@ def run_server(host: str = "0.0.0.0", port: int = 8000, debug: bool = False, pat
     else:
         logger.warning("API server failed to connect to control state - FPS metrics will be unavailable")
 
+    # For a multi-process LED system, disable auto-reload to avoid file watching noise
     uvicorn.run(
         "src.web.api_server:app",
         host=host,
         port=port,
-        reload=debug,
+        reload=False,  # Disabled to prevent watchfiles logging noise
         log_level="debug" if debug else "info",
     )
 
