@@ -136,6 +136,8 @@ class ConsumerProcess:
         self._led_optimizer = LEDOptimizer(
             diffusion_patterns_path=diffusion_patterns_path,
         )
+
+        # Note: Playlist sync handled by producer, consumer just tracks rendered items
         # Configure WLED client
         wled_config = WLEDSinkConfig(
             host=wled_host,
@@ -191,6 +193,9 @@ class ConsumerProcess:
         self._optimization_thread: Optional[threading.Thread] = None
         self._renderer_thread: Optional[threading.Thread] = None
 
+        # Track last rendered playlist item index to detect transitions
+        self._last_rendered_item_index = -1
+
         # Performance settings
         self.max_frame_wait_timeout = 1.0
         self.brightness_scale = 1.0
@@ -214,6 +219,18 @@ class ConsumerProcess:
         """
         try:
             logger.info("Initializing consumer process...")
+
+            # Set LED optimizer logging to WARNING to reduce noise
+            led_optimizer_logger = logging.getLogger("src.consumer.led_optimizer")
+            led_optimizer_logger.setLevel(logging.WARNING)
+
+            # Set sparse tensor logging to WARNING to reduce noise
+            sparse_tensor_logger = logging.getLogger("src.utils.single_block_sparse_tensor")
+            sparse_tensor_logger.setLevel(logging.WARNING)
+
+            # Set compute kernel logging to WARNING to reduce noise
+            compute_kernel_logger = logging.getLogger("src.utils.kernels.compute_optimized_3d_int8")
+            compute_kernel_logger.setLevel(logging.WARNING)
 
             # Connect to shared memory buffer (required)
             if not self._frame_consumer.connect():
@@ -251,6 +268,8 @@ class ConsumerProcess:
             # Connect preview sink to frame renderer for statistics
             if self._preview_sink:
                 self._preview_sink.set_frame_renderer(self._frame_renderer)
+
+            # Note: Playlist sync handled by producer - consumer just logs renderer transitions
 
             self._initialized = True
             logger.info("Consumer process initialized successfully")
@@ -404,6 +423,17 @@ class ConsumerProcess:
 
                 led_values, timestamp, metadata = led_data
 
+                # Handle playlist item transitions at render time (not optimization time)
+                if metadata and metadata.get("is_first_frame_of_item", False):
+                    playlist_item_index = metadata.get("playlist_item_index", -1)
+                    if playlist_item_index >= 0 and playlist_item_index != self._last_rendered_item_index:
+                        logger.info(f"RENDERER: Starting to render playlist item {playlist_item_index}")
+                        self._last_rendered_item_index = playlist_item_index
+
+                        # Note: Don't send position updates to sync service as this creates a feedback loop
+                        # The producer already sends next_item() commands when content finishes
+                        # UI should be synchronized to producer state, not renderer state
+
                 # Debug logging for high FPS investigation
                 frame_count = self._stats.frames_processed
                 if frame_count % 100 == 0:  # Log every 100th frame
@@ -506,25 +536,30 @@ class ConsumerProcess:
 
             # Separate presentation timestamp from receive time for proper gap tracking
             current_receive_time = time.time()
-            presentation_timestamp = getattr(buffer_info, "presentation_timestamp", None)
-            if presentation_timestamp is None:
+            if buffer_info.metadata and hasattr(buffer_info.metadata, "presentation_timestamp"):
+                timestamp = buffer_info.metadata.presentation_timestamp
+                self._track_frame_gaps(timestamp, current_receive_time, has_presentation_timestamp=True)
+            else:
                 # Use receive time as fallback, but track gaps separately
                 logger.warning(
-                    f"Frame missing presentation timestamp, using receive time {current_receive_time} for processing"
+                    f"Frame missing presentation timestamp metadata, using receive time {current_receive_time} for processing"
                 )
                 timestamp = current_receive_time
                 self._track_frame_gaps(timestamp, current_receive_time, has_presentation_timestamp=False)
-            else:
-                timestamp = presentation_timestamp
-                self._track_frame_gaps(timestamp, current_receive_time, has_presentation_timestamp=True)
+
+            # Read playlist metadata for renderer synchronization
+            playlist_item_index = -1
+            is_first_frame_of_item = False
+            if buffer_info.metadata:
+                playlist_item_index = buffer_info.metadata.playlist_item_index
+                is_first_frame_of_item = buffer_info.metadata.is_first_frame_of_item
 
             # Update consumer input FPS tracking
             self._stats.update_consumer_input_fps(timestamp)
 
-            # Check if LED buffer is full - drop frame early to reduce optimization workload
-            buffer_stats = self._led_buffer.get_buffer_stats()
-            if buffer_stats["is_full"]:
-                logger.debug("LED buffer full - dropping frame before optimization to catch up")
+            # Check if frame is already late - drop if so, otherwise proceed with optimization
+            if self._frame_renderer.is_frame_late(timestamp, late_threshold_ms=50.0):
+                logger.debug(f"Frame already late (timestamp={timestamp:.3f}) - dropping before optimization")
                 self._stats.frames_dropped_early += 1
                 self._stats.update_dropped_frames_ewma()
                 return
@@ -581,7 +616,11 @@ class ConsumerProcess:
                     "converged": result.converged,
                     "iterations": result.iterations,
                     "error_metrics": result.error_metrics,
+                    "playlist_item_index": playlist_item_index,
+                    "is_first_frame_of_item": is_first_frame_of_item,
                 },
+                block=True,  # Use backpressure - wait for renderer to free up space
+                timeout=2.0,  # Timeout after 2 seconds to avoid hanging
             )
 
             # Preview data is now handled by PreviewSink in frame renderer
@@ -909,6 +948,8 @@ class ConsumerProcess:
 
             if hasattr(self, "_test_renderer") and self._test_renderer:
                 self._test_renderer.stop()
+
+            # Note: No playlist sync client to cleanup in consumer
 
             if hasattr(self, "_wled_client"):
                 self._wled_client.disconnect()

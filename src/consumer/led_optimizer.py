@@ -84,7 +84,9 @@ class LEDOptimizer:
             use_mixed_tensor: Deprecated parameter - always uses mixed tensor format
             enable_performance_timing: If True, enable detailed performance timing
         """
-        self.diffusion_patterns_path = diffusion_patterns_path or "diffusion_patterns/synthetic_1000"
+        if diffusion_patterns_path is None:
+            raise ValueError("diffusion_patterns_path must be provided - no default fallback")
+        self.diffusion_patterns_path = diffusion_patterns_path
         self.use_mixed_tensor = use_mixed_tensor
 
         # Performance timing

@@ -46,6 +46,8 @@ class FrameMetadata:
     source_width: int  # Actual content width within buffer
     source_height: int  # Actual content height within buffer
     capture_timestamp: float  # When this frame was captured/created
+    playlist_item_index: int = -1  # Current playlist item index for renderer sync
+    is_first_frame_of_item: bool = False  # True if this is the first frame of a new playlist item
 
 
 @dataclass
@@ -465,6 +467,8 @@ class FrameProducer(FrameRingBuffer):
         presentation_timestamp: Optional[float] = None,
         source_width: Optional[int] = None,
         source_height: Optional[int] = None,
+        playlist_item_index: Optional[int] = None,
+        is_first_frame_of_item: bool = False,
     ) -> Optional[BufferInfo]:
         """
         Get the next buffer available for writing (producer process).
@@ -477,6 +481,8 @@ class FrameProducer(FrameRingBuffer):
             presentation_timestamp: When this frame should be displayed (defaults to current time)
             source_width: Actual content width within buffer (defaults to full buffer width)
             source_height: Actual content height within buffer (defaults to full buffer height)
+            playlist_item_index: Current playlist item index (for renderer synchronization)
+            is_first_frame_of_item: True if this is the first frame of a new playlist item
 
         Returns:
             Dictionary with buffer info or None if not available within timeout
@@ -517,6 +523,8 @@ class FrameProducer(FrameRingBuffer):
                             self._metadata_array[write_idx]["source_width"] = source_width
                             self._metadata_array[write_idx]["source_height"] = source_height
                             self._metadata_array[write_idx]["capture_timestamp"] = current_time
+                            self._metadata_array[write_idx]["playlist_item_index"] = playlist_item_index or -1
+                            self._metadata_array[write_idx]["is_first_frame_of_item"] = is_first_frame_of_item
 
                         # Create metadata object for return
                         metadata = FrameMetadata(
@@ -727,6 +735,8 @@ class FrameConsumer(FrameRingBuffer):
                                 source_width=int(metadata_record["source_width"]),
                                 source_height=int(metadata_record["source_height"]),
                                 capture_timestamp=float(metadata_record["capture_timestamp"]),
+                                playlist_item_index=int(metadata_record["playlist_item_index"]),
+                                is_first_frame_of_item=bool(metadata_record["is_first_frame_of_item"]),
                             )
 
                         buffer_info = BufferInfo(

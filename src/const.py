@@ -22,6 +22,8 @@ METADATA_DTYPE: np.dtype = np.dtype(
         ("source_width", np.int32),
         ("source_height", np.int32),
         ("capture_timestamp", np.float64),
+        ("playlist_item_index", np.int32),  # Current playlist item index for renderer sync
+        ("is_first_frame_of_item", np.bool_),  # True if this is the first frame of a new playlist item
     ]
 )
 

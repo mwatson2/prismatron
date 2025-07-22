@@ -64,7 +64,12 @@ class LEDBuffer:
         return (led_bytes + timestamp_bytes) / (1024 * 1024)
 
     def write_led_values(
-        self, led_values: np.ndarray, timestamp: float, metadata: Optional[Dict[str, Any]] = None
+        self,
+        led_values: np.ndarray,
+        timestamp: float,
+        metadata: Optional[Dict[str, Any]] = None,
+        block: bool = False,
+        timeout: float = 1.0,
     ) -> bool:
         """
         Write LED values to buffer with timestamp.
@@ -73,18 +78,40 @@ class LEDBuffer:
             led_values: LED RGB values, shape (led_count, 3) or (3, led_count)
             timestamp: Frame timestamp
             metadata: Optional metadata dictionary
+            block: If True, wait for space instead of dropping frames
+            timeout: Maximum time to wait for space when blocking
 
         Returns:
-            True if written successfully, False if buffer overflow
+            True if written successfully, False if buffer overflow or timeout
         """
+        if block:
+            # Blocking mode: wait for space with timeout
+            import time
+
+            start_time = time.time()
+            while True:
+                with self.lock:
+                    if self.count < self.buffer_size:
+                        break  # Space available, proceed with write
+                if time.time() - start_time > timeout:
+                    logger.warning(f"LED buffer write timeout after {timeout:.1f}s")
+                    return False
+                # Brief sleep before checking again
+                time.sleep(0.001)
+
         with self.lock:
-            # Handle buffer overflow
+            # Handle buffer overflow (non-blocking mode only)
             if self.count >= self.buffer_size:
-                logger.warning("LED buffer overflow - dropping oldest frame")
-                self.overflow_count += 1
-                # Advance read index to make space
-                self.read_index = (self.read_index + 1) % self.buffer_size
-                self.count -= 1
+                if not block:  # Only drop in non-blocking mode
+                    logger.warning("LED buffer overflow - dropping oldest frame")
+                    self.overflow_count += 1
+                    # Advance read index to make space
+                    self.read_index = (self.read_index + 1) % self.buffer_size
+                    self.count -= 1
+                else:
+                    # This shouldn't happen in blocking mode, but safety check
+                    logger.error("LED buffer still full after blocking wait")
+                    return False
 
             # Validate and convert LED values format
             if led_values.shape == (3, LED_COUNT):

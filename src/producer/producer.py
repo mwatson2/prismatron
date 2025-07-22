@@ -378,6 +378,7 @@ class ProducerProcess:
         # Current content and state
         self._current_source: Optional[ContentSource] = None
         self._current_item: Optional[PlaylistItem] = None
+        self._is_first_frame_of_current_item = True  # Track first frame of each playlist item
 
         # Threading and timing
         self._producer_thread: Optional[threading.Thread] = None
@@ -765,6 +766,7 @@ class ProducerProcess:
             logger.info(f"PRODUCER CONTENT: Loading content source for {current_item.filepath}")
             self._current_source = current_item.get_content_source()
             self._current_item = current_item
+            self._is_first_frame_of_current_item = True  # Reset flag for new item
 
             # Calculate global timestamp offset for this item
             self._update_global_timestamp_offset()
@@ -858,12 +860,14 @@ class ProducerProcess:
                 # Track the last frame duration for accumulation when item completes
                 self._last_frame_duration = max(frame_data.duration, min_duration)
 
-            # Get write buffer with global timestamp
+            # Get write buffer with global timestamp and playlist information
             buffer_info = self._frame_buffer.get_write_buffer(
                 timeout=0.1,  # Short timeout to avoid blocking
                 presentation_timestamp=global_timestamp,  # Use global timestamp
                 source_width=frame_data.width,
                 source_height=frame_data.height,
+                playlist_item_index=self._playlist.get_current_index(),
+                is_first_frame_of_item=self._is_first_frame_of_current_item,
             )
 
             if not buffer_info:
@@ -884,6 +888,10 @@ class ProducerProcess:
             if not self._frame_buffer.advance_write():
                 logger.warning("Failed to advance write buffer")
                 return False
+
+            # Mark that we've written the first frame of this item
+            if self._is_first_frame_of_current_item:
+                self._is_first_frame_of_current_item = False
 
             return True
 

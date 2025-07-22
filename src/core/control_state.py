@@ -642,7 +642,6 @@ class ControlState:
             for field_name, value in updates.items():
                 if hasattr(current_status, field_name):
                     setattr(current_status, field_name, value)
-                    logger.info(f"Updated status field '{field_name}' to {value}")
                 else:
                     logger.warning(f"Unknown status field: {field_name}")
 

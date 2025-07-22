@@ -615,3 +615,28 @@ class FrameRenderer:
     def is_initialized(self) -> bool:
         """Check if renderer is initialized with timing delta."""
         return self.first_frame_received and self.wallclock_delta is not None
+
+    def is_frame_late(self, frame_timestamp: float, late_threshold_ms: float = 50.0) -> bool:
+        """
+        Check if a frame is already late for rendering.
+
+        Args:
+            frame_timestamp: Presentation timestamp of the frame
+            late_threshold_ms: Threshold in milliseconds for considering a frame late
+
+        Returns:
+            True if frame is late and should be dropped, False if frame should be processed
+        """
+        if not self.is_initialized():
+            # If renderer not initialized, we can't determine timing - process the frame
+            return False
+
+        # Calculate target wallclock time
+        target_wallclock = frame_timestamp + self.wallclock_delta
+        current_wallclock = time.time()
+
+        # Time difference (positive = late)
+        time_diff = current_wallclock - target_wallclock
+        late_threshold = late_threshold_ms / 1000.0
+
+        return time_diff > late_threshold
