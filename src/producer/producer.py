@@ -18,6 +18,7 @@ from ..core.control_state import ControlState, PlayState, SystemState
 from ..core.playlist_sync import PlaylistState as SyncPlaylistState
 from ..core.playlist_sync import PlaylistSyncClient
 from ..core.shared_buffer import FrameProducer
+from ..utils.frame_timing import FrameTimingData
 from .content_sources import (
     ContentSource,
     ContentSourceRegistry,
@@ -832,6 +833,37 @@ class ProducerProcess:
             logger.warning(f"Failed to update global timestamp offset: {e}")
             self._current_item_global_offset = 0.0
 
+    def _update_timing_data_in_shared_memory(self, buffer_info, timing_data: FrameTimingData) -> None:
+        """
+        Update timing data fields in shared memory metadata.
+
+        Args:
+            buffer_info: Buffer info object from frame buffer
+            timing_data: Timing data to store
+        """
+        try:
+            # Get the frame buffer's metadata array to update timing fields
+            if hasattr(self._frame_buffer, "_metadata_array") and self._frame_buffer._metadata_array is not None:
+                # Use the actual buffer index that was allocated
+                buffer_idx = buffer_info.buffer_index
+
+                # Update timing fields in shared memory
+                metadata_record = self._frame_buffer._metadata_array[buffer_idx]
+                logger.debug(
+                    f"Producer writing to buffer {buffer_idx}: frame_index={timing_data.frame_index} -> shared memory"
+                )
+                metadata_record["frame_index"] = timing_data.frame_index
+                metadata_record["plugin_timestamp"] = timing_data.plugin_timestamp
+                metadata_record["producer_timestamp"] = timing_data.producer_timestamp
+                metadata_record["item_duration"] = timing_data.item_duration
+                metadata_record["write_to_buffer_time"] = timing_data.write_to_buffer_time or 0.0
+                logger.debug(
+                    f"Producer wrote to shared memory buffer {buffer_idx}: frame_index={metadata_record['frame_index']}"
+                )
+
+        except Exception as e:
+            logger.warning(f"Producer: Failed to update timing data in shared memory: {e}")
+
     def _render_frame_to_buffer(self, frame_data: FrameData) -> bool:
         """
         Render frame data to shared memory buffer.
@@ -847,6 +879,30 @@ class ProducerProcess:
             local_timestamp = frame_data.presentation_timestamp or 0.0
             global_timestamp = self._current_item_global_offset + local_timestamp
 
+            # Get write buffer with global timestamp and playlist information FIRST
+            # Use longer timeout since waiting for buffer availability is normal flow control
+            buffer_info = self._frame_buffer.get_write_buffer(
+                timeout=2.0,  # Reasonable timeout for normal flow control
+                presentation_timestamp=global_timestamp,  # Use global timestamp
+                source_width=frame_data.width,
+                source_height=frame_data.height,
+                playlist_item_index=self._playlist.get_current_index(),
+                is_first_frame_of_item=self._is_first_frame_of_current_item,
+            )
+
+            if not buffer_info:
+                # This indicates a more serious issue if we timeout after 2 seconds
+                logger.error("Unable to get write buffer after 2s timeout - consumer may be blocked")
+                return False
+
+            # Use the circular buffer's frame ID to ensure perfect synchronization
+            timing_data = FrameTimingData(
+                frame_index=buffer_info.frame_id,  # Matches the actual frame position in circular buffer
+                plugin_timestamp=local_timestamp,  # 0-based timestamp from content plugin
+                producer_timestamp=global_timestamp,  # Global presentation timestamp
+                item_duration=self._current_item.get_effective_duration() if self._current_item else 0.0,
+            )
+
             # Apply duration clamping for robustness
             if frame_data.duration is not None:
                 # Ensure duration is at least one frame interval longer than the last frame timestamp
@@ -860,25 +916,28 @@ class ProducerProcess:
                 # Track the last frame duration for accumulation when item completes
                 self._last_frame_duration = max(frame_data.duration, min_duration)
 
-            # Get write buffer with global timestamp and playlist information
-            buffer_info = self._frame_buffer.get_write_buffer(
-                timeout=0.1,  # Short timeout to avoid blocking
-                presentation_timestamp=global_timestamp,  # Use global timestamp
-                source_width=frame_data.width,
-                source_height=frame_data.height,
-                playlist_item_index=self._playlist.get_current_index(),
-                is_first_frame_of_item=self._is_first_frame_of_current_item,
-            )
+                # Update timing data with clamped duration
+                timing_data.item_duration = max(frame_data.duration, min_duration)
 
-            if not buffer_info:
-                logger.warning("Failed to get write buffer")
-                return False
+            # Attach timing data to buffer metadata
+            if buffer_info.metadata:
+                buffer_info.metadata.timing_data = timing_data
 
             # Get buffer array in planar format (3, H, W)
             buffer_array = buffer_info.get_array(FRAME_WIDTH, FRAME_HEIGHT, FRAME_CHANNELS)
 
             # Scale and copy frame data to buffer (both in planar format)
             self._copy_frame_to_buffer(frame_data, buffer_array)
+
+            # Mark write-to-buffer time after data is copied
+            timing_data.mark_write_to_buffer()
+
+            # Update timing data in shared memory metadata
+            buffer_idx = timing_data.frame_index % self._frame_buffer.buffer_count
+            logger.debug(
+                f"Writing timing data to shared memory: frame_index={timing_data.frame_index}, calculated_buffer_idx={buffer_idx}"
+            )
+            self._update_timing_data_in_shared_memory(buffer_info, timing_data)
 
             # Check if frame has non-zero content for logging
             if buffer_array.max() > 0:

@@ -23,6 +23,7 @@ from ..const import (
     FRAME_WIDTH,
     METADATA_DTYPE,
 )
+from ..utils.frame_timing import FrameTimingData
 
 # Check for shared_memory availability (Python 3.8+)
 try:
@@ -48,6 +49,7 @@ class FrameMetadata:
     capture_timestamp: float  # When this frame was captured/created
     playlist_item_index: int = -1  # Current playlist item index for renderer sync
     is_first_frame_of_item: bool = False  # True if this is the first frame of a new playlist item
+    timing_data: Optional[FrameTimingData] = None  # Detailed timing information for performance analysis
 
 
 @dataclass
@@ -57,6 +59,7 @@ class BufferInfo:
     buffer: memoryview  # Raw buffer access
     timestamp: float
     frame_id: int
+    buffer_index: int  # Actual buffer index in circular buffer
     metadata: Optional[FrameMetadata] = None
 
     def get_array(self, width: int, height: int, channels: int = FRAME_CHANNELS) -> np.ndarray:
@@ -112,6 +115,7 @@ class FrameRingBuffer:
 
         # Local state (not shared across processes)
         self._local_read_index = 0  # Last frame we've read
+        self._local_read_buffer = 0  # Next buffer index to read from
         self._local_frame_counter = 0
 
         self._initialized = False
@@ -233,19 +237,21 @@ class FrameRingBuffer:
         # Get the minimum consumed frame from shared memory
         min_consumed_frame = self._get_min_consumed_frame()
 
-        # Special case: if no frames have been consumed yet (min_consumed_frame == 0)
-        # and we haven't filled all buffers, allow writing
-        if min_consumed_frame == 0 and current_frame < self.buffer_count:
-            return True
-
         # We can write if the frame we're about to write is not more than
         # buffer_count frames ahead of consumption
         next_frame = current_frame + 1
         frames_ahead = next_frame - min_consumed_frame
 
-        # Allow writing if we're not too far ahead
-        # For no consumer case, allow some buffering before blocking
-        max_frames_ahead = self.buffer_count if min_consumed_frame > 0 else self.buffer_count * 2
+        # For triple buffering, we should only allow buffer_count frames ahead
+        # This ensures we don't overwrite unconsumed frames
+        max_frames_ahead = self.buffer_count
+
+        # Special case: if no consumer has started yet (min_consumed_frame == 0),
+        # only allow filling the initial buffers once, then block
+        if min_consumed_frame == 0:
+            # Only allow buffer_count frames total before blocking for consumer
+            return current_frame < self.buffer_count
+
         return frames_ahead <= max_frames_ahead
 
     def get_status(self) -> Dict:
@@ -437,6 +443,13 @@ class FrameProducer(FrameRingBuffer):
                 self._metadata_array["source_width"] = FRAME_WIDTH
                 self._metadata_array["source_height"] = FRAME_HEIGHT
                 self._metadata_array["capture_timestamp"] = 0.0
+                # Initialize timing data fields
+                self._metadata_array["frame_index"] = 0
+                self._metadata_array["plugin_timestamp"] = 0.0
+                self._metadata_array["producer_timestamp"] = 0.0
+                self._metadata_array["item_duration"] = 0.0
+                self._metadata_array["write_to_buffer_time"] = 0.0
+                self._metadata_array["read_from_buffer_time"] = 0.0
 
             # Control array structure:
             # [0] = current write buffer index (0, 1, or 2)
@@ -538,10 +551,11 @@ class FrameProducer(FrameRingBuffer):
                             buffer=memoryview(self._shared_memory[write_idx].buf),
                             timestamp=current_time,
                             frame_id=current_frame + 1,  # Next frame to be written
+                            buffer_index=write_idx,  # Actual buffer index allocated
                             metadata=metadata,
                         )
 
-                        logger.debug(f"Producer got write buffer {write_idx}")
+                        logger.debug(f"Producer got write buffer {write_idx}, frame id {buffer_info.frame_id}")
                         return buffer_info
 
                 # Buffer not available, wait briefly and retry
@@ -706,30 +720,53 @@ class FrameConsumer(FrameRingBuffer):
                 with self._lock:  # Quick atomic check
                     current_frame = self._get_frame_counter()
 
-                    # Check if there's new data since our last read
+                    # Check if there's a new frame available at our next expected buffer
                     if current_frame > self._local_read_index:
-                        # Find the most recent completed buffer
-                        write_idx = self._get_write_index()
+                        # Calculate which frame we should read next
+                        next_frame = self._local_read_index + 1
 
-                        # The most recent completed buffer is the one before current write
-                        read_idx = (write_idx - 1) % self.buffer_count
-                        timestamp = self._get_buffer_timestamp(read_idx)
+                        # Check if this frame exists (hasn't been overwritten)
+                        if next_frame <= current_frame and (current_frame - next_frame) < self.buffer_count:
+                            # The frame is available - calculate which buffer it's in
+                            # For frame N, buffer index is (N-1) % buffer_count
+                            read_idx = (next_frame - 1) % self.buffer_count
+                            timestamp = self._get_buffer_timestamp(read_idx)
 
-                        # Update the shared read index to indicate which buffer we're reading
-                        # This tells the producer which buffer is currently being consumed
-                        self._set_read_index(read_idx)
+                            # Update the shared read index to indicate which buffer we're reading
+                            self._set_read_index(read_idx)
 
-                        # Update the minimum consumed frame counter
-                        # This tracks the highest frame number that has been consumed
-                        self._set_min_consumed_frame(current_frame)
+                            # Update the minimum consumed frame counter to this frame
+                            self._set_min_consumed_frame(next_frame)
 
-                        # Update our local read position
-                        self._local_read_index = current_frame
+                            # Update our local read position
+                            self._local_read_index = next_frame
+                            self._local_read_buffer = (self._local_read_buffer + 1) % self.buffer_count
 
                         # Read metadata for this buffer
                         metadata = None
                         if self._metadata_array is not None:
                             metadata_record = self._metadata_array[read_idx]
+
+                            # Reconstruct timing data from shared memory fields
+                            timing_data = None
+                            if metadata_record["frame_index"] > 0:  # Valid timing data present
+                                # Mark read time in shared memory
+                                current_read_time = time.time()
+                                metadata_record["read_from_buffer_time"] = current_read_time
+
+                                timing_data = FrameTimingData(
+                                    frame_index=int(metadata_record["frame_index"]),
+                                    plugin_timestamp=float(metadata_record["plugin_timestamp"]),
+                                    producer_timestamp=float(metadata_record["producer_timestamp"]),
+                                    item_duration=float(metadata_record["item_duration"]),
+                                    write_to_buffer_time=(
+                                        float(metadata_record["write_to_buffer_time"])
+                                        if metadata_record["write_to_buffer_time"] > 0
+                                        else None
+                                    ),
+                                    read_from_buffer_time=current_read_time,
+                                )
+
                             metadata = FrameMetadata(
                                 presentation_timestamp=float(metadata_record["presentation_timestamp"]),
                                 source_width=int(metadata_record["source_width"]),
@@ -737,17 +774,32 @@ class FrameConsumer(FrameRingBuffer):
                                 capture_timestamp=float(metadata_record["capture_timestamp"]),
                                 playlist_item_index=int(metadata_record["playlist_item_index"]),
                                 is_first_frame_of_item=bool(metadata_record["is_first_frame_of_item"]),
+                                timing_data=timing_data,
                             )
 
-                        buffer_info = BufferInfo(
-                            buffer=memoryview(self._shared_memory[read_idx].buf),
-                            timestamp=timestamp,
-                            frame_id=current_frame,
-                            metadata=metadata,
-                        )
+                            buffer_info = BufferInfo(
+                                buffer=memoryview(self._shared_memory[read_idx].buf),
+                                timestamp=timestamp,
+                                frame_id=next_frame,
+                                buffer_index=read_idx,  # Actual buffer index being read
+                                metadata=metadata,
+                            )
 
-                        logger.debug(f"Consumer got buffer {read_idx}, frame {current_frame}")
-                        return buffer_info
+                            logger.debug(
+                                f"Consumer got buffer {read_idx}, frame {next_frame}, index {metadata_record['frame_index']}"
+                            )
+                            logger.debug(
+                                f"Consumer reading metadata from buffer {read_idx}: frame_index={metadata_record['frame_index']}, plugin_timestamp={metadata_record['plugin_timestamp']}"
+                            )
+                            return buffer_info
+
+                        else:
+                            # Frame was overwritten before we could read it
+                            logger.debug(f"Frame {next_frame} was overwritten (current_frame={current_frame})")
+                            # Skip to the oldest available frame
+                            oldest_available = max(1, current_frame - self.buffer_count + 1)
+                            self._local_read_index = oldest_available - 1
+                            continue
 
                 # Brief sleep to avoid busy-waiting
                 time.sleep(0.001)  # 1ms polling interval

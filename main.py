@@ -224,6 +224,7 @@ class ProcessManager:
                         wled_host=self.config.get("wled_host", "192.168.1.100"),
                         wled_port=self.config.get("wled_port", 4048),
                         diffusion_patterns_path=self.config.get("diffusion_patterns_path"),
+                        timing_log_path=self.config.get("timing_log_path"),
                     )
 
                     # Initialize consumer (WLED connection not required for startup)
@@ -522,6 +523,7 @@ def main():
     parser.add_argument("--wled-port", type=int, default=4048, help="WLED controller port")
     parser.add_argument("--content-dir", help="Default content directory to load")
     parser.add_argument("--diffusion-patterns", help="Path to diffusion patterns file")
+    parser.add_argument("--timing-log", help="Path to CSV file for frame timing data logging")
 
     args = parser.parse_args()
 
@@ -540,6 +542,7 @@ def main():
         "wled_port": args.wled_port,
         "default_content_dir": args.content_dir,
         "diffusion_patterns_path": args.diffusion_patterns,
+        "timing_log_path": args.timing_log,
     }
 
     logger.info("Starting Prismatron LED Display System")

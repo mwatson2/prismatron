@@ -17,6 +17,7 @@ import numpy as np
 
 from ..const import FRAME_CHANNELS, FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
 from ..core import ControlState, FrameConsumer
+from ..utils.frame_timing import FrameTimingData, FrameTimingLogger
 from .frame_renderer import FrameRenderer
 from .led_buffer import LEDBuffer
 from .led_optimizer import LEDOptimizer
@@ -114,6 +115,7 @@ class ConsumerProcess:
         diffusion_patterns_path: Optional[str] = None,
         enable_test_renderer: bool = False,
         test_renderer_config: Optional[TestSinkConfig] = None,
+        timing_log_path: Optional[str] = None,
     ):
         """
         Initialize consumer process.
@@ -126,6 +128,7 @@ class ConsumerProcess:
             diffusion_patterns_path: Path to diffusion patterns
             enable_test_renderer: Enable test renderer for debugging
             test_renderer_config: Test renderer configuration
+            timing_log_path: Path to CSV file for timing data logging (optional)
         """
         self.buffer_name = buffer_name
         self.control_name = control_name
@@ -190,11 +193,19 @@ class ConsumerProcess:
         self._last_frame_receive_time = 0.0  # Last real-time when frame was received
         self._frame_timestamp_gap_threshold = 0.1  # 100ms threshold for frame timestamp gaps
         self._realtime_gap_threshold = 0.2  # 200ms threshold for real-time gaps
+
+        # Frame sequence tracking for complete logging
+        self._last_frame_index_seen = 0  # Track last frame index to detect gaps
         self._optimization_thread: Optional[threading.Thread] = None
         self._renderer_thread: Optional[threading.Thread] = None
 
         # Track last rendered playlist item index to detect transitions
         self._last_rendered_item_index = -1
+
+        # Timing logger for performance analysis
+        self._timing_logger: Optional[FrameTimingLogger] = None
+        if timing_log_path:
+            self._timing_logger = FrameTimingLogger(timing_log_path)
 
         # Performance settings
         self.max_frame_wait_timeout = 1.0
@@ -270,6 +281,14 @@ class ConsumerProcess:
                 self._preview_sink.set_frame_renderer(self._frame_renderer)
 
             # Note: Playlist sync handled by producer - consumer just logs renderer transitions
+
+            # Start timing logger if configured
+            if self._timing_logger:
+                if not self._timing_logger.start_logging():
+                    logger.warning("Failed to start timing logger, continuing without timing data")
+                    self._timing_logger = None
+                else:
+                    logger.info("Started frame timing logger")
 
             self._initialized = True
             logger.info("Consumer process initialized successfully")
@@ -423,6 +442,13 @@ class ConsumerProcess:
 
                 led_values, timestamp, metadata = led_data
 
+                # Extract timing data and mark read-from-LED-buffer time
+                timing_data = None
+                if metadata and "timing_data" in metadata:
+                    timing_data = metadata["timing_data"]
+                    if timing_data:
+                        timing_data.mark_read_from_led_buffer()
+
                 # Handle playlist item transitions at render time (not optimization time)
                 if metadata and metadata.get("is_first_frame_of_item", False):
                     playlist_item_index = metadata.get("playlist_item_index", -1)
@@ -446,6 +472,17 @@ class ConsumerProcess:
 
                 # Render with timestamp-based timing
                 success = self._frame_renderer.render_frame_at_timestamp(led_values, timestamp, metadata)
+
+                # Mark render time and log timing data based on success
+                if timing_data:
+                    if success:
+                        # Successful render - mark render time and log complete data
+                        timing_data.mark_render()
+                    # Always log timing data (Case 3: failed renders have empty render_time)
+                    if self._timing_logger:
+                        self._timing_logger.log_frame(timing_data)
+                        if not success:
+                            logger.debug(f"Logged render-failed frame {timing_data.frame_index} (render failure)")
 
                 # Update renderer output FPS tracking
                 if success:
@@ -550,9 +587,19 @@ class ConsumerProcess:
             # Read playlist metadata for renderer synchronization
             playlist_item_index = -1
             is_first_frame_of_item = False
+            timing_data = None
             if buffer_info.metadata:
                 playlist_item_index = buffer_info.metadata.playlist_item_index
                 is_first_frame_of_item = buffer_info.metadata.is_first_frame_of_item
+                timing_data = buffer_info.metadata.timing_data
+
+                # Mark read-from-buffer time in timing data
+                if timing_data:
+                    timing_data.mark_read_from_buffer()
+
+                    # Detect and log missing frames (Case 1: Never received by consumer)
+                    # Detect missing frames before processing this one
+                    self._detect_and_log_missing_frames(timing_data.frame_index)
 
             # Update consumer input FPS tracking
             self._stats.update_consumer_input_fps(timestamp)
@@ -562,6 +609,13 @@ class ConsumerProcess:
                 logger.debug(f"Frame already late (timestamp={timestamp:.3f}) - dropping before optimization")
                 self._stats.frames_dropped_early += 1
                 self._stats.update_dropped_frames_ewma()
+
+                # Log dropped frame to timing data if configured (Case 2: Dropped before optimization)
+                if timing_data and self._timing_logger:
+                    # Case 2: Frame dropped before optimization - has frame info and buffer times, but no optimization/render times
+                    self._timing_logger.log_frame(timing_data)
+                    logger.debug(f"Logged early-dropped frame {timing_data.frame_index} (late before optimization)")
+
                 return
 
             # Validate frame shape
@@ -608,6 +662,10 @@ class ConsumerProcess:
             if led_values_uint8.max() > 0:
                 self._frames_with_content += 1
 
+            # Mark write-to-LED-buffer time before writing
+            if timing_data:
+                timing_data.mark_write_to_led_buffer()
+
             success = self._led_buffer.write_led_values(
                 led_values_uint8,
                 timestamp,
@@ -618,6 +676,7 @@ class ConsumerProcess:
                     "error_metrics": result.error_metrics,
                     "playlist_item_index": playlist_item_index,
                     "is_first_frame_of_item": is_first_frame_of_item,
+                    "timing_data": timing_data,  # Pass timing data through to renderer
                 },
                 block=True,  # Use backpressure - wait for renderer to free up space
                 timeout=2.0,  # Timeout after 2 seconds to avoid hanging
@@ -627,6 +686,21 @@ class ConsumerProcess:
 
             if not success:
                 logger.warning("Failed to write LED values to buffer")
+
+                # Log optimization-completed but buffer-write-failed frame to timing data
+                if timing_data and self._timing_logger:
+                    # This frame was optimized but couldn't be written to LED buffer
+                    optimization_failed_timing = FrameTimingData(
+                        frame_index=timing_data.frame_index,
+                        plugin_timestamp=timing_data.plugin_timestamp,
+                        producer_timestamp=timing_data.producer_timestamp,
+                        item_duration=timing_data.item_duration,
+                        write_to_buffer_time=timing_data.write_to_buffer_time,
+                        read_from_buffer_time=timing_data.read_from_buffer_time,
+                        write_to_led_buffer_time=timing_data.write_to_led_buffer_time,
+                        # Leave render times None to indicate LED buffer write failure
+                    )
+                    self._timing_logger.log_frame(optimization_failed_timing)
 
             # Update statistics (optimization only)
             total_time = time.time() - start_time
@@ -876,6 +950,71 @@ class ConsumerProcess:
         self._frame_renderer.set_wled_enabled(enabled)
         logger.info(f"WLED output {'enabled' if enabled else 'disabled'}")
 
+    def _detect_and_log_missing_frames(self, current_frame_index: int) -> None:
+        """
+        Detect missing frames and log them as Case 1: Never received by consumer.
+
+        Since the circular buffer now blocks writes until consumed, there should be no
+        missing frames in normal operation. This function will detect any anomalies.
+
+        Args:
+            current_frame_index: Frame index of current frame being processed
+        """
+        try:
+            logger.debug(f"Gap detection called: frame={current_frame_index}, last_seen={self._last_frame_index_seen}")
+
+            if self._last_frame_index_seen == 0:
+                # Very first frame processed
+                logger.debug(f"First frame: {current_frame_index}")
+                if current_frame_index > 1:
+                    # Missing frames before first frame (shouldn't happen with fixed buffer)
+                    logger.warning(
+                        f"First frame is {current_frame_index} - missing frames 1 to {current_frame_index-1}"
+                    )
+                    for missing_frame_index in range(1, current_frame_index):
+                        if self._timing_logger:
+                            missing_frame_timing = FrameTimingData(
+                                frame_index=missing_frame_index,
+                                plugin_timestamp=0.0,
+                                producer_timestamp=0.0,
+                                item_duration=0.0,
+                            )
+                            self._timing_logger.log_frame(missing_frame_timing)
+                            logger.debug(f"Logged missing frame {missing_frame_index} (never received by consumer)")
+
+                old_value = self._last_frame_index_seen
+                self._last_frame_index_seen = current_frame_index
+                logger.debug(f"Updated _last_frame_index_seen: {old_value} -> {current_frame_index}")
+                return
+
+            # Check for gaps in sequence
+            expected_next = self._last_frame_index_seen + 1
+            if current_frame_index == expected_next:
+                # Normal sequence
+                logger.debug(f"Normal sequence: {current_frame_index} follows {self._last_frame_index_seen}")
+            elif current_frame_index > expected_next:
+                # Gap detected - shouldn't happen with fixed buffer
+                logger.warning(f"Frame gap detected: expected {expected_next}, got {current_frame_index}")
+                for missing_frame_index in range(expected_next, current_frame_index):
+                    if self._timing_logger:
+                        missing_frame_timing = FrameTimingData(
+                            frame_index=missing_frame_index,
+                            plugin_timestamp=0.0,
+                            producer_timestamp=0.0,
+                            item_duration=0.0,
+                        )
+                        self._timing_logger.log_frame(missing_frame_timing)
+                        logger.debug(f"Logged missing frame {missing_frame_index} (never received by consumer)")
+            else:
+                # Frame went backwards - major error
+                logger.error(f"Frame sequence went backwards: expected {expected_next}, got {current_frame_index}")
+                return  # Don't update last_seen if sequence is broken
+
+            self._last_frame_index_seen = current_frame_index
+
+        except Exception as e:
+            logger.warning(f"Error detecting missing frames: {e}")
+
     def is_renderer_initialized(self) -> bool:
         """Check if renderer is initialized with timing delta."""
         return self._frame_renderer.is_initialized()
@@ -950,6 +1089,10 @@ class ConsumerProcess:
                 self._test_renderer.stop()
 
             # Note: No playlist sync client to cleanup in consumer
+
+            # Stop timing logger
+            if hasattr(self, "_timing_logger") and self._timing_logger:
+                self._timing_logger.stop_logging()
 
             if hasattr(self, "_wled_client"):
                 self._wled_client.disconnect()

@@ -24,6 +24,13 @@ METADATA_DTYPE: np.dtype = np.dtype(
         ("capture_timestamp", np.float64),
         ("playlist_item_index", np.int32),  # Current playlist item index for renderer sync
         ("is_first_frame_of_item", np.bool_),  # True if this is the first frame of a new playlist item
+        # Timing data fields for performance analysis
+        ("frame_index", np.int32),
+        ("plugin_timestamp", np.float64),
+        ("producer_timestamp", np.float64),
+        ("item_duration", np.float64),
+        ("write_to_buffer_time", np.float64),
+        ("read_from_buffer_time", np.float64),
     ]
 )
 
