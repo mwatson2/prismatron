@@ -136,9 +136,15 @@ class ProcessManager:
                 """Playlist sync service worker."""
                 try:
                     # Setup logging for subprocess
+                    from src.utils.logging_utils import create_app_time_formatter
+
+                    formatter = create_app_time_formatter()
+                    handler = logging.StreamHandler()
+                    handler.setFormatter(formatter)
+
                     logging.basicConfig(
                         level=logging.INFO,
-                        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                        handlers=[handler],
                     )
 
                     # Create and start playlist sync service
@@ -176,9 +182,15 @@ class ProcessManager:
                 """Web server process worker."""
                 try:
                     # Setup logging for subprocess
+                    from src.utils.logging_utils import create_app_time_formatter
+
+                    formatter = create_app_time_formatter()
+                    handler = logging.StreamHandler()
+                    handler.setFormatter(formatter)
+
                     logging.basicConfig(
                         level=logging.INFO,
-                        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                        handlers=[handler],
                     )
 
                     # Signal ready
@@ -269,9 +281,15 @@ class ProcessManager:
                 """Producer process worker."""
                 try:
                     # Setup logging for subprocess
+                    from src.utils.logging_utils import create_app_time_formatter
+
+                    formatter = create_app_time_formatter()
+                    handler = logging.StreamHandler()
+                    handler.setFormatter(formatter)
+
                     logging.basicConfig(
                         level=logging.INFO,
-                        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                        handlers=[handler],
                     )
 
                     # Create producer
@@ -456,6 +474,13 @@ class ProcessManager:
 
 def setup_logging(debug: bool = False) -> None:
     """Setup logging configuration."""
+    import time
+
+    from src.utils.logging_utils import create_app_time_formatter, set_app_start_time
+
+    # Set application start time
+    set_app_start_time(time.time())
+
     level = logging.DEBUG if debug else logging.INFO
 
     # Clear the log file on startup
@@ -466,13 +491,19 @@ def setup_logging(debug: bool = False) -> None:
     except Exception:
         pass  # If we can't clear it, continue anyway
 
+    # Create custom formatter with app time
+    formatter = create_app_time_formatter()
+
+    # Create handlers
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(formatter)
+
     logging.basicConfig(
         level=level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler(log_file),
-        ],
+        handlers=[console_handler, file_handler],
     )
 
     # Reduce noise from some modules

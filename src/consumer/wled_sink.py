@@ -108,6 +108,7 @@ class WLEDSink:
         self.sequence_number = 0
         self.last_frame_time = 0.0
         self.is_connected = False
+        self.is_failing = False  # Track if the sink is currently failing
 
         # Thread safety for sequence numbers and timing
         self._lock = threading.Lock()
@@ -403,9 +404,9 @@ class WLEDSink:
         if not self.is_connected or not self.socket:
             error_msg = "Not connected to WLED controller"
             # Only log error if within first minute
-            elapsed_minutes = (time.time() - self._error_message_start_time) / 60.0
-            if elapsed_minutes < self._silent_after_minutes:
+            if not self.is_failing:
                 logger.error(error_msg)
+                self.is_failing = True
             return TransmissionResult(
                 success=False,
                 packets_sent=0,
@@ -413,6 +414,8 @@ class WLEDSink:
                 transmission_time=time.time() - start_time,
                 errors=[error_msg],
             )
+
+        self.is_failing = False  # Reset failing state on successful connection
 
         # Convert numpy array to bytes if needed
         if isinstance(led_data, np.ndarray):

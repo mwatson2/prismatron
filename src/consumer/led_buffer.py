@@ -49,6 +49,10 @@ class LEDBuffer:
         self.count = 0
         self.lock = threading.RLock()
 
+        # Event signaling for space availability
+        self.space_available = threading.Condition(self.lock)
+        self.data_available = threading.Condition(self.lock)
+
         # Statistics
         self.frames_written = 0
         self.frames_read = 0
@@ -85,19 +89,12 @@ class LEDBuffer:
             True if written successfully, False if buffer overflow or timeout
         """
         if block:
-            # Blocking mode: wait for space with timeout
-            import time
-
-            start_time = time.time()
-            while True:
-                with self.lock:
-                    if self.count < self.buffer_size:
-                        break  # Space available, proceed with write
-                if time.time() - start_time > timeout:
-                    logger.warning(f"LED buffer write timeout after {timeout:.1f}s")
-                    return False
-                # Brief sleep before checking again
-                time.sleep(0.001)
+            # Blocking mode: wait for space using condition variable
+            with self.space_available:
+                while self.count >= self.buffer_size:
+                    if not self.space_available.wait(timeout=timeout):
+                        logger.warning(f"LED buffer write timeout after {timeout:.1f}s")
+                        return False
 
         with self.lock:
             # Handle buffer overflow (non-blocking mode only)
@@ -133,6 +130,9 @@ class LEDBuffer:
             self.count += 1
             self.frames_written += 1
 
+            # Signal that data is now available
+            self.data_available.notify()
+
             return True
 
     def read_led_values(self, timeout: Optional[float] = None) -> Optional[Tuple[np.ndarray, float, Dict[str, Any]]]:
@@ -147,37 +147,53 @@ class LEDBuffer:
         """
         start_time = time.time() if timeout is not None else None
 
-        while True:
-            with self.lock:
-                # Check if data available
-                if self.count > 0:
-                    # Read data
-                    led_values = self.led_arrays[self.read_index].copy()
-                    timestamp = self.timestamps[self.read_index]
-                    metadata = self.metadata[self.read_index] or {}
+        with self.data_available:
+            # Wait for data using condition variable
+            while self.count == 0:
+                if timeout is None:
+                    # No timeout, wait indefinitely
+                    self.data_available.wait()
+                else:
+                    # Wait with timeout
+                    if not self.data_available.wait(timeout=timeout):
+                        # Timeout reached
+                        with self.lock:
+                            self.underflow_count += 1
+                        return None
 
-                    # Advance read index
-                    self.read_index = (self.read_index + 1) % self.buffer_size
-                    self.count -= 1
-                    self.frames_read += 1
+            # Data available, read it
+            led_values = self.led_arrays[self.read_index].copy()
+            timestamp = self.timestamps[self.read_index]
+            metadata = self.metadata[self.read_index] or {}
 
-                    return led_values, timestamp, metadata
+            # Advance read index
+            self.read_index = (self.read_index + 1) % self.buffer_size
+            self.count -= 1
+            self.frames_read += 1
 
-                # Check for underflow (no data available)
-                if timeout is None or start_time is None:
-                    break  # No timeout, return immediately
+            # Signal that space is now available
+            self.space_available.notify()
 
-                elapsed = time.time() - start_time
-                if elapsed >= timeout:
-                    break  # Timeout reached
+            return led_values, timestamp, metadata
 
-            # Brief sleep before retry
-            time.sleep(0.001)
+    def read_latest_led_values(self) -> Optional[Tuple[np.ndarray, float, Dict[str, Any]]]:
+        """
+        Read the latest LED values from buffer without blocking.
 
-        # No data available
+        Returns:
+            Tuple of (led_values, timestamp, metadata) or None if buffer empty
+        """
         with self.lock:
-            self.underflow_count += 1
-        return None
+            if self.count == 0:
+                return None
+
+            # Get the most recent frame (latest written)
+            latest_index = (self.write_index - 1) % self.buffer_size
+            led_values = self.led_arrays[latest_index].copy()
+            timestamp = self.timestamps[latest_index]
+            metadata = self.metadata[latest_index] or {}
+
+            return led_values, timestamp, metadata
 
     def peek_next_timestamp(self) -> Optional[float]:
         """

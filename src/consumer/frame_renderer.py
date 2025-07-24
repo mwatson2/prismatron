@@ -117,7 +117,7 @@ class FrameRenderer:
             enabled: Whether the sink is initially enabled
         """
         if hasattr(sink, "send_led_data") or hasattr(sink, "render_led_values"):
-            self.sinks.append({"sink": sink, "name": name, "enabled": enabled})
+            self.sinks.append({"sink": sink, "name": name, "enabled": enabled, "failing": False})
             self.sink_names[sink] = name
             logger.info(f"Registered sink: {name} (enabled={enabled})")
         else:
@@ -316,11 +316,6 @@ class FrameRenderer:
                     # Consider frames different if max difference > 1 or mean difference > 0.1
                     is_different = max_diff > 1.0 or mean_diff > 0.1
 
-                    if not is_different:
-                        logger.debug(
-                            f"DEBUG: Skipping identical frame (max_diff={max_diff:.3f}, mean_diff={mean_diff:.3f})"
-                        )
-
                 if is_different:
                     # Save both spatial and physical LED values for comparison
                     debug_spatial_file = self._debug_led_dir / f"led_spatial_{self._debug_led_count:03d}.npy"
@@ -352,10 +347,11 @@ class FrameRenderer:
                     # WLED-style sink
                     result = sink.send_led_data(physical_led_values)
                     if hasattr(result, "success") and not result.success:
-                        # Only log transmission failures if within first minute
-                        elapsed_minutes = (time.time() - self._error_message_start_time) / 60.0
-                        if elapsed_minutes < self._silent_after_minutes:
+                        if not sink_info["failing"]:
                             logger.warning(f"{name} transmission failed: {result.errors}")
+                            sink_info["failing"] = True
+                    else:
+                        sink_info["failing"] = False
                 elif hasattr(sink, "render_led_values"):
                     # Renderer-style sink
                     if hasattr(sink, "is_running") and not sink.is_running:

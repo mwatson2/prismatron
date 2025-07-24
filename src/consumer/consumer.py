@@ -652,7 +652,6 @@ class ConsumerProcess:
 
             # Check optimization result
             if not result.converged:
-                logger.debug(f"Optimization did not converge after {result.iterations} iterations")
                 self._stats.optimization_errors += 1
 
             # Store in LED buffer with timestamp
@@ -679,7 +678,7 @@ class ConsumerProcess:
                     "timing_data": timing_data,  # Pass timing data through to renderer
                 },
                 block=True,  # Use backpressure - wait for renderer to free up space
-                timeout=2.0,  # Timeout after 2 seconds to avoid hanging
+                timeout=0.1,  # Short timeout - just wait for one slot to become available
             )
 
             # Preview data is now handled by PreviewSink in frame renderer
@@ -1114,9 +1113,15 @@ def main():
     import sys
 
     # Setup logging
+    from src.utils.logging_utils import create_app_time_formatter
+
+    formatter = create_app_time_formatter()
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[handler],
     )
 
     try:

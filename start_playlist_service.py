@@ -60,11 +60,16 @@ Examples:
     args = parser.parse_args()
 
     # Setup logging
+    from src.utils.logging_utils import create_app_time_formatter
+
     log_level = logging.DEBUG if args.verbose else logging.INFO
+    formatter = create_app_time_formatter()
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+
     logging.basicConfig(
         level=log_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[logging.StreamHandler()],
+        handlers=[handler],
     )
 
     # Setup signal handlers

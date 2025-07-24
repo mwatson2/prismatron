@@ -1768,9 +1768,15 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Setup logging
+    from src.utils.logging_utils import create_app_time_formatter
+
+    formatter = create_app_time_formatter()
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+
     logging.basicConfig(
         level=logging.DEBUG if args.debug else logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[handler],
     )
 
     logger.info(f"Starting Prismatron API server on {args.host}:{args.port}")
