@@ -251,10 +251,13 @@ class FrameRenderer:
 
         # Debug logging for high FPS investigation
         if self.frames_rendered % 1 == 0:  # Log every frame
+            waiting = f", waiting {-time_diff*1000:.1f}ms" if time_diff < -self.timing_tolerance else ""
+            late = f", late {time_diff*1000:.1f}ms" if time_diff > self.timing_tolerance else ""
             logger.debug(
                 f"Frame {self.frames_rendered}: timestamp={frame_timestamp:.3f}, "
                 f"target_wall={target_wallclock:.3f}, current_wall={current_wallclock:.3f}, "
                 f"time_diff={time_diff*1000:.1f}ms, ewma_fps={self.ewma_fps:.1f}"
+                f"{waiting}{late}"
             )
 
         try:
@@ -262,9 +265,6 @@ class FrameRenderer:
                 # Late frame - render immediately
                 self.late_frames += 1
                 self.total_late_time += time_diff
-
-                if time_diff > self.late_frame_log_threshold:
-                    logger.debug(f"Late frame: {time_diff*1000:.1f}ms")
 
                 self._send_to_outputs(led_values, metadata)
 
@@ -274,7 +274,6 @@ class FrameRenderer:
                 self.early_frames += 1
                 self.total_wait_time += wait_time
 
-                logger.debug(f"Early frame: waiting {wait_time*1000:.1f}ms")
                 time.sleep(wait_time)
                 self._send_to_outputs(led_values, metadata)
 
