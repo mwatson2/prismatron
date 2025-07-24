@@ -215,7 +215,8 @@ class ConsumerProcess:
 
         # WLED connection management
         self.wled_reconnect_interval = 10.0  # Try to reconnect every 10 seconds
-        self.last_wled_attempt = 0.0
+        self._wled_reconnection_thread: Optional[threading.Thread] = None
+        self._wled_reconnection_event = threading.Event()  # Signal for graceful shutdown
 
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -319,14 +320,18 @@ class ConsumerProcess:
 
             self._optimization_thread = threading.Thread(target=self._optimization_loop, name="OptimizationThread")
             self._renderer_thread = threading.Thread(target=self._rendering_loop, name="RendererThread")
+            self._wled_reconnection_thread = threading.Thread(
+                target=self._wled_reconnection_loop, name="WLEDReconnectionThread"
+            )
 
             # Backward compatibility alias
             self._process_thread = self._optimization_thread
 
             self._optimization_thread.start()
             self._renderer_thread.start()
+            self._wled_reconnection_thread.start()
 
-            logger.info("Consumer process started with dual threads")
+            logger.info("Consumer process started with optimization, renderer, and WLED reconnection threads")
             return True
 
         except Exception as e:
@@ -341,9 +346,13 @@ class ConsumerProcess:
         try:
             self._shutdown_requested = True
             self._running = False
+
+            # Signal WLED reconnection thread to stop
+            self._wled_reconnection_event.set()
+
             logger.info("Stopping consumer process...")
 
-            # Wait for both threads to finish
+            # Wait for all threads to finish
             if self._optimization_thread and self._optimization_thread.is_alive():
                 self._optimization_thread.join(timeout=5.0)
                 if self._optimization_thread.is_alive():
@@ -353,6 +362,11 @@ class ConsumerProcess:
                 self._renderer_thread.join(timeout=5.0)
                 if self._renderer_thread.is_alive():
                     logger.warning("Renderer thread did not stop gracefully")
+
+            if self._wled_reconnection_thread and self._wled_reconnection_thread.is_alive():
+                self._wled_reconnection_thread.join(timeout=2.0)
+                if self._wled_reconnection_thread.is_alive():
+                    logger.warning("WLED reconnection thread did not stop gracefully")
 
             # Cleanup components
             self._cleanup()
@@ -428,12 +442,6 @@ class ConsumerProcess:
 
         while self._running and not self._shutdown_requested:
             try:
-                # Check for WLED reconnection periodically
-                current_time = time.time()
-                if current_time - self.last_wled_attempt >= self.wled_reconnect_interval:
-                    self._try_wled_reconnect()
-                    self.last_wled_attempt = current_time
-
                 # Get next LED values with timeout
                 led_data = self._led_buffer.read_led_values(timeout=0.1)
 
@@ -464,6 +472,7 @@ class ConsumerProcess:
                 frame_count = self._stats.frames_processed
                 if frame_count % 100 == 0:  # Log every 100th frame
                     buffer_stats = self._led_buffer.get_buffer_stats()
+                    current_time = time.time()
                     logger.debug(
                         f"Renderer pulling frame {frame_count}: timestamp={timestamp:.3f}, "
                         f"buffer_depth={buffer_stats['current_count']}, "
@@ -497,19 +506,42 @@ class ConsumerProcess:
 
         logger.info("Renderer thread ended")
 
+    def _wled_reconnection_loop(self) -> None:
+        """Dedicated thread for WLED reconnection attempts."""
+        logger.info("WLED reconnection thread started")
+
+        while self._running and not self._shutdown_requested:
+            try:
+                # Wait for reconnect interval or shutdown signal
+                if self._wled_reconnection_event.wait(timeout=self.wled_reconnect_interval):
+                    # Event was set - shutdown requested
+                    break
+
+                # Try reconnection if not connected
+                if not self._wled_client.is_connected:
+                    logger.debug("Attempting WLED reconnection...")
+                    if self._wled_client.connect():
+                        logger.info("WLED controller reconnected successfully")
+                        # Update frame renderer with new connection
+                        self._frame_renderer.set_output_targets(
+                            wled_sink=self._wled_client, test_sink=self._test_renderer, preview_sink=self._preview_sink
+                        )
+                    else:
+                        logger.debug("WLED reconnection failed - will retry later")
+
+            except Exception as e:
+                logger.error(f"Error in WLED reconnection loop: {e}", exc_info=True)
+                time.sleep(1.0)  # Brief pause before retrying
+
+        logger.info("WLED reconnection thread ended")
+
     def _try_wled_reconnect(self) -> None:
-        """Try to reconnect to WLED controller if not connected."""
-        try:
-            if not self._wled_client.is_connected:
-                logger.debug("Attempting WLED reconnection...")
-                if self._wled_client.connect():
-                    logger.info("WLED controller reconnected successfully")
-                    # Update frame renderer with new connection
-                    self._frame_renderer.set_output_targets(wled_sink=self._wled_client, test_sink=self._test_renderer)
-                else:
-                    logger.debug("WLED reconnection failed - will retry later")
-        except Exception as e:
-            logger.debug(f"Error during WLED reconnection attempt: {e}")
+        """
+        Legacy method - WLED reconnection now handled by dedicated thread.
+
+        This method is kept for backward compatibility but does nothing
+        since reconnection is now handled by _wled_reconnection_loop().
+        """
 
     def _process_frame(self, buffer_info) -> None:
         """Process a frame (backward compatibility wrapper)."""
