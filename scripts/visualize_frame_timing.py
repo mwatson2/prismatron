@@ -88,7 +88,7 @@ class FrameTimingVisualizer:
 
     def create_timeline_visualization(self, output_path: Optional[str] = None, max_frames: int = 1000) -> None:
         """
-        Create timeline visualization with complete and incomplete frames.
+        Create timeline visualization with horizontal lines showing frame states.
 
         Args:
             output_path: Path to save the visualization (optional)
@@ -103,22 +103,22 @@ class FrameTimingVisualizer:
         complete_data = self.complete_frames.head(max_frames).copy()
         incomplete_data = self.incomplete_frames.head(max_frames).copy()
 
-        # Create figure with subplots
-        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(16, 16))
+        # Create figure with 3 subplots (content timeline + 2 frame state plots)
+        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(16, 18))
         fig.suptitle(
             f"Frame Timing Pipeline Analysis ({len(all_data)} total frames, {len(complete_data)} complete, {len(incomplete_data)} dropped)",
             fontsize=16,
         )
 
-        # Define colors for different stages
-        colors = {
-            "plugin_timestamp": "#1f77b4",  # Blue
-            "producer_timestamp": "#ff7f0e",  # Orange
-            "write_to_buffer_time": "#2ca02c",  # Green
-            "read_from_buffer_time": "#d62728",  # Red
-            "write_to_led_buffer_time": "#9467bd",  # Purple
-            "read_from_led_buffer_time": "#8c564b",  # Brown
-            "render_time": "#e377c2",  # Pink
+        # Define colors for different frame states
+        state_colors = {
+            "shared_buffer": "#2ca02c",  # Green - time in shared buffer
+            "optimization": "#d62728",  # Red - optimization time
+            "led_buffer": "#9467bd",  # Purple - time in LED buffer
+            "rendered": "#e377c2",  # Pink - time in rendered state
+            "led_queue": "#ff8c00",  # Orange - LED buffer queue length
+            "plugin_timestamp": "#1f77b4",  # Blue - plugin timestamps
+            "producer_timestamp": "#ff7f0e",  # Orange - producer timestamps
         }
 
         # Calculate wallclock time range from all available data
@@ -154,7 +154,143 @@ class FrameTimingVisualizer:
         else:
             min_wallclock = 0
 
-        # Plot 1: Content timestamps converted to wallclock time - All frames
+        def draw_frame_states(ax, data, title_suffix="", show_incomplete=False):
+            """Draw frame states with 2px height and 1px gap."""
+            ax.set_title(f"Frame States Combined{title_suffix}")
+
+            # Plot complete frames
+            for _, frame in data.iterrows():
+                frame_y = frame["frame_index"] * 2  # 2px per frame
+
+                # Time in shared buffer (with 1px gap at start)
+                if frame["write_to_buffer_time"] > 0 and frame["read_from_buffer_time"] > 0:
+                    start_time = frame["write_to_buffer_time"] - min_wallclock + 0.001  # 1px gap
+                    end_time = frame["read_from_buffer_time"] - min_wallclock
+                    ax.plot(
+                        [start_time, end_time],
+                        [frame_y, frame_y],
+                        color=state_colors["shared_buffer"],
+                        linewidth=2,
+                        alpha=0.8,
+                        solid_capstyle="butt",
+                    )
+
+                # Optimization time
+                if frame["read_from_buffer_time"] > 0 and frame["write_to_led_buffer_time"] > 0:
+                    start_time = frame["read_from_buffer_time"] - min_wallclock + 0.001
+                    end_time = frame["write_to_led_buffer_time"] - min_wallclock
+                    ax.plot(
+                        [start_time, end_time],
+                        [frame_y, frame_y],
+                        color=state_colors["optimization"],
+                        linewidth=2,
+                        alpha=0.8,
+                        solid_capstyle="butt",
+                    )
+
+                # Time in LED buffer
+                if frame["write_to_led_buffer_time"] > 0 and frame["read_from_led_buffer_time"] > 0:
+                    start_time = frame["write_to_led_buffer_time"] - min_wallclock + 0.001
+                    end_time = frame["read_from_led_buffer_time"] - min_wallclock
+                    ax.plot(
+                        [start_time, end_time],
+                        [frame_y, frame_y],
+                        color=state_colors["led_buffer"],
+                        linewidth=2,
+                        alpha=0.8,
+                        solid_capstyle="butt",
+                    )
+
+                # Time in rendered state
+                if frame["read_from_led_buffer_time"] > 0 and frame["render_time"] > 0:
+                    start_time = frame["read_from_led_buffer_time"] - min_wallclock + 0.001
+                    end_time = frame["render_time"] - min_wallclock
+                    ax.plot(
+                        [start_time, end_time],
+                        [frame_y, frame_y],
+                        color=state_colors["rendered"],
+                        linewidth=2,
+                        alpha=0.8,
+                        solid_capstyle="butt",
+                    )
+
+            # Plot incomplete frames if requested
+            if show_incomplete and len(incomplete_data) > 0:
+                for _, frame in incomplete_data.iterrows():
+                    frame_y = frame["frame_index"] * 2
+
+                    # Show partial states for incomplete frames
+                    if frame["write_to_buffer_time"] > 0 and frame["read_from_buffer_time"] > 0:
+                        start_time = frame["write_to_buffer_time"] - min_wallclock + 0.001
+                        end_time = frame["read_from_buffer_time"] - min_wallclock
+                        ax.plot(
+                            [start_time, end_time],
+                            [frame_y, frame_y],
+                            color=state_colors["shared_buffer"],
+                            linewidth=2,
+                            alpha=0.4,
+                            solid_capstyle="butt",
+                        )
+
+                    if frame["read_from_buffer_time"] > 0 and frame["write_to_led_buffer_time"] > 0:
+                        start_time = frame["read_from_buffer_time"] - min_wallclock + 0.001
+                        end_time = frame["write_to_led_buffer_time"] - min_wallclock
+                        ax.plot(
+                            [start_time, end_time],
+                            [frame_y, frame_y],
+                            color=state_colors["optimization"],
+                            linewidth=2,
+                            alpha=0.4,
+                            solid_capstyle="butt",
+                        )
+
+                    if frame["write_to_led_buffer_time"] > 0 and frame["read_from_led_buffer_time"] > 0:
+                        start_time = frame["write_to_led_buffer_time"] - min_wallclock + 0.001
+                        end_time = frame["read_from_led_buffer_time"] - min_wallclock
+                        ax.plot(
+                            [start_time, end_time],
+                            [frame_y, frame_y],
+                            color=state_colors["led_buffer"],
+                            linewidth=2,
+                            alpha=0.4,
+                            solid_capstyle="butt",
+                        )
+
+        def calculate_led_queue_length_square_wave(data):
+            """Calculate LED buffer queue length over time as square wave (only complete frames)."""
+            events = []
+
+            # Only add events for frames that have BOTH write_to_led_buffer_time AND read_from_led_buffer_time
+            # This excludes dropped frames that only have one of these timestamps
+            for _, frame in data.iterrows():
+                if frame["write_to_led_buffer_time"] > 0 and frame["read_from_led_buffer_time"] > 0:
+                    events.append((frame["write_to_led_buffer_time"], +1, frame["frame_index"]))
+                    events.append((frame["read_from_led_buffer_time"], -1, frame["frame_index"]))
+
+            # Sort by time
+            events.sort()
+
+            # Calculate square wave points
+            times = []
+            queue_lengths = []
+            current_length = 0
+
+            for timestamp, delta, frame_idx in events:
+                # Add point just before change (horizontal line)
+                times.append(timestamp - min_wallclock)
+                queue_lengths.append(current_length)
+
+                # Update queue length
+                current_length += delta
+
+                # Add point just after change (vertical line)
+                times.append(timestamp - min_wallclock)
+                queue_lengths.append(current_length)
+
+            return times, queue_lengths
+
+        # Plot 1: Content Timeline (Plugin and Producer Timestamps)
+        ax1.set_title("Content Timeline (Plugin and Producer Timestamps)")
         all_y_positions = all_data["frame_index"].values
 
         # Convert content timestamps to wallclock time for alignment
@@ -163,154 +299,122 @@ class FrameTimingVisualizer:
         ax1.scatter(
             all_data["plugin_timestamp"] + (content_start_wallclock - min_wallclock),
             all_y_positions,
-            c=colors["plugin_timestamp"],
+            c=state_colors["plugin_timestamp"],
             s=1,
             alpha=0.7,
-            label="Plugin Timestamp",
+            label="Plugin Timestamp (Item Timestamp)",
         )
         ax1.scatter(
             all_data["producer_timestamp"] + (content_start_wallclock - min_wallclock),
             all_y_positions,
-            c=colors["producer_timestamp"],
+            c=state_colors["producer_timestamp"],
             s=1,
             alpha=0.7,
-            label="Producer Timestamp",
+            label="Producer Timestamp (Global Timestamp)",
         )
 
-        ax1.set_xlabel("Time (seconds from processing start)")
         ax1.set_ylabel("Frame Index")
-        ax1.set_title("Content Timeline (Plugin and Producer Timestamps) - All Frames")
         ax1.grid(True, alpha=0.3)
         ax1.legend()
 
-        # Calculate x-axis limits for all plots to align them
+        # Plot 2: Complete frames only
+        draw_frame_states(ax2, complete_data, " (Complete Frames Only)")
+
+        # Calculate and plot LED queue length for complete frames - square wave
+        if len(complete_data) > 0:
+            queue_times, queue_lengths = calculate_led_queue_length_square_wave(complete_data)
+            if queue_times:
+                ax2_queue = ax2.twinx()
+                ax2_queue.plot(
+                    queue_times,
+                    queue_lengths,
+                    color=state_colors["led_queue"],
+                    linewidth=1.5,
+                    alpha=0.5,
+                    label="LED Buffer Queue Length",
+                )
+                ax2_queue.set_ylabel("LED Buffer Queue Length", color=state_colors["led_queue"])
+                ax2_queue.tick_params(axis="y", labelcolor=state_colors["led_queue"])
+
+        # Add legends for plot 2
+        ax2.plot([], [], color=state_colors["shared_buffer"], linewidth=2, label="Time in Shared Buffer")
+        ax2.plot([], [], color=state_colors["optimization"], linewidth=2, label="Optimization Time")
+        ax2.plot([], [], color=state_colors["led_buffer"], linewidth=2, label="Time in LED Buffer")
+        ax2.plot([], [], color=state_colors["rendered"], linewidth=2, label="Time in Rendered State")
+        ax2.set_ylabel("Frame Index")
+        ax2.legend(loc="upper left")
+
+        # Plot 3: All frames (complete + incomplete)
+        draw_frame_states(ax3, complete_data, " (All Frames)", show_incomplete=True)
+
+        # Calculate and plot LED queue length for complete frames only (not all frames) - square wave
+        if len(complete_data) > 0:
+            queue_times, queue_lengths = calculate_led_queue_length_square_wave(complete_data)
+            if queue_times:
+                ax3_queue = ax3.twinx()
+                ax3_queue.plot(
+                    queue_times,
+                    queue_lengths,
+                    color=state_colors["led_queue"],
+                    linewidth=1.5,
+                    alpha=0.5,
+                    label="LED Buffer Queue Length",
+                )
+                ax3_queue.set_ylabel("LED Buffer Queue Length", color=state_colors["led_queue"])
+                ax3_queue.tick_params(axis="y", labelcolor=state_colors["led_queue"])
+
+        # Add legends for plot 3
+        ax3.plot([], [], color=state_colors["shared_buffer"], linewidth=2, label="Complete: Time in Shared Buffer")
+        ax3.plot([], [], color=state_colors["optimization"], linewidth=2, label="Complete: Optimization Time")
+        ax3.plot([], [], color=state_colors["led_buffer"], linewidth=2, label="Complete: Time in LED Buffer")
+        ax3.plot([], [], color=state_colors["rendered"], linewidth=2, label="Complete: Time in Rendered State")
+        ax3.plot(
+            [], [], color=state_colors["shared_buffer"], linewidth=2, alpha=0.4, label="Incomplete: Partial States"
+        )
+        ax3.set_xlabel("Time (seconds from processing start)")
+        ax3.set_ylabel("Frame Index")
+        ax3.legend(loc="upper left")
+
+        # Calculate x-axis limits from all timing data
         all_x_values = []
+        if len(all_data) > 0:
+            for col in [
+                "write_to_buffer_time",
+                "read_from_buffer_time",
+                "write_to_led_buffer_time",
+                "read_from_led_buffer_time",
+                "render_time",
+            ]:
+                non_zero_times = all_data[all_data[col] > 0][col]
+                if len(non_zero_times) > 0:
+                    all_x_values.extend(non_zero_times - min_wallclock)
+
+        # Add content timestamps to x-axis calculation
         all_x_values.extend(all_data["plugin_timestamp"])
         all_x_values.extend(all_data["producer_timestamp"])
 
-        if len(complete_data) > 0:
-            all_x_values.extend(complete_data["write_to_buffer_time"] - min_wallclock)
-            all_x_values.extend(complete_data["read_from_buffer_time"] - min_wallclock)
-            all_x_values.extend(complete_data["write_to_led_buffer_time"] - min_wallclock)
-            all_x_values.extend(complete_data["read_from_led_buffer_time"] - min_wallclock)
-            all_x_values.extend(complete_data["render_time"] - min_wallclock)
-
-            # Plot 2: Complete frames pipeline (wallclock times)
-            complete_y_positions = complete_data["frame_index"].values
-
-            ax2.scatter(
-                complete_data["write_to_buffer_time"] - min_wallclock,
-                complete_y_positions,
-                c=colors["write_to_buffer_time"],
-                s=1,
-                alpha=0.7,
-                label="Write to Buffer",
-            )
-            ax2.scatter(
-                complete_data["read_from_buffer_time"] - min_wallclock,
-                complete_y_positions,
-                c=colors["read_from_buffer_time"],
-                s=1,
-                alpha=0.7,
-                label="Read from Buffer",
-            )
-            ax2.scatter(
-                complete_data["write_to_led_buffer_time"] - min_wallclock,
-                complete_y_positions,
-                c=colors["write_to_led_buffer_time"],
-                s=1,
-                alpha=0.7,
-                label="Write to LED Buffer",
-            )
-            ax2.scatter(
-                complete_data["read_from_led_buffer_time"] - min_wallclock,
-                complete_y_positions,
-                c=colors["read_from_led_buffer_time"],
-                s=1,
-                alpha=0.7,
-                label="Read from LED Buffer",
-            )
-            ax2.scatter(
-                complete_data["render_time"] - min_wallclock,
-                complete_y_positions,
-                c=colors["render_time"],
-                s=1,
-                alpha=0.7,
-                label="Render Time",
-            )
-
-            ax2.set_xlabel("Time (seconds from processing start)")
-            ax2.set_ylabel("Frame Index")
-            ax2.set_title("Complete Frames Pipeline Timeline (Wallclock Times)")
-            ax2.grid(True, alpha=0.3)
-            ax2.legend()
-        else:
-            ax2.text(
-                0.5,
-                0.5,
-                "No complete frames to display",
-                horizontalalignment="center",
-                verticalalignment="center",
-                transform=ax2.transAxes,
-                fontsize=14,
-            )
-            ax2.set_title("Complete Frames Pipeline Timeline (No Data)")
-
-        # Plot 3: Dropped/incomplete frames analysis
-        if len(incomplete_data) > 0:
-            incomplete_y_positions = incomplete_data["frame_index"].values
-
-            # Show what stages incomplete frames reached
-            stages = [
-                ("write_to_buffer_time", "Write to Buffer", colors["write_to_buffer_time"]),
-                ("read_from_buffer_time", "Read from Buffer", colors["read_from_buffer_time"]),
-                ("write_to_led_buffer_time", "Write to LED Buffer", colors["write_to_led_buffer_time"]),
-                ("read_from_led_buffer_time", "Read from LED Buffer", colors["read_from_led_buffer_time"]),
-                ("render_time", "Render Time", colors["render_time"]),
-            ]
-
-            for stage_col, stage_name, color in stages:
-                stage_mask = incomplete_data[stage_col] > 0
-                if stage_mask.any():
-                    stage_data = incomplete_data[stage_mask]
-                    # Always use the same time reference for alignment
-                    stage_times = stage_data[stage_col] - min_wallclock
-                    all_x_values.extend(stage_times)
-                    ax3.scatter(
-                        stage_times,
-                        stage_data["frame_index"],
-                        c=color,
-                        s=3,
-                        alpha=0.8,
-                        label=f"{stage_name} (reached)",
-                        marker="x",
-                    )
-
-            ax3.set_xlabel("Time (seconds from processing start)")
-            ax3.set_ylabel("Frame Index")
-            ax3.set_title("Dropped/Incomplete Frames - Pipeline Stages Reached")
-            ax3.grid(True, alpha=0.3)
-            ax3.legend()
-        else:
-            ax3.text(
-                0.5,
-                0.5,
-                "No dropped frames to display",
-                horizontalalignment="center",
-                verticalalignment="center",
-                transform=ax3.transAxes,
-                fontsize=14,
-            )
-            ax3.set_title("Dropped/Incomplete Frames (No Data)")
-
-        # Align x-axis limits for all three plots
+        # Set up axes for all plots
         if all_x_values:
             x_min = min(all_x_values)
             x_max = max(all_x_values)
-            x_margin = (x_max - x_min) * 0.05  # 5% margin
-            ax1.set_xlim(x_min - x_margin, x_max + x_margin)
-            ax2.set_xlim(x_min - x_margin, x_max + x_margin)
-            ax3.set_xlim(x_min - x_margin, x_max + x_margin)
+            x_margin = (x_max - x_min) * 0.05
+
+            for ax in [ax1, ax2, ax3]:
+                ax.set_xlim(x_min - x_margin, x_max + x_margin)
+
+                # Horizontal gridlines every 20 frames
+                max_frame = max(all_data["frame_index"]) * 2  # Account for 2px per frame
+                h_grid_ticks = np.arange(0, max_frame + 40, 40)  # Every 20 frames * 2px
+                ax.set_yticks(h_grid_ticks, minor=False)
+                ax.grid(True, which="major", axis="y", alpha=0.3, linestyle="-")
+
+                # Vertical gridlines at 0.1 second intervals
+                grid_start = int(x_min / 0.1) * 0.1
+                grid_end = int(x_max / 0.1 + 1) * 0.1
+                v_grid_ticks = np.arange(grid_start, grid_end + 0.1, 0.1)
+                ax.set_xticks(v_grid_ticks, minor=True)
+                ax.grid(True, which="minor", axis="x", alpha=0.2, linestyle="-", linewidth=0.5)
+                ax.grid(True, which="major", axis="x", alpha=0.3)
 
         plt.tight_layout()
 
