@@ -78,6 +78,7 @@ When overall system performance evaluation is needed, it will be explicitly requ
 - Defer speculative performance analysis until a complete request is made
 - When doing ad hoc debug in command lines, Write the command as a single string, properly escaped for bash/zsh
 - Always run the pre-commit first before committing
+- We own the entire codebase for the system and we are not yet in production. DO NOT IMPLEMENT FALLBACKS in unexpected cases. Log errors instead so we can identify and fix problerms faster.
 
 ### Deprecated Methods
 - CSC natrix for A is deprecated - we are using the mixed tensor now

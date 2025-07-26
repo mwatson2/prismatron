@@ -402,13 +402,9 @@ class PreviewSink:
             rendering_index = -1
             if metadata and "rendering_index" in metadata:
                 rendering_index = metadata["rendering_index"]
-                logger.info(
-                    f"PREVIEW SINK: Writing rendering_index={rendering_index} to shared memory (frame {getattr(self, '_frame_counter', 0) + 1})"
-                )
+                logger.debug(f"Writing rendering_index={rendering_index} to shared memory")
             else:
-                logger.warning(
-                    f"PREVIEW SINK: No rendering_index in metadata: {list(metadata.keys()) if metadata else 'No metadata'}"
-                )
+                logger.debug(f"No rendering_index in metadata: {list(metadata.keys()) if metadata else 'No metadata'}")
 
             # Update shared memory with new LED data
             with self._lock:
@@ -436,9 +432,7 @@ class PreviewSink:
                 stats = self.stats.get_statistics()
 
                 logger.info(
-                    f"PREVIEW SINK PIPELINE: {self.frames_received} frames received, "
-                    f"{self.frames_with_content} with content ({content_ratio:.1f}%), "
-                    f"FPS: {stats['ewma_fps']:.1f}, late: {stats['ewma_late_fraction']*100:.1f}%"
+                    f"Preview sink: {self.frames_received} frames, {content_ratio:.1f}% with content, FPS: {stats['ewma_fps']:.1f}"
                 )
                 self.last_log_time = start_time
 

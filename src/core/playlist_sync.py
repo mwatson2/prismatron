@@ -478,22 +478,7 @@ class PlaylistSyncService:
         if self.playlist_state.items:
             old_index = self.playlist_state.current_index
             self.playlist_state.current_index = (self.playlist_state.current_index + 1) % len(self.playlist_state.items)
-            logger.info(
-                f"PLAYLIST SYNC: Next item request - {old_index} -> {self.playlist_state.current_index} (client: {message.client_id})"
-            )
-
-            # Log playlist item names for debugging
-            if 0 <= old_index < len(self.playlist_state.items):
-                old_name = self.playlist_state.items[old_index].name
-            else:
-                old_name = "invalid_index"
-
-            if 0 <= self.playlist_state.current_index < len(self.playlist_state.items):
-                new_name = self.playlist_state.items[self.playlist_state.current_index].name
-            else:
-                new_name = "invalid_index"
-
-            logger.info(f"PLAYLIST SYNC: Item change - '{old_name}' -> '{new_name}'")
+            logger.debug(f"Next item: {old_index} -> {self.playlist_state.current_index} (client: {message.client_id})")
 
     def _handle_previous(self, message: PlaylistMessage):
         """Handle previous item message."""

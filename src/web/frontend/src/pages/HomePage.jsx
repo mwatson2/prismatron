@@ -20,43 +20,31 @@ const HomePage = () => {
 
   // Use WebSocket preview data (no need for HTTP polling)
   const previewData = wsPreviewData
+  const status = systemStatus
 
-  // Use preview data's current_item (based on rendering_index) for HomePage display
-  // playlist.current_index reflects producer state, previewData.current_item reflects rendering state
+  // Use ONLY preview data's current_item (based on rendering_index) for HomePage display
+  // No fallbacks - if this is missing, we have a bug that needs to be fixed
   const currentItem = previewData?.current_item ? {
     name: previewData.current_item.name,
     type: previewData.current_item.type
   } : null
-  const status = systemStatus
 
-  // Debug logging for data synchronization
+  // Track when the current rendered item actually changes
   useEffect(() => {
-    console.log('DEBUG: Data state updated:', {
-      // Playlist state (producer)
-      playlist_itemCount: playlist.items?.length || 0,
-      playlist_currentIndex: playlist.current_index,
-      playlist_isPlaying: playlist.is_playing,
-      playlist_currentItemName: playlist.items?.[playlist.current_index]?.name || 'none',
+    const itemName = previewData?.current_item?.name || null;
+    if (itemName) {
+      console.log(`📺 RENDERED ITEM CHANGED: "${itemName}" (rendering_index: ${status?.rendering_index ?? 'undefined'})`);
+    } else if (playlist.is_playing) {
+      console.warn('🚨 PLAYING BUT NO CURRENT ITEM in previewData');
+    }
+  }, [previewData?.current_item?.name])
 
-      // Preview state (rendering)
-      preview_hasData: !!previewData,
-      preview_currentItem: previewData?.current_item || null,
-      preview_currentItemName: previewData?.current_item?.name || 'none',
-      preview_hasFrame: previewData?.has_frame || false,
-
-      // System status fallback
-      status_currentFile: status?.current_file || 'none',
-      status_renderingIndex: status?.rendering_index ?? 'undefined',
-
-      // Final resolved current item
-      resolved_currentItemName: currentItem?.name || 'none',
-      fallback_used: !currentItem && !!status?.current_file,
-
-      // Rendering index comparison for debugging
-      controlState_renderingIndex: status?.rendering_index ?? 'undefined',
-      sharedMemory_renderingIndex: previewData?.shm_rendering_index ?? 'undefined'
-    })
-  }, [playlist, previewData, currentItem, status])
+  // Track rendering index changes separately
+  useEffect(() => {
+    if (status?.rendering_index !== undefined) {
+      console.log(`🎯 RENDERING INDEX CHANGED: ${status.rendering_index}`);
+    }
+  }, [status?.rendering_index])
 
   // System status is now received via WebSocket, no need for HTTP polling
 
@@ -68,10 +56,7 @@ const HomePage = () => {
         if (response.ok) {
           const data = await response.json()
           setLedPositions(data)
-          console.log('LED positions loaded:', data.led_count, 'LEDs')
-          console.log('Debug stats:', data.debug)
-          console.log('Frame dimensions:', data.frame_dimensions)
-          console.log('First 3 positions:', data.positions.slice(0, 3))
+          console.debug('LED positions loaded:', data.led_count, 'LEDs')
         }
       } catch (error) {
         console.error('Failed to fetch LED positions:', error)
@@ -136,7 +121,7 @@ const HomePage = () => {
     const scaleX = canvas.width / ledPositions.frame_dimensions.width
     const scaleY = canvas.height / ledPositions.frame_dimensions.height
 
-    console.log(`RGB Stamp LED rendering: ${canvas.width}x${canvas.height}, scale: ${scaleX.toFixed(3)}x${scaleY.toFixed(3)}`)
+    console.debug(`RGB Stamp LED rendering: ${canvas.width}x${canvas.height}, scale: ${scaleX.toFixed(3)}x${scaleY.toFixed(3)}`)
 
     // Use additive blending to properly composite RGB stamps
     ctx.globalCompositeOperation = 'lighter'
@@ -211,7 +196,7 @@ const HomePage = () => {
 
     const renderEndTime = performance.now()
     const renderDuration = renderEndTime - renderStartTime
-    console.log(`LED image render time: ${renderDuration.toFixed(2)}ms (${ledPositions.positions.length} LEDs)`)
+    console.debug(`LED render time: ${renderDuration.toFixed(2)}ms (${ledPositions.positions.length} LEDs)`)
   }
 
   // Redraw LEDs when data changes
@@ -398,32 +383,30 @@ const HomePage = () => {
           </button>
         </div>
 
-        {/* Playlist position indicator */}
+        {/* Playlist position indicator - based on rendering position */}
         {playlist.items?.length > 0 && (
           <div className="mt-4 text-center">
-            <p className="text-xs text-metal-silver font-mono">
-              Producer: {playlist.current_index + 1} / {playlist.items.length}
-              {status?.rendering_index !== undefined && status.rendering_index >= 0 && (
-                <span className="ml-2 text-neon-cyan">
-                  | Rendering: {status.rendering_index + 1}
-                </span>
-              )}
-              {previewData?.shm_rendering_index !== undefined && previewData.shm_rendering_index >= 0 && (
-                <span className="ml-2 text-neon-orange">
-                  | SHM: {previewData.shm_rendering_index + 1}
-                </span>
-              )}
-            </p>
+            {(() => {
+              // Use rendering_index from ControlState as the authoritative position
+              const renderingIndex = status?.rendering_index >= 0 ? status.rendering_index : 0;
+              return (
+                <>
+                  <p className="text-xs text-metal-silver font-mono">
+                    {renderingIndex + 1} / {playlist.items.length}
+                  </p>
 
-            {/* Progress bar - shows producer position */}
-            <div className="mt-2 w-full bg-dark-700 rounded-retro h-1 overflow-hidden">
-              <div
-                className="h-full bg-neon-cyan transition-all duration-300"
-                style={{
-                  width: `${((playlist.current_index + 1) / playlist.items.length) * 100}%`
-                }}
-              />
-            </div>
+                  {/* Progress bar - shows rendering position */}
+                  <div className="mt-2 w-full bg-dark-700 rounded-retro h-1 overflow-hidden">
+                    <div
+                      className="h-full bg-neon-cyan transition-all duration-300"
+                      style={{
+                        width: `${((renderingIndex + 1) / playlist.items.length) * 100}%`
+                      }}
+                    />
+                  </div>
+                </>
+              );
+            })()}
           </div>
         )}
       </div>

@@ -563,17 +563,17 @@ async def preview_broadcast_task():
                         dropped_frames_percentage = system_status.get("dropped_frames_percentage", 0.0)
                         late_frame_percentage = system_status.get("late_frame_percentage", 0.0)
 
-                        # Debug log every 10 seconds to verify values
+                        # Debug log every 30 seconds to verify values
                         if hasattr(get_system_status, "_last_debug_log"):
-                            if current_time - get_system_status._last_debug_log > 10.0:
-                                logger.info(
-                                    f"API DEBUG (ControlState): input_fps={consumer_input_fps:.1f}, output_fps={renderer_output_fps:.1f}, dropped={dropped_frames_percentage:.1f}%"
+                            if current_time - get_system_status._last_debug_log > 30.0:
+                                logger.debug(
+                                    f"System stats: input_fps={consumer_input_fps:.1f}, output_fps={renderer_output_fps:.1f}, dropped={dropped_frames_percentage:.1f}%"
                                 )
                                 get_system_status._last_debug_log = current_time
                         else:
                             get_system_status._last_debug_log = current_time
                     else:
-                        logger.warning("API DEBUG (ControlState): no control state available")
+                        logger.debug("No control state available")
 
                     # Try to get LED panel connection status from consumer process if available (fallback)
                     if consumer_process and hasattr(consumer_process, "get_statistics"):
@@ -720,14 +720,11 @@ async def preview_broadcast_task():
                                         shm_rendering_index if shm_rendering_index < 999999 else -1
                                     )
 
-                                    # Debug: Compare rendering_index from different sources
+                                    # Debug: Compare rendering_index from different sources (reduced frequency)
                                     if hasattr(preview_broadcast_task, "_last_debug_time"):
-                                        if current_time - preview_broadcast_task._last_debug_time > 2.0:
-                                            logger.info(
-                                                f"RENDERING INDEX DEBUG: ControlState={rendering_index}, SharedMemory={shm_rendering_index}, Frame={frame_counter}"
-                                            )
-                                            logger.info(
-                                                f"SHM TIMESTAMP DEBUG: shm_timestamp={timestamp:.3f}, current_time={current_time:.3f}, age={(current_time-timestamp):.3f}s"
+                                        if current_time - preview_broadcast_task._last_debug_time > 10.0:
+                                            logger.debug(
+                                                f"Rendering index - ControlState={rendering_index}, SharedMemory={shm_rendering_index}"
                                             )
                                             preview_broadcast_task._last_debug_time = current_time
                                     else:

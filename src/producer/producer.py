@@ -651,7 +651,7 @@ class ProducerProcess:
 
                 # Log play state changes for debugging
                 if not hasattr(self, "_last_play_state") or self._last_play_state != status.play_state:
-                    logger.info(f"PRODUCER CONTROL STATE: Play state changed to {status.play_state}")
+                    logger.debug(f"Play state changed to {status.play_state}")
                     self._last_play_state = status.play_state
 
                 # Handle play state
@@ -715,7 +715,7 @@ class ProducerProcess:
             if frame_data is not None:
                 # Log first frame for debugging
                 if self._frames_produced == 0:
-                    logger.info(f"PRODUCER FRAMES: Got first frame from {self._current_item.filepath}")
+                    logger.debug(f"Got first frame from {self._current_item.filepath}")
 
                 # Render frame to shared memory
                 if self._render_frame_to_buffer(frame_data):
@@ -732,23 +732,20 @@ class ProducerProcess:
                     self._last_frame_duration = None  # Reset for next item
 
                 current_item_name = os.path.basename(self._current_item.filepath) if self._current_item else "unknown"
-                logger.info(
-                    f"PRODUCER FRAMES: Content finished for '{current_item_name}' ({self._current_item.filepath}) after {self._accumulated_duration:.3f}s"
-                )
+                logger.info(f"Content finished: {current_item_name}")
 
                 # Prevent duplicate next_item() calls for the same content
                 if not self._content_finished_processed:
                     self._content_finished_processed = True
-                    logger.info(f"PRODUCER FRAMES: Advancing to next content (first call for '{current_item_name}')")
                     self._advance_to_next_content()
                 else:
-                    logger.info(
-                        f"PRODUCER FRAMES: Content '{current_item_name}' already processed for advancement, skipping duplicate call"
+                    logger.debug(
+                        f"Content '{current_item_name}' already processed for advancement, skipping duplicate call"
                     )
             else:
                 # No frame available yet (but not finished)
                 if not hasattr(self, "_no_frame_logged") or not self._no_frame_logged:
-                    logger.info(f"PRODUCER FRAMES: No frame available from {self._current_item.filepath} (waiting...)")
+                    logger.debug(f"No frame available from {self._current_item.filepath} (waiting...)")
                     self._no_frame_logged = True
 
         except Exception as e:
@@ -785,12 +782,12 @@ class ProducerProcess:
         # Try to load current playlist item
         current_item = self._playlist.get_current_item()
         if not current_item:
-            logger.info("PRODUCER CONTENT: No current playlist item available")
+            logger.debug("No current playlist item available")
             return False
 
         current_playlist_index = self._playlist.get_current_index()
         logger.debug(
-            f"PRODUCER CONTENT: _ensure_current_content called - playlist_index={current_playlist_index}, loaded_index={self._current_item_index} ({os.path.basename(current_item.filepath)})"
+            f"_ensure_current_content called - playlist_index={current_playlist_index}, loaded_index={self._current_item_index}"
         )
 
         # Load content source if needed
@@ -800,14 +797,16 @@ class ProducerProcess:
                 self._current_source.cleanup()
 
             # Load new content
-            logger.info(f"PRODUCER CONTENT: Loading content source for {current_item.filepath}")
+            logger.info(f"Loading content: {os.path.basename(current_item.filepath)}")
             self._current_source = current_item.get_content_source()
             self._current_item = current_item
             self._current_item_index = self._playlist.get_current_index()  # Store the index of the loaded content
             self._is_first_frame_of_current_item = True  # Reset flag for new item
             self._content_finished_processed = False  # Reset flag for new content
-            logger.info(
-                f"PRODUCER CONTENT: Loaded content index {self._current_item_index} ({os.path.basename(current_item.filepath)})"
+
+            # Log the index update for debugging
+            logger.debug(
+                f"Loaded content at index {self._current_item_index}: {os.path.basename(current_item.filepath)}"
             )
 
             # Calculate global timestamp offset for this item
@@ -818,12 +817,9 @@ class ProducerProcess:
                 return False
 
             # Setup content source
-            logger.info(f"PRODUCER CONTENT: Setting up content source for {current_item.filepath}")
             if not self._current_source.setup():
                 logger.error(f"Failed to setup content: {current_item.filepath}")
                 return False
-
-            logger.info(f"PRODUCER CONTENT: Successfully loaded {current_item.filepath}")
 
             # Update control state with current file
             self._control_state.set_current_file(current_item.filepath)
@@ -844,8 +840,7 @@ class ProducerProcess:
         try:
             # If connected to sync service, send next command instead of advancing locally
             if self._playlist_sync_client and self._playlist_sync_client.connected:
-                current_item_name = os.path.basename(self._current_item.filepath) if self._current_item else "none"
-                logger.info(f"PRODUCER: Requesting next item from sync service (current: '{current_item_name}')")
+                logger.debug("Requesting next item from sync service")
                 success = self._playlist_sync_client.next_item()
                 if not success:
                     logger.warning("Failed to send next command to sync service")
@@ -965,6 +960,12 @@ class ProducerProcess:
             # Calculate global presentation timestamp
             local_timestamp = frame_data.presentation_timestamp or 0.0
             global_timestamp = self._current_item_global_offset + local_timestamp
+
+            # Debug logging for index 0 issue
+            if self._current_item_index == 0:
+                logger.info(
+                    f"PRODUCER INDEX 0 DEBUG: Creating frame with index={self._current_item_index}, first_frame={self._is_first_frame_of_current_item}"
+                )
 
             # Get write buffer with global timestamp and playlist information FIRST
             # Use longer timeout since waiting for buffer availability is normal flow control
@@ -1401,8 +1402,8 @@ class ProducerProcess:
     def _on_playlist_sync_update(self, sync_state: SyncPlaylistState) -> None:
         """Handle playlist updates from synchronization service."""
         try:
-            logger.info(
-                f"PRODUCER SYNC: Received playlist update: {len(sync_state.items)} items, current_index={sync_state.current_index}, is_playing={sync_state.is_playing}"
+            logger.debug(
+                f"Received playlist update: {len(sync_state.items)} items, current_index={sync_state.current_index}"
             )
 
             # Clear current playlist
@@ -1434,6 +1435,14 @@ class ProducerProcess:
 
             # Update current index and playback state
             self._playlist._current_index = sync_state.current_index
+
+            # If the current content needs to change (different index), reset loaded content tracking
+            if self._current_item_index != sync_state.current_index:
+                logger.info(
+                    f"PLAYLIST INDEX SYNC: Producer index {self._current_item_index} -> playlist index {sync_state.current_index}"
+                )
+                # Mark that content needs to be reloaded to sync with new index
+                self._current_item = None  # Force content reload in _ensure_current_content
 
             # Update play state based on sync state
             if sync_state.is_playing:
