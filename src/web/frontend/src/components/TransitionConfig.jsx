@@ -157,7 +157,7 @@ const TransitionConfig = ({ item, onUpdate, onClose }) => {
           step={paramName === 'duration' ? 0.1 : 1}
           className={`w-full px-3 py-2 bg-metal-dark border rounded-retro font-mono text-sm
             ${error ? 'border-neon-orange' : 'border-metal-silver'}
-            text-white focus:border-neon-cyan focus:outline-none`}
+            text-black focus:border-neon-cyan focus:outline-none`}
           placeholder={paramSchema.default}
         />
         {error && (
@@ -189,7 +189,7 @@ const TransitionConfig = ({ item, onUpdate, onClose }) => {
               onChange={(e) => onTypeChange(direction, e.target.value)}
               className={`w-full px-3 py-2 bg-metal-dark border rounded-retro font-mono text-sm appearance-none cursor-pointer
                 ${typeError ? 'border-neon-orange' : 'border-metal-silver'}
-                text-white focus:border-neon-cyan focus:outline-none`}
+                text-black focus:border-neon-cyan focus:outline-none`}
             >
               {availableTransitions.map(trans => (
                 <option key={trans.type} value={trans.type}>

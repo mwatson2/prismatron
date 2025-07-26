@@ -143,7 +143,7 @@ class PlaylistState:
 class PlaylistMessage:
     """Message structure for playlist operations."""
 
-    type: str  # "update", "add", "remove", "reorder", "clear", "play", "pause", "next", "prev"
+    type: str  # "update", "add", "remove", "reorder", "clear", "play", "pause", "next", "prev", "update_transitions"
     operation: Optional[str] = None  # Specific operation for update type
     data: Optional[Dict[str, Any]] = None
     client_id: Optional[str] = None
@@ -367,6 +367,8 @@ class PlaylistSyncService:
                     self._handle_previous(message)
                 elif message.type == "set_position":
                     self._handle_set_position(message)
+                elif message.type == "update_transitions":
+                    self._handle_update_transitions(message)
                 else:
                     logger.warning(f"Unknown message type: {message.type}")
                     return
@@ -378,7 +380,10 @@ class PlaylistSyncService:
                 self._broadcast_update(exclude_client=None)
 
                 # Trigger callbacks
-                if message.type in ["add_item", "remove_item", "reorder", "clear"] and self.on_playlist_changed:
+                if (
+                    message.type in ["add_item", "remove_item", "reorder", "clear", "update_transitions"]
+                    and self.on_playlist_changed
+                ):
                     self.on_playlist_changed(self.playlist_state)
 
                 if message.type in ["play", "pause", "next", "previous", "set_position"] and self.on_playback_changed:
@@ -498,6 +503,28 @@ class PlaylistSyncService:
             logger.info(f"Set playlist position: index {index}")
         else:
             logger.warning(f"Invalid playlist index: {index}")
+
+    def _handle_update_transitions(self, message: PlaylistMessage):
+        """Handle update item transitions message."""
+        if not message.data or "item_id" not in message.data:
+            logger.error("Update transitions message missing item_id")
+            return
+
+        item_id = message.data["item_id"]
+        transition_in_data = message.data.get("transition_in")
+        transition_out_data = message.data.get("transition_out")
+
+        # Find the item to update
+        for item in self.playlist_state.items:
+            if item.id == item_id:
+                if transition_in_data:
+                    item.transition_in = TransitionConfig.from_dict(transition_in_data)
+                if transition_out_data:
+                    item.transition_out = TransitionConfig.from_dict(transition_out_data)
+                logger.info(f"Updated transitions for item: {item.name}")
+                return
+
+        logger.warning(f"Item not found for transition update: {item_id}")
 
     def _broadcast_update(self, exclude_client: Optional[str] = None):
         """Broadcast full playlist state to all clients. Must be called with lock held."""
@@ -727,3 +754,14 @@ class PlaylistSyncClient:
     def set_position(self, index: int) -> bool:
         """Set current playlist position."""
         return self.send_message(PlaylistMessage(type="set_position", data={"index": index}))
+
+    def update_item_transitions(
+        self, item_id: str, transition_in: TransitionConfig, transition_out: TransitionConfig
+    ) -> bool:
+        """Update transition configurations for a playlist item."""
+        data = {
+            "item_id": item_id,
+            "transition_in": transition_in.to_dict(),
+            "transition_out": transition_out.to_dict(),
+        }
+        return self.send_message(PlaylistMessage(type="update_transitions", data=data))

@@ -1482,39 +1482,17 @@ async def update_item_transitions(item_id: str, transition_in: TransitionConfig,
         if validation_errors:
             raise HTTPException(status_code=400, detail={"errors": validation_errors})
 
-        # Find and update the item
+        # Send update to playlist sync service
         if playlist_sync_client and playlist_sync_client.connected:
-            # Use the current playlist state (updated via callback)
-            if playlist_state and playlist_state.items:
-                # Find the item to update
-                item_found = False
-                for playlist_item in playlist_state.items:
-                    if playlist_item.id == item_id:
-                        # Update transitions
-                        playlist_item.transition_in = TransitionConfig(
-                            type=transition_in.type, parameters=transition_in.parameters
-                        )
-                        playlist_item.transition_out = TransitionConfig(
-                            type=transition_out.type, parameters=transition_out.parameters
-                        )
-                        item_found = True
-                        break
+            # Convert API transition configs to sync transition configs
+            sync_transition_in = SyncTransitionConfig(type=transition_in.type, parameters=transition_in.parameters)
+            sync_transition_out = SyncTransitionConfig(type=transition_out.type, parameters=transition_out.parameters)
 
-                if not item_found:
-                    raise HTTPException(status_code=404, detail="Playlist item not found")
+            # Send update via sync service
+            success = playlist_sync_client.update_item_transitions(item_id, sync_transition_in, sync_transition_out)
 
-                # Broadcast updated playlist state to WebSocket clients
-                await manager.broadcast(
-                    {
-                        "type": "playlist_updated",
-                        "items": [item.dict_serializable() for item in playlist_state.items],
-                        "current_index": playlist_state.current_index,
-                        "is_playing": playlist_state.is_playing,
-                        "auto_repeat": playlist_state.auto_repeat,
-                        "shuffle": playlist_state.shuffle,
-                    }
-                )
-
+            if success:
+                # Note: WebSocket broadcast will happen via sync service callback when the update comes back
                 return {
                     "status": "updated",
                     "item_id": item_id,
@@ -1522,7 +1500,7 @@ async def update_item_transitions(item_id: str, transition_in: TransitionConfig,
                     "transition_out": transition_out.dict_serializable(),
                 }
             else:
-                raise HTTPException(status_code=500, detail="Failed to get playlist state from sync service")
+                raise HTTPException(status_code=500, detail="Failed to update transitions via sync service")
         else:
             # Update local playlist state if sync service not available
             item_found = False
