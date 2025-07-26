@@ -300,11 +300,11 @@ class FrameRenderer:
         """
         # Convert from spatial to physical order before sending to sinks
         physical_led_values = self._convert_spatial_to_physical(led_values)
-        
+
         # Add rendering_index to metadata for PreviewSink
         enhanced_metadata = metadata.copy() if metadata else {}
-        if metadata and 'playlist_item_index' in metadata:
-            enhanced_metadata['rendering_index'] = metadata['playlist_item_index']
+        if metadata and "playlist_item_index" in metadata:
+            enhanced_metadata["rendering_index"] = metadata["playlist_item_index"]
 
         # Debug: Write first 10 different LED value sets to temporary files for analysis
         if self._debug_led_count < self._debug_max_leds:

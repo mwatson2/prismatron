@@ -37,21 +37,21 @@ const HomePage = () => {
       playlist_currentIndex: playlist.current_index,
       playlist_isPlaying: playlist.is_playing,
       playlist_currentItemName: playlist.items?.[playlist.current_index]?.name || 'none',
-      
+
       // Preview state (rendering)
       preview_hasData: !!previewData,
       preview_currentItem: previewData?.current_item || null,
       preview_currentItemName: previewData?.current_item?.name || 'none',
       preview_hasFrame: previewData?.has_frame || false,
-      
+
       // System status fallback
       status_currentFile: status?.current_file || 'none',
       status_renderingIndex: status?.rendering_index ?? 'undefined',
-      
+
       // Final resolved current item
       resolved_currentItemName: currentItem?.name || 'none',
       fallback_used: !currentItem && !!status?.current_file,
-      
+
       // Rendering index comparison for debugging
       controlState_renderingIndex: status?.rendering_index ?? 'undefined',
       sharedMemory_renderingIndex: previewData?.shm_rendering_index ?? 'undefined'

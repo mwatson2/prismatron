@@ -12,6 +12,6 @@ from .transition_factory import TransitionFactory
 
 __all__ = [
     "BaseTransition",
-    "FadeTransition", 
+    "FadeTransition",
     "TransitionFactory",
 ]

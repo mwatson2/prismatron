@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class FadeTransition(BaseTransition):
     """
     Fade transition implementation.
-    
+
     Provides smooth fade-in and fade-out effects by adjusting frame brightness
     over a specified duration. Supports different interpolation curves for
     natural-looking transitions.
@@ -54,7 +54,7 @@ class FadeTransition(BaseTransition):
             # Validate inputs
             if frame.ndim != 3 or frame.shape[2] != 3:
                 raise ValueError(f"Expected RGB frame with shape (H, W, 3), got {frame.shape}")
-            
+
             if not self.validate_parameters(transition_config.get("parameters", {})):
                 raise ValueError("Invalid fade transition parameters")
 
@@ -78,7 +78,7 @@ class FadeTransition(BaseTransition):
                 # Fade in: start at min_brightness, end at full brightness
                 fade_factor = min_brightness + (1.0 - min_brightness) * curve_progress
             elif direction == "out":
-                # Fade out: start at full brightness, end at min_brightness  
+                # Fade out: start at full brightness, end at min_brightness
                 fade_factor = 1.0 - (1.0 - min_brightness) * curve_progress
             else:
                 raise ValueError(f"Invalid direction '{direction}', must be 'in' or 'out'")
@@ -87,7 +87,7 @@ class FadeTransition(BaseTransition):
             # Convert to float for processing, then back to uint8
             frame_float = frame.astype(np.float32)
             faded_frame = frame_float * fade_factor
-            
+
             # Clamp values and convert back to uint8
             faded_frame = np.clip(faded_frame, 0, 255).astype(np.uint8)
 
@@ -211,24 +211,24 @@ class FadeTransition(BaseTransition):
                     "minimum": 0.1,
                     "maximum": 60.0,
                     "default": 1.0,
-                    "description": "Fade duration in seconds"
+                    "description": "Fade duration in seconds",
                 },
                 "curve": {
                     "type": "string",
                     "enum": ["linear", "ease-in", "ease-out", "ease-in-out"],
                     "default": "linear",
-                    "description": "Interpolation curve for fade transition"
+                    "description": "Interpolation curve for fade transition",
                 },
                 "min_brightness": {
                     "type": "number",
                     "minimum": 0.0,
                     "maximum": 1.0,
                     "default": 0.0,
-                    "description": "Minimum brightness level (0.0 = full fade to black)"
-                }
+                    "description": "Minimum brightness level (0.0 = full fade to black)",
+                },
             },
             "required": ["duration"],
-            "additionalProperties": False
+            "additionalProperties": False,
         }
 
     def _apply_curve(self, progress: float, curve_type: str) -> float:

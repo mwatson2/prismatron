@@ -50,7 +50,7 @@ const TransitionConfig = ({ item, onUpdate, onClose }) => {
   const handleTransitionTypeChange = (direction, newType) => {
     const schema = getTransitionSchema(newType)
     const defaultParams = {}
-    
+
     // Set default values based on schema
     Object.entries(schema).forEach(([key, paramSchema]) => {
       defaultParams[key] = paramSchema.default
@@ -61,7 +61,7 @@ const TransitionConfig = ({ item, onUpdate, onClose }) => {
     } else {
       setTransitionOut({ type: newType, parameters: defaultParams })
     }
-    
+
     // Clear any errors for this direction
     setErrors(prev => {
       const newErrors = { ...prev }
@@ -76,7 +76,7 @@ const TransitionConfig = ({ item, onUpdate, onClose }) => {
 
   const handleParameterChange = (direction, paramName, value) => {
     const numericValue = paramName === 'duration' ? parseFloat(value) : value
-    
+
     if (direction === 'in') {
       setTransitionIn(prev => ({
         ...prev,
@@ -88,7 +88,7 @@ const TransitionConfig = ({ item, onUpdate, onClose }) => {
         parameters: { ...prev.parameters, [paramName]: numericValue }
       }))
     }
-    
+
     // Clear error for this parameter
     const errorKey = `transition_${direction}.parameters.${paramName}`
     if (errors[errorKey]) {
@@ -103,7 +103,7 @@ const TransitionConfig = ({ item, onUpdate, onClose }) => {
   const handleSave = async () => {
     setIsLoading(true)
     setErrors({})
-    
+
     try {
       const response = await fetch(`/api/playlist/${item.id}/transitions`, {
         method: 'PUT',
@@ -137,8 +137,8 @@ const TransitionConfig = ({ item, onUpdate, onClose }) => {
   }
 
   const renderParameterInput = (direction, paramName, paramSchema) => {
-    const currentValue = direction === 'in' 
-      ? transitionIn.parameters[paramName] 
+    const currentValue = direction === 'in'
+      ? transitionIn.parameters[paramName]
       : transitionOut.parameters[paramName]
     const errorKey = `transition_${direction}.parameters.${paramName}`
     const error = errors[errorKey]
@@ -177,7 +177,7 @@ const TransitionConfig = ({ item, onUpdate, onClose }) => {
     return (
       <div className="space-y-4">
         <h4 className="text-sm font-retro text-neon-cyan uppercase">{directionLabel}</h4>
-        
+
         {/* Transition Type Selector */}
         <div className="space-y-1">
           <label className="block text-xs font-mono text-metal-silver uppercase">

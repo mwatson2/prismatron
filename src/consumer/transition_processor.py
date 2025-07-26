@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class TransitionProcessor:
     """
     Handles transition processing in the consumer pipeline.
-    
+
     This component extracts transition metadata from frame data and applies
     the appropriate transition effects using the centralized factory system.
     It processes both transition_in and transition_out effects as needed.
@@ -29,7 +29,7 @@ class TransitionProcessor:
         """Initialize the transition processor."""
         self._factory = get_transition_factory()
         self._frame_count = 0
-        
+
         logger.info("Transition processor initialized")
 
     def process_frame(self, frame: np.ndarray, metadata: Dict[str, Any]) -> np.ndarray:
@@ -45,7 +45,7 @@ class TransitionProcessor:
         """
         try:
             self._frame_count += 1
-            
+
             # Extract transition metadata from frame metadata
             transition_context = self._extract_transition_context(metadata)
             if not transition_context:
@@ -54,19 +54,15 @@ class TransitionProcessor:
 
             # Check if we need to apply any transitions
             frame_with_transitions = frame.copy()
-            
+
             # Apply transition_in if frame is in the transition region
             if self._should_apply_transition_in(transition_context):
-                frame_with_transitions = self._apply_transition(
-                    frame_with_transitions, transition_context, "in"
-                )
-            
+                frame_with_transitions = self._apply_transition(frame_with_transitions, transition_context, "in")
+
             # Apply transition_out if frame is in the transition region
             if self._should_apply_transition_out(transition_context):
-                frame_with_transitions = self._apply_transition(
-                    frame_with_transitions, transition_context, "out"
-                )
-            
+                frame_with_transitions = self._apply_transition(frame_with_transitions, transition_context, "out")
+
             return frame_with_transitions
 
         except Exception as e:
@@ -87,11 +83,14 @@ class TransitionProcessor:
         try:
             # Check if required transition fields are present
             required_fields = [
-                "transition_in_type", "transition_in_duration",
-                "transition_out_type", "transition_out_duration", 
-                "item_timestamp", "item_duration"
+                "transition_in_type",
+                "transition_in_duration",
+                "transition_out_type",
+                "transition_out_duration",
+                "item_timestamp",
+                "item_duration",
             ]
-            
+
             if not all(field in metadata for field in required_fields):
                 logger.debug("Frame metadata missing transition fields")
                 return None
@@ -100,19 +99,21 @@ class TransitionProcessor:
             transition_context = {
                 "transition_in": {
                     "type": metadata["transition_in_type"],
-                    "parameters": {"duration": metadata["transition_in_duration"]}
+                    "parameters": {"duration": metadata["transition_in_duration"]},
                 },
                 "transition_out": {
-                    "type": metadata["transition_out_type"], 
-                    "parameters": {"duration": metadata["transition_out_duration"]}
+                    "type": metadata["transition_out_type"],
+                    "parameters": {"duration": metadata["transition_out_duration"]},
                 },
                 "item_timestamp": metadata["item_timestamp"],
-                "item_duration": metadata["item_duration"]
+                "item_duration": metadata["item_duration"],
             }
 
             # Skip processing if both transitions are "none"
-            if (transition_context["transition_in"]["type"] == "none" and 
-                transition_context["transition_out"]["type"] == "none"):
+            if (
+                transition_context["transition_in"]["type"] == "none"
+                and transition_context["transition_out"]["type"] == "none"
+            ):
                 return None
 
             return transition_context
@@ -145,7 +146,7 @@ class TransitionProcessor:
                 timestamp=transition_context["item_timestamp"],
                 item_duration=transition_context["item_duration"],
                 transition_config=transition_config,
-                direction="in"
+                direction="in",
             )
 
         except Exception as e:
@@ -176,19 +177,14 @@ class TransitionProcessor:
                 timestamp=transition_context["item_timestamp"],
                 item_duration=transition_context["item_duration"],
                 transition_config=transition_config,
-                direction="out"
+                direction="out",
             )
 
         except Exception as e:
             logger.warning(f"Error checking transition_out applicability: {e}")
             return False
 
-    def _apply_transition(
-        self, 
-        frame: np.ndarray, 
-        transition_context: Dict[str, Any], 
-        direction: str
-    ) -> np.ndarray:
+    def _apply_transition(self, frame: np.ndarray, transition_context: Dict[str, Any], direction: str) -> np.ndarray:
         """
         Apply a specific transition to a frame.
 
@@ -203,14 +199,14 @@ class TransitionProcessor:
         try:
             # Get the appropriate transition configuration
             transition_config = transition_context[f"transition_{direction}"]
-            
+
             # Use the factory to apply the transition
             processed_frame = self._factory.apply_transition_to_frame(
                 frame=frame,
                 timestamp=transition_context["item_timestamp"],
                 item_duration=transition_context["item_duration"],
                 transition_config=transition_config,
-                direction=direction
+                direction=direction,
             )
 
             # Log successful transition application (debug level to avoid spam)
@@ -236,7 +232,7 @@ class TransitionProcessor:
         """
         return {
             "frames_processed": self._frame_count,
-            "available_transitions": self._factory.get_available_transitions()
+            "available_transitions": self._factory.get_available_transitions(),
         }
 
     def reset_statistics(self) -> None:

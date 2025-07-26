@@ -70,7 +70,7 @@ class SystemStatus:
     renderer_output_fps: float = 0.0
     dropped_frames_percentage: float = 0.0
     late_frame_percentage: float = 0.0
-    
+
     # Rendering index to track which item is actually being rendered
     rendering_index: int = -1
 

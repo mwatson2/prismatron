@@ -42,10 +42,10 @@ from src.const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT, LED_DATA_SIZE
 from src.core.control_state import ControlState
 from src.core.playlist_sync import PlaylistItem as SyncPlaylistItem
 from src.core.playlist_sync import PlaylistState as SyncPlaylistState
-from src.core.playlist_sync import TransitionConfig as SyncTransitionConfig
 from src.core.playlist_sync import (
     PlaylistSyncClient,
 )
+from src.core.playlist_sync import TransitionConfig as SyncTransitionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ def get_gpu_temperature():
 # Pydantic models for API requests/responses
 class TransitionConfig(BaseModel):
     """Transition configuration model."""
-    
+
     type: str = Field("none", description="Transition type: none, fade")
     parameters: Dict = Field(default_factory=dict, description="Transition parameters")
 
@@ -97,7 +97,9 @@ class PlaylistItem(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
     order: int = Field(0, description="Display order")
     transition_in: TransitionConfig = Field(default_factory=TransitionConfig, description="Transition in configuration")
-    transition_out: TransitionConfig = Field(default_factory=TransitionConfig, description="Transition out configuration")
+    transition_out: TransitionConfig = Field(
+        default_factory=TransitionConfig, description="Transition out configuration"
+    )
 
     def dict_serializable(self):
         """Return a dictionary with datetime objects converted to ISO strings."""
@@ -292,13 +294,13 @@ def sync_item_to_api_item(sync_item: SyncPlaylistItem) -> PlaylistItem:
     # Convert transition configurations
     transition_in = TransitionConfig(
         type=sync_item.transition_in.type if sync_item.transition_in else "none",
-        parameters=sync_item.transition_in.parameters if sync_item.transition_in else {}
+        parameters=sync_item.transition_in.parameters if sync_item.transition_in else {},
     )
     transition_out = TransitionConfig(
         type=sync_item.transition_out.type if sync_item.transition_out else "none",
-        parameters=sync_item.transition_out.parameters if sync_item.transition_out else {}
+        parameters=sync_item.transition_out.parameters if sync_item.transition_out else {},
     )
-    
+
     return PlaylistItem(
         id=sync_item.id,
         name=sync_item.name,
@@ -317,15 +319,11 @@ def sync_item_to_api_item(sync_item: SyncPlaylistItem) -> PlaylistItem:
 def api_item_to_sync_item(api_item: PlaylistItem) -> SyncPlaylistItem:
     """Convert API playlist item to sync playlist item."""
     # Convert transition configurations
-    transition_in = SyncTransitionConfig(
-        type=api_item.transition_in.type,
-        parameters=api_item.transition_in.parameters
-    )
+    transition_in = SyncTransitionConfig(type=api_item.transition_in.type, parameters=api_item.transition_in.parameters)
     transition_out = SyncTransitionConfig(
-        type=api_item.transition_out.type,
-        parameters=api_item.transition_out.parameters
+        type=api_item.transition_out.type, parameters=api_item.transition_out.parameters
     )
-    
+
     return SyncPlaylistItem(
         id=api_item.id,
         name=api_item.name,
@@ -344,17 +342,17 @@ def api_item_to_sync_item(api_item: PlaylistItem) -> SyncPlaylistItem:
 def validate_transition_config(transition_config: TransitionConfig) -> Dict[str, str]:
     """
     Validate transition configuration and return any errors.
-    
+
     Returns:
         Dictionary of errors, empty if valid
     """
     errors = {}
-    
+
     # Validate transition type
     valid_types = ["none", "fade"]
     if transition_config.type not in valid_types:
         errors["type"] = f"Invalid transition type '{transition_config.type}'. Must be one of: {', '.join(valid_types)}"
-    
+
     # Validate parameters based on type
     if transition_config.type == "fade":
         duration = transition_config.parameters.get("duration")
@@ -364,28 +362,28 @@ def validate_transition_config(transition_config: TransitionConfig) -> Dict[str,
             errors["parameters.duration"] = "Duration must be a number"
         elif duration < 0.1 or duration > 10.0:
             errors["parameters.duration"] = "Duration must be between 0.1 and 10.0 seconds"
-    
+
     return errors
 
 
 def validate_playlist_item(item: PlaylistItem) -> Dict[str, str]:
     """
     Validate playlist item including transition configurations.
-    
+
     Returns:
         Dictionary of errors, empty if valid
     """
     errors = {}
-    
+
     # Validate transition configurations
     transition_in_errors = validate_transition_config(item.transition_in)
     for key, error in transition_in_errors.items():
         errors[f"transition_in.{key}"] = error
-        
+
     transition_out_errors = validate_transition_config(item.transition_out)
     for key, error in transition_out_errors.items():
         errors[f"transition_out.{key}"] = error
-    
+
     return errors
 
 
@@ -620,7 +618,7 @@ async def preview_broadcast_task():
                 cpu_temp = get_cpu_temperature()
                 gpu_temp = get_gpu_temperature()
 
-                # Get rendering_index from control state 
+                # Get rendering_index from control state
                 rendering_index_for_status = -1
                 if control_state:
                     system_status_for_index = control_state.get_status_dict()
@@ -669,7 +667,7 @@ async def preview_broadcast_task():
                 if control_state:
                     system_status = control_state.get_status_dict()
                     rendering_index = system_status.get("rendering_index", -1)
-                
+
                 if playlist_state.items and 0 <= rendering_index < len(playlist_state.items):
                     current_item = playlist_state.items[rendering_index]
                     preview_data["current_item"] = {"name": current_item.name, "type": current_item.type}
@@ -689,8 +687,12 @@ async def preview_broadcast_task():
                             import struct
 
                             # Unpack header according to PreviewSink format: "<ddii40x"
-                            timestamp, frame_counter, led_count, shm_rendering_index = struct.unpack("<ddii40x", header_data)
-                            logger.debug(f"API SHM READ: timestamp={timestamp:.3f}, frame={frame_counter}, leds={led_count}, rendering_index={shm_rendering_index}")
+                            timestamp, frame_counter, led_count, shm_rendering_index = struct.unpack(
+                                "<ddii40x", header_data
+                            )
+                            logger.debug(
+                                f"API SHM READ: timestamp={timestamp:.3f}, frame={frame_counter}, leds={led_count}, rendering_index={shm_rendering_index}"
+                            )
 
                             if led_count > 0:
                                 # Read LED data starting at offset 64: led_count * 3 bytes (RGB)
@@ -714,13 +716,19 @@ async def preview_broadcast_task():
                                     preview_data["total_leds"] = led_count
                                     preview_data["frame_counter"] = frame_counter
                                     # Handle potential invalid rendering_index values
-                                    preview_data["shm_rendering_index"] = shm_rendering_index if shm_rendering_index < 999999 else -1
-                                    
+                                    preview_data["shm_rendering_index"] = (
+                                        shm_rendering_index if shm_rendering_index < 999999 else -1
+                                    )
+
                                     # Debug: Compare rendering_index from different sources
                                     if hasattr(preview_broadcast_task, "_last_debug_time"):
                                         if current_time - preview_broadcast_task._last_debug_time > 2.0:
-                                            logger.info(f"RENDERING INDEX DEBUG: ControlState={rendering_index}, SharedMemory={shm_rendering_index}, Frame={frame_counter}")
-                                            logger.info(f"SHM TIMESTAMP DEBUG: shm_timestamp={timestamp:.3f}, current_time={current_time:.3f}, age={(current_time-timestamp):.3f}s")
+                                            logger.info(
+                                                f"RENDERING INDEX DEBUG: ControlState={rendering_index}, SharedMemory={shm_rendering_index}, Frame={frame_counter}"
+                                            )
+                                            logger.info(
+                                                f"SHM TIMESTAMP DEBUG: shm_timestamp={timestamp:.3f}, current_time={current_time:.3f}, age={(current_time-timestamp):.3f}s"
+                                            )
                                             preview_broadcast_task._last_debug_time = current_time
                                     else:
                                         preview_broadcast_task._last_debug_time = current_time
@@ -1447,12 +1455,7 @@ async def get_transition_types():
     """Get available transition types and their schemas."""
     return {
         "types": [
-            {
-                "type": "none",
-                "name": "None",
-                "description": "No transition",
-                "parameters": {}
-            },
+            {"type": "none", "name": "None", "description": "No transition", "parameters": {}},
             {
                 "type": "fade",
                 "name": "Fade",
@@ -1463,36 +1466,32 @@ async def get_transition_types():
                         "default": 1.0,
                         "min": 0.1,
                         "max": 10.0,
-                        "description": "Fade duration in seconds"
+                        "description": "Fade duration in seconds",
                     }
-                }
-            }
+                },
+            },
         ]
     }
 
 
 @app.put("/api/playlist/{item_id}/transitions")
-async def update_item_transitions(
-    item_id: str,
-    transition_in: TransitionConfig,
-    transition_out: TransitionConfig
-):
+async def update_item_transitions(item_id: str, transition_in: TransitionConfig, transition_out: TransitionConfig):
     """Update transition configurations for a playlist item."""
     try:
         # Validate transition configurations
         validation_errors = {}
-        
+
         transition_in_errors = validate_transition_config(transition_in)
         for key, error in transition_in_errors.items():
             validation_errors[f"transition_in.{key}"] = error
-            
+
         transition_out_errors = validate_transition_config(transition_out)
         for key, error in transition_out_errors.items():
             validation_errors[f"transition_out.{key}"] = error
-        
+
         if validation_errors:
             raise HTTPException(status_code=400, detail={"errors": validation_errors})
-        
+
         # Find and update the item
         if playlist_sync_client and playlist_sync_client.connected:
             # Get current state from sync service
@@ -1504,29 +1503,27 @@ async def update_item_transitions(
                     if sync_item.id == item_id:
                         # Update transitions
                         sync_item.transition_in = SyncTransitionConfig(
-                            type=transition_in.type,
-                            parameters=transition_in.parameters
+                            type=transition_in.type, parameters=transition_in.parameters
                         )
                         sync_item.transition_out = SyncTransitionConfig(
-                            type=transition_out.type,
-                            parameters=transition_out.parameters
+                            type=transition_out.type, parameters=transition_out.parameters
                         )
                         item_found = True
                         break
-                
+
                 if not item_found:
                     raise HTTPException(status_code=404, detail="Playlist item not found")
-                
+
                 # Update the sync service
                 success = playlist_sync_client.update_item(sync_item)
                 if not success:
                     raise HTTPException(status_code=500, detail="Failed to update item in sync service")
-                
+
                 return {
                     "status": "updated",
                     "item_id": item_id,
                     "transition_in": transition_in.dict_serializable(),
-                    "transition_out": transition_out.dict_serializable()
+                    "transition_out": transition_out.dict_serializable(),
                 }
             else:
                 raise HTTPException(status_code=500, detail="Failed to get playlist state from sync service")
@@ -1539,17 +1536,17 @@ async def update_item_transitions(
                     item.transition_out = transition_out
                     item_found = True
                     break
-            
+
             if not item_found:
                 raise HTTPException(status_code=404, detail="Playlist item not found")
-            
+
             return {
                 "status": "updated",
                 "item_id": item_id,
                 "transition_in": transition_in.dict_serializable(),
-                "transition_out": transition_out.dict_serializable()
+                "transition_out": transition_out.dict_serializable(),
             }
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1680,7 +1677,7 @@ async def get_led_preview():
         if control_state:
             system_status = control_state.get_status_dict()
             rendering_index = system_status.get("rendering_index", -1)
-        
+
         if playlist_state.items and 0 <= rendering_index < len(playlist_state.items):
             current_item = playlist_state.items[rendering_index]
             preview_data["current_item"] = {"name": current_item.name, "type": current_item.type}
@@ -1701,7 +1698,9 @@ async def get_led_preview():
 
                     # Unpack header according to PreviewSink format: "<ddii40x"
                     timestamp, frame_counter, led_count, shm_rendering_index = struct.unpack("<ddii40x", header_data)
-                    logger.debug(f"API PREVIEW READ: timestamp={timestamp:.3f}, frame={frame_counter}, leds={led_count}, rendering_index={shm_rendering_index}")
+                    logger.debug(
+                        f"API PREVIEW READ: timestamp={timestamp:.3f}, frame={frame_counter}, leds={led_count}, rendering_index={shm_rendering_index}"
+                    )
 
                     if led_count > 0:
                         # Read LED data starting at offset 64: led_count * 3 bytes (RGB)
@@ -1724,8 +1723,10 @@ async def get_led_preview():
                             preview_data["frame_data"] = frame_data
                             preview_data["total_leds"] = led_count
                             preview_data["frame_counter"] = frame_counter
-                            # Handle potential invalid rendering_index values  
-                            preview_data["shm_rendering_index"] = shm_rendering_index if shm_rendering_index < 999999 else -1
+                            # Handle potential invalid rendering_index values
+                            preview_data["shm_rendering_index"] = (
+                                shm_rendering_index if shm_rendering_index < 999999 else -1
+                            )
                             logger.debug(
                                 f"Using real LED data from shared memory: {len(frame_data)} LEDs, frame {frame_counter}, shm_rendering_index={shm_rendering_index}"
                             )
@@ -1977,7 +1978,8 @@ async def serve_register_sw():
         return FileResponse(str(sw_file), media_type="application/javascript")
     raise HTTPException(status_code=404, detail="Service worker not found")
 
-@app.get("/sw.js")  
+
+@app.get("/sw.js")
 async def serve_sw():
     """Serve the service worker file."""
     frontend_dir = Path(__file__).parent / "frontend" / "dist"
@@ -1985,6 +1987,7 @@ async def serve_sw():
     if sw_file.exists():
         return FileResponse(str(sw_file), media_type="application/javascript")
     raise HTTPException(status_code=404, detail="Service worker not found")
+
 
 # Catch-all route for SPA routing - must be after all API routes
 @app.get("/{path:path}")

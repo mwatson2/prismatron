@@ -15,7 +15,7 @@ import numpy as np
 class BaseTransition(ABC):
     """
     Abstract base class for all transition implementations.
-    
+
     Transitions are applied to individual frames during playback to create
     visual effects at the beginning (transition_in) or end (transition_out)
     of playlist items.
@@ -47,7 +47,6 @@ class BaseTransition(ABC):
             ValueError: If parameters are invalid
             RuntimeError: If transition processing fails
         """
-        pass
 
     @abstractmethod
     def get_transition_region(
@@ -69,7 +68,6 @@ class BaseTransition(ABC):
         Raises:
             ValueError: If parameters are invalid
         """
-        pass
 
     @abstractmethod
     def is_in_transition_region(
@@ -87,7 +85,6 @@ class BaseTransition(ABC):
         Returns:
             True if timestamp is within the transition region, False otherwise
         """
-        pass
 
     @abstractmethod
     def validate_parameters(self, parameters: Dict[str, Any]) -> bool:
@@ -103,7 +100,6 @@ class BaseTransition(ABC):
         Note:
             Should log specific validation errors for debugging
         """
-        pass
 
     @abstractmethod
     def get_parameter_schema(self) -> Dict[str, Any]:
@@ -128,7 +124,6 @@ class BaseTransition(ABC):
                 "required": ["duration"]
             }
         """
-        pass
 
     def get_transition_name(self) -> str:
         """

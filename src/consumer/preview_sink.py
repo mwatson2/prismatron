@@ -188,7 +188,7 @@ class PreviewSink:
         self.frames_received = 0  # Total frames received
 
         logger.info(f"Preview sink initialized with shared memory size: {self.shared_memory_size} bytes")
-        logger.info(f"Preview sink header format: <ddii40x")
+        logger.info("Preview sink header format: <ddii40x")
 
     def _calculate_shared_memory_size(self) -> int:
         """Calculate required shared memory size."""
@@ -400,11 +400,15 @@ class PreviewSink:
             # LED values are already in physical order from frame renderer
             # Extract rendering_index from metadata
             rendering_index = -1
-            if metadata and 'rendering_index' in metadata:
-                rendering_index = metadata['rendering_index']
-                logger.info(f"PREVIEW SINK: Writing rendering_index={rendering_index} to shared memory (frame {getattr(self, '_frame_counter', 0) + 1})")
+            if metadata and "rendering_index" in metadata:
+                rendering_index = metadata["rendering_index"]
+                logger.info(
+                    f"PREVIEW SINK: Writing rendering_index={rendering_index} to shared memory (frame {getattr(self, '_frame_counter', 0) + 1})"
+                )
             else:
-                logger.warning(f"PREVIEW SINK: No rendering_index in metadata: {list(metadata.keys()) if metadata else 'No metadata'}")
+                logger.warning(
+                    f"PREVIEW SINK: No rendering_index in metadata: {list(metadata.keys()) if metadata else 'No metadata'}"
+                )
 
             # Update shared memory with new LED data
             with self._lock:
@@ -438,8 +442,10 @@ class PreviewSink:
                 )
                 self.last_log_time = start_time
 
-            logger.debug(f"Updated preview data: frame {frame_counter}, {len(led_data_bytes)} bytes, rendering_index={rendering_index}")
-            
+            logger.debug(
+                f"Updated preview data: frame {frame_counter}, {len(led_data_bytes)} bytes, rendering_index={rendering_index}"
+            )
+
             # Additional debug: Log first few LED values to detect corruption
             if led_values.size > 0:
                 sample_leds = led_values[:3].flatten()  # First 3 LEDs as flat RGB array

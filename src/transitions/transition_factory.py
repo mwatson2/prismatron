@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class TransitionFactory:
     """
     Factory and registry for transition implementations.
-    
+
     Manages the available transition types, creates instances based on
     configuration, and provides validation and introspection capabilities.
     """
@@ -26,7 +26,7 @@ class TransitionFactory:
         """Initialize the transition factory with built-in transitions."""
         # Registry of transition type name -> transition class
         self._transitions: Dict[str, Type[BaseTransition]] = {}
-        
+
         # Register built-in transitions
         self.register_transition("none", NoneTransition)
         self.register_transition("fade", FadeTransition)
@@ -44,13 +44,13 @@ class TransitionFactory:
         """
         if not name or not isinstance(name, str):
             raise ValueError("Transition name must be a non-empty string")
-        
+
         if not issubclass(transition_class, BaseTransition):
             raise ValueError("Transition class must inherit from BaseTransition")
-        
+
         if name in self._transitions:
             logger.warning(f"Overriding existing transition '{name}'")
-        
+
         self._transitions[name] = transition_class
         logger.debug(f"Registered transition type '{name}': {transition_class.__name__}")
 
@@ -77,9 +77,11 @@ class TransitionFactory:
             Logs error if transition type is not registered
         """
         if transition_type not in self._transitions:
-            logger.error(f"Unknown transition type '{transition_type}'. Available types: {self.get_available_transitions()}")
+            logger.error(
+                f"Unknown transition type '{transition_type}'. Available types: {self.get_available_transitions()}"
+            )
             return None
-        
+
         try:
             transition_class = self._transitions[transition_type]
             return transition_class()
@@ -102,23 +104,23 @@ class TransitionFactory:
             if not isinstance(transition_config, dict):
                 logger.error("Transition config must be a dictionary")
                 return False
-            
+
             transition_type = transition_config.get("type")
             if not transition_type:
                 logger.error("Transition config missing 'type' field")
                 return False
-            
+
             # Check if transition type exists
             if transition_type not in self._transitions:
                 logger.error(f"Unknown transition type '{transition_type}'")
                 return False
-            
+
             # Validate parameters with transition implementation
             parameters = transition_config.get("parameters", {})
             transition = self.create_transition(transition_type)
             if transition is None:
                 return False
-            
+
             return transition.validate_parameters(parameters)
 
         except Exception as e:
@@ -138,7 +140,7 @@ class TransitionFactory:
         transition = self.create_transition(transition_type)
         if transition is None:
             return None
-        
+
         try:
             return transition.get_parameter_schema()
         except Exception as e:
@@ -189,13 +191,13 @@ class TransitionFactory:
             if not self.validate_transition_config(transition_config):
                 logger.warning("Invalid transition config, skipping transition")
                 return frame
-            
+
             # Create and apply transition
             transition_type = transition_config["type"]
             transition = self.create_transition(transition_type)
             if transition is None:
                 return frame
-            
+
             return transition.apply_transition(frame, timestamp, item_duration, transition_config, direction)
 
         except Exception as e:
@@ -206,11 +208,13 @@ class TransitionFactory:
 class NoneTransition(BaseTransition):
     """
     Pass-through transition that applies no effect.
-    
+
     This is the default transition type that leaves frames unmodified.
     """
 
-    def apply_transition(self, frame, timestamp: float, item_duration: float, transition_config: Dict[str, Any], direction: str):
+    def apply_transition(
+        self, frame, timestamp: float, item_duration: float, transition_config: Dict[str, Any], direction: str
+    ):
         """Return frame unmodified."""
         return frame
 
@@ -218,7 +222,9 @@ class NoneTransition(BaseTransition):
         """Return empty transition region."""
         return (0.0, 0.0)
 
-    def is_in_transition_region(self, timestamp: float, item_duration: float, transition_config: Dict[str, Any], direction: str) -> bool:
+    def is_in_transition_region(
+        self, timestamp: float, item_duration: float, transition_config: Dict[str, Any], direction: str
+    ) -> bool:
         """Always return False since no transition is applied."""
         return False
 
@@ -228,11 +234,7 @@ class NoneTransition(BaseTransition):
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         """Return empty schema since no parameters are needed."""
-        return {
-            "type": "object",
-            "properties": {},
-            "additionalProperties": False
-        }
+        return {"type": "object", "properties": {}, "additionalProperties": False}
 
 
 # Global factory instance
