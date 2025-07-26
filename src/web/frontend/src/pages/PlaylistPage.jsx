@@ -10,13 +10,16 @@ import {
   ArrowsRightLeftIcon,
   PhotoIcon,
   FilmIcon,
-  SparklesIcon
+  SparklesIcon,
+  Cog6ToothIcon
 } from '@heroicons/react/24/outline'
 import { useWebSocket } from '../hooks/useWebSocket'
+import TransitionConfig from '../components/TransitionConfig'
 
 const PlaylistPage = () => {
   const { playlist } = useWebSocket()
   const [isDragging, setIsDragging] = useState(false)
+  const [transitionConfigItem, setTransitionConfigItem] = useState(null)
 
   const formatDuration = (seconds) => {
     if (!seconds) return '--:--'
@@ -136,6 +139,20 @@ const PlaylistPage = () => {
   const jumpToItem = async (index) => {
     // This would require implementing a "jump to" endpoint in the API
     console.log('Jump to item:', index)
+  }
+
+  const openTransitionConfig = (item) => {
+    setTransitionConfigItem(item)
+  }
+
+  const closeTransitionConfig = () => {
+    setTransitionConfigItem(null)
+  }
+
+  const handleTransitionUpdate = (result) => {
+    console.log('Transition updated:', result)
+    // The playlist will be updated via WebSocket from the sync service
+    closeTransitionConfig()
   }
 
   return (
@@ -286,6 +303,14 @@ const PlaylistPage = () => {
                                 </button>
 
                                 <button
+                                  onClick={() => openTransitionConfig(item)}
+                                  className="p-2 text-metal-silver hover:text-neon-purple"
+                                  aria-label="Configure transitions"
+                                >
+                                  <Cog6ToothIcon className="w-4 h-4" />
+                                </button>
+
+                                <button
                                   onClick={() => removeItem(item.id)}
                                   className="p-2 text-metal-silver hover:text-neon-orange"
                                   aria-label="Remove item"
@@ -359,6 +384,15 @@ const PlaylistPage = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Transition Configuration Modal */}
+      {transitionConfigItem && (
+        <TransitionConfig
+          item={transitionConfigItem}
+          onUpdate={handleTransitionUpdate}
+          onClose={closeTransitionConfig}
+        />
       )}
     </div>
   )

@@ -31,6 +31,12 @@ METADATA_DTYPE: np.dtype = np.dtype(
         ("item_duration", np.float64),
         ("write_to_buffer_time", np.float64),
         ("read_from_buffer_time", np.float64),
+        # Transition data fields for playlist transitions
+        ("transition_in_type", "U16"),  # Transition in type (e.g., "fade", "none")
+        ("transition_in_duration", np.float64),  # Transition in duration in seconds
+        ("transition_out_type", "U16"),  # Transition out type (e.g., "fade", "none")
+        ("transition_out_duration", np.float64),  # Transition out duration in seconds
+        ("item_timestamp", np.float64),  # Time within current item (for transition calculations)
     ]
 )
 

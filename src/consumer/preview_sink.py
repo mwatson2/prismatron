@@ -188,6 +188,7 @@ class PreviewSink:
         self.frames_received = 0  # Total frames received
 
         logger.info(f"Preview sink initialized with shared memory size: {self.shared_memory_size} bytes")
+        logger.info(f"Preview sink header format: <ddii40x")
 
     def _calculate_shared_memory_size(self) -> int:
         """Calculate required shared memory size."""
@@ -270,7 +271,7 @@ class PreviewSink:
             self.shared_memory_map = mmap.mmap(self.shared_memory_fd, self.shared_memory_size)
 
             # Initialize header
-            self._write_header(timestamp=time.time(), frame_counter=0, led_count=LED_COUNT)
+            self._write_header(timestamp=time.time(), frame_counter=0, led_count=LED_COUNT, rendering_index=-1)
 
             # Zero out LED data section
             led_data_offset = 64
@@ -302,13 +303,13 @@ class PreviewSink:
         except Exception as e:
             logger.warning(f"Error cleaning up shared memory: {e}")
 
-    def _write_header(self, timestamp: float, frame_counter: int, led_count: int) -> None:
+    def _write_header(self, timestamp: float, frame_counter: int, led_count: int, rendering_index: int = -1) -> None:
         """Write header to shared memory."""
         if not self.shared_memory_map:
             return
 
-        # Header format: timestamp(8) + frame_counter(8) + led_count(4) + padding(44)
-        header_data = struct.pack("<ddI44x", timestamp, frame_counter, led_count)
+        # Header format: timestamp(8) + frame_counter(8) + led_count(4) + rendering_index(4) + padding(40)
+        header_data = struct.pack("<ddii40x", timestamp, frame_counter, led_count, rendering_index)
         self.shared_memory_map[0:64] = header_data
 
     def _write_statistics(self) -> None:
@@ -369,7 +370,7 @@ class PreviewSink:
 
         Args:
             led_values: LED RGB values, shape (led_count, 3) in physical order
-            metadata: Optional frame metadata
+            metadata: Optional frame metadata (should include 'rendering_index')
 
         Returns:
             True if successful, False otherwise
@@ -397,12 +398,20 @@ class PreviewSink:
                 is_late = time_since_last > self.config.late_frame_threshold_ms
 
             # LED values are already in physical order from frame renderer
+            # Extract rendering_index from metadata
+            rendering_index = -1
+            if metadata and 'rendering_index' in metadata:
+                rendering_index = metadata['rendering_index']
+                logger.info(f"PREVIEW SINK: Writing rendering_index={rendering_index} to shared memory (frame {getattr(self, '_frame_counter', 0) + 1})")
+            else:
+                logger.warning(f"PREVIEW SINK: No rendering_index in metadata: {list(metadata.keys()) if metadata else 'No metadata'}")
+
             # Update shared memory with new LED data
             with self._lock:
                 # Update header
                 frame_counter = getattr(self, "_frame_counter", 0) + 1
                 self._frame_counter = frame_counter
-                self._write_header(start_time, frame_counter, LED_COUNT)
+                self._write_header(start_time, frame_counter, LED_COUNT, rendering_index)
 
                 # Write LED data (convert to uint8 and flatten)
                 led_data_uint8 = np.clip(led_values, 0, 255).astype(np.uint8)
@@ -429,7 +438,12 @@ class PreviewSink:
                 )
                 self.last_log_time = start_time
 
-            logger.debug(f"Updated preview data: frame {frame_counter}, {len(led_data_bytes)} bytes")
+            logger.debug(f"Updated preview data: frame {frame_counter}, {len(led_data_bytes)} bytes, rendering_index={rendering_index}")
+            
+            # Additional debug: Log first few LED values to detect corruption
+            if led_values.size > 0:
+                sample_leds = led_values[:3].flatten()  # First 3 LEDs as flat RGB array
+                logger.debug(f"Sample LED values: {sample_leds}")
             return True
 
         except Exception as e:
@@ -479,7 +493,7 @@ class PreviewSink:
             "led_data_size": LED_DATA_SIZE,
             "stats_offset": self.shared_memory_size - 128,
             "stats_size": 128,
-            "header_format": "<ddI44x",  # timestamp, frame_counter, led_count, padding
+            "header_format": "<ddii40x",  # timestamp, frame_counter, led_count, rendering_index, padding
             "led_count": LED_COUNT,
         }
 

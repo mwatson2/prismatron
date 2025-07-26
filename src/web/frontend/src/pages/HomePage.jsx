@@ -18,18 +18,45 @@ const HomePage = () => {
   const ledStampGRef = useRef(null)
   const ledStampBRef = useRef(null)
 
-  const currentItem = playlist.items?.[playlist.current_index]
+  // Use WebSocket preview data (no need for HTTP polling)
+  const previewData = wsPreviewData
+
+  // Use preview data's current_item (based on rendering_index) for HomePage display
+  // playlist.current_index reflects producer state, previewData.current_item reflects rendering state
+  const currentItem = previewData?.current_item ? {
+    name: previewData.current_item.name,
+    type: previewData.current_item.type
+  } : null
   const status = systemStatus
 
-  // Debug logging for playlist state updates
+  // Debug logging for data synchronization
   useEffect(() => {
-    console.log('Playlist state updated:', {
-      itemCount: playlist.items?.length || 0,
-      currentIndex: playlist.current_index,
-      isPlaying: playlist.is_playing,
-      currentItemName: currentItem?.name || 'none'
+    console.log('DEBUG: Data state updated:', {
+      // Playlist state (producer)
+      playlist_itemCount: playlist.items?.length || 0,
+      playlist_currentIndex: playlist.current_index,
+      playlist_isPlaying: playlist.is_playing,
+      playlist_currentItemName: playlist.items?.[playlist.current_index]?.name || 'none',
+      
+      // Preview state (rendering)
+      preview_hasData: !!previewData,
+      preview_currentItem: previewData?.current_item || null,
+      preview_currentItemName: previewData?.current_item?.name || 'none',
+      preview_hasFrame: previewData?.has_frame || false,
+      
+      // System status fallback
+      status_currentFile: status?.current_file || 'none',
+      status_renderingIndex: status?.rendering_index ?? 'undefined',
+      
+      // Final resolved current item
+      resolved_currentItemName: currentItem?.name || 'none',
+      fallback_used: !currentItem && !!status?.current_file,
+      
+      // Rendering index comparison for debugging
+      controlState_renderingIndex: status?.rendering_index ?? 'undefined',
+      sharedMemory_renderingIndex: previewData?.shm_rendering_index ?? 'undefined'
     })
-  }, [playlist, currentItem])
+  }, [playlist, previewData, currentItem, status])
 
   // System status is now received via WebSocket, no need for HTTP polling
 
@@ -55,9 +82,6 @@ const HomePage = () => {
     createLEDStamps()
     fetchLedPositions()
   }, [])
-
-  // Use WebSocket preview data (no need for HTTP polling)
-  const previewData = wsPreviewData
 
   // Create pre-rendered LED stamps for fast rendering with proper Gaussian shape
   const createLEDStamps = () => {
@@ -95,6 +119,8 @@ const HomePage = () => {
   // Fast canvas-based LED rendering using pre-rendered RGB stamps
   const drawLEDs = () => {
     if (!canvasRef.current || !ledPositions || !ledStampRRef.current || !ledStampGRef.current || !ledStampBRef.current) return
+
+    const renderStartTime = performance.now()
 
     const canvas = canvasRef.current
     const ctx = canvas.getContext('2d')
@@ -182,6 +208,10 @@ const HomePage = () => {
 
     // Reset composite operation
     ctx.globalCompositeOperation = 'source-over'
+
+    const renderEndTime = performance.now()
+    const renderDuration = renderEndTime - renderStartTime
+    console.log(`LED image render time: ${renderDuration.toFixed(2)}ms (${ledPositions.positions.length} LEDs)`)
   }
 
   // Redraw LEDs when data changes
@@ -372,10 +402,20 @@ const HomePage = () => {
         {playlist.items?.length > 0 && (
           <div className="mt-4 text-center">
             <p className="text-xs text-metal-silver font-mono">
-              {playlist.current_index + 1} / {playlist.items.length}
+              Producer: {playlist.current_index + 1} / {playlist.items.length}
+              {status?.rendering_index !== undefined && status.rendering_index >= 0 && (
+                <span className="ml-2 text-neon-cyan">
+                  | Rendering: {status.rendering_index + 1}
+                </span>
+              )}
+              {previewData?.shm_rendering_index !== undefined && previewData.shm_rendering_index >= 0 && (
+                <span className="ml-2 text-neon-orange">
+                  | SHM: {previewData.shm_rendering_index + 1}
+                </span>
+              )}
             </p>
 
-            {/* Progress bar */}
+            {/* Progress bar - shows producer position */}
             <div className="mt-2 w-full bg-dark-700 rounded-retro h-1 overflow-hidden">
               <div
                 className="h-full bg-neon-cyan transition-all duration-300"

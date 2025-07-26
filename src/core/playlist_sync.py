@@ -22,6 +22,33 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class TransitionConfig:
+    """Transition configuration for playlist items."""
+    
+    type: str = "none"
+    parameters: Dict[str, Any] = None
+    
+    def __post_init__(self):
+        if self.parameters is None:
+            self.parameters = {}
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "type": self.type,
+            "parameters": self.parameters
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TransitionConfig":
+        """Create from dictionary."""
+        return cls(
+            type=data.get("type", "none"),
+            parameters=data.get("parameters", {})
+        )
+
+
+@dataclass
 class PlaylistItem:
     """Playlist item data structure."""
 
@@ -34,19 +61,48 @@ class PlaylistItem:
     thumbnail: Optional[str] = None
     created_at: float = 0.0
     order: int = 0
+    transition_in: TransitionConfig = None
+    transition_out: TransitionConfig = None
 
     def __post_init__(self):
         if self.created_at == 0.0:
             self.created_at = time.time()
+        
+        # Initialize default transitions if not provided
+        if self.transition_in is None:
+            self.transition_in = TransitionConfig()
+        if self.transition_out is None:
+            self.transition_out = TransitionConfig()
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return asdict(self)
+        result = asdict(self)
+        # Convert TransitionConfig objects to dictionaries
+        if isinstance(result.get("transition_in"), dict):
+            result["transition_in"] = self.transition_in.to_dict()
+        if isinstance(result.get("transition_out"), dict):
+            result["transition_out"] = self.transition_out.to_dict()
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PlaylistItem":
         """Create from dictionary."""
-        return cls(**data)
+        # Extract transition configurations and convert them
+        data_copy = data.copy()
+        
+        transition_in_data = data_copy.pop("transition_in", None)
+        transition_out_data = data_copy.pop("transition_out", None)
+        
+        # Create the playlist item
+        item = cls(**data_copy)
+        
+        # Set transition configurations
+        if transition_in_data:
+            item.transition_in = TransitionConfig.from_dict(transition_in_data)
+        if transition_out_data:
+            item.transition_out = TransitionConfig.from_dict(transition_out_data)
+            
+        return item
 
 
 @dataclass
@@ -426,8 +482,22 @@ class PlaylistSyncService:
     def _handle_next(self, message: PlaylistMessage):
         """Handle next item message."""
         if self.playlist_state.items:
+            old_index = self.playlist_state.current_index
             self.playlist_state.current_index = (self.playlist_state.current_index + 1) % len(self.playlist_state.items)
-            logger.info(f"Next item: index {self.playlist_state.current_index}")
+            logger.info(f"PLAYLIST SYNC: Next item request - {old_index} -> {self.playlist_state.current_index} (client: {message.client_id})")
+            
+            # Log playlist item names for debugging
+            if 0 <= old_index < len(self.playlist_state.items):
+                old_name = self.playlist_state.items[old_index].name
+            else:
+                old_name = "invalid_index"
+            
+            if 0 <= self.playlist_state.current_index < len(self.playlist_state.items):
+                new_name = self.playlist_state.items[self.playlist_state.current_index].name
+            else:
+                new_name = "invalid_index"
+                
+            logger.info(f"PLAYLIST SYNC: Item change - '{old_name}' -> '{new_name}'")
 
     def _handle_previous(self, message: PlaylistMessage):
         """Handle previous item message."""

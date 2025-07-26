@@ -23,6 +23,7 @@ from .led_buffer import LEDBuffer
 from .led_optimizer import LEDOptimizer
 from .preview_sink import PreviewSink, PreviewSinkConfig
 from .test_sink import TestSink, TestSinkConfig
+from .transition_processor import TransitionProcessor
 from .wled_sink import WLEDSink, WLEDSinkConfig
 
 logger = logging.getLogger(__name__)
@@ -217,6 +218,9 @@ class ConsumerProcess:
         self.wled_reconnect_interval = 10.0  # Try to reconnect every 10 seconds
         self._wled_reconnection_thread: Optional[threading.Thread] = None
         self._wled_reconnection_event = threading.Event()  # Signal for graceful shutdown
+
+        # Transition processor for playlist item transitions
+        self._transition_processor = TransitionProcessor()
 
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -457,16 +461,17 @@ class ConsumerProcess:
                     if timing_data:
                         timing_data.mark_read_from_led_buffer()
 
-                # Handle playlist item transitions at render time (not optimization time)
-                if metadata and metadata.get("is_first_frame_of_item", False):
-                    playlist_item_index = metadata.get("playlist_item_index", -1)
-                    if playlist_item_index >= 0 and playlist_item_index != self._last_rendered_item_index:
-                        logger.info(f"RENDERER: Starting to render playlist item {playlist_item_index}")
-                        self._last_rendered_item_index = playlist_item_index
+                # Check for playlist item transitions (but update rendering_index after successful render)
+                is_first_frame_of_item = metadata and metadata.get("is_first_frame_of_item", False)
+                playlist_item_index = metadata.get("playlist_item_index", -1) if metadata else -1
+                should_update_rendering_index = (
+                    is_first_frame_of_item
+                    and playlist_item_index >= 0
+                    and playlist_item_index != self._last_rendered_item_index
+                )
 
-                        # Note: Don't send position updates to sync service as this creates a feedback loop
-                        # The producer already sends next_item() commands when content finishes
-                        # UI should be synchronized to producer state, not renderer state
+                if should_update_rendering_index:
+                    logger.info(f"RENDERER: Starting to render playlist item {playlist_item_index}")
 
                 # Debug logging for high FPS investigation
                 frame_count = self._stats.frames_processed
@@ -481,6 +486,18 @@ class ConsumerProcess:
 
                 # Render with timestamp-based timing
                 success = self._frame_renderer.render_frame_at_timestamp(led_values, timestamp, metadata)
+
+                # Update rendering_index AFTER successful render to reflect what's actually been rendered
+                if success and should_update_rendering_index:
+                    self._last_rendered_item_index = playlist_item_index
+                    try:
+                        self._control_state.update_status(rendering_index=playlist_item_index)
+                        logger.info(f"Updated rendering_index to {playlist_item_index} after successful render")
+                    except Exception as e:
+                        logger.warning(f"Failed to update rendering_index in ControlState: {e}")
+
+                    # Note: Don't send position updates to sync service as this creates a feedback loop
+                    # The producer already sends next_item() commands when content finishes
 
                 # Mark render time and log timing data based on success
                 if timing_data:
@@ -674,6 +691,12 @@ class ConsumerProcess:
                 # TODO: Do this on the GPU (i.e. don't move data back and forth)
                 rgb_frame = (rgb_frame * self.brightness_scale).clip(0, 255).astype(np.uint8)
 
+            # Apply playlist item transitions before LED optimization
+            transition_start = time.time()
+            metadata_dict = self._extract_metadata_dict(buffer_info.metadata)
+            rgb_frame = self._transition_processor.process_frame(rgb_frame, metadata_dict)
+            transition_time = time.time() - transition_start
+
             # Optimize LED values (no timing constraints)
             optimization_start = time.time()
 
@@ -788,6 +811,47 @@ class ConsumerProcess:
         except Exception as e:
             logger.error(f"Error in optimization: {e}", exc_info=True)
             self._stats.optimization_errors += 1
+
+    def _extract_metadata_dict(self, metadata) -> Dict[str, Any]:
+        """
+        Extract frame metadata into dictionary format for transition processor.
+
+        Args:
+            metadata: Frame metadata object from shared buffer
+
+        Returns:
+            Dictionary containing metadata fields needed by transition processor
+        """
+        try:
+            if metadata is None:
+                return {}
+
+            # Extract fields that the transition processor needs
+            metadata_dict = {}
+
+            # Add transition fields if they exist
+            for field in [
+                "transition_in_type",
+                "transition_in_duration",
+                "transition_out_type",
+                "transition_out_duration",
+                "item_timestamp",
+                "item_duration",
+            ]:
+                if hasattr(metadata, field):
+                    metadata_dict[field] = getattr(metadata, field)
+                else:
+                    # Set default values for missing fields
+                    if field.endswith("_type"):
+                        metadata_dict[field] = "none"
+                    elif field.endswith(("_duration", "_timestamp")):
+                        metadata_dict[field] = 0.0
+
+            return metadata_dict
+
+        except Exception as e:
+            logger.warning(f"Error extracting metadata for transitions: {e}")
+            return {}
 
     def _initialize_test_renderer(self) -> bool:
         """

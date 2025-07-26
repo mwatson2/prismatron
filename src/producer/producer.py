@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Union
 from ..const import FRAME_CHANNELS, FRAME_HEIGHT, FRAME_WIDTH
 from ..core.control_state import ControlState, PlayState, SystemState
 from ..core.playlist_sync import PlaylistState as SyncPlaylistState
-from ..core.playlist_sync import PlaylistSyncClient
+from ..core.playlist_sync import PlaylistSyncClient, TransitionConfig
 from ..core.shared_buffer import FrameProducer
 from ..utils.frame_timing import FrameTimingData
 from .content_sources import (
@@ -39,6 +39,8 @@ class PlaylistItem:
         duration: Optional[float] = None,
         repeat: int = 1,
         metadata: Optional[Dict[str, Any]] = None,
+        transition_in: Optional[TransitionConfig] = None,
+        transition_out: Optional[TransitionConfig] = None,
     ):
         """
         Initialize playlist item.
@@ -48,12 +50,18 @@ class PlaylistItem:
             duration: Override duration (None = use file duration)
             repeat: Number of times to repeat (1 = play once)
             metadata: Additional metadata
+            transition_in: Transition configuration for item start
+            transition_out: Transition configuration for item end
         """
         self.filepath = filepath
         self.duration_override = duration
         self.repeat_count = repeat
         self.metadata = metadata or {}
         self.current_repeat = 0
+
+        # Transition configurations
+        self.transition_in = transition_in or TransitionConfig()
+        self.transition_out = transition_out or TransitionConfig()
 
         # Content source will be created when needed
         self._content_source: Optional[ContentSource] = None
@@ -121,6 +129,8 @@ class ContentPlaylist:
         duration: Optional[float] = None,
         repeat: int = 1,
         metadata: Optional[Dict[str, Any]] = None,
+        transition_in: Optional[TransitionConfig] = None,
+        transition_out: Optional[TransitionConfig] = None,
     ) -> bool:
         """
         Add item to playlist.
@@ -130,6 +140,8 @@ class ContentPlaylist:
             duration: Override duration
             repeat: Repeat count
             metadata: Additional metadata
+            transition_in: Transition configuration for item start
+            transition_out: Transition configuration for item end
 
         Returns:
             True if added successfully, False otherwise
@@ -159,7 +171,7 @@ class ContentPlaylist:
                         logger.error(f"Content file not found: {filepath}")
                         return False
 
-                item = PlaylistItem(filepath, duration, repeat, metadata)
+                item = PlaylistItem(filepath, duration, repeat, metadata, transition_in, transition_out)
                 self._items.append(item)
 
                 if content_type == ContentType.TEXT:
@@ -379,7 +391,9 @@ class ProducerProcess:
         # Current content and state
         self._current_source: Optional[ContentSource] = None
         self._current_item: Optional[PlaylistItem] = None
+        self._current_item_index: int = -1  # Track the index of the currently loaded content
         self._is_first_frame_of_current_item = True  # Track first frame of each playlist item
+        self._content_finished_processed = False  # Prevent multiple next_item() calls for same content
 
         # Threading and timing
         self._producer_thread: Optional[threading.Thread] = None
@@ -612,6 +626,9 @@ class ProducerProcess:
         if self._current_source:
             self._current_source.cleanup()
             self._current_source = None
+            self._current_item = None
+            self._current_item_index = -1
+            self._content_finished_processed = False  # Reset flag when producer stops
 
         # Update control state
         self._control_state.set_play_state(PlayState.STOPPED)
@@ -714,8 +731,20 @@ class ProducerProcess:
                     )
                     self._last_frame_duration = None  # Reset for next item
 
-                logger.info(f"PRODUCER FRAMES: Content finished for {self._current_item.filepath}")
-                self._advance_to_next_content()
+                current_item_name = os.path.basename(self._current_item.filepath) if self._current_item else "unknown"
+                logger.info(
+                    f"PRODUCER FRAMES: Content finished for '{current_item_name}' ({self._current_item.filepath}) after {self._accumulated_duration:.3f}s"
+                )
+
+                # Prevent duplicate next_item() calls for the same content
+                if not self._content_finished_processed:
+                    self._content_finished_processed = True
+                    logger.info(f"PRODUCER FRAMES: Advancing to next content (first call for '{current_item_name}')")
+                    self._advance_to_next_content()
+                else:
+                    logger.info(
+                        f"PRODUCER FRAMES: Content '{current_item_name}' already processed for advancement, skipping duplicate call"
+                    )
             else:
                 # No frame available yet (but not finished)
                 if not hasattr(self, "_no_frame_logged") or not self._no_frame_logged:
@@ -738,6 +767,8 @@ class ProducerProcess:
             self._current_source.cleanup()
             self._current_source = None
             self._current_item = None
+            self._current_item_index = -1
+            self._content_finished_processed = False  # Reset flag when content is cleaned up
 
         time.sleep(0.1)
 
@@ -757,6 +788,11 @@ class ProducerProcess:
             logger.info("PRODUCER CONTENT: No current playlist item available")
             return False
 
+        current_playlist_index = self._playlist.get_current_index()
+        logger.debug(
+            f"PRODUCER CONTENT: _ensure_current_content called - playlist_index={current_playlist_index}, loaded_index={self._current_item_index} ({os.path.basename(current_item.filepath)})"
+        )
+
         # Load content source if needed
         if self._current_item != current_item:
             # Clean up previous content
@@ -767,7 +803,12 @@ class ProducerProcess:
             logger.info(f"PRODUCER CONTENT: Loading content source for {current_item.filepath}")
             self._current_source = current_item.get_content_source()
             self._current_item = current_item
+            self._current_item_index = self._playlist.get_current_index()  # Store the index of the loaded content
             self._is_first_frame_of_current_item = True  # Reset flag for new item
+            self._content_finished_processed = False  # Reset flag for new content
+            logger.info(
+                f"PRODUCER CONTENT: Loaded content index {self._current_item_index} ({os.path.basename(current_item.filepath)})"
+            )
 
             # Calculate global timestamp offset for this item
             self._update_global_timestamp_offset()
@@ -803,7 +844,8 @@ class ProducerProcess:
         try:
             # If connected to sync service, send next command instead of advancing locally
             if self._playlist_sync_client and self._playlist_sync_client.connected:
-                logger.info("Requesting next item from sync service")
+                current_item_name = os.path.basename(self._current_item.filepath) if self._current_item else "none"
+                logger.info(f"PRODUCER: Requesting next item from sync service (current: '{current_item_name}')")
                 success = self._playlist_sync_client.next_item()
                 if not success:
                     logger.warning("Failed to send next command to sync service")
@@ -864,6 +906,51 @@ class ProducerProcess:
         except Exception as e:
             logger.warning(f"Producer: Failed to update timing data in shared memory: {e}")
 
+    def _update_transition_metadata_in_shared_memory(self, buffer_info, item_timestamp: float) -> None:
+        """
+        Update transition metadata fields in shared memory.
+
+        Args:
+            buffer_info: Buffer info object from frame buffer
+            item_timestamp: Time within the current playlist item (seconds from item start)
+        """
+        try:
+            # Get the frame buffer's metadata array to update transition fields
+            if hasattr(self._frame_buffer, "_metadata_array") and self._frame_buffer._metadata_array is not None:
+                # Use the actual buffer index that was allocated
+                buffer_idx = buffer_info.buffer_index
+
+                # Get current item and its transition configuration
+                current_item = self._playlist.get_current_item()
+                if current_item:
+                    # Update transition fields in shared memory
+                    metadata_record = self._frame_buffer._metadata_array[buffer_idx]
+
+                    # Set transition_in configuration
+                    metadata_record["transition_in_type"] = current_item.transition_in.type
+                    metadata_record["transition_in_duration"] = current_item.transition_in.parameters.get(
+                        "duration", 0.0
+                    )
+
+                    # Set transition_out configuration
+                    metadata_record["transition_out_type"] = current_item.transition_out.type
+                    metadata_record["transition_out_duration"] = current_item.transition_out.parameters.get(
+                        "duration", 0.0
+                    )
+
+                    # Set item timestamp for transition calculations
+                    metadata_record["item_timestamp"] = item_timestamp
+
+                    logger.debug(
+                        f"Producer wrote transition metadata to buffer {buffer_idx}: "
+                        f"in={current_item.transition_in.type}({metadata_record['transition_in_duration']}s), "
+                        f"out={current_item.transition_out.type}({metadata_record['transition_out_duration']}s), "
+                        f"item_timestamp={item_timestamp:.3f}s"
+                    )
+
+        except Exception as e:
+            logger.warning(f"Producer: Failed to update transition metadata in shared memory: {e}")
+
     def _render_frame_to_buffer(self, frame_data: FrameData) -> bool:
         """
         Render frame data to shared memory buffer.
@@ -886,7 +973,7 @@ class ProducerProcess:
                 presentation_timestamp=global_timestamp,  # Use global timestamp
                 source_width=frame_data.width,
                 source_height=frame_data.height,
-                playlist_item_index=self._playlist.get_current_index(),
+                playlist_item_index=self._current_item_index,
                 is_first_frame_of_item=self._is_first_frame_of_current_item,
             )
 
@@ -938,6 +1025,9 @@ class ProducerProcess:
                 f"Writing timing data to shared memory: frame_index={timing_data.frame_index}, calculated_buffer_idx={buffer_idx}"
             )
             self._update_timing_data_in_shared_memory(buffer_info, timing_data)
+
+            # Update transition metadata in shared memory
+            self._update_transition_metadata_in_shared_memory(buffer_info, local_timestamp)
 
             # Check if frame has non-zero content for logging
             if buffer_array.max() > 0:
@@ -1311,7 +1401,9 @@ class ProducerProcess:
     def _on_playlist_sync_update(self, sync_state: SyncPlaylistState) -> None:
         """Handle playlist updates from synchronization service."""
         try:
-            logger.info(f"Producer received playlist update: {len(sync_state.items)} items")
+            logger.info(
+                f"PRODUCER SYNC: Received playlist update: {len(sync_state.items)} items, current_index={sync_state.current_index}, is_playing={sync_state.is_playing}"
+            )
 
             # Clear current playlist
             self._playlist.clear()
@@ -1319,12 +1411,22 @@ class ProducerProcess:
             # Convert sync playlist items to producer playlist items
             for sync_item in sync_state.items:
                 if sync_item.type in ["image", "video"] and sync_item.file_path:
-                    # Add regular media files
-                    self._playlist.add_item(filepath=sync_item.file_path, duration=sync_item.duration, repeat=1)
-                elif sync_item.type == "text" and sync_item.file_path:
-                    # Handle text content (file_path contains JSON config)
+                    # Add regular media files with transition configurations
                     self._playlist.add_item(
-                        filepath=sync_item.file_path, duration=sync_item.duration, repeat=1  # JSON config as filepath
+                        filepath=sync_item.file_path,
+                        duration=sync_item.duration,
+                        repeat=1,
+                        transition_in=sync_item.transition_in,
+                        transition_out=sync_item.transition_out,
+                    )
+                elif sync_item.type == "text" and sync_item.file_path:
+                    # Handle text content (file_path contains JSON config) with transitions
+                    self._playlist.add_item(
+                        filepath=sync_item.file_path,
+                        duration=sync_item.duration,
+                        repeat=1,
+                        transition_in=sync_item.transition_in,
+                        transition_out=sync_item.transition_out,
                     )
                 elif sync_item.type == "effect" and sync_item.effect_config:
                     # Handle effect content (for future implementation)

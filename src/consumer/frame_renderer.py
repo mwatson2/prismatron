@@ -300,6 +300,11 @@ class FrameRenderer:
         """
         # Convert from spatial to physical order before sending to sinks
         physical_led_values = self._convert_spatial_to_physical(led_values)
+        
+        # Add rendering_index to metadata for PreviewSink
+        enhanced_metadata = metadata.copy() if metadata else {}
+        if metadata and 'playlist_item_index' in metadata:
+            enhanced_metadata['rendering_index'] = metadata['playlist_item_index']
 
         # Debug: Write first 10 different LED value sets to temporary files for analysis
         if self._debug_led_count < self._debug_max_leds:
@@ -355,7 +360,7 @@ class FrameRenderer:
                     # Renderer-style sink
                     if hasattr(sink, "is_running") and not sink.is_running:
                         continue  # Skip if sink is not running
-                    sink.render_led_values(physical_led_values.astype(np.uint8), metadata)
+                    sink.render_led_values(physical_led_values.astype(np.uint8), enhanced_metadata)
                 else:
                     logger.warning(f"Sink {name} has no compatible interface")
 
