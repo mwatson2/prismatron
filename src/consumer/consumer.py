@@ -479,11 +479,7 @@ class ConsumerProcess:
                 if frame_count % 100 == 0:  # Log every 100th frame
                     buffer_stats = self._led_buffer.get_buffer_stats()
                     current_time = time.time()
-                    logger.debug(
-                        f"Renderer pulling frame {frame_count}: timestamp={timestamp:.3f}, "
-                        f"buffer_depth={buffer_stats['current_count']}, "
-                        f"current_time={current_time:.3f}"
-                    )
+                    # Debug logging for high FPS investigation
 
                 # Render with timestamp-based timing
                 success = self._frame_renderer.render_frame_at_timestamp(led_values, timestamp, metadata)
@@ -509,7 +505,7 @@ class ConsumerProcess:
                     if self._timing_logger:
                         self._timing_logger.log_frame(timing_data)
                         if not success:
-                            logger.debug(f"Logged render-failed frame {timing_data.frame_index} (render failure)")
+                            pass  # Log render-failed frame to timing data
 
                 # Update renderer output FPS tracking
                 if success:
@@ -656,7 +652,7 @@ class ConsumerProcess:
 
             # Check if frame is already late - drop if so, otherwise proceed with optimization
             if self._frame_renderer.is_frame_late(timestamp, late_threshold_ms=50.0):
-                logger.debug(f"Frame already late (timestamp={timestamp:.3f}) - dropping before optimization")
+                # Frame already late - drop it
                 self._stats.frames_dropped_early += 1
                 self._stats.update_dropped_frames_ewma()
 
@@ -664,7 +660,7 @@ class ConsumerProcess:
                 if timing_data and self._timing_logger:
                     # Case 2: Frame dropped before optimization - has frame info and buffer times, but no optimization/render times
                     self._timing_logger.log_frame(timing_data)
-                    logger.debug(f"Logged early-dropped frame {timing_data.frame_index} (late before optimization)")
+                    # Log early-dropped frame to timing data
 
                 return
 
@@ -682,7 +678,7 @@ class ConsumerProcess:
                 try:
                     debug_file = self._debug_frame_dir / f"frame_{self._debug_frame_count:03d}.npy"
                     np.save(debug_file, rgb_frame)
-                    logger.info(f"DEBUG: Wrote frame {self._debug_frame_count} to {debug_file}")
+                    # Write debug frame to file
                     self._debug_frame_count += 1
                 except Exception as e:
                     logger.warning(f"DEBUG: Failed to write frame {self._debug_frame_count}: {e}")
@@ -713,9 +709,9 @@ class ConsumerProcess:
                         # Update instance variable for consistency
                         if iterations != self.optimization_iterations:
                             self.optimization_iterations = iterations
-                            logger.debug(f"Updated optimization iterations to {iterations} from ControlState")
+                            # Update optimization iterations from ControlState
             except Exception as e:
-                logger.debug(f"Failed to read optimization iterations from ControlState: {e}")
+                pass  # Failed to read optimization iterations from ControlState
 
             result = self._led_optimizer.optimize_frame(rgb_frame, max_iterations=iterations)
             optimization_time = time.time() - optimization_start
@@ -1077,11 +1073,11 @@ class ConsumerProcess:
             current_frame_index: Frame index of current frame being processed
         """
         try:
-            logger.debug(f"Gap detection called: frame={current_frame_index}, last_seen={self._last_frame_index_seen}")
+            # Gap detection for missing frames
 
             if self._last_frame_index_seen == 0:
                 # Very first frame processed
-                logger.debug(f"First frame: {current_frame_index}")
+                # First frame processing
                 if current_frame_index > 1:
                     # Missing frames before first frame (shouldn't happen with fixed buffer)
                     logger.warning(
@@ -1096,18 +1092,18 @@ class ConsumerProcess:
                                 item_duration=0.0,
                             )
                             self._timing_logger.log_frame(missing_frame_timing)
-                            logger.debug(f"Logged missing frame {missing_frame_index} (never received by consumer)")
+                            # Log missing frame to timing data
 
                 old_value = self._last_frame_index_seen
                 self._last_frame_index_seen = current_frame_index
-                logger.debug(f"Updated _last_frame_index_seen: {old_value} -> {current_frame_index}")
+                # Update last seen frame index
                 return
 
             # Check for gaps in sequence
             expected_next = self._last_frame_index_seen + 1
             if current_frame_index == expected_next:
-                # Normal sequence
-                logger.debug(f"Normal sequence: {current_frame_index} follows {self._last_frame_index_seen}")
+                # Normal sequence - no gap
+                pass
             elif current_frame_index > expected_next:
                 # Gap detected - shouldn't happen with fixed buffer
                 logger.warning(f"Frame gap detected: expected {expected_next}, got {current_frame_index}")
@@ -1120,7 +1116,7 @@ class ConsumerProcess:
                             item_duration=0.0,
                         )
                         self._timing_logger.log_frame(missing_frame_timing)
-                        logger.debug(f"Logged missing frame {missing_frame_index} (never received by consumer)")
+                        # Log missing frame to timing data
             else:
                 # Frame went backwards - major error
                 logger.error(f"Frame sequence went backwards: expected {expected_next}, got {current_frame_index}")

@@ -50,14 +50,10 @@ class TransitionProcessor:
             transition_context = self._extract_transition_context(metadata)
             if not transition_context:
                 # No transition metadata available
-                logger.debug(f"No transition context for frame {self._frame_count}")
+                # No transition context for this frame
                 return frame
 
-            logger.debug(
-                f"Processing frame {self._frame_count} with transitions: "
-                f"in={transition_context['transition_in']['type']}, "
-                f"out={transition_context['transition_out']['type']}"
-            )
+            # Processing frame with transitions
 
             # Check if we need to apply any transitions
             frame_with_transitions = frame.copy()

@@ -799,17 +799,12 @@ class FrameConsumer(FrameRingBuffer):
                                 metadata=metadata,
                             )
 
-                            logger.debug(
-                                f"Consumer got buffer {read_idx}, frame {next_frame}, index {metadata_record['frame_index']}"
-                            )
-                            logger.debug(
-                                f"Consumer reading metadata from buffer {read_idx}: frame_index={metadata_record['frame_index']}, plugin_timestamp={metadata_record['plugin_timestamp']}"
-                            )
+                            # Removed debug logs for cleaner output
                             return buffer_info
 
                         else:
                             # Frame was overwritten before we could read it
-                            logger.debug(f"Frame {next_frame} was overwritten (current_frame={current_frame})")
+                            # Frame was overwritten before we could read it
                             # Skip to the oldest available frame
                             oldest_available = max(1, current_frame - self.buffer_count + 1)
                             self._local_read_index = oldest_available - 1
