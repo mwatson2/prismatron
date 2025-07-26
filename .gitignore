@@ -201,3 +201,7 @@ patterns_*.npz
 # Test images
 test_images/
 uploads/*.png
+
+# Timing data and performance logs
+timing.csv
+timing/
