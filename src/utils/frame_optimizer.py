@@ -271,6 +271,7 @@ def optimize_frame_led_values(
         initial_mse = _compute_mse_only(led_values_gpu, target_planar_uint8, at_matrix)
         mse_values.append(float(initial_mse))
 
+    iteration = 0
     for iteration in range(max_iterations):
         # Compute gradient: A^T A @ x - A^T @ b using DIA matrix operations
         ATA_x = ata_matrix.multiply_3d(led_values_gpu)
@@ -324,7 +325,7 @@ def optimize_frame_led_values(
     result = FrameOptimizationResult(
         led_values=led_values_output,
         error_metrics=error_metrics,
-        iterations=iteration + 1,
+        iterations=max_iterations,  # Use actual max_iterations instead of iteration + 1
         converged=False,  # Fixed iterations, no convergence checking
         step_sizes=np.array(step_sizes) if step_sizes else None,
         timing_data=timing_data,

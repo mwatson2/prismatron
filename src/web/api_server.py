@@ -1563,6 +1563,34 @@ async def set_brightness(brightness: float):
     return {"brightness": brightness}
 
 
+class OptimizationIterationsRequest(BaseModel):
+    """Request model for optimization iterations."""
+
+    iterations: int = Field(
+        ..., ge=0, le=20, description="Number of optimization iterations (0-20, 0 = pseudo inverse only)"
+    )
+
+
+@app.post("/api/settings/optimization-iterations")
+async def set_optimization_iterations(request: OptimizationIterationsRequest):
+    """Set optimization iterations."""
+    try:
+        # Update in control state if available
+        if control_state:
+            control_state.update_status(optimization_iterations=request.iterations)
+            logger.info(f"Updated optimization iterations to {request.iterations}")
+        else:
+            logger.warning("Control state not available - optimization iterations not updated")
+
+        await manager.broadcast({"type": "optimization_iterations_changed", "iterations": request.iterations})
+
+        return {"iterations": request.iterations, "status": "updated"}
+
+    except Exception as e:
+        logger.error(f"Failed to set optimization iterations: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 # WebSocket endpoint for live updates
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

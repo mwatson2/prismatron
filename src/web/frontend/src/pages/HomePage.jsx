@@ -13,6 +13,7 @@ const HomePage = () => {
   const { playlist, isConnected, systemStatus, previewData: wsPreviewData } = useWebSocket()
   const [ledPositions, setLedPositions] = useState(null)
   const [previewBrightness, setPreviewBrightness] = useState(0.8)
+  const [optimizationIterations, setOptimizationIterations] = useState(5)
   const canvasRef = useRef(null)
   const ledStampRRef = useRef(null)
   const ledStampGRef = useRef(null)
@@ -226,6 +227,21 @@ const HomePage = () => {
       await fetch('/api/control/previous', { method: 'POST' })
     } catch (error) {
       console.error('Failed to skip to previous:', error)
+    }
+  }
+
+  const handleOptimizationIterationsChange = async (newIterations) => {
+    try {
+      await fetch('/api/settings/optimization-iterations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ iterations: newIterations }),
+      })
+      setOptimizationIterations(newIterations)
+    } catch (error) {
+      console.error('Failed to update optimization iterations:', error)
     }
   }
 
@@ -494,6 +510,47 @@ const HomePage = () => {
             </span>
             <span className="text-sm text-neon-cyan font-mono">
               {Math.round(previewBrightness * 100)}%
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Optimization Iterations Control */}
+      <div className="retro-container">
+        <h3 className="text-sm font-retro text-neon-orange mb-3">OPTIMIZATION ITERATIONS</h3>
+        <div className="space-y-3">
+          <div className="flex items-center gap-4">
+            <span className="text-xs text-metal-silver font-mono w-8">0</span>
+            <div className="flex-1 relative">
+              <input
+                type="range"
+                min="0"
+                max="20"
+                step="1"
+                value={optimizationIterations}
+                onChange={(e) => handleOptimizationIterationsChange(parseInt(e.target.value))}
+                className="w-full h-2 bg-dark-700 rounded-retro appearance-none cursor-pointer slider"
+                style={{
+                  background: `linear-gradient(to right,
+                    #333 0%,
+                    #333 ${(optimizationIterations / 20) * 100}%,
+                    #1a1a1a ${(optimizationIterations / 20) * 100}%,
+                    #1a1a1a 100%)`
+                }}
+              />
+              <div
+                className="absolute top-0 h-2 bg-gradient-to-r from-neon-orange to-neon-red rounded-retro pointer-events-none"
+                style={{ width: `${(optimizationIterations / 20) * 100}%` }}
+              />
+            </div>
+            <span className="text-xs text-metal-silver font-mono w-8">20</span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-xs text-metal-silver font-mono">
+              {optimizationIterations === 0 ? 'Pseudo inverse only (no optimization)' : 'Number of optimization iterations for LED calculations'}
+            </span>
+            <span className="text-sm text-neon-orange font-mono">
+              {optimizationIterations === 0 ? 'PSEUDO INV' : optimizationIterations}
             </span>
           </div>
         </div>

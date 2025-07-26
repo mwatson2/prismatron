@@ -74,6 +74,9 @@ class SystemStatus:
     # Rendering index to track which item is actually being rendered
     rendering_index: int = -1
 
+    # Optimization settings
+    optimization_iterations: int = 5
+
 
 class ControlState:
     """

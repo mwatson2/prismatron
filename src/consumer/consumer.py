@@ -703,8 +703,20 @@ class ConsumerProcess:
             # Optimize LED values (no timing constraints)
             optimization_start = time.time()
 
-            # Set iterations
+            # Get current optimization iterations from control state, fallback to instance variable
             iterations = self.optimization_iterations
+            try:
+                if self._control_state:
+                    control_status = self._control_state.get_status()
+                    if control_status and hasattr(control_status, "optimization_iterations"):
+                        iterations = control_status.optimization_iterations
+                        # Update instance variable for consistency
+                        if iterations != self.optimization_iterations:
+                            self.optimization_iterations = iterations
+                            logger.debug(f"Updated optimization iterations to {iterations} from ControlState")
+            except Exception as e:
+                logger.debug(f"Failed to read optimization iterations from ControlState: {e}")
+
             result = self._led_optimizer.optimize_frame(rgb_frame, max_iterations=iterations)
             optimization_time = time.time() - optimization_start
 
