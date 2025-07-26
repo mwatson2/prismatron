@@ -536,7 +536,9 @@ class FrameProducer(FrameRingBuffer):
                             self._metadata_array[write_idx]["source_width"] = source_width
                             self._metadata_array[write_idx]["source_height"] = source_height
                             self._metadata_array[write_idx]["capture_timestamp"] = current_time
-                            self._metadata_array[write_idx]["playlist_item_index"] = playlist_item_index or -1
+                            self._metadata_array[write_idx]["playlist_item_index"] = (
+                                playlist_item_index if playlist_item_index is not None else -1
+                            )
                             self._metadata_array[write_idx]["is_first_frame_of_item"] = is_first_frame_of_item
 
                         # Create metadata object for return

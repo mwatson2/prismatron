@@ -464,17 +464,12 @@ class ConsumerProcess:
                 # Check for playlist item transitions (but update rendering_index after successful render)
                 is_first_frame_of_item = metadata and metadata.get("is_first_frame_of_item", False)
                 playlist_item_index = metadata.get("playlist_item_index", -1) if metadata else -1
+
                 should_update_rendering_index = (
                     is_first_frame_of_item
                     and playlist_item_index >= 0
                     and playlist_item_index != self._last_rendered_item_index
                 )
-
-                # Debug logging for index 0 issue
-                if playlist_item_index == 0:
-                    logger.info(
-                        f"INDEX 0 DEBUG: is_first_frame={is_first_frame_of_item}, index={playlist_item_index}, last_rendered={self._last_rendered_item_index}, should_update={should_update_rendering_index}"
-                    )
 
                 if should_update_rendering_index:
                     logger.info(f"RENDERER: Starting to render playlist item {playlist_item_index}")

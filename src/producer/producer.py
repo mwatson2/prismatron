@@ -961,12 +961,6 @@ class ProducerProcess:
             local_timestamp = frame_data.presentation_timestamp or 0.0
             global_timestamp = self._current_item_global_offset + local_timestamp
 
-            # Debug logging for index 0 issue
-            if self._current_item_index == 0:
-                logger.info(
-                    f"PRODUCER INDEX 0 DEBUG: Creating frame with index={self._current_item_index}, first_frame={self._is_first_frame_of_current_item}"
-                )
-
             # Get write buffer with global timestamp and playlist information FIRST
             # Use longer timeout since waiting for buffer availability is normal flow control
             buffer_info = self._frame_buffer.get_write_buffer(
