@@ -13,8 +13,9 @@ This tool captures the diffusion patterns for each LED and color channel by:
 8. Saving in modern mixed tensor format compatible with the optimization engine
 
 Features:
-- Configurable block size (default: 128x128, supports 32-256)
+- Configurable block size (default: 64x64, supports 32-256)
 - Precision control (fp16/fp32) for memory optimization
+- uint8 storage format for memory efficiency and CUDA vectorization
 - Automatic block position detection and alignment
 - RCM spatial ordering for bandwidth optimization
 - Modern mixed tensor storage format
@@ -22,7 +23,7 @@ Features:
 
 Usage:
     python capture_diffusion_patterns.py --wled-host 192.168.1.100 --camera-device 0 --output patterns.npz --preview
-    python capture_diffusion_patterns.py --wled-host 192.168.1.100 --output patterns.npz --block-size 64 --precision fp16
+    python capture_diffusion_patterns.py --wled-host 192.168.1.100 --output patterns.npz --block-size 64 --precision fp16 --uint8
 """
 
 import argparse
@@ -192,8 +193,9 @@ class DiffusionPatternCapture:
         camera_device: int = 0,
         capture_fps: float = 10.0,
         crop_region: Optional[Tuple[int, int, int, int]] = None,
-        block_size: int = 128,
+        block_size: int = 64,
         precision: str = "fp32",
+        use_uint8: bool = False,
     ):
         """
         Initialize diffusion pattern capture.
@@ -206,6 +208,7 @@ class DiffusionPatternCapture:
             crop_region: Optional crop region for camera
             block_size: Block size for mixed tensor storage
             precision: Precision for mixed tensor storage ("fp16" or "fp32")
+            use_uint8: Whether to use uint8 format for memory efficiency
         """
         self.wled_host = wled_host
         self.wled_port = wled_port
@@ -213,6 +216,7 @@ class DiffusionPatternCapture:
         self.capture_interval = 1.0 / capture_fps
         self.block_size = block_size
         self.precision = precision
+        self.use_uint8 = use_uint8
 
         # Initialize WLED client
         wled_config = WLEDConfig(host=wled_host, port=wled_port, led_count=LED_COUNT, max_fps=60.0)
@@ -221,10 +225,16 @@ class DiffusionPatternCapture:
         # Initialize camera
         self.camera = CameraCapture(camera_device, crop_region)
 
-        # Determine output dtype based on precision
-        if precision == "fp16":
+        # Determine output dtype based on precision and format
+        if use_uint8:
+            # Use uint8 for storage, float32 for computation
+            tensor_dtype = cp.uint8
+            output_dtype = cp.float32
+        elif precision == "fp16":
+            tensor_dtype = cp.float16
             output_dtype = cp.float16
         else:
+            tensor_dtype = cp.float32
             output_dtype = cp.float32
 
         # Initialize mixed tensor for pattern storage
@@ -235,6 +245,7 @@ class DiffusionPatternCapture:
             width=FRAME_WIDTH,
             block_size=block_size,
             device="cpu",  # Use CPU for capture
+            dtype=tensor_dtype,
             output_dtype=output_dtype,
         )
 
@@ -302,11 +313,16 @@ class DiffusionPatternCapture:
                         logger.warning(f"Failed to capture frame for LED {led_idx}, channel {channel_idx}")
                         continue
 
-                    # Convert frame to appropriate precision (normalize to [0, 1] range)
-                    if self.precision == "fp16":
-                        pattern_float = frame.astype(np.float16) / 255.0
+                    # Convert frame to appropriate format
+                    if self.use_uint8:
+                        # Keep as uint8 [0-255] for memory efficiency
+                        pattern_data = frame.astype(np.uint8)
+                    elif self.precision == "fp16":
+                        # Convert to fp16 [0-1] range
+                        pattern_data = frame.astype(np.float16) / 255.0
                     else:
-                        pattern_float = frame.astype(np.float32) / 255.0
+                        # Convert to fp32 [0-1] range
+                        pattern_data = frame.astype(np.float32) / 255.0
 
                     # For first channel of each LED, determine optimal block position
                     if channel_idx == 0:
@@ -317,13 +333,13 @@ class DiffusionPatternCapture:
                         top_row, left_col = self.block_positions[led_idx]
 
                     # Extract block from full pattern
-                    block = pattern_float[
+                    block = pattern_data[
                         top_row : top_row + self.block_size, left_col : left_col + self.block_size, channel_idx
                     ]
 
                     # Ensure block is the right size (pad with zeros if needed)
                     if block.shape != (self.block_size, self.block_size):
-                        padded_block = np.zeros((self.block_size, self.block_size), dtype=pattern_float.dtype)
+                        padded_block = np.zeros((self.block_size, self.block_size), dtype=pattern_data.dtype)
                         h, w = min(block.shape[0], self.block_size), min(block.shape[1], self.block_size)
                         padded_block[:h, :w] = block[:h, :w]
                         block = padded_block
@@ -496,9 +512,14 @@ class DiffusionPatternCapture:
         led_spatial_mapping = {original_id: rcm_pos for rcm_pos, original_id in enumerate(rcm_order)}
 
         # Create new mixed tensor with same configuration
-        if self.precision == "fp16":
+        if self.use_uint8:
+            tensor_dtype = cp.uint8
+            output_dtype = cp.float32
+        elif self.precision == "fp16":
+            tensor_dtype = cp.float16
             output_dtype = cp.float16
         else:
+            tensor_dtype = cp.float32
             output_dtype = cp.float32
 
         reordered_tensor = SingleBlockMixedSparseTensor(
@@ -508,6 +529,7 @@ class DiffusionPatternCapture:
             width=FRAME_WIDTH,
             block_size=self.block_size,
             device="cpu",
+            dtype=tensor_dtype,
             output_dtype=output_dtype,
         )
 
@@ -531,7 +553,7 @@ class DiffusionPatternCapture:
                 except Exception as e:
                     logger.warning(f"Failed to copy block for LED {original_led_id}, channel {channel}: {e}")
                     # Create a zero block as fallback
-                    zero_block = cp.zeros((self.block_size, self.block_size), dtype=output_dtype)
+                    zero_block = cp.zeros((self.block_size, self.block_size), dtype=tensor_dtype)
                     reordered_tensor.set_block(rcm_led_id, channel, top_row, left_col, zero_block)
 
         logger.info("RCM reordering completed")
@@ -547,7 +569,9 @@ class DiffusionPatternCapture:
         logger.info("Building DiagonalATAMatrix from captured patterns...")
 
         # Determine output dtype based on precision
-        if self.precision == "fp16":
+        if self.use_uint8:
+            output_dtype = cp.float32  # Computation in fp32, storage in uint8
+        elif self.precision == "fp16":
             output_dtype = cp.float16
         else:
             output_dtype = cp.float32
@@ -680,13 +704,26 @@ class DiffusionPatternCapture:
                 "wled_port": self.wled_port,
                 "block_size": self.block_size,
                 "precision": self.precision,
+                "use_uint8": self.use_uint8,
+                "pattern_type": "captured_real",
+                "intensity_variation": True,  # Real LEDs have natural variation
+                "led_size_scaling": False,  # Not applicable for real capture
             }
+
+            # Create led_ordering array: spatial_index -> physical_led_id
+            # This is what the frame renderer will use to convert from spatial to physical order
+            # Invert the spatial mapping: original spatial_mapping[physical_id] = spatial_index
+            # We need: led_ordering[spatial_index] = physical_id
+            led_ordering = np.zeros(LED_COUNT, dtype=np.int32)
+            for physical_id, spatial_index in self.led_spatial_mapping.items():
+                led_ordering[spatial_index] = physical_id
 
             # Save everything in a single NPZ file (matching synthetic tool format)
             save_dict = {
                 # LED information
                 "led_positions": self.led_positions,
                 "led_spatial_mapping": self.led_spatial_mapping,
+                "led_ordering": led_ordering,  # New: spatial_index -> physical_led_id
                 # Metadata
                 "metadata": save_metadata,
                 # Mixed tensor stored as nested element using to_dict()
@@ -700,7 +737,7 @@ class DiffusionPatternCapture:
             # Log file info
             file_size = Path(output_path).stat().st_size / (1024 * 1024)  # MB
 
-            logger.info(f"Saved mixed tensor and DIA matrix to {output_path}")
+            logger.info(f"Saved mixed tensor, DIA matrix, and metadata to {output_path}")
             logger.info(f"File size: {file_size:.1f} MB")
             logger.info("Mixed tensor format: SingleBlockMixedSparseTensor")
             logger.info(
@@ -711,7 +748,9 @@ class DiffusionPatternCapture:
             logger.info(
                 f"DIA matrix: {dia_matrix.led_count} LEDs, bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
             )
-            logger.info("Use compute_ata_inverse.py tool to add ATA inverse matrices")
+            storage_shape = dia_matrix.dia_data_cpu.shape if dia_matrix.dia_data_cpu is not None else "None"
+            logger.info(f"DIA matrix storage shape: {storage_shape}")
+            logger.info("Use compute_ata_inverse.py tool to add ATA inverse matrices for optimization")
 
             return True
 
@@ -756,8 +795,13 @@ def main():
     parser.add_argument(
         "--block-size",
         type=int,
-        default=128,
-        help="Block size for mixed tensor storage (default: 128)",
+        default=64,
+        help="Block size for mixed tensor storage (default: 64)",
+    )
+    parser.add_argument(
+        "--uint8",
+        action="store_true",
+        help="Use uint8 format for memory efficiency and CUDA vectorization (recommended)",
     )
     parser.add_argument(
         "--log-level",
@@ -805,6 +849,7 @@ def main():
         crop_region=crop_region,
         block_size=args.block_size,
         precision=args.precision,
+        use_uint8=args.uint8,
     )
 
     try:
