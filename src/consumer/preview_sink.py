@@ -327,9 +327,6 @@ class PreviewSink:
             if self.frame_renderer and hasattr(self.frame_renderer, "get_timing_stats"):
                 try:
                     renderer_stats = self.frame_renderer.get_timing_stats()
-                    logger.debug(
-                        f"Renderer stats: fps={renderer_stats.get('ewma_fps', 0.0):.1f}, frames={renderer_stats.get('frames_rendered', 0)}"
-                    )
                     stats.update(
                         {
                             "renderer_fps": renderer_stats.get("ewma_fps", 0.0),
@@ -355,9 +352,6 @@ class PreviewSink:
 
             # Write to shared memory (last 1024 bytes)
             stats_offset = self.shared_memory_size - 1024
-            logger.debug(
-                f"Writing stats to offset {stats_offset}, length {len(stats_json)}: {stats_json[:100].decode('utf-8')}"
-            )
             self.shared_memory_map[stats_offset : stats_offset + len(stats_json)] = stats_json
             self.shared_memory_map[stats_offset + len(stats_json)] = 0  # Null terminator
 
@@ -402,7 +396,6 @@ class PreviewSink:
             rendering_index = -1
             if metadata and "rendering_index" in metadata:
                 rendering_index = metadata["rendering_index"]
-                logger.debug(f"Writing rendering_index={rendering_index} to shared memory")
             else:
                 logger.debug(f"No rendering_index in metadata: {list(metadata.keys()) if metadata else 'No metadata'}")
 
@@ -436,14 +429,9 @@ class PreviewSink:
                 )
                 self.last_log_time = start_time
 
-            logger.debug(
-                f"Updated preview data: frame {frame_counter}, {len(led_data_bytes)} bytes, rendering_index={rendering_index}"
-            )
-
             # Additional debug: Log first few LED values to detect corruption
             if led_values.size > 0:
                 sample_leds = led_values[:3].flatten()  # First 3 LEDs as flat RGB array
-                logger.debug(f"Sample LED values: {sample_leds}")
             return True
 
         except Exception as e:

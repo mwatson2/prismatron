@@ -886,17 +886,11 @@ class ProducerProcess:
 
                 # Update timing fields in shared memory
                 metadata_record = self._frame_buffer._metadata_array[buffer_idx]
-                logger.debug(
-                    f"Producer writing to buffer {buffer_idx}: frame_index={timing_data.frame_index} -> shared memory"
-                )
                 metadata_record["frame_index"] = timing_data.frame_index
                 metadata_record["plugin_timestamp"] = timing_data.plugin_timestamp
                 metadata_record["producer_timestamp"] = timing_data.producer_timestamp
                 metadata_record["item_duration"] = timing_data.item_duration
                 metadata_record["write_to_buffer_time"] = timing_data.write_to_buffer_time or 0.0
-                logger.debug(
-                    f"Producer wrote to shared memory buffer {buffer_idx}: frame_index={metadata_record['frame_index']}"
-                )
 
         except Exception as e:
             logger.warning(f"Producer: Failed to update timing data in shared memory: {e}")
@@ -935,13 +929,6 @@ class ProducerProcess:
 
                     # Set item timestamp for transition calculations
                     metadata_record["item_timestamp"] = item_timestamp
-
-                    logger.debug(
-                        f"Producer wrote transition metadata to buffer {buffer_idx}: "
-                        f"in={current_item.transition_in.type}({metadata_record['transition_in_duration']}s), "
-                        f"out={current_item.transition_out.type}({metadata_record['transition_out_duration']}s), "
-                        f"item_timestamp={item_timestamp:.3f}s"
-                    )
 
         except Exception as e:
             logger.warning(f"Producer: Failed to update transition metadata in shared memory: {e}")
@@ -1016,9 +1003,6 @@ class ProducerProcess:
 
             # Update timing data in shared memory metadata
             buffer_idx = timing_data.frame_index % self._frame_buffer.buffer_count
-            logger.debug(
-                f"Writing timing data to shared memory: frame_index={timing_data.frame_index}, calculated_buffer_idx={buffer_idx}"
-            )
             self._update_timing_data_in_shared_memory(buffer_info, timing_data)
 
             # Update transition metadata in shared memory

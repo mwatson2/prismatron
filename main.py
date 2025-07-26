@@ -509,6 +509,11 @@ def setup_logging(debug: bool = False) -> None:
     # Reduce noise from some modules
     logging.getLogger("uvicorn").setLevel(logging.WARNING)
     logging.getLogger("fastapi").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.protocols.websockets").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.protocols.websockets.impl").setLevel(logging.WARNING)
+    logging.getLogger("websockets").setLevel(logging.WARNING)
+    logging.getLogger("websockets.protocol").setLevel(logging.WARNING)
+    logging.getLogger("websockets.server").setLevel(logging.WARNING)
 
 
 def signal_handler(signum, frame, process_manager: ProcessManager) -> None:

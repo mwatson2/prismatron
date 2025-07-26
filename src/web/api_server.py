@@ -690,9 +690,6 @@ async def preview_broadcast_task():
                             timestamp, frame_counter, led_count, shm_rendering_index = struct.unpack(
                                 "<ddii40x", header_data
                             )
-                            logger.debug(
-                                f"API SHM READ: timestamp={timestamp:.3f}, frame={frame_counter}, leds={led_count}, rendering_index={shm_rendering_index}"
-                            )
 
                             if led_count > 0:
                                 # Read LED data starting at offset 64: led_count * 3 bytes (RGB)
@@ -740,15 +737,11 @@ async def preview_broadcast_task():
                             os.lseek(shm_fd, stats_offset, os.SEEK_SET)
                             stats_data = os.read(shm_fd, 1024)
 
-                            logger.debug(f"Read stats data: first 50 bytes = {stats_data[:50]}")
-
                             # Find null terminator
                             null_pos = stats_data.find(b"\x00")
                             if null_pos > 0:
                                 stats_json = stats_data[:null_pos].decode("utf-8")
                                 stats = json.loads(stats_json)
-
-                                logger.debug(f"Parsed stats: renderer_fps={stats.get('renderer_fps', 'missing')}")
 
                                 # Extract FPS and frame statistics
                                 # Try renderer_fps first (if available), otherwise use ewma_fps (preview sink FPS)
@@ -1491,18 +1484,17 @@ async def update_item_transitions(item_id: str, transition_in: TransitionConfig,
 
         # Find and update the item
         if playlist_sync_client and playlist_sync_client.connected:
-            # Get current state from sync service
-            sync_state = playlist_sync_client.get_state()
-            if sync_state:
+            # Use the current playlist state (updated via callback)
+            if playlist_state and playlist_state.items:
                 # Find the item to update
                 item_found = False
-                for sync_item in sync_state.items:
-                    if sync_item.id == item_id:
+                for playlist_item in playlist_state.items:
+                    if playlist_item.id == item_id:
                         # Update transitions
-                        sync_item.transition_in = SyncTransitionConfig(
+                        playlist_item.transition_in = TransitionConfig(
                             type=transition_in.type, parameters=transition_in.parameters
                         )
-                        sync_item.transition_out = SyncTransitionConfig(
+                        playlist_item.transition_out = TransitionConfig(
                             type=transition_out.type, parameters=transition_out.parameters
                         )
                         item_found = True
@@ -1511,10 +1503,17 @@ async def update_item_transitions(item_id: str, transition_in: TransitionConfig,
                 if not item_found:
                     raise HTTPException(status_code=404, detail="Playlist item not found")
 
-                # Update the sync service
-                success = playlist_sync_client.update_item(sync_item)
-                if not success:
-                    raise HTTPException(status_code=500, detail="Failed to update item in sync service")
+                # Broadcast updated playlist state to WebSocket clients
+                await manager.broadcast(
+                    {
+                        "type": "playlist_updated",
+                        "items": [item.dict_serializable() for item in playlist_state.items],
+                        "current_index": playlist_state.current_index,
+                        "is_playing": playlist_state.is_playing,
+                        "auto_repeat": playlist_state.auto_repeat,
+                        "shuffle": playlist_state.shuffle,
+                    }
+                )
 
                 return {
                     "status": "updated",
@@ -1695,9 +1694,6 @@ async def get_led_preview():
 
                     # Unpack header according to PreviewSink format: "<ddii40x"
                     timestamp, frame_counter, led_count, shm_rendering_index = struct.unpack("<ddii40x", header_data)
-                    logger.debug(
-                        f"API PREVIEW READ: timestamp={timestamp:.3f}, frame={frame_counter}, leds={led_count}, rendering_index={shm_rendering_index}"
-                    )
 
                     if led_count > 0:
                         # Read LED data starting at offset 64: led_count * 3 bytes (RGB)
@@ -1723,9 +1719,6 @@ async def get_led_preview():
                             # Handle potential invalid rendering_index values
                             preview_data["shm_rendering_index"] = (
                                 shm_rendering_index if shm_rendering_index < 999999 else -1
-                            )
-                            logger.debug(
-                                f"Using real LED data from shared memory: {len(frame_data)} LEDs, frame {frame_counter}, shm_rendering_index={shm_rendering_index}"
                             )
                         else:
                             logger.debug(
@@ -1763,7 +1756,6 @@ async def get_led_preview():
             preview_data["frame_data"] = preview_colors
             preview_data["total_leds"] = test_led_count
             preview_data["shm_rendering_index"] = -1  # No shared memory data
-            logger.debug(f"Using fallback test pattern with {test_led_count} LEDs")
 
         return preview_data
 
@@ -2027,7 +2019,8 @@ def run_server(host: str = "0.0.0.0", port: int = 8000, debug: bool = False, pat
         host=host,
         port=port,
         reload=False,  # Disabled to prevent watchfiles logging noise
-        log_level="debug" if debug else "info",
+        log_level="info",  # Keep at info level to avoid verbose WebSocket debugging
+        access_log=False,  # Disable access logging to reduce noise
     )
 
 

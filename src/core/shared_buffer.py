@@ -557,7 +557,6 @@ class FrameProducer(FrameRingBuffer):
                             metadata=metadata,
                         )
 
-                        logger.debug(f"Producer got write buffer {write_idx}, frame id {buffer_info.frame_id}")
                         return buffer_info
 
                 # Buffer not available, wait briefly and retry
@@ -609,7 +608,6 @@ class FrameProducer(FrameRingBuffer):
                 if hasattr(self, "_frames_written"):
                     self._frames_written += 1
 
-                logger.debug(f"Advanced write: buffer {write_idx} -> {next_write_idx}, frame {new_frame_count}")
                 return True
 
         except Exception as e:
