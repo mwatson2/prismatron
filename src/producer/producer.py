@@ -895,13 +895,16 @@ class ProducerProcess:
         except Exception as e:
             logger.warning(f"Producer: Failed to update timing data in shared memory: {e}")
 
-    def _update_transition_metadata_in_shared_memory(self, buffer_info, item_timestamp: float) -> None:
+    def _update_transition_metadata_in_shared_memory(
+        self, buffer_info, item_timestamp: float, frame_index: int
+    ) -> None:
         """
         Update transition metadata fields in shared memory.
 
         Args:
             buffer_info: Buffer info object from frame buffer
             item_timestamp: Time within the current playlist item (seconds from item start)
+            frame_index: Current frame index for logging
         """
         try:
             # Get the frame buffer's metadata array to update transition fields
@@ -927,8 +930,13 @@ class ProducerProcess:
                         "duration", 0.0
                     )
 
-                    # Set item timestamp for transition calculations
+                    # Set item timestamp and duration for transition calculations
                     metadata_record["item_timestamp"] = item_timestamp
+                    metadata_record["item_duration"] = current_item.get_effective_duration()
+                else:
+                    logger.debug(f"No current item available for frame {frame_index} - transition metadata not set")
+            else:
+                logger.debug("Frame buffer has no metadata array - transition metadata not set")
 
         except Exception as e:
             logger.warning(f"Producer: Failed to update transition metadata in shared memory: {e}")
@@ -1006,7 +1014,7 @@ class ProducerProcess:
             self._update_timing_data_in_shared_memory(buffer_info, timing_data)
 
             # Update transition metadata in shared memory
-            self._update_transition_metadata_in_shared_memory(buffer_info, local_timestamp)
+            self._update_transition_metadata_in_shared_memory(buffer_info, local_timestamp, timing_data.frame_index)
 
             # Check if frame has non-zero content for logging
             if buffer_array.max() > 0:

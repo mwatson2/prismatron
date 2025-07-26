@@ -695,6 +695,8 @@ class ConsumerProcess:
             # Apply playlist item transitions before LED optimization
             transition_start = time.time()
             metadata_dict = self._extract_metadata_dict(buffer_info.metadata)
+
+            # Apply transitions to frame if metadata is available
             rgb_frame = self._transition_processor.process_frame(rgb_frame, metadata_dict)
             transition_time = time.time() - transition_start
 
@@ -829,6 +831,7 @@ class ConsumerProcess:
 
             # Extract fields that the transition processor needs
             metadata_dict = {}
+            missing_fields = []
 
             # Add transition fields if they exist
             for field in [
@@ -847,6 +850,11 @@ class ConsumerProcess:
                         metadata_dict[field] = "none"
                     elif field.endswith(("_duration", "_timestamp")):
                         metadata_dict[field] = 0.0
+                    missing_fields.append(field)
+
+            # Log missing fields only in debug mode
+            if missing_fields and logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Using default values for missing transition fields: {', '.join(missing_fields)}")
 
             return metadata_dict
 

@@ -50,6 +50,13 @@ class FrameMetadata:
     playlist_item_index: int = -1  # Current playlist item index for renderer sync
     is_first_frame_of_item: bool = False  # True if this is the first frame of a new playlist item
     timing_data: Optional[FrameTimingData] = None  # Detailed timing information for performance analysis
+    # Transition fields for playlist item transitions
+    transition_in_type: str = "none"  # Transition in type (e.g., "fade", "none")
+    transition_in_duration: float = 0.0  # Transition in duration in seconds
+    transition_out_type: str = "none"  # Transition out type (e.g., "fade", "none")
+    transition_out_duration: float = 0.0  # Transition out duration in seconds
+    item_timestamp: float = 0.0  # Time within current item (for transition calculations)
+    item_duration: float = 0.0  # Total duration of current item
 
 
 @dataclass
@@ -775,6 +782,13 @@ class FrameConsumer(FrameRingBuffer):
                                 playlist_item_index=int(metadata_record["playlist_item_index"]),
                                 is_first_frame_of_item=bool(metadata_record["is_first_frame_of_item"]),
                                 timing_data=timing_data,
+                                # Include transition fields from shared memory
+                                transition_in_type=str(metadata_record["transition_in_type"]),
+                                transition_in_duration=float(metadata_record["transition_in_duration"]),
+                                transition_out_type=str(metadata_record["transition_out_type"]),
+                                transition_out_duration=float(metadata_record["transition_out_duration"]),
+                                item_timestamp=float(metadata_record["item_timestamp"]),
+                                item_duration=float(metadata_record["item_duration"]),
                             )
 
                             buffer_info = BufferInfo(

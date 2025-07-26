@@ -50,18 +50,31 @@ class TransitionProcessor:
             transition_context = self._extract_transition_context(metadata)
             if not transition_context:
                 # No transition metadata available
+                logger.debug(f"No transition context for frame {self._frame_count}")
                 return frame
+
+            logger.debug(
+                f"Processing frame {self._frame_count} with transitions: "
+                f"in={transition_context['transition_in']['type']}, "
+                f"out={transition_context['transition_out']['type']}"
+            )
 
             # Check if we need to apply any transitions
             frame_with_transitions = frame.copy()
+            transitions_applied = []
 
             # Apply transition_in if frame is in the transition region
             if self._should_apply_transition_in(transition_context):
                 frame_with_transitions = self._apply_transition(frame_with_transitions, transition_context, "in")
+                transitions_applied.append("in")
 
             # Apply transition_out if frame is in the transition region
             if self._should_apply_transition_out(transition_context):
                 frame_with_transitions = self._apply_transition(frame_with_transitions, transition_context, "out")
+                transitions_applied.append("out")
+
+            if transitions_applied:
+                logger.debug(f"Applied transitions to frame {self._frame_count}: {', '.join(transitions_applied)}")
 
             return frame_with_transitions
 
@@ -91,8 +104,9 @@ class TransitionProcessor:
                 "item_duration",
             ]
 
-            if not all(field in metadata for field in required_fields):
-                logger.debug("Frame metadata missing transition fields")
+            missing_fields = [field for field in required_fields if field not in metadata]
+            if missing_fields:
+                logger.debug(f"Frame metadata missing transition fields: {missing_fields}")
                 return None
 
             # Extract transition configuration
