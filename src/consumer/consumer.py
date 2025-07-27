@@ -19,6 +19,7 @@ import numpy as np
 from ..const import FRAME_CHANNELS, FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
 from ..core import ControlState, FrameConsumer
 from ..utils.frame_timing import FrameTimingData, FrameTimingLogger
+from .adaptive_frame_dropper import AdaptiveFrameDropper
 from .frame_renderer import FrameRenderer
 from .led_buffer import LEDBuffer
 from .led_optimizer import LEDOptimizer
@@ -118,6 +119,7 @@ class ConsumerProcess:
         enable_test_renderer: bool = False,
         test_renderer_config: Optional[TestSinkConfig] = None,
         timing_log_path: Optional[str] = None,
+        enable_adaptive_frame_dropping: bool = True,
     ):
         """
         Initialize consumer process.
@@ -131,6 +133,7 @@ class ConsumerProcess:
             enable_test_renderer: Enable test renderer for debugging
             test_renderer_config: Test renderer configuration
             timing_log_path: Path to CSV file for timing data logging (optional)
+            enable_adaptive_frame_dropping: Enable adaptive frame dropping for LED buffer management
         """
         self.buffer_name = buffer_name
         self.control_name = control_name
@@ -153,6 +156,21 @@ class ConsumerProcess:
 
         # New timestamp-based rendering components
         self._led_buffer = LEDBuffer(buffer_size=10)
+
+        # Adaptive frame dropping for LED buffer management
+        self.enable_adaptive_frame_dropping = enable_adaptive_frame_dropping
+        if self.enable_adaptive_frame_dropping:
+            self._adaptive_frame_dropper = AdaptiveFrameDropper(
+                led_buffer_low_threshold=3.0,  # Increase drop rate when buffer < 3
+                led_buffer_high_threshold=8.0,  # Decrease drop rate when buffer > 8
+                drop_rate_step_size=0.05,  # 5% step size for target adjustments
+                led_buffer_ewma_alpha=0.1,  # EWMA alpha for buffer level tracking
+                frame_drop_ewma_alpha=0.1,  # EWMA alpha for drop rate tracking
+            )
+            logger.info("Adaptive frame dropping enabled for LED buffer management")
+        else:
+            self._adaptive_frame_dropper = None
+            logger.info("Adaptive frame dropping disabled")
 
         # Create frame renderer with LED ordering from pattern file if available
         from ..utils.pattern_loader import create_frame_renderer_with_pattern
@@ -653,6 +671,26 @@ class ConsumerProcess:
             # Update consumer input FPS tracking
             self._stats.update_consumer_input_fps(timestamp)
 
+            # Adaptive frame dropping based on LED buffer occupancy
+            if self.enable_adaptive_frame_dropping and self._adaptive_frame_dropper:
+                led_buffer_size = len(self._led_buffer)
+                should_drop_adaptive = self._adaptive_frame_dropper.should_drop_frame(timestamp, led_buffer_size)
+
+                if should_drop_adaptive:
+                    # Drop frame for LED buffer management
+                    self._stats.frames_dropped_early += 1
+                    self._stats.update_dropped_frames_ewma()
+
+                    # Log dropped frame to timing data if configured
+                    if timing_data and self._timing_logger:
+                        # Adaptive drop - has frame info and buffer times, but no optimization/render times
+                        self._timing_logger.log_frame(timing_data)
+
+                    logger.debug(
+                        f"Frame {timing_data.frame_index if timing_data else 'unknown'} dropped by adaptive dropper (LED buffer size: {led_buffer_size})"
+                    )
+                    return
+
             # Check if frame is already late - drop if so, otherwise proceed with optimization
             if self._frame_renderer.is_frame_late(timestamp, late_threshold_ms=50.0):
                 # Frame already late - drop it
@@ -968,6 +1006,10 @@ class ConsumerProcess:
             "test_renderer_stats": (self._test_renderer.get_statistics() if self._test_renderer else None),
             "led_buffer_stats": self._led_buffer.get_buffer_stats(),
             "renderer_stats": self._frame_renderer.get_renderer_stats(),
+            "adaptive_frame_dropper_enabled": self.enable_adaptive_frame_dropping,
+            "adaptive_frame_dropper_stats": (
+                self._adaptive_frame_dropper.get_stats() if self._adaptive_frame_dropper else None
+            ),
         }
 
     def get_statistics(self) -> Dict[str, Any]:
