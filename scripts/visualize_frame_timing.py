@@ -496,23 +496,34 @@ class FrameTimingVisualizer:
             f"Content duration range: {all_data['plugin_timestamp'].min():.3f}s - {all_data['plugin_timestamp'].max():.3f}s"
         )
 
-        # Analyze dropped frame patterns
-        if len(incomplete_data) > 0:
-            print("\n=== Dropped Frame Analysis ===")
+        # Analyze frame progression through pipeline stages
+        print("\n=== Frame Pipeline Progression Analysis ===")
 
-            # Count frames that reached each stage
-            stages = [
-                ("write_to_buffer_time", "Write to Buffer"),
-                ("read_from_buffer_time", "Read from Buffer"),
-                ("write_to_led_buffer_time", "Write to LED Buffer"),
-                ("read_from_led_buffer_time", "Read from LED Buffer"),
-                ("render_time", "Render Time"),
-            ]
+        # Count ALL frames that reached each stage (complete + incomplete)
+        stages = [
+            ("write_to_buffer_time", "Write to Buffer"),
+            ("read_from_buffer_time", "Read from Buffer"),
+            ("write_to_led_buffer_time", "Write to LED Buffer"),
+            ("read_from_led_buffer_time", "Read from LED Buffer"),
+            ("render_time", "Render Time"),
+        ]
+
+        total_frames = len(all_data)
+        for stage_col, stage_name in stages:
+            reached_count = (all_data[stage_col] > 0).sum()
+            print(
+                f"Frames reaching {stage_name}: {reached_count}/{total_frames} ({reached_count/total_frames*100:.1f}%)"
+            )
+
+        # Additional analysis for incomplete frames only
+        if len(incomplete_data) > 0:
+            print(f"\n=== Incomplete Frame Details ===")
+            print(f"Total incomplete frames: {len(incomplete_data)}")
 
             for stage_col, stage_name in stages:
-                reached_count = (incomplete_data[stage_col] > 0).sum()
+                incomplete_reached = (incomplete_data[stage_col] > 0).sum()
                 print(
-                    f"Frames reaching {stage_name}: {reached_count}/{len(incomplete_data)} ({reached_count/len(incomplete_data)*100:.1f}%)"
+                    f"  Incomplete frames reaching {stage_name}: {incomplete_reached}/{len(incomplete_data)} ({incomplete_reached/len(incomplete_data)*100:.1f}%)"
                 )
 
         # Calculate processing latencies (complete frames only)
