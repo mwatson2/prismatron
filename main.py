@@ -462,6 +462,15 @@ class ProcessManager:
             logger.info("Performing comprehensive cleanup...")
             self.stop_all_processes()
 
+            # Stop log rotation service
+            try:
+                from src.utils.log_rotation import stop_log_rotation
+
+                if stop_log_rotation(timeout=2.0):
+                    logger.info("Log rotation service stopped")
+            except Exception as e:
+                logger.warning(f"Error stopping log rotation: {e}")
+
             # Additional cleanup for any remaining shared memory
             self._cleanup_orphaned_shared_memory()
 
@@ -473,9 +482,10 @@ class ProcessManager:
 
 
 def setup_logging(debug: bool = False) -> None:
-    """Setup logging configuration."""
+    """Setup logging configuration with automatic rotation."""
     import time
 
+    from src.utils.log_rotation import start_log_rotation
     from src.utils.logging_utils import create_app_time_formatter, set_app_start_time
 
     # Set application start time
@@ -505,6 +515,12 @@ def setup_logging(debug: bool = False) -> None:
         level=level,
         handlers=[console_handler, file_handler],
     )
+
+    # Start log rotation service (checks every 5 minutes)
+    if start_log_rotation(log_file, check_interval=300):
+        logger.info("Log rotation service started (max 100MB per file, 200MB total)")
+    else:
+        logger.warning("Failed to start log rotation service")
 
     # Reduce noise from some modules
     logging.getLogger("uvicorn").setLevel(logging.WARNING)
