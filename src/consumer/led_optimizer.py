@@ -615,7 +615,7 @@ class LEDOptimizer:
                 ata_matrix=self._diagonal_ata_matrix,  # Updated parameter name
                 ata_inverse=self._ATA_inverse_cpu,  # Required parameter - use CPU version
                 initial_values=initial_values_frame_opt,
-                max_iterations=max_iterations or self.max_iterations,
+                max_iterations=max_iterations if max_iterations is not None else self.max_iterations,
                 convergence_threshold=self.convergence_threshold,
                 step_size_scaling=self.step_size_scaling,
                 compute_error_metrics=debug,
