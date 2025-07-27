@@ -115,7 +115,7 @@ class FrameTimingVisualizer:
             "shared_buffer": "#2ca02c",  # Green - time in shared buffer
             "optimization": "#d62728",  # Red - optimization time
             "led_buffer": "#9467bd",  # Purple - time in LED buffer
-            "rendered": "#e377c2",  # Pink - time in rendered state
+            "rendered": "#ffff00",  # Bright Yellow - time in rendered state (high visibility)
             "led_queue": "#ff8c00",  # Orange - LED buffer queue length
             "plugin_timestamp": "#1f77b4",  # Blue - plugin timestamps
             "producer_timestamp": "#ff7f0e",  # Orange - producer timestamps
@@ -209,8 +209,8 @@ class FrameTimingVisualizer:
                         [start_time, end_time],
                         [frame_y, frame_y],
                         color=state_colors["rendered"],
-                        linewidth=2,
-                        alpha=0.8,
+                        linewidth=3,  # Make rendered segments thicker for better visibility
+                        alpha=1.0,  # Make rendered segments fully opaque
                         solid_capstyle="butt",
                     )
 
