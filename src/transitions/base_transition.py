@@ -9,6 +9,7 @@ transitions between playlist items.
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Tuple
 
+import cupy as cp
 import numpy as np
 
 
@@ -24,27 +25,27 @@ class BaseTransition(ABC):
     @abstractmethod
     def apply_transition(
         self,
-        frame: np.ndarray,
+        frame: cp.ndarray,
         timestamp: float,
         item_duration: float,
         transition_config: Dict[str, Any],
         direction: str,
-    ) -> np.ndarray:
+    ) -> cp.ndarray:
         """
         Apply transition effect to a frame.
 
         Args:
-            frame: RGB frame data as numpy array (H, W, 3) with values 0-255
+            frame: RGB frame data as cupy GPU array (H, W, 3) with values 0-255
             timestamp: Time within the current playlist item (seconds from item start)
             item_duration: Total duration of the current playlist item (seconds)
             transition_config: Transition configuration including type and parameters
             direction: "in" for transition_in, "out" for transition_out
 
         Returns:
-            Modified frame data with transition applied
+            Modified frame data with transition applied (GPU array)
 
         Raises:
-            ValueError: If parameters are invalid
+            ValueError: If parameters are invalid or frame is not on GPU
             RuntimeError: If transition processing fails
         """
 

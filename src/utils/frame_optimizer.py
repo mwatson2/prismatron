@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 class FrameOptimizationResult:
     """Results from frame optimization process."""
 
-    led_values: np.ndarray  # RGB values for each LED (3, led_count) in spatial order [0,255]
+    led_values: cp.ndarray  # RGB values for each LED (3, led_count) in spatial order [0,255] - GPU array only
     error_metrics: Dict[str, float]  # Error metrics (mse, mae, etc.)
     iterations: int  # Number of optimization iterations
     converged: bool  # Whether optimization converged
@@ -60,7 +60,7 @@ def load_ata_inverse_from_pattern(pattern_file_path: str) -> Optional[np.ndarray
 
 
 def optimize_frame_led_values(
-    target_frame: np.ndarray,
+    target_frame: cp.ndarray,
     at_matrix: SingleBlockMixedSparseTensor,
     ata_matrix: DiagonalATAMatrix,
     ata_inverse: Union[np.ndarray, DiagonalATAMatrix, Dict[str, any]],
@@ -82,7 +82,7 @@ def optimize_frame_led_values(
     for efficient A^T A operations. Supports both fp32 and uint8 mixed tensor formats.
 
     Args:
-        target_frame: Target image in uint8 format (3, 480, 800) or standard (480, 800, 3)
+        target_frame: Target image in uint8 format (3, 480, 800) or standard (480, 800, 3) - GPU cupy array
         at_matrix: A^T matrix for computing A^T @ b (SingleBlockMixedSparseTensor with 3D CUDA kernels)
                    - If dtype=uint8: uses uint8 x uint8 -> fp32 kernels with proper scaling
                    - If dtype=fp32: uses fp32 x fp32 -> fp32 kernels
@@ -109,21 +109,22 @@ def optimize_frame_led_values(
     # Initialize performance timing if requested
     timing = PerformanceTiming("frame_optimizer", enable=False, enable_gpu_timing=False)  # Disable timing for now
 
-    # Validate input frame format and convert to planar uint8 if needed
-    if target_frame.dtype != np.int8 and target_frame.dtype != np.uint8:
+    # Validate GPU input frame and format
+    if not isinstance(target_frame, cp.ndarray):
+        logger.error(f"Expected GPU cupy array, got {type(target_frame)}")
+        raise ValueError(f"Target frame must be cupy GPU array, got {type(target_frame)}")
+
+    if target_frame.dtype != cp.int8 and target_frame.dtype != cp.uint8:
         raise ValueError(f"Target frame must be int8 or uint8, got {target_frame.dtype}")
 
-    # Handle both planar (3, H, W) and standard (H, W, 3) formats
-    # Keep target as uint8 for consistent processing with both uint8 and fp32 mixed tensors
+    # Handle both planar (3, H, W) and standard (H, W, 3) formats on GPU
     if target_frame.shape == (3, 480, 800):
-        # Already in planar format - ensure uint8 and C-contiguous for optimal GPU performance
-        target_planar_uint8 = np.ascontiguousarray(target_frame.astype(np.uint8))
+        # Already in planar format - ensure uint8 and C-contiguous
+        target_planar_uint8 = cp.ascontiguousarray(target_frame.astype(cp.uint8))
     elif target_frame.shape == (480, 800, 3):
-        # Convert from HWC to CHW planar format with true data rearrangement
-        # Use ascontiguousarray to ensure actual planar layout (RRR...GGG...BBB...)
-        # instead of transpose view which keeps interleaved data (RGBRGB...)
-        target_planar_uint8 = np.ascontiguousarray(
-            target_frame.astype(np.uint8).transpose(2, 0, 1)
+        # Convert from HWC to CHW planar format on GPU
+        target_planar_uint8 = cp.ascontiguousarray(
+            target_frame.astype(cp.uint8).transpose(2, 0, 1)
         )  # (H, W, 3) -> (3, H, W)
     else:
         raise ValueError(f"Unsupported frame shape {target_frame.shape}, expected (3, 480, 800) or (480, 800, 3)")
@@ -303,17 +304,18 @@ def optimize_frame_led_values(
             current_mse = _compute_mse_only(led_values_gpu, target_planar_uint8, at_matrix)
             mse_values.append(float(current_mse))
 
-    # Step 5: Convert back to spatial order and CPU
+    # Step 5: Convert back to spatial order - GPU output only
     # Values are already in correct order (pattern generation handles ordering)
-    led_values_spatial = cp.asnumpy(led_values_gpu)
-
-    # Convert to uint8 [0, 255] range
-    led_values_output = (led_values_spatial * 255.0).astype(np.uint8)
+    led_values_spatial_gpu = led_values_gpu
+    # Convert to uint8 [0, 255] range on GPU
+    led_values_output = (led_values_spatial_gpu * 255.0).astype(cp.uint8)
 
     # Step 6: Compute error metrics if requested
     error_metrics = {}
     if compute_error_metrics:
-        error_metrics = _compute_error_metrics(led_values_spatial, target_planar_uint8, at_matrix, debug=debug)
+        # Convert to CPU for error metrics computation (temporary)
+        led_values_for_metrics = cp.asnumpy(led_values_gpu)
+        error_metrics = _compute_error_metrics(led_values_for_metrics, target_planar_uint8, at_matrix, debug=debug)
 
     # Extract timing data if available
     timing_data = None
@@ -485,7 +487,7 @@ def _compute_error_metrics(
 
 
 def optimize_frame_with_tensors(
-    target_frame: np.ndarray,
+    target_frame: cp.ndarray,
     mixed_tensor: SingleBlockMixedSparseTensor,
     dia_matrix: DiagonalATAMatrix,
     ata_inverse: Optional[np.ndarray] = None,
@@ -497,7 +499,7 @@ def optimize_frame_with_tensors(
     Supports both uint8 and fp32 mixed tensors with automatic dtype handling.
 
     Args:
-        target_frame: Target frame uint8 (3, 480, 800) or (480, 800, 3)
+        target_frame: Target frame uint8 (3, 480, 800) or (480, 800, 3) - GPU cupy array
         mixed_tensor: Mixed tensor for A^T @ b computation with 3D CUDA kernels
                      - uint8 dtype: uses optimized uint8 x uint8 -> fp32 kernels
                      - fp32 dtype: uses fp32 x fp32 -> fp32 kernels

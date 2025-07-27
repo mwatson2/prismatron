@@ -7,8 +7,9 @@ adjust the brightness of frames at the beginning or end of playlist items.
 
 import logging
 import math
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Union
 
+import cupy as cp
 import numpy as np
 
 from .base_transition import BaseTransition
@@ -18,40 +19,45 @@ logger = logging.getLogger(__name__)
 
 class FadeTransition(BaseTransition):
     """
-    Fade transition implementation.
+    Fade transition implementation with GPU-native support.
 
     Provides smooth fade-in and fade-out effects by adjusting frame brightness
     over a specified duration. Supports different interpolation curves for
-    natural-looking transitions.
+    natural-looking transitions. GPU-native processing maintains frame format
+    (CPU or GPU) throughout the pipeline for optimal performance.
     """
 
     def apply_transition(
         self,
-        frame: np.ndarray,
+        frame: cp.ndarray,
         timestamp: float,
         item_duration: float,
         transition_config: Dict[str, Any],
         direction: str,
-    ) -> np.ndarray:
+    ) -> cp.ndarray:
         """
         Apply fade transition to a frame.
 
         Args:
-            frame: RGB frame data as numpy array (H, W, 3) with values 0-255
+            frame: RGB frame data as cupy GPU array (H, W, 3) with values 0-255
             timestamp: Time within the current playlist item (seconds from item start)
             item_duration: Total duration of the current playlist item (seconds)
             transition_config: Transition configuration with parameters
             direction: "in" for fade-in, "out" for fade-out
 
         Returns:
-            Frame with fade transition applied
+            Frame with fade transition applied (GPU array)
 
         Raises:
-            ValueError: If parameters are invalid
+            ValueError: If parameters are invalid or frame is not on GPU
             RuntimeError: If transition processing fails
         """
         try:
-            # Validate inputs
+            # Validate inputs - frame must be GPU array
+            if not isinstance(frame, cp.ndarray):
+                logger.error(f"Expected GPU cupy array, got {type(frame)}")
+                raise ValueError(f"Frame must be cupy GPU array, got {type(frame)}")
+
             if frame.ndim != 3 or frame.shape[2] != 3:
                 raise ValueError(f"Expected RGB frame with shape (H, W, 3), got {frame.shape}")
 
@@ -83,13 +89,11 @@ class FadeTransition(BaseTransition):
             else:
                 raise ValueError(f"Invalid direction '{direction}', must be 'in' or 'out'")
 
-            # Apply fade to frame
-            # Convert to float for processing, then back to uint8
-            frame_float = frame.astype(np.float32)
+            # Apply fade to frame - GPU-only processing
+            frame_float = frame.astype(cp.float32)
             faded_frame = frame_float * fade_factor
-
-            # Clamp values and convert back to uint8
-            faded_frame = np.clip(faded_frame, 0, 255).astype(np.uint8)
+            # Clamp values and convert back to uint8 on GPU
+            faded_frame = cp.clip(faded_frame, 0, 255).astype(cp.uint8)
 
             return faded_frame
 

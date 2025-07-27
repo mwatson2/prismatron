@@ -8,7 +8,10 @@ and factory methods for creating transition instances based on configuration.
 import logging
 from typing import Any, Dict, List, Optional, Type
 
+import cupy as cp
+
 from .base_transition import BaseTransition
+from .blur_transition import BlurTransition
 from .fade_transition import FadeTransition
 
 logger = logging.getLogger(__name__)
@@ -27,9 +30,13 @@ class TransitionFactory:
         # Registry of transition type name -> transition class
         self._transitions: Dict[str, Type[BaseTransition]] = {}
 
+        # Cache of transition instances (one per type for reuse)
+        self._transition_instances: Dict[str, BaseTransition] = {}
+
         # Register built-in transitions
         self.register_transition("none", NoneTransition)
         self.register_transition("fade", FadeTransition)
+        self.register_transition("blur", BlurTransition)
 
     def register_transition(self, name: str, transition_class: Type[BaseTransition]) -> None:
         """
@@ -65,13 +72,13 @@ class TransitionFactory:
 
     def create_transition(self, transition_type: str) -> Optional[BaseTransition]:
         """
-        Create a transition instance by type name.
+        Get a cached transition instance by type name (creates once, reuses thereafter).
 
         Args:
-            transition_type: Name of the transition type to create
+            transition_type: Name of the transition type to get
 
         Returns:
-            Transition instance, or None if type not found
+            Cached transition instance, or None if type not found
 
         Note:
             Logs error if transition type is not registered
@@ -82,9 +89,17 @@ class TransitionFactory:
             )
             return None
 
+        # Return cached instance if available
+        if transition_type in self._transition_instances:
+            return self._transition_instances[transition_type]
+
+        # Create and cache new instance
         try:
             transition_class = self._transitions[transition_type]
-            return transition_class()
+            instance = transition_class()
+            self._transition_instances[transition_type] = instance
+            logger.debug(f"Created and cached transition instance for '{transition_type}'")
+            return instance
         except Exception as e:
             logger.error(f"Error creating transition '{transition_type}': {e}")
             return None
@@ -216,6 +231,10 @@ class NoneTransition(BaseTransition):
         self, frame, timestamp: float, item_duration: float, transition_config: Dict[str, Any], direction: str
     ):
         """Return frame unmodified."""
+        # Validate frame is GPU array for consistency
+        if not isinstance(frame, cp.ndarray):
+            logger.error(f"Expected GPU cupy array, got {type(frame)}")
+            raise ValueError(f"Frame must be cupy GPU array, got {type(frame)}")
         return frame
 
     def get_transition_region(self, item_duration: float, transition_config: Dict[str, Any], direction: str):

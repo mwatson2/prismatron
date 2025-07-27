@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import cupy as cp
 import numpy as np
 
 from ..const import FRAME_CHANNELS, FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
@@ -613,9 +614,11 @@ class ConsumerProcess:
         start_time = time.time()
 
         try:
-            # Extract frame and timestamp
-            # TODO: Check get_array_interleaved to ensure this is on the GPU already
-            frame_array = buffer_info.get_array_interleaved(FRAME_WIDTH, FRAME_HEIGHT, FRAME_CHANNELS)
+            # Extract frame and timestamp - move to GPU immediately
+            frame_array_cpu = buffer_info.get_array_interleaved(FRAME_WIDTH, FRAME_HEIGHT, FRAME_CHANNELS)
+
+            # Move frame to GPU immediately for GPU-native pipeline
+            frame_array = cp.asarray(frame_array_cpu, dtype=cp.uint8)
 
             # Separate presentation timestamp from receive time for proper gap tracking
             current_receive_time = time.time()
@@ -669,24 +672,24 @@ class ConsumerProcess:
                 logger.warning(f"Unexpected frame shape: {frame_array.shape}")
                 return
 
-            # Convert RGBA to RGB
+            # Convert RGBA to RGB (on GPU)
             # TODO; Remove this, we only have RGB
-            rgb_frame = frame_array[:, :, :3].astype(np.uint8)
+            rgb_frame = frame_array[:, :, :3].astype(cp.uint8)
 
-            # Debug: Write first 10 frames to temporary files for analysis
+            # Debug: Write first 10 frames to temporary files for analysis (convert to CPU for saving)
             if self._debug_frame_count < self._debug_max_frames:
                 try:
                     debug_file = self._debug_frame_dir / f"frame_{self._debug_frame_count:03d}.npy"
-                    np.save(debug_file, rgb_frame)
+                    rgb_frame_cpu = cp.asnumpy(rgb_frame)  # Convert to CPU for saving
+                    np.save(debug_file, rgb_frame_cpu)
                     # Write debug frame to file
                     self._debug_frame_count += 1
                 except Exception as e:
                     logger.warning(f"DEBUG: Failed to write frame {self._debug_frame_count}: {e}")
 
-            # Apply brightness scaling
+            # Apply brightness scaling (on GPU)
             if self.brightness_scale != 1.0:
-                # TODO: Do this on the GPU (i.e. don't move data back and forth)
-                rgb_frame = (rgb_frame * self.brightness_scale).clip(0, 255).astype(np.uint8)
+                rgb_frame = (rgb_frame * self.brightness_scale).clip(0, 255).astype(cp.uint8)
 
             # Apply playlist item transitions before LED optimization
             transition_start = time.time()
@@ -720,8 +723,11 @@ class ConsumerProcess:
             if not result.converged:
                 self._stats.optimization_errors += 1
 
-            # Store in LED buffer with timestamp
-            led_values_uint8 = result.led_values.astype(np.uint8)
+            # Store in LED buffer with timestamp (convert to CPU for LED buffer)
+            if isinstance(result.led_values, cp.ndarray):
+                led_values_uint8 = cp.asnumpy(result.led_values).astype(np.uint8)
+            else:
+                led_values_uint8 = result.led_values.astype(np.uint8)
 
             # Check if LED values have non-zero content for logging
             if led_values_uint8.max() > 0:
