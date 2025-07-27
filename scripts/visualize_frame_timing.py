@@ -412,25 +412,58 @@ class FrameTimingVisualizer:
         all_x_values.extend(all_data["plugin_timestamp"])
         all_x_values.extend(all_data["producer_timestamp"])
 
-        # Set up axes for all plots
+        # Set up axes for all plots with adaptive scaling
         if all_x_values:
             x_min = min(all_x_values)
             x_max = max(all_x_values)
             x_margin = (x_max - x_min) * 0.05
+            x_range = x_max - x_min
+
+            # Calculate adaptive Y-axis (frame index) scaling
+            max_frame_index = max(all_data["frame_index"])
+            max_frame_y = max_frame_index * 2  # Account for 2px per frame
+
+            # Target ~20 labels on Y-axis, interval must be multiple of 10
+            target_y_labels = 20
+            y_range = max_frame_y
+            base_interval = max(10, int(y_range / target_y_labels / 10) * 10)  # Round to nearest 10
+
+            # Ensure we have at least some reasonable spacing
+            y_interval = max(20, base_interval)  # Minimum 20 (10 frames * 2px)
+
+            # Calculate adaptive X-axis (time) scaling
+            # Target ~100 vertical grid lines
+            target_x_lines = 100
+            x_interval = x_range / target_x_lines
+
+            # Round to nice intervals (0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, etc.)
+            magnitude = 10 ** np.floor(np.log10(x_interval))
+            normalized = x_interval / magnitude
+            if normalized <= 1:
+                nice_interval = magnitude
+            elif normalized <= 2:
+                nice_interval = 2 * magnitude
+            elif normalized <= 5:
+                nice_interval = 5 * magnitude
+            else:
+                nice_interval = 10 * magnitude
 
             for ax in [ax1, ax2, ax3]:
                 ax.set_xlim(x_min - x_margin, x_max + x_margin)
 
-                # Horizontal gridlines every 20 frames
-                max_frame = max(all_data["frame_index"]) * 2  # Account for 2px per frame
-                h_grid_ticks = np.arange(0, max_frame + 40, 40)  # Every 20 frames * 2px
+                # Adaptive horizontal gridlines for frame indices
+                h_grid_ticks = np.arange(0, max_frame_y + y_interval, y_interval)
                 ax.set_yticks(h_grid_ticks, minor=False)
+
+                # Convert y-tick positions back to frame numbers for labels
+                ax.set_yticklabels([f"{int(y/2)}" for y in h_grid_ticks])
+
                 ax.grid(True, which="major", axis="y", alpha=0.3, linestyle="-")
 
-                # Vertical gridlines at 0.1 second intervals
-                grid_start = int(x_min / 0.1) * 0.1
-                grid_end = int(x_max / 0.1 + 1) * 0.1
-                v_grid_ticks = np.arange(grid_start, grid_end + 0.1, 0.1)
+                # Adaptive vertical gridlines for time
+                grid_start = np.floor(x_min / nice_interval) * nice_interval
+                grid_end = np.ceil(x_max / nice_interval) * nice_interval
+                v_grid_ticks = np.arange(grid_start, grid_end + nice_interval, nice_interval)
                 ax.set_xticks(v_grid_ticks, minor=True)
                 ax.grid(True, which="minor", axis="x", alpha=0.2, linestyle="-", linewidth=0.5)
                 ax.grid(True, which="major", axis="x", alpha=0.3)
