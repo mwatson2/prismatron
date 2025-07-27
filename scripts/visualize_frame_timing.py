@@ -173,6 +173,7 @@ class FrameTimingVisualizer:
                         linewidth=2,
                         alpha=0.8,
                         solid_capstyle="butt",
+                        zorder=3,  # Higher z-order to draw on top of LED queue
                     )
 
                 # Optimization time
@@ -186,6 +187,7 @@ class FrameTimingVisualizer:
                         linewidth=2,
                         alpha=0.8,
                         solid_capstyle="butt",
+                        zorder=3,  # Higher z-order to draw on top of LED queue
                     )
 
                 # Time in LED buffer
@@ -199,6 +201,7 @@ class FrameTimingVisualizer:
                         linewidth=2,
                         alpha=0.8,
                         solid_capstyle="butt",
+                        zorder=3,  # Higher z-order to draw on top of LED queue
                     )
 
                 # Time in rendered state
@@ -212,6 +215,7 @@ class FrameTimingVisualizer:
                         linewidth=3,  # Make rendered segments thicker for better visibility
                         alpha=1.0,  # Make rendered segments fully opaque
                         solid_capstyle="butt",
+                        zorder=4,  # Highest z-order for rendered segments
                     )
 
             # Plot incomplete frames if requested
@@ -230,6 +234,7 @@ class FrameTimingVisualizer:
                             linewidth=2,
                             alpha=0.4,
                             solid_capstyle="butt",
+                            zorder=2,  # Medium z-order for incomplete frames
                         )
 
                     if frame["read_from_buffer_time"] > 0 and frame["write_to_led_buffer_time"] > 0:
@@ -242,6 +247,7 @@ class FrameTimingVisualizer:
                             linewidth=2,
                             alpha=0.4,
                             solid_capstyle="butt",
+                            zorder=2,  # Medium z-order for incomplete frames
                         )
 
                     if frame["write_to_led_buffer_time"] > 0 and frame["read_from_led_buffer_time"] > 0:
@@ -254,6 +260,7 @@ class FrameTimingVisualizer:
                             linewidth=2,
                             alpha=0.4,
                             solid_capstyle="butt",
+                            zorder=2,  # Medium z-order for incomplete frames
                         )
 
         def calculate_led_queue_length_square_wave(data):
@@ -318,9 +325,7 @@ class FrameTimingVisualizer:
         ax1.legend()
 
         # Plot 2: Complete frames only
-        draw_frame_states(ax2, complete_data, " (Complete Frames Only)")
-
-        # Calculate and plot LED queue length for complete frames - square wave
+        # First, create and configure LED queue axis (behind frame states)
         if len(complete_data) > 0:
             queue_times, queue_lengths = calculate_led_queue_length_square_wave(complete_data)
             if queue_times:
@@ -330,11 +335,19 @@ class FrameTimingVisualizer:
                     queue_lengths,
                     color=state_colors["led_queue"],
                     linewidth=1.5,
-                    alpha=0.5,
+                    alpha=0.3,  # More transparent so it stays in background
                     label="LED Buffer Queue Length",
+                    zorder=1,  # Lower z-order to draw behind frame states
                 )
+                # Set axis to go to at least 10
+                max_queue = max(queue_lengths) if queue_lengths else 0
+                ax2_queue.set_ylim(0, max(10, max_queue + 1))
                 ax2_queue.set_ylabel("LED Buffer Queue Length", color=state_colors["led_queue"])
                 ax2_queue.tick_params(axis="y", labelcolor=state_colors["led_queue"])
+                ax2_queue.grid(True, alpha=0.2, axis="y")  # Add subtle grid for queue levels
+
+        # Then draw frame states on top
+        draw_frame_states(ax2, complete_data, " (Complete Frames Only)")
 
         # Add legends for plot 2
         ax2.plot([], [], color=state_colors["shared_buffer"], linewidth=2, label="Time in Shared Buffer")
@@ -345,9 +358,7 @@ class FrameTimingVisualizer:
         ax2.legend(loc="upper left")
 
         # Plot 3: All frames (complete + incomplete)
-        draw_frame_states(ax3, complete_data, " (All Frames)", show_incomplete=True)
-
-        # Calculate and plot LED queue length for complete frames only (not all frames) - square wave
+        # First, create and configure LED queue axis (behind frame states)
         if len(complete_data) > 0:
             queue_times, queue_lengths = calculate_led_queue_length_square_wave(complete_data)
             if queue_times:
@@ -357,11 +368,19 @@ class FrameTimingVisualizer:
                     queue_lengths,
                     color=state_colors["led_queue"],
                     linewidth=1.5,
-                    alpha=0.5,
+                    alpha=0.3,  # More transparent so it stays in background
                     label="LED Buffer Queue Length",
+                    zorder=1,  # Lower z-order to draw behind frame states
                 )
+                # Set axis to go to at least 10
+                max_queue = max(queue_lengths) if queue_lengths else 0
+                ax3_queue.set_ylim(0, max(10, max_queue + 1))
                 ax3_queue.set_ylabel("LED Buffer Queue Length", color=state_colors["led_queue"])
                 ax3_queue.tick_params(axis="y", labelcolor=state_colors["led_queue"])
+                ax3_queue.grid(True, alpha=0.2, axis="y")  # Add subtle grid for queue levels
+
+        # Then draw frame states on top
+        draw_frame_states(ax3, complete_data, " (All Frames)", show_incomplete=True)
 
         # Add legends for plot 3
         ax3.plot([], [], color=state_colors["shared_buffer"], linewidth=2, label="Complete: Time in Shared Buffer")
