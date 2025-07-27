@@ -155,12 +155,12 @@ class FrameTimingVisualizer:
             min_wallclock = 0
 
         def draw_frame_states(ax, data, title_suffix="", show_incomplete=False):
-            """Draw frame states with 2px height and 1px gap."""
+            """Draw frame states with 2px linewidth and 1px gap between frames."""
             ax.set_title(f"Frame States Combined{title_suffix}")
 
             # Plot complete frames
             for _, frame in data.iterrows():
-                frame_y = frame["frame_index"] * 2  # 2px per frame
+                frame_y = frame["frame_index"] * 3  # 3px per frame (2px line + 1px gap)
 
                 # Time in shared buffer (with 1px gap at start)
                 if frame["write_to_buffer_time"] > 0 and frame["read_from_buffer_time"] > 0:
@@ -221,7 +221,7 @@ class FrameTimingVisualizer:
             # Plot incomplete frames if requested
             if show_incomplete and len(incomplete_data) > 0:
                 for _, frame in incomplete_data.iterrows():
-                    frame_y = frame["frame_index"] * 2
+                    frame_y = frame["frame_index"] * 3  # 3px per frame (2px line + 1px gap)
 
                     # Show partial states for incomplete frames
                     if frame["write_to_buffer_time"] > 0 and frame["read_from_buffer_time"] > 0:
@@ -421,15 +421,15 @@ class FrameTimingVisualizer:
 
             # Calculate adaptive Y-axis (frame index) scaling
             max_frame_index = max(all_data["frame_index"])
-            max_frame_y = max_frame_index * 2  # Account for 2px per frame
+            max_frame_y = max_frame_index * 3  # Account for 3px per frame (2px line + 1px gap)
 
             # Target ~20 labels on Y-axis, interval must be multiple of 10
             target_y_labels = 20
             y_range = max_frame_y
-            base_interval = max(10, int(y_range / target_y_labels / 10) * 10)  # Round to nearest 10
+            base_interval = max(15, int(y_range / target_y_labels / 15) * 15)  # Round to nearest 15 (5 frames * 3px)
 
             # Ensure we have at least some reasonable spacing
-            y_interval = max(20, base_interval)  # Minimum 20 (10 frames * 2px)
+            y_interval = max(30, base_interval)  # Minimum 30 (10 frames * 3px)
 
             # Calculate adaptive X-axis (time) scaling
             # Target ~100 vertical grid lines
@@ -456,7 +456,7 @@ class FrameTimingVisualizer:
                 ax.set_yticks(h_grid_ticks, minor=False)
 
                 # Convert y-tick positions back to frame numbers for labels
-                ax.set_yticklabels([f"{int(y/2)}" for y in h_grid_ticks])
+                ax.set_yticklabels([f"{int(y/3)}" for y in h_grid_ticks])
 
                 ax.grid(True, which="major", axis="y", alpha=0.3, linestyle="-")
 
