@@ -75,17 +75,21 @@ const TransitionConfig = ({ item, onUpdate, onClose }) => {
   }
 
   const handleParameterChange = (direction, paramName, value) => {
-    const numericValue = paramName === 'duration' ? parseFloat(value) : value
+    // Handle different parameter types
+    let processedValue = value
+    if (paramName === 'duration' || paramName === 'max_blur_radius') {
+      processedValue = parseFloat(value)
+    }
 
     if (direction === 'in') {
       setTransitionIn(prev => ({
         ...prev,
-        parameters: { ...prev.parameters, [paramName]: numericValue }
+        parameters: { ...prev.parameters, [paramName]: processedValue }
       }))
     } else {
       setTransitionOut(prev => ({
         ...prev,
-        parameters: { ...prev.parameters, [paramName]: numericValue }
+        parameters: { ...prev.parameters, [paramName]: processedValue }
       }))
     }
 
@@ -143,29 +147,62 @@ const TransitionConfig = ({ item, onUpdate, onClose }) => {
     const errorKey = `transition_${direction}.parameters.${paramName}`
     const error = errors[errorKey]
 
-    return (
-      <div key={paramName} className="space-y-1">
-        <label className="block text-xs font-mono text-metal-silver uppercase">
-          {paramName}
-        </label>
-        <input
-          type="number"
-          value={currentValue || ''}
-          onChange={(e) => handleParameterChange(direction, paramName, e.target.value)}
-          min={paramSchema.min}
-          max={paramSchema.max}
-          step={paramName === 'duration' ? 0.1 : 1}
-          className={`w-full px-3 py-2 bg-metal-dark border rounded-retro font-mono text-sm
-            ${error ? 'border-neon-orange' : 'border-metal-silver'}
-            text-black focus:border-neon-cyan focus:outline-none`}
-          placeholder={paramSchema.default}
-        />
-        {error && (
-          <p className="text-xs text-neon-orange font-mono">{error}</p>
-        )}
-        <p className="text-xs text-metal-silver font-mono">{paramSchema.description}</p>
-      </div>
-    )
+    // Handle different input types based on parameter schema
+    if (paramSchema.options) {
+      // Render dropdown for string options (like curve type)
+      return (
+        <div key={paramName} className="space-y-1">
+          <label className="block text-xs font-mono text-metal-silver uppercase">
+            {paramName.replace('_', ' ')}
+          </label>
+          <div className="relative">
+            <select
+              value={currentValue || paramSchema.default}
+              onChange={(e) => handleParameterChange(direction, paramName, e.target.value)}
+              className={`w-full px-3 py-2 bg-metal-dark border rounded-retro font-mono text-sm appearance-none cursor-pointer
+                ${error ? 'border-neon-orange' : 'border-metal-silver'}
+                text-black focus:border-neon-cyan focus:outline-none`}
+            >
+              {paramSchema.options.map(option => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+            <ChevronDownIcon className="absolute right-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-metal-silver pointer-events-none" />
+          </div>
+          {error && (
+            <p className="text-xs text-neon-orange font-mono">{error}</p>
+          )}
+          <p className="text-xs text-metal-silver font-mono">{paramSchema.description}</p>
+        </div>
+      )
+    } else {
+      // Render number input for numeric parameters
+      return (
+        <div key={paramName} className="space-y-1">
+          <label className="block text-xs font-mono text-metal-silver uppercase">
+            {paramName.replace('_', ' ')}
+          </label>
+          <input
+            type="number"
+            value={currentValue || ''}
+            onChange={(e) => handleParameterChange(direction, paramName, e.target.value)}
+            min={paramSchema.min}
+            max={paramSchema.max}
+            step={paramName === 'duration' ? 0.1 : (paramName === 'max_blur_radius' ? 0.5 : 1)}
+            className={`w-full px-3 py-2 bg-metal-dark border rounded-retro font-mono text-sm
+              ${error ? 'border-neon-orange' : 'border-metal-silver'}
+              text-black focus:border-neon-cyan focus:outline-none`}
+            placeholder={paramSchema.default}
+          />
+          {error && (
+            <p className="text-xs text-neon-orange font-mono">{error}</p>
+          )}
+          <p className="text-xs text-metal-silver font-mono">{paramSchema.description}</p>
+        </div>
+      )
+    }
   }
 
   const renderTransitionConfig = (direction, transition, onTypeChange) => {

@@ -76,7 +76,7 @@ def get_gpu_temperature():
 class TransitionConfig(BaseModel):
     """Transition configuration model."""
 
-    type: str = Field("none", description="Transition type: none, fade")
+    type: str = Field("none", description="Transition type: none, fade, blur")
     parameters: Dict = Field(default_factory=dict, description="Transition parameters")
 
     def dict_serializable(self):
@@ -349,7 +349,7 @@ def validate_transition_config(transition_config: TransitionConfig) -> Dict[str,
     errors = {}
 
     # Validate transition type
-    valid_types = ["none", "fade"]
+    valid_types = ["none", "fade", "blur"]
     if transition_config.type not in valid_types:
         errors["type"] = f"Invalid transition type '{transition_config.type}'. Must be one of: {', '.join(valid_types)}"
 
@@ -362,6 +362,28 @@ def validate_transition_config(transition_config: TransitionConfig) -> Dict[str,
             errors["parameters.duration"] = "Duration must be a number"
         elif duration < 0.1 or duration > 10.0:
             errors["parameters.duration"] = "Duration must be between 0.1 and 10.0 seconds"
+
+    elif transition_config.type == "blur":
+        duration = transition_config.parameters.get("duration")
+        if duration is None:
+            errors["parameters.duration"] = "Duration parameter is required for blur transitions"
+        elif not isinstance(duration, (int, float)):
+            errors["parameters.duration"] = "Duration must be a number"
+        elif duration < 0.1 or duration > 60.0:
+            errors["parameters.duration"] = "Duration must be between 0.1 and 60.0 seconds"
+
+        max_blur_radius = transition_config.parameters.get("max_blur_radius")
+        if max_blur_radius is not None:
+            if not isinstance(max_blur_radius, (int, float)):
+                errors["parameters.max_blur_radius"] = "max_blur_radius must be a number"
+            elif max_blur_radius <= 0 or max_blur_radius > 100.0:
+                errors["parameters.max_blur_radius"] = "max_blur_radius must be between 1.0 and 100.0 pixels"
+
+        curve = transition_config.parameters.get("curve")
+        if curve is not None:
+            valid_curves = ["linear", "ease-in", "ease-out", "ease-in-out"]
+            if curve not in valid_curves:
+                errors["parameters.curve"] = f"curve must be one of: {', '.join(valid_curves)}"
 
     return errors
 
@@ -1458,6 +1480,33 @@ async def get_transition_types():
                         "max": 10.0,
                         "description": "Fade duration in seconds",
                     }
+                },
+            },
+            {
+                "type": "blur",
+                "name": "Blur",
+                "description": "Gaussian blur in/out transition",
+                "parameters": {
+                    "duration": {
+                        "type": "number",
+                        "default": 1.0,
+                        "min": 0.1,
+                        "max": 60.0,
+                        "description": "Blur transition duration in seconds",
+                    },
+                    "max_blur_radius": {
+                        "type": "number",
+                        "default": 20.0,
+                        "min": 1.0,
+                        "max": 100.0,
+                        "description": "Maximum blur radius in pixels",
+                    },
+                    "curve": {
+                        "type": "string",
+                        "default": "linear",
+                        "options": ["linear", "ease-in", "ease-out", "ease-in-out"],
+                        "description": "Interpolation curve for blur transition",
+                    },
                 },
             },
         ]
