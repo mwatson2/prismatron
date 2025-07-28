@@ -137,19 +137,27 @@ class WLEDSink:
         self._silent_after_minutes = 1.0
 
     def _calculate_fragmentation(self) -> None:
-        """Calculate how to fragment LED data into DDP packets."""
-        data_size = self.config.led_count * 3  # RGB data
+        """Calculate how to fragment LED data into DDP packets ensuring whole LEDs per packet."""
+        data_size = self.config.led_count * 3  # RGB data (3 bytes per LED)
 
-        self.packets_per_frame = (data_size + DDP_MAX_DATA_PER_PACKET - 1) // DDP_MAX_DATA_PER_PACKET
-        self.data_per_packet = DDP_MAX_DATA_PER_PACKET
-        self.last_packet_size = data_size % DDP_MAX_DATA_PER_PACKET
-        if self.last_packet_size == 0:
-            self.last_packet_size = DDP_MAX_DATA_PER_PACKET
+        # Calculate maximum complete LEDs that fit in one packet
+        max_leds_per_packet = DDP_MAX_DATA_PER_PACKET // 3
+        self.data_per_packet = max_leds_per_packet * 3  # Ensure multiple of 3 bytes
+
+        # Calculate number of packets needed
+        self.packets_per_frame = (self.config.led_count + max_leds_per_packet - 1) // max_leds_per_packet
+
+        # Calculate last packet size (also must be multiple of 3)
+        remaining_leds = self.config.led_count % max_leds_per_packet
+        if remaining_leds == 0:
+            self.last_packet_size = self.data_per_packet  # Full packet
+        else:
+            self.last_packet_size = remaining_leds * 3  # Partial packet with whole LEDs
 
         logger.info(
             f"LED array fragmentation: {self.packets_per_frame} packets, "
-            f"{self.data_per_packet} bytes per packet, "
-            f"last packet {self.last_packet_size} bytes"
+            f"{max_leds_per_packet} LEDs ({self.data_per_packet} bytes) per packet, "
+            f"last packet {remaining_leds if remaining_leds > 0 else max_leds_per_packet} LEDs ({self.last_packet_size} bytes)"
         )
 
     def connect(self) -> bool:

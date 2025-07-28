@@ -24,14 +24,18 @@ Features:
 Usage:
     python capture_diffusion_patterns.py --wled-host 192.168.1.100 --camera-device 0 --output patterns.npz --preview
     python capture_diffusion_patterns.py --wled-host 192.168.1.100 --output patterns.npz --block-size 64 --precision fp16 --uint8
+    python capture_diffusion_patterns.py --wled-host 192.168.1.100 --camera-config camera.json --output patterns.npz --flip-image
 """
 
 import argparse
+import json
 import logging
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -48,44 +52,14 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 from tools.led_position_utils import calculate_block_positions
 
-# Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-try:
-    from const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
-    from consumer.wled_client import WLEDClient, WLEDConfig
-    from utils.diagonal_ata_matrix import DiagonalATAMatrix
-    from utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
-    from utils.spatial_ordering import compute_rcm_ordering
-except ImportError:
-    # Fallback to hardcoded constants for testing
-    FRAME_HEIGHT = 480
-    FRAME_WIDTH = 800
-    LED_COUNT = 3200
-
-    # Create mock classes for testing
-    class WLEDConfig:
-        def __init__(self, **kwargs):
-            for k, v in kwargs.items():
-                setattr(self, k, v)
-
-    class WLEDClient:
-        def __init__(self, config):
-            self.config = config
-
-        def connect(self):
-            return True
-
-        def set_solid_color(self, r, g, b):
-            return True
-
-        def send_led_data(self, data):
-            class Result:
-                success = True
-                errors = []
-
-            return Result()
-
+from src.const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
+from src.consumer.wled_client import WLEDClient, WLEDConfig
+from src.utils.diagonal_ata_matrix import DiagonalATAMatrix
+from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
+from src.utils.spatial_ordering import compute_rcm_ordering
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +71,7 @@ class CameraCapture:
         self,
         device_id: int = 0,
         crop_region: Optional[Tuple[int, int, int, int]] = None,
+        flip_image: bool = False,
     ):
         """
         Initialize camera capture.
@@ -104,20 +79,38 @@ class CameraCapture:
         Args:
             device_id: Camera device ID (usually 0 for default camera)
             crop_region: Optional crop region (x, y, width, height) for prismatron area
+            flip_image: Whether to flip the image 180 degrees (for upside-down camera mounting)
         """
         self.device_id = device_id
         self.crop_region = crop_region
+        self.flip_image = flip_image
         self.cap: Optional[cv2.VideoCapture] = None
         self.camera_width = 0
         self.camera_height = 0
+        self.gst_process = None
+        self.temp_fifo = None
 
     def initialize(self) -> bool:
-        """Initialize camera and configure settings."""
+        """Initialize camera using OpenCV with GStreamer support."""
         try:
-            self.cap = cv2.VideoCapture(self.device_id)
+            logger.info(f"Using OpenCV with GStreamer support for camera {self.device_id}")
+
+            # Use the working GStreamer pipeline
+            gstreamer_pipeline = (
+                f"nvarguscamerasrc sensor-id={self.device_id} ! "
+                "nvvidconv ! video/x-raw,format=I420 ! "
+                "videoconvert ! video/x-raw,format=BGR ! "
+                "appsink drop=1"
+            )
+
+            logger.info(f"Pipeline: {gstreamer_pipeline}")
+            self.cap = cv2.VideoCapture(gstreamer_pipeline, cv2.CAP_GSTREAMER)
+
             if not self.cap.isOpened():
-                logger.error(f"Failed to open camera device {self.device_id}")
+                logger.error("GStreamer pipeline failed to open")
                 return False
+
+            logger.info("GStreamer pipeline opened successfully")
 
             # Get camera resolution
             self.camera_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -125,17 +118,23 @@ class CameraCapture:
 
             logger.info(f"Camera initialized: {self.camera_width}x{self.camera_height}")
 
-            # Set camera properties for consistent capture
-            self.cap.set(cv2.CAP_PROP_EXPOSURE, -6)  # Lower exposure for LED capture
-            self.cap.set(cv2.CAP_PROP_GAIN, 1)  # Minimal gain
-            self.cap.set(cv2.CAP_PROP_BRIGHTNESS, 0.5)
-            self.cap.set(cv2.CAP_PROP_CONTRAST, 1.0)
+            # Skip camera properties for now to avoid segfault
+            logger.info("Skipping camera property configuration to avoid segfault")
 
-            # Warm up camera
-            for _ in range(5):
-                ret, _ = self.cap.read()
-                if not ret:
-                    logger.error("Failed to read from camera during warmup")
+            # Warm up camera with safer approach
+            logger.info("Warming up camera...")
+            for i in range(3):
+                try:
+                    logger.info(f"Reading warmup frame {i}...")
+                    ret, frame = self.cap.read()
+                    if not ret:
+                        logger.warning(f"Warmup frame {i} failed to read")
+                    else:
+                        logger.info(
+                            f"Warmup frame {i} successful, shape: {frame.shape if frame is not None else 'None'}"
+                        )
+                except Exception as e:
+                    logger.error(f"Exception during warmup frame {i}: {e}")
                     return False
 
             return True
@@ -146,21 +145,27 @@ class CameraCapture:
 
     def capture_frame(self) -> Optional[np.ndarray]:
         """
-        Capture a frame and process it.
+        Capture a frame using OpenCV VideoCapture.
 
         Returns:
             Processed frame as 800x480 RGB array, or None if failed
         """
         if not self.cap:
+            logger.error("Camera not initialized")
             return None
 
         try:
             ret, frame = self.cap.read()
             if not ret:
+                logger.error("Failed to read frame from camera")
                 return None
 
             # Convert BGR to RGB
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            # Apply image flip if requested
+            if self.flip_image:
+                frame = cv2.rotate(frame, cv2.ROTATE_180)
 
             # Apply crop region if specified
             if self.crop_region:
@@ -191,11 +196,14 @@ class DiffusionPatternCapture:
         wled_host: str,
         wled_port: int = 21324,
         camera_device: int = 0,
-        capture_fps: float = 10.0,
+        capture_fps: float = 4.0,
         crop_region: Optional[Tuple[int, int, int, int]] = None,
         block_size: int = 64,
         precision: str = "fp32",
         use_uint8: bool = False,
+        flip_image: bool = False,
+        led_count: Optional[int] = None,
+        debug_mode: bool = False,
     ):
         """
         Initialize diffusion pattern capture.
@@ -209,6 +217,9 @@ class DiffusionPatternCapture:
             block_size: Block size for mixed tensor storage
             precision: Precision for mixed tensor storage ("fp16" or "fp32")
             use_uint8: Whether to use uint8 format for memory efficiency
+            flip_image: Whether to flip the image 180 degrees (for upside-down camera mounting)
+            led_count: Number of LEDs to capture (default: LED_COUNT from config)
+            debug_mode: Debug mode - only capture LEDs with physical index multiples of 100
         """
         self.wled_host = wled_host
         self.wled_port = wled_port
@@ -217,13 +228,24 @@ class DiffusionPatternCapture:
         self.block_size = block_size
         self.precision = precision
         self.use_uint8 = use_uint8
+        self.debug_mode = debug_mode
+
+        # Set LED count (use override or default from config)
+        self.led_count = led_count if led_count is not None else LED_COUNT
+
+        # Create debug LED list if in debug mode (multiples of 100)
+        if self.debug_mode:
+            self.debug_leds = [i for i in range(0, self.led_count, 100)]
+            logger.info(f"Debug mode: will capture {len(self.debug_leds)} LEDs: {self.debug_leds}")
+        else:
+            self.debug_leds = None
 
         # Initialize WLED client
-        wled_config = WLEDConfig(host=wled_host, port=wled_port, led_count=LED_COUNT, max_fps=60.0)
+        wled_config = WLEDConfig(host=wled_host, port=wled_port, led_count=self.led_count, max_fps=60.0)
         self.wled_client = WLEDClient(wled_config)
 
         # Initialize camera
-        self.camera = CameraCapture(camera_device, crop_region)
+        self.camera = CameraCapture(camera_device, crop_region, flip_image)
 
         # Determine output dtype based on precision and format
         if use_uint8:
@@ -239,7 +261,7 @@ class DiffusionPatternCapture:
 
         # Initialize mixed tensor for pattern storage
         self.mixed_tensor = SingleBlockMixedSparseTensor(
-            batch_size=LED_COUNT,
+            batch_size=self.led_count,
             channels=3,
             height=FRAME_HEIGHT,
             width=FRAME_WIDTH,
@@ -250,8 +272,8 @@ class DiffusionPatternCapture:
         )
 
         # Storage for LED positions and block positions
-        self.led_positions = np.zeros((LED_COUNT, 2), dtype=np.float32)
-        self.block_positions = np.zeros((LED_COUNT, 2), dtype=np.int32)  # Top-left corner of each block
+        self.led_positions = np.zeros((self.led_count, 2), dtype=np.float32)
+        self.block_positions = np.zeros((self.led_count, 2), dtype=np.int32)  # Top-left corner of each block
         self.led_spatial_mapping = None  # Will be set after RCM reordering
 
     def initialize(self) -> bool:
@@ -281,21 +303,29 @@ class DiffusionPatternCapture:
             True if capture successful
         """
         try:
-            total_captures = LED_COUNT * 3  # 3 channels per LED
-            logger.info(f"Starting capture of {total_captures} diffusion patterns")
+            # Determine which LEDs to capture
+            if self.debug_mode:
+                led_list = self.debug_leds
+                total_captures = len(led_list) * 3  # 3 channels per LED
+                logger.info(f"Debug mode: capturing {total_captures} diffusion patterns for LEDs {led_list}")
+            else:
+                led_list = range(self.led_count)
+                total_captures = self.led_count * 3  # 3 channels per LED
+                logger.info(f"Starting capture of {total_captures} diffusion patterns")
 
             # Turn off all LEDs initially
             self.wled_client.set_solid_color(0, 0, 0)
             time.sleep(0.5)  # Allow LEDs to turn off
 
-            for led_idx in range(LED_COUNT):
+            capture_count = 0
+            for led_idx in led_list:
                 for channel_idx in range(3):  # R, G, B channels
-                    capture_num = led_idx * 3 + channel_idx + 1
+                    capture_count += 1
 
-                    logger.info(f"Capturing LED {led_idx}, Channel {channel_idx} ({capture_num}/{total_captures})")
+                    logger.info(f"Capturing LED {led_idx}, Channel {channel_idx} ({capture_count}/{total_captures})")
 
                     # Create LED data array (all off except current LED/channel)
-                    led_data = np.zeros((LED_COUNT, 3), dtype=np.uint8)
+                    led_data = np.zeros((self.led_count, 3), dtype=np.uint8)
                     led_data[led_idx, channel_idx] = 255  # Full brightness for this LED/channel
 
                     # Send to WLED
@@ -304,8 +334,11 @@ class DiffusionPatternCapture:
                         logger.warning(f"Failed to send LED data: {result.errors}")
                         continue
 
-                    # Wait for LED to update and stabilize
-                    time.sleep(self.capture_interval)
+                    # Wait for LED to update and stabilize (longer for first LED)
+                    if led_idx == 0 and channel_idx == 0:
+                        time.sleep(1.0)  # Extra delay for first capture
+                    else:
+                        time.sleep(self.capture_interval)
 
                     # Capture frame
                     frame = self.camera.capture_frame()
@@ -328,6 +361,10 @@ class DiffusionPatternCapture:
                     if channel_idx == 0:
                         top_row, left_col = self._find_optimal_block_position(frame, led_idx)
                         self.block_positions[led_idx] = [top_row, left_col]
+
+                        # Save debug image if in debug mode
+                        if self.debug_mode:
+                            self._save_debug_image(frame, led_idx, top_row, left_col)
                     else:
                         # Use same block position for other channels of the same LED
                         top_row, left_col = self.block_positions[led_idx]
@@ -350,12 +387,12 @@ class DiffusionPatternCapture:
 
                     # Show preview if requested
                     if preview:
-                        self._show_preview(frame, led_idx, channel_idx, capture_num, total_captures)
+                        self._show_preview(frame, led_idx, channel_idx, capture_count, total_captures)
 
                     # Progress update
-                    if capture_num % 100 == 0:
-                        progress = (capture_num / total_captures) * 100
-                        logger.info(f"Progress: {progress:.1f}% ({capture_num}/{total_captures})")
+                    if capture_count % 100 == 0:
+                        progress = (capture_count / total_captures) * 100
+                        logger.info(f"Progress: {progress:.1f}% ({capture_count}/{total_captures})")
 
             # Turn off all LEDs
             self.wled_client.set_solid_color(0, 0, 0)
@@ -416,6 +453,54 @@ class DiffusionPatternCapture:
         except Exception as e:
             logger.warning(f"Preview display failed: {e}")
 
+    def _save_debug_image(self, frame: np.ndarray, led_id: int, top_row: int, left_col: int):
+        """
+        Save debug image showing the detected block region for an LED.
+
+        Args:
+            frame: Full camera frame (RGB)
+            led_id: LED physical index
+            top_row: Top row of detected block
+            left_col: Left column of detected block
+        """
+        try:
+            # Create debug output directory
+            debug_dir = Path("debug_led_blocks")
+            debug_dir.mkdir(exist_ok=True)
+
+            # Convert frame to BGR for OpenCV
+            debug_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
+            # Draw the 64x64 block rectangle
+            bottom_row = min(top_row + self.block_size, frame.shape[0])
+            right_col = min(left_col + self.block_size, frame.shape[1])
+
+            # Draw rectangle (BGR color: green)
+            cv2.rectangle(debug_frame, (left_col, top_row), (right_col, bottom_row), (0, 255, 0), 2)
+
+            # Add text label with LED ID and position
+            label = f"LED {led_id}: ({top_row},{left_col})"
+            cv2.putText(debug_frame, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+
+            # Add centroid position if available
+            if led_id < len(self.led_positions):
+                centroid_x, centroid_y = self.led_positions[led_id]
+                centroid_label = f"Centroid: ({centroid_x:.1f}, {centroid_y:.1f})"
+                cv2.putText(debug_frame, centroid_label, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+
+                # Draw crosshair at centroid
+                cx, cy = int(centroid_x), int(centroid_y)
+                cv2.line(debug_frame, (cx - 10, cy), (cx + 10, cy), (0, 255, 255), 1)
+                cv2.line(debug_frame, (cx, cy - 10), (cx, cy + 10), (0, 255, 255), 1)
+
+            # Save image
+            filename = debug_dir / f"led_{led_id:04d}.jpg"
+            cv2.imwrite(str(filename), debug_frame)
+            logger.info(f"Saved debug image for LED {led_id}: {filename}")
+
+        except Exception as e:
+            logger.warning(f"Failed to save debug image for LED {led_id}: {e}")
+
     def _align_to_pixel_boundary(self, x_coord: int) -> int:
         """
         Align x-coordinate to 4-pixel boundary.
@@ -430,68 +515,173 @@ class DiffusionPatternCapture:
 
     def _find_optimal_block_position(self, pattern: np.ndarray, led_id: int) -> Tuple[int, int]:
         """
-        Find optimal block position for a captured LED pattern.
+        Find the 64x64 block position with maximum total intensity using tiled search.
 
         Args:
             pattern: Captured pattern (height, width, 3)
             led_id: LED ID for position estimation
 
         Returns:
-            Tuple of (top_row, left_col) for block position (aligned to 4-pixel boundary)
+            Tuple of (top_row, left_col) for brightest block position (aligned to 4-pixel boundary)
         """
         try:
             # Combine all three color channels for intensity analysis
             combined_pattern = np.max(pattern, axis=2).astype(np.float32)
-
-            # Calculate intensity-weighted centroid
-            total_intensity = 0
-            weighted_x = 0
-            weighted_y = 0
-
             height, width = combined_pattern.shape
-            for y in range(height):
-                for x in range(width):
-                    intensity = float(combined_pattern[y, x])
-                    if intensity > 10:  # Threshold to ignore noise
-                        total_intensity += intensity
-                        weighted_x += x * intensity
-                        weighted_y += y * intensity
 
-            if total_intensity > 0:
-                centroid_x = weighted_x / total_intensity
-                centroid_y = weighted_y / total_intensity
+            # Step 1: Tile the image into non-overlapping 64x64 blocks
+            tiles = []
+            tile_intensities = []
 
-                # Store estimated LED position
-                self.led_positions[led_id] = [centroid_x, centroid_y]
+            for tile_row in range(0, height - self.block_size + 1, self.block_size):
+                for tile_col in range(0, width - self.block_size + 1, self.block_size):
+                    # Extract 64x64 tile
+                    tile = combined_pattern[
+                        tile_row : tile_row + self.block_size, tile_col : tile_col + self.block_size
+                    ]
 
-                # Calculate block position centered on LED
-                top_row = max(0, min(height - self.block_size, int(centroid_y - self.block_size // 2)))
-                left_col_candidate = max(0, min(width - self.block_size, int(centroid_x - self.block_size // 2)))
+                    # Calculate total intensity
+                    tile_intensity = np.sum(tile)
+                    tiles.append((tile_row, tile_col))
+                    tile_intensities.append(tile_intensity)
 
-                # Align to 4-pixel boundary
-                left_col = self._align_to_pixel_boundary(left_col_candidate)
+            # Step 2: Find the 128x128 region with maximum local contrast for LED detection
+            max_contrast_score = 0
+            best_region_top = 0
+            best_region_left = 0
+            region_size = 2 * self.block_size  # 128x128 region
 
-                return top_row, left_col
+            # Search all possible 128x128 regions for local contrast
+            for region_top in range(0, height - region_size + 1, self.block_size):
+                for region_left in range(0, width - region_size + 1, self.block_size):
+                    # Ensure region stays within image bounds
+                    if region_top + region_size > height or region_left + region_size > width:
+                        continue
+
+                    # Extract 128x128 region
+                    region = combined_pattern[
+                        region_top : region_top + region_size, region_left : region_left + region_size
+                    ]
+
+                    # Calculate local contrast within this large region
+                    region_max = np.max(region)
+                    region_mean = np.mean(region)
+
+                    # Skip very dark regions
+                    if region_max < 25:
+                        continue
+
+                    # Find the peak region (top 10% of pixels in 128x128 region)
+                    top_10_percent_threshold = np.percentile(region, 90)
+                    peak_pixels = region >= top_10_percent_threshold
+                    peak_count = np.sum(peak_pixels)
+
+                    if peak_count == 0:
+                        continue
+
+                    # Calculate peak intensity
+                    peak_intensity = np.mean(region[peak_pixels])
+
+                    # Local contrast: how much does the peak stand out from region background
+                    background_pixels = region < top_10_percent_threshold
+                    if np.sum(background_pixels) > 0:
+                        background_intensity = np.mean(region[background_pixels])
+                        local_contrast = peak_intensity - background_intensity
+                    else:
+                        local_contrast = peak_intensity - region_mean
+
+                    # Score: favor high contrast with reasonable peak size
+                    # LEDs can saturate large areas, so don't penalize too much for size
+                    max_reasonable_peak = region_size * region_size * 0.3  # Up to 30% of region
+                    if local_contrast > 15 and peak_count <= max_reasonable_peak:
+                        # Compactness bonus: smaller peaks get slight bonus, but not too much
+                        compactness_factor = min(2.0, max_reasonable_peak / (peak_count + 1))
+                        contrast_score = local_contrast * peak_intensity * compactness_factor
+                    else:
+                        contrast_score = 0
+
+                    if contrast_score > max_contrast_score:
+                        max_contrast_score = contrast_score
+                        best_region_top = region_top
+                        best_region_left = region_left
+
+            # Step 3: Within the best 128x128 region, find the optimal 64x64 block
+            # Expand search to include all blocks whose centers fall within the best region
+            half_block = self.block_size // 2
+            search_top = max(0, best_region_top - half_block)
+            search_left = max(0, best_region_left - half_block)
+            search_bottom = min(height, best_region_top + region_size + half_block)
+            search_right = min(width, best_region_left + region_size + half_block)
+
+            # Step 4: Exhaustive search for brightest 64x64 block using squared intensity bias
+            max_intensity_score = 0
+            best_top_row = search_top
+            best_left_col = search_left
+
+            for top_row in range(search_top, search_bottom - self.block_size + 1, 4):
+                for left_col in range(search_left, search_right - self.block_size + 1, 4):
+                    # Ensure block stays within image bounds
+                    if top_row + self.block_size > height or left_col + self.block_size > width:
+                        continue
+
+                    # Extract the current 64x64 block
+                    block = combined_pattern[top_row : top_row + self.block_size, left_col : left_col + self.block_size]
+
+                    # Calculate squared intensity sum to bias towards brighter pixels and suppress noise
+                    # This heavily favors bright LED pixels over accumulated dim noise
+                    squared_intensities = np.square(block)
+                    intensity_score = np.sum(squared_intensities)
+
+                    # Keep track of the block with highest squared intensity score
+                    if intensity_score > max_intensity_score:
+                        max_intensity_score = intensity_score
+                        best_top_row = top_row
+                        best_left_col = left_col
+                        # Also calculate regular intensity for logging
+                        max_intensity = np.sum(block)
+
+            # Align to 4-pixel boundary
+            best_left_col = self._align_to_pixel_boundary(best_left_col)
+
+            # Calculate centroid within the brightest block for reference
+            best_block = combined_pattern[
+                best_top_row : best_top_row + self.block_size, best_left_col : best_left_col + self.block_size
+            ]
+
+            # Find centroid within the block
+            block_total = np.sum(best_block)
+            if block_total > 0:
+                y_indices, x_indices = np.indices(best_block.shape)
+                centroid_x_in_block = np.sum(x_indices * best_block) / block_total
+                centroid_y_in_block = np.sum(y_indices * best_block) / block_total
+
+                # Convert to global coordinates
+                global_centroid_x = best_left_col + centroid_x_in_block
+                global_centroid_y = best_top_row + centroid_y_in_block
             else:
-                # Fallback for failed patterns - use center of frame
-                logger.warning(f"Failed to find pattern for LED {led_id}, using center")
-                self.led_positions[led_id] = [width // 2, height // 2]
+                global_centroid_x = best_left_col + self.block_size // 2
+                global_centroid_y = best_top_row + self.block_size // 2
 
-                top_row = max(0, (height - self.block_size) // 2)
-                left_col_candidate = max(0, (width - self.block_size) // 2)
-                left_col = self._align_to_pixel_boundary(left_col_candidate)
+            # Store estimated LED position
+            self.led_positions[led_id] = [global_centroid_x, global_centroid_y]
 
-                return top_row, left_col
+            logger.info(
+                f"LED {led_id}: best contrast region at ({best_region_top}, {best_region_left}) score={max_contrast_score:.1f}, "
+                f"brightest block at ({best_top_row}, {best_left_col}) intensity={max_intensity:.1f}, "
+                f"search_region=({search_top},{search_left})-({search_bottom},{search_right})"
+            )
+
+            return best_top_row, best_left_col
 
         except Exception as e:
-            logger.error(f"Failed to find block position for LED {led_id}: {e}")
+            logger.error(f"Failed to find brightest block for LED {led_id}: {e}")
             # Fallback to center
-            top_row = max(0, (FRAME_HEIGHT - self.block_size) // 2)
-            left_col_candidate = max(0, (FRAME_WIDTH - self.block_size) // 2)
+            top_row = max(0, (height - self.block_size) // 2)
+            left_col_candidate = max(0, (width - self.block_size) // 2)
             left_col = self._align_to_pixel_boundary(left_col_candidate)
 
             # Store fallback position
-            self.led_positions[led_id] = [FRAME_WIDTH // 2, FRAME_HEIGHT // 2]
+            self.led_positions[led_id] = [width // 2, height // 2]
 
             return top_row, left_col
 
@@ -523,7 +713,7 @@ class DiffusionPatternCapture:
             output_dtype = cp.float32
 
         reordered_tensor = SingleBlockMixedSparseTensor(
-            batch_size=LED_COUNT,
+            batch_size=self.led_count,
             channels=3,
             height=FRAME_HEIGHT,
             width=FRAME_WIDTH,
@@ -535,7 +725,7 @@ class DiffusionPatternCapture:
 
         # Copy all blocks from original tensor to RCM-ordered positions
         logger.info("Copying patterns to RCM-ordered tensor...")
-        for original_led_id in range(LED_COUNT):
+        for original_led_id in range(self.led_count):
             rcm_led_id = led_spatial_mapping[original_led_id]
 
             for channel in range(3):
@@ -544,11 +734,16 @@ class DiffusionPatternCapture:
 
                 # Get the block from the original mixed tensor
                 try:
-                    # Use the mixed tensor's internal method to get the block
-                    block = self.mixed_tensor.get_block(original_led_id, channel, top_row, left_col)
+                    # Use get_block_info to retrieve the block data and position
+                    block_info = self.mixed_tensor.get_block_info(original_led_id, channel)
+                    block = block_info["values"]
+                    stored_position = block_info["position"]
 
-                    # Set in the reordered tensor at the RCM position
-                    reordered_tensor.set_block(rcm_led_id, channel, top_row, left_col, block)
+                    # Use the stored position (should match top_row, left_col)
+                    stored_top, stored_left = stored_position
+
+                    # Set in the reordered tensor at the RCM position using stored position
+                    reordered_tensor.set_block(rcm_led_id, channel, stored_top, stored_left, block)
 
                 except Exception as e:
                     logger.warning(f"Failed to copy block for LED {original_led_id}, channel {channel}: {e}")
@@ -577,7 +772,7 @@ class DiffusionPatternCapture:
             output_dtype = cp.float32
 
         # Create DiagonalATAMatrix instance
-        dia_matrix = DiagonalATAMatrix(LED_COUNT, crop_size=self.block_size, output_dtype=output_dtype)
+        dia_matrix = DiagonalATAMatrix(self.led_count, crop_size=self.block_size, output_dtype=output_dtype)
 
         # For captured data, we need to compute A^T @ A from actual diffusion patterns
         # This requires converting the mixed tensor to a sparse matrix first
@@ -590,7 +785,7 @@ class DiffusionPatternCapture:
         dia_matrix.build_from_diffusion_matrix(sparse_matrix)
 
         logger.info(
-            f"DiagonalATAMatrix built: {LED_COUNT} LEDs, bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
+            f"DiagonalATAMatrix built: {self.led_count} LEDs, bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
         )
 
         return dia_matrix
@@ -611,14 +806,15 @@ class DiffusionPatternCapture:
 
         pixels_per_channel = FRAME_HEIGHT * FRAME_WIDTH
 
-        for led_id in range(LED_COUNT):
+        for led_id in range(self.led_count):
             for channel in range(3):
                 try:
                     # Get block position
                     top_row, left_col = self.block_positions[led_id]
 
-                    # Get block from mixed tensor
-                    block = self.mixed_tensor.get_block(led_id, channel, top_row, left_col)
+                    # Get block from mixed tensor using get_block_info
+                    block_info = self.mixed_tensor.get_block_info(led_id, channel)
+                    block = block_info["values"]
 
                     # Convert to numpy if needed
                     if hasattr(block, "get"):  # CuPy array
@@ -656,7 +852,7 @@ class DiffusionPatternCapture:
         # Create CSC matrix
         sparse_matrix = sp.csc_matrix(
             (values, (rows, cols)),
-            shape=(pixels_per_channel, LED_COUNT * 3),
+            shape=(pixels_per_channel, self.led_count * 3),
             dtype=np.float32,
         )
 
@@ -690,11 +886,11 @@ class DiffusionPatternCapture:
             save_metadata = {
                 "generator": "DiffusionPatternCapture",
                 "format": "led_diffusion_csc_with_mixed_tensor",
-                "led_count": LED_COUNT,
+                "led_count": self.led_count,
                 "frame_width": FRAME_WIDTH,
                 "frame_height": FRAME_HEIGHT,
                 "channels": 3,
-                "matrix_shape": [FRAME_HEIGHT * FRAME_WIDTH, LED_COUNT * 3],  # Equivalent sparse matrix shape
+                "matrix_shape": [FRAME_HEIGHT * FRAME_WIDTH, self.led_count * 3],  # Equivalent sparse matrix shape
                 "nnz": 0,  # Will be calculated if needed
                 "sparsity_percent": 0.0,  # Will be calculated if needed
                 "sparsity_threshold": 0.0,  # Not applicable for captured data
@@ -714,7 +910,7 @@ class DiffusionPatternCapture:
             # This is what the frame renderer will use to convert from spatial to physical order
             # Invert the spatial mapping: original spatial_mapping[physical_id] = spatial_index
             # We need: led_ordering[spatial_index] = physical_id
-            led_ordering = np.zeros(LED_COUNT, dtype=np.int32)
+            led_ordering = np.zeros(self.led_count, dtype=np.int32)
             for physical_id, spatial_index in self.led_spatial_mapping.items():
                 led_ordering[spatial_index] = physical_id
 
@@ -804,10 +1000,29 @@ def main():
         help="Use uint8 format for memory efficiency and CUDA vectorization (recommended)",
     )
     parser.add_argument(
+        "--flip-image",
+        action="store_true",
+        help="Flip image 180 degrees (for upside-down camera mounting)",
+    )
+    parser.add_argument(
+        "--camera-config",
+        help="Camera calibration JSON file from camera_calibration.py",
+    )
+    parser.add_argument(
+        "--led-count",
+        type=int,
+        help=f"Number of LEDs to capture (default: {LED_COUNT} from config)",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging level",
+    )
+    parser.add_argument(
+        "--debug-mode",
+        action="store_true",
+        help="Debug mode: only capture LEDs with physical index multiples of 100 and save debug images",
     )
 
     args = parser.parse_args()
@@ -835,21 +1050,51 @@ def main():
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Create crop region tuple if provided
+    # Load camera configuration if provided
+    camera_device = args.camera_device
     crop_region = None
+    flip_image = args.flip_image
+    led_count = args.led_count  # Use command line override or None for default
+
+    if args.camera_config:
+        try:
+            with open(args.camera_config, "r") as f:
+                camera_config = json.load(f)
+
+            # Override camera device from config if not explicitly provided
+            if hasattr(args, "camera_device") and args.camera_device == 0:  # Default value
+                camera_device = camera_config.get("camera_device", 0)
+
+            # Extract crop region from config
+            crop_config = camera_config.get("crop_region")
+            if crop_config:
+                crop_region = (crop_config["x"], crop_config["y"], crop_config["width"], crop_config["height"])
+                logger.info(f"Using crop region from config: {crop_region}")
+
+            logger.info(f"Loaded camera configuration from {args.camera_config}")
+
+        except Exception as e:
+            logger.error(f"Failed to load camera config {args.camera_config}: {e}")
+            return 1
+
+    # Override crop region if provided via command line
     if args.crop_region:
         crop_region = tuple(args.crop_region)
+        logger.info(f"Using crop region from command line: {crop_region}")
 
     # Create capture tool
     capture_tool = DiffusionPatternCapture(
         wled_host=args.wled_host,
         wled_port=args.wled_port,
-        camera_device=args.camera_device,
+        camera_device=camera_device,
         capture_fps=args.capture_fps,
         crop_region=crop_region,
         block_size=args.block_size,
         precision=args.precision,
         use_uint8=args.uint8,
+        flip_image=flip_image,
+        led_count=led_count,
+        debug_mode=args.debug_mode,
     )
 
     try:
@@ -859,8 +1104,10 @@ def main():
             return 1
 
         # Estimate capture time
-        total_captures = LED_COUNT * 3
+        actual_led_count = capture_tool.led_count
+        total_captures = actual_led_count * 3
         estimated_time_minutes = (total_captures * (1.0 / args.capture_fps)) / 60
+        logger.info(f"Capturing {actual_led_count} LEDs")
         logger.info(f"Estimated capture time: {estimated_time_minutes:.1f} minutes")
 
         # Start capture

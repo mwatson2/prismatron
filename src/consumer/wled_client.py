@@ -132,19 +132,27 @@ class WLEDClient:
         self._calculate_fragmentation()
 
     def _calculate_fragmentation(self) -> None:
-        """Calculate how to fragment LED data into DDP packets."""
-        data_size = self.config.led_count * 3  # RGB data
+        """Calculate how to fragment LED data into DDP packets ensuring whole LEDs per packet."""
+        data_size = self.config.led_count * 3  # RGB data (3 bytes per LED)
 
-        self.packets_per_frame = (data_size + DDP_MAX_DATA_PER_PACKET - 1) // DDP_MAX_DATA_PER_PACKET
-        self.data_per_packet = DDP_MAX_DATA_PER_PACKET
-        self.last_packet_size = data_size % DDP_MAX_DATA_PER_PACKET
-        if self.last_packet_size == 0:
-            self.last_packet_size = DDP_MAX_DATA_PER_PACKET
+        # Calculate maximum complete LEDs that fit in one packet
+        max_leds_per_packet = DDP_MAX_DATA_PER_PACKET // 3
+        self.data_per_packet = max_leds_per_packet * 3  # Ensure multiple of 3 bytes
+
+        # Calculate number of packets needed
+        self.packets_per_frame = (self.config.led_count + max_leds_per_packet - 1) // max_leds_per_packet
+
+        # Calculate last packet size (also must be multiple of 3)
+        remaining_leds = self.config.led_count % max_leds_per_packet
+        if remaining_leds == 0:
+            self.last_packet_size = self.data_per_packet  # Full packet
+        else:
+            self.last_packet_size = remaining_leds * 3  # Partial packet with whole LEDs
 
         logger.info(
             f"LED array fragmentation: {self.packets_per_frame} packets, "
-            f"{self.data_per_packet} bytes per packet, "
-            f"last packet {self.last_packet_size} bytes"
+            f"{max_leds_per_packet} LEDs ({self.data_per_packet} bytes) per packet, "
+            f"last packet {remaining_leds if remaining_leds > 0 else max_leds_per_packet} LEDs ({self.last_packet_size} bytes)"
         )
 
     def connect(self) -> bool:
@@ -567,6 +575,22 @@ class WLEDClient:
                     if self.socket is None:
                         return False
                     self.socket.sendto(packet, (self.config.host, self.config.port))
+
+                    # Extract first 10 LED color values for logging
+                    led_colors = []
+                    if len(data) >= 30:  # Need at least 30 bytes for 10 RGB LEDs
+                        for i in range(0, min(30, len(data)), 3):
+                            if i + 2 < len(data):
+                                r, g, b = data[i], data[i + 1], data[i + 2]
+                                led_colors.append(f"({r},{g},{b})")
+
+                    led_colors_str = " ".join(led_colors[:10]) if led_colors else "no data"
+
+                    logger.debug(
+                        f"Sent DDP packet {sequence} to {self.config.host}:{self.config.port} "
+                        f"({len(packet)} bytes, offset {data_offset}) "
+                        f"First 10 LEDs: {led_colors_str}"
+                    )
                     return True
                 except socket.timeout:
                     logger.warning(f"Packet send timeout, attempt {attempt + 1}/{self.config.retry_count}")

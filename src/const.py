@@ -46,8 +46,8 @@ LED_DATA_SIZE = LED_COUNT * 3  # RGB data size in bytes
 
 # WLED Communication Configuration
 WLED_DEFAULT_HOST = "wled.local"  # Default WLED controller hostname
-WLED_DEFAULT_PORT = 21324  # Default port for DDP protocol
-WLED_DDP_PORT = 21324  # DDP (Distributed Display Protocol) port
+WLED_DEFAULT_PORT = 4048  # Default port for DDP protocol
+WLED_DDP_PORT = 4048  # DDP (Distributed Display Protocol) port
 WLED_UDP_RAW_PORT = 19446  # UDP Raw protocol port
 WLED_E131_PORT = 5568  # E1.31/sACN protocol port
 
@@ -63,7 +63,7 @@ WLED_TIMEOUT_SECONDS = 5.0  # Network timeout for WLED communication
 WLED_RETRY_COUNT = 3  # Number of retries for failed transmissions
 
 # Content Source Frame Rate Configuration
-DEFAULT_CONTENT_FPS = 15.0  # Default frame rate for static content (images, text effects)
+DEFAULT_CONTENT_FPS = 24.0  # Default frame rate for static content (images, text effects)
 
 # Log Management Configuration
 LOG_MAX_SIZE_MB = 100  # Maximum log file size in MB before rotation
