@@ -65,10 +65,20 @@ class CameraCalibration:
     def initialize(self) -> bool:
         """Initialize camera connection."""
         try:
-            self.cap = cv2.VideoCapture(self.camera_device)
+            # Use working GStreamer pipeline for NVIDIA Jetson cameras
+            gstreamer_pipeline = (
+                f"nvarguscamerasrc sensor-id={self.camera_device} ! " "nvvidconv ! video/x-raw, format=BGR ! appsink"
+            )
+
+            logger.info(f"Using GStreamer pipeline: {gstreamer_pipeline}")
+            self.cap = cv2.VideoCapture(gstreamer_pipeline, cv2.CAP_GSTREAMER)
+
             if not self.cap.isOpened():
-                logger.error(f"Failed to open camera device {self.camera_device}")
+                logger.error("GStreamer pipeline failed to open")
+                logger.error("Make sure nvarguscamerasrc is available and camera is not in use")
                 return False
+
+            logger.info("GStreamer pipeline opened successfully")
 
             # Get camera resolution
             self.camera_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
