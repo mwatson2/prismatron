@@ -121,7 +121,7 @@ class ConsumerProcess:
         self,
         buffer_name: str = "prismatron_buffer",
         control_name: str = "prismatron_control",
-        wled_host: str = "192.168.1.100",
+        wled_host: str = "192.168.7.140",
         wled_port: int = 4048,
         diffusion_patterns_path: Optional[str] = None,
         enable_test_renderer: bool = False,

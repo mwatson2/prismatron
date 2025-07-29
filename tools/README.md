@@ -33,7 +33,7 @@ python tools/wled_test_patterns.py solid --color 255 0 0 --duration 5
 python tools/wled_test_patterns.py solid --color 0 0 255
 
 # White LEDs with custom WLED IP
-python tools/wled_test_patterns.py solid --color 255 255 255 --host 192.168.1.100
+python tools/wled_test_patterns.py solid --color 255 255 255 --host
 ```
 
 #### Rainbow Cycle
@@ -174,7 +174,7 @@ Tool for capturing real diffusion patterns from the physical LED display. Cycles
 #### Basic Capture
 ```bash
 # Capture patterns using default camera
-python tools/capture_diffusion_patterns.py --wled-host 192.168.1.100 --output patterns.npz
+python tools/capture_diffusion_patterns.py --wled-host 192.168.7.140 --output patterns.npz
 
 # With live preview
 python tools/capture_diffusion_patterns.py --wled-host wled.local --output patterns.npz --preview
@@ -184,7 +184,7 @@ python tools/capture_diffusion_patterns.py --wled-host wled.local --output patte
 ```bash
 # Specific camera device and capture rate
 python tools/capture_diffusion_patterns.py \
-    --wled-host 192.168.1.100 \
+    --wled-host 192.168.7.140 \
     --camera-device 1 \
     --capture-fps 15.0 \
     --output high_res_patterns.npz \
@@ -192,7 +192,7 @@ python tools/capture_diffusion_patterns.py \
 
 # With camera crop region (x, y, width, height)
 python tools/capture_diffusion_patterns.py \
-    --wled-host 192.168.1.100 \
+    --wled-host 192.168.7.140 \
     --camera-device 0 \
     --crop-region 100 50 800 480 \
     --output cropped_patterns.npz
@@ -285,7 +285,7 @@ This configuration can be used with the capture tool:
 ```bash
 # Use calibrated crop region  
 python tools/capture_diffusion_patterns.py \
-    --wled-host 192.168.1.100 \
+    --wled-host 192.168.7.140 \
     --crop-region 260 140 1400 840 \
     --output patterns.npz
 ```
@@ -442,7 +442,7 @@ python tools/camera_calibration.py --output-config calibration.json
 
 # 2. Capture diffusion patterns (using calibration)
 python tools/capture_diffusion_patterns.py \
-    --wled-host 192.168.1.100 \
+    --wled-host 192.168.7.140 \
     --crop-region 260 140 1400 840 \
     --output real_patterns.npz \
     --preview

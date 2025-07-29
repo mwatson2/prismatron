@@ -964,7 +964,10 @@ class DiffusionPatternVisualizer:
                 img_resized = img.resize((FRAME_WIDTH, FRAME_HEIGHT), Image.LANCZOS)
 
                 # Convert to numpy array in HWC format
-                target_frame = np.array(img_resized, dtype=np.uint8)  # Shape: (480, 800, 3)
+                target_frame_np = np.array(img_resized, dtype=np.uint8)  # Shape: (480, 800, 3)
+
+                # Convert to GPU array for the optimizer
+                target_frame = cp.asarray(target_frame_np)
 
             logger.info(f"Target frame shape: {target_frame.shape}")
 

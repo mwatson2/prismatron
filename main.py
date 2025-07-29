@@ -233,7 +233,7 @@ class ProcessManager:
 
                     # Create consumer with configuration
                     consumer = ConsumerProcess(
-                        wled_host=self.config.get("wled_host", "192.168.1.100"),
+                        wled_host=self.config.get("wled_host", "192.168.7.140"),
                         wled_port=self.config.get("wled_port", 4048),
                         diffusion_patterns_path=self.config.get("diffusion_patterns_path"),
                         timing_log_path=self.config.get("timing_log_path"),
@@ -571,7 +571,7 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--web-host", default="0.0.0.0", help="Web server host")
     parser.add_argument("--web-port", type=int, default=8000, help="Web server port")
-    parser.add_argument("--wled-host", default="192.168.1.100", help="WLED controller IP")
+    parser.add_argument("--wled-host", default="192.168.7.140", help="WLED controller IP")
     parser.add_argument("--wled-port", type=int, default=4048, help="WLED controller port")
     parser.add_argument("--content-dir", help="Default content directory to load")
     parser.add_argument("--diffusion-patterns", help="Path to diffusion patterns file")

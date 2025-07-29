@@ -22,9 +22,9 @@ Features:
 - Compatible with visualization and optimization tools
 
 Usage:
-    python capture_diffusion_patterns.py --wled-host 192.168.1.100 --camera-device 0 --output patterns.npz --preview
-    python capture_diffusion_patterns.py --wled-host 192.168.1.100 --output patterns.npz --block-size 64 --precision fp16 --uint8
-    python capture_diffusion_patterns.py --wled-host 192.168.1.100 --camera-config camera.json --output patterns.npz --flip-image
+    python capture_diffusion_patterns.py --wled-host 192.168.7.140 --camera-device 0 --output patterns.npz --preview
+    python capture_diffusion_patterns.py --wled-host 192.168.7.140 --output patterns.npz --block-size 64 --precision fp16 --uint8
+    python capture_diffusion_patterns.py --wled-host 192.168.7.140 --camera-config camera.json --output patterns.npz --flip-image
 """
 
 import argparse

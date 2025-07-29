@@ -82,7 +82,7 @@ class TestConsumerProcess(unittest.TestCase):
             self.consumer = ConsumerProcess(
                 buffer_name="test_buffer",
                 control_name="test_control",
-                wled_host="192.168.1.100",
+                wled_host="192.168.7.140",
                 wled_port=4048,
             )
 

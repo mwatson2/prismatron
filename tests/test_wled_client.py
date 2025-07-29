@@ -79,14 +79,14 @@ class TestWLEDSinkConfig(unittest.TestCase):
     def test_custom_initialization(self):
         """Test config with custom values."""
         config = WLEDSinkConfig(
-            host="192.168.1.100",
+            host="192.168.7.140",
             port=4048,
             led_count=1000,
             max_fps=30.0,
             persistent_retry=True,
         )
 
-        self.assertEqual(config.host, "192.168.1.100")
+        self.assertEqual(config.host, "192.168.7.140")
         self.assertEqual(config.port, 4048)
         self.assertEqual(config.led_count, 1000)
         self.assertEqual(config.max_fps, 30.0)
@@ -98,7 +98,7 @@ class TestWLEDSink(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.config = WLEDSinkConfig(host="192.168.1.100", port=4048, timeout=1.0)
+        self.config = WLEDSinkConfig(host="192.168.7.140", port=4048, timeout=1.0)
         self.client = WLEDSink(self.config)
 
     def tearDown(self):
@@ -108,7 +108,7 @@ class TestWLEDSink(unittest.TestCase):
 
     def test_initialization(self):
         """Test client initialization."""
-        self.assertEqual(self.client.config.host, "192.168.1.100")
+        self.assertEqual(self.client.config.host, "192.168.7.140")
         self.assertEqual(self.client.config.port, 4048)
         self.assertFalse(self.client.is_connected)
         self.assertEqual(self.client.sequence_number, 0)
@@ -327,7 +327,7 @@ class TestWLEDSinkIntegration(unittest.TestCase):
         mock_socket = Mock()
         mock_socket_class.return_value = mock_socket
 
-        config = WLEDSinkConfig(host="192.168.1.100", port=4048)
+        config = WLEDSinkConfig(host="192.168.7.140", port=4048)
         client = WLEDSink(config)
 
         # Connect and send test data
