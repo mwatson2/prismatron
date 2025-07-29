@@ -63,7 +63,7 @@ WLED_TIMEOUT_SECONDS = 5.0  # Network timeout for WLED communication
 WLED_RETRY_COUNT = 3  # Number of retries for failed transmissions
 
 # Content Source Frame Rate Configuration
-DEFAULT_CONTENT_FPS = 24.0  # Default frame rate for static content (images, text effects)
+DEFAULT_CONTENT_FPS = 15.0  # Default frame rate for static content (images, text effects)
 
 # Log Management Configuration
 LOG_MAX_SIZE_MB = 100  # Maximum log file size in MB before rotation

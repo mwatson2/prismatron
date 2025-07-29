@@ -77,8 +77,12 @@ const TransitionConfig = ({ item, onUpdate, onClose }) => {
   const handleParameterChange = (direction, paramName, value) => {
     // Handle different parameter types
     let processedValue = value
-    if (paramName === 'duration' || paramName === 'max_blur_radius') {
+    if (paramName === 'duration' || paramName === 'max_blur_radius' || paramName === 'blur_intensity') {
       processedValue = parseFloat(value)
+    } else if (paramName === 'kernel_size' || paramName === 'leds_per_frame' || paramName === 'seed') {
+      processedValue = parseInt(value)
+    } else if (paramName === 'fade_tail') {
+      processedValue = value === 'true' || value === true
     }
 
     if (direction === 'in') {
@@ -148,7 +152,31 @@ const TransitionConfig = ({ item, onUpdate, onClose }) => {
     const error = errors[errorKey]
 
     // Handle different input types based on parameter schema
-    if (paramSchema.options) {
+    if (paramSchema.type === 'boolean') {
+      // Render checkbox for boolean parameters
+      return (
+        <div key={paramName} className="space-y-1">
+          <label className="block text-xs font-mono text-metal-silver uppercase">
+            {paramName.replace('_', ' ')}
+          </label>
+          <div className="flex items-center">
+            <input
+              type="checkbox"
+              checked={currentValue || false}
+              onChange={(e) => handleParameterChange(direction, paramName, e.target.checked)}
+              className="mr-2 text-neon-cyan bg-metal-dark border-metal-silver rounded focus:ring-neon-cyan"
+            />
+            <span className="text-sm font-mono text-metal-silver">
+              {currentValue ? 'Enabled' : 'Disabled'}
+            </span>
+          </div>
+          {error && (
+            <p className="text-xs text-neon-orange font-mono">{error}</p>
+          )}
+          <p className="text-xs text-metal-silver font-mono">{paramSchema.description}</p>
+        </div>
+      )
+    } else if (paramSchema.options) {
       // Render dropdown for string options (like curve type)
       return (
         <div key={paramName} className="space-y-1">
@@ -190,7 +218,7 @@ const TransitionConfig = ({ item, onUpdate, onClose }) => {
             onChange={(e) => handleParameterChange(direction, paramName, e.target.value)}
             min={paramSchema.min}
             max={paramSchema.max}
-            step={paramName === 'duration' ? 0.1 : (paramName === 'max_blur_radius' ? 0.5 : 1)}
+            step={paramName === 'duration' || paramName === 'blur_intensity' ? 0.1 : (paramName === 'max_blur_radius' ? 0.5 : 1)}
             className={`w-full px-3 py-2 bg-metal-dark border rounded-retro font-mono text-sm
               ${error ? 'border-neon-orange' : 'border-metal-silver'}
               text-black focus:border-neon-cyan focus:outline-none`}

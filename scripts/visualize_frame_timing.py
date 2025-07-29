@@ -49,6 +49,7 @@ class FrameTimingVisualizer:
                 "read_from_buffer_time",
                 "write_to_led_buffer_time",
                 "read_from_led_buffer_time",
+                "led_transition_time",
                 "render_time",
                 "item_duration",
             ]
@@ -67,6 +68,7 @@ class FrameTimingVisualizer:
                 & (self.timing_data["read_from_buffer_time"] > 0)
                 & (self.timing_data["write_to_led_buffer_time"] > 0)
                 & (self.timing_data["read_from_led_buffer_time"] > 0)
+                & (self.timing_data["led_transition_time"] > 0)
                 & (self.timing_data["render_time"] > 0)
             )
 
@@ -115,6 +117,7 @@ class FrameTimingVisualizer:
             "shared_buffer": "#2ca02c",  # Green - time in shared buffer
             "optimization": "#d62728",  # Red - optimization time
             "led_buffer": "#9467bd",  # Purple - time in LED buffer
+            "led_transitions": "#ff69b4",  # Hot Pink - LED transitions time
             "rendered": "#ffff00",  # Bright Yellow - time in rendered state (high visibility)
             "led_queue": "#ff8c00",  # Orange - LED buffer queue length
             "plugin_timestamp": "#1f77b4",  # Blue - plugin timestamps
@@ -132,6 +135,7 @@ class FrameTimingVisualizer:
                     complete_data["read_from_buffer_time"],
                     complete_data["write_to_led_buffer_time"],
                     complete_data["read_from_led_buffer_time"],
+                    complete_data["led_transition_time"],
                     complete_data["render_time"],
                 ]
             )
@@ -142,6 +146,7 @@ class FrameTimingVisualizer:
                 "read_from_buffer_time",
                 "write_to_led_buffer_time",
                 "read_from_led_buffer_time",
+                "led_transition_time",
                 "render_time",
             ]:
                 non_zero_times = incomplete_data[incomplete_data[col] > 0][col]
@@ -204,9 +209,23 @@ class FrameTimingVisualizer:
                         zorder=3,  # Higher z-order to draw on top of LED queue
                     )
 
-                # Time in rendered state
-                if frame["read_from_led_buffer_time"] > 0 and frame["render_time"] > 0:
+                # LED transitions time
+                if frame["read_from_led_buffer_time"] > 0 and frame["led_transition_time"] > 0:
                     start_time = frame["read_from_led_buffer_time"] - min_wallclock + 0.001
+                    end_time = frame["led_transition_time"] - min_wallclock
+                    ax.plot(
+                        [start_time, end_time],
+                        [frame_y, frame_y],
+                        color=state_colors["led_transitions"],
+                        linewidth=2,
+                        alpha=0.8,
+                        solid_capstyle="butt",
+                        zorder=3,  # Higher z-order to draw on top of LED queue
+                    )
+
+                # Time in rendered state
+                if frame["led_transition_time"] > 0 and frame["render_time"] > 0:
+                    start_time = frame["led_transition_time"] - min_wallclock + 0.001
                     end_time = frame["render_time"] - min_wallclock
                     ax.plot(
                         [start_time, end_time],
@@ -263,16 +282,30 @@ class FrameTimingVisualizer:
                             zorder=2,  # Medium z-order for incomplete frames
                         )
 
+                    # LED transitions time for incomplete frames
+                    if frame["read_from_led_buffer_time"] > 0 and frame["led_transition_time"] > 0:
+                        start_time = frame["read_from_led_buffer_time"] - min_wallclock + 0.001
+                        end_time = frame["led_transition_time"] - min_wallclock
+                        ax.plot(
+                            [start_time, end_time],
+                            [frame_y, frame_y],
+                            color=state_colors["led_transitions"],
+                            linewidth=2,
+                            alpha=0.4,
+                            solid_capstyle="butt",
+                            zorder=2,  # Medium z-order for incomplete frames
+                        )
+
         def calculate_led_queue_length_square_wave(data):
             """Calculate LED buffer queue length over time as square wave (only complete frames)."""
             events = []
 
-            # Only add events for frames that have BOTH write_to_led_buffer_time AND read_from_led_buffer_time
+            # Only add events for frames that have BOTH write_to_led_buffer_time AND led_transition_time
             # This excludes dropped frames that only have one of these timestamps
             for _, frame in data.iterrows():
-                if frame["write_to_led_buffer_time"] > 0 and frame["read_from_led_buffer_time"] > 0:
+                if frame["write_to_led_buffer_time"] > 0 and frame["led_transition_time"] > 0:
                     events.append((frame["write_to_led_buffer_time"], +1, frame["frame_index"]))
-                    events.append((frame["read_from_led_buffer_time"], -1, frame["frame_index"]))
+                    events.append((frame["led_transition_time"], -1, frame["frame_index"]))
 
             # Sort by time
             events.sort()
@@ -353,6 +386,7 @@ class FrameTimingVisualizer:
         ax2.plot([], [], color=state_colors["shared_buffer"], linewidth=2, label="Time in Shared Buffer")
         ax2.plot([], [], color=state_colors["optimization"], linewidth=2, label="Optimization Time")
         ax2.plot([], [], color=state_colors["led_buffer"], linewidth=2, label="Time in LED Buffer")
+        ax2.plot([], [], color=state_colors["led_transitions"], linewidth=2, label="LED Transitions Time")
         ax2.plot([], [], color=state_colors["rendered"], linewidth=2, label="Time in Rendered State")
         ax2.set_ylabel("Frame Index")
         ax2.legend(loc="upper left")
@@ -386,6 +420,7 @@ class FrameTimingVisualizer:
         ax3.plot([], [], color=state_colors["shared_buffer"], linewidth=2, label="Complete: Time in Shared Buffer")
         ax3.plot([], [], color=state_colors["optimization"], linewidth=2, label="Complete: Optimization Time")
         ax3.plot([], [], color=state_colors["led_buffer"], linewidth=2, label="Complete: Time in LED Buffer")
+        ax3.plot([], [], color=state_colors["led_transitions"], linewidth=2, label="Complete: LED Transitions Time")
         ax3.plot([], [], color=state_colors["rendered"], linewidth=2, label="Complete: Time in Rendered State")
         ax3.plot(
             [], [], color=state_colors["shared_buffer"], linewidth=2, alpha=0.4, label="Incomplete: Partial States"
@@ -402,6 +437,7 @@ class FrameTimingVisualizer:
                 "read_from_buffer_time",
                 "write_to_led_buffer_time",
                 "read_from_led_buffer_time",
+                "led_transition_time",
                 "render_time",
             ]:
                 non_zero_times = all_data[all_data[col] > 0][col]
@@ -494,7 +530,8 @@ class FrameTimingVisualizer:
             "Buffer Latency": data["read_from_buffer_time"] - data["write_to_buffer_time"],
             "Processing Latency": data["write_to_led_buffer_time"] - data["read_from_buffer_time"],
             "LED Buffer Latency": data["read_from_led_buffer_time"] - data["write_to_led_buffer_time"],
-            "Render Latency": data["render_time"] - data["read_from_led_buffer_time"],
+            "LED Transitions Latency": data["led_transition_time"] - data["read_from_led_buffer_time"],
+            "Render Latency": data["render_time"] - data["led_transition_time"],
             "End-to-End Latency": data["render_time"] - data["write_to_buffer_time"],
         }
 
@@ -505,7 +542,7 @@ class FrameTimingVisualizer:
         for idx, (name, latency) in enumerate(latencies.items()):
             row = idx // 3
             col = idx % 3
-            ax = axes[row, col] if len(latencies) > 3 else axes[col]
+            ax = axes[row, col]
 
             # Remove outliers for better visualization (keep 99th percentile)
             p99 = np.percentile(latency, 99)
@@ -517,9 +554,7 @@ class FrameTimingVisualizer:
             ax.set_title(f"{name}\nMean: {latency.mean()*1000:.1f}ms, Std: {latency.std()*1000:.1f}ms")
             ax.grid(True, alpha=0.3)
 
-        # Remove empty subplot if we have 5 plots
-        if len(latencies) == 5:
-            fig.delaxes(axes[1, 2])
+        # We now have 6 plots, so no need to remove any subplot
 
         plt.tight_layout()
 
@@ -557,6 +592,7 @@ class FrameTimingVisualizer:
             ("read_from_buffer_time", "Read from Buffer"),
             ("write_to_led_buffer_time", "Write to LED Buffer"),
             ("read_from_led_buffer_time", "Read from LED Buffer"),
+            ("led_transition_time", "LED Transitions"),
             ("render_time", "Render Time"),
         ]
 
@@ -587,7 +623,10 @@ class FrameTimingVisualizer:
             led_buffer_latency = (
                 complete_data["read_from_led_buffer_time"] - complete_data["write_to_led_buffer_time"]
             ) * 1000
-            render_latency = (complete_data["render_time"] - complete_data["read_from_led_buffer_time"]) * 1000
+            led_transitions_latency = (
+                complete_data["led_transition_time"] - complete_data["read_from_led_buffer_time"]
+            ) * 1000
+            render_latency = (complete_data["render_time"] - complete_data["led_transition_time"]) * 1000
             end_to_end_latency = (complete_data["render_time"] - complete_data["write_to_buffer_time"]) * 1000
 
             print("\n=== Processing Latencies (milliseconds) - Complete Frames Only ====")
@@ -595,6 +634,7 @@ class FrameTimingVisualizer:
                 "Shared Buffer": buffer_latency,
                 "Optimization": processing_latency,
                 "LED Buffer": led_buffer_latency,
+                "LED Transitions": led_transitions_latency,
                 "Render": render_latency,
                 "End-to-End": end_to_end_latency,
             }

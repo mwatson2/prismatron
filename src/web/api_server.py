@@ -348,42 +348,55 @@ def validate_transition_config(transition_config: TransitionConfig) -> Dict[str,
     """
     errors = {}
 
-    # Validate transition type
-    valid_types = ["none", "fade", "blur"]
-    if transition_config.type not in valid_types:
-        errors["type"] = f"Invalid transition type '{transition_config.type}'. Must be one of: {', '.join(valid_types)}"
+    try:
+        # Get available transition types from factory (includes LED transitions)
+        from ..transitions.transition_factory import get_transition_factory
 
-    # Validate parameters based on type
-    if transition_config.type == "fade":
-        duration = transition_config.parameters.get("duration")
-        if duration is None:
-            errors["parameters.duration"] = "Duration parameter is required for fade transitions"
-        elif not isinstance(duration, (int, float)):
-            errors["parameters.duration"] = "Duration must be a number"
-        elif duration < 0.1 or duration > 10.0:
-            errors["parameters.duration"] = "Duration must be between 0.1 and 10.0 seconds"
+        factory = get_transition_factory()
+        valid_types = factory.get_available_transitions_with_led()
 
-    elif transition_config.type == "blur":
-        duration = transition_config.parameters.get("duration")
-        if duration is None:
-            errors["parameters.duration"] = "Duration parameter is required for blur transitions"
-        elif not isinstance(duration, (int, float)):
-            errors["parameters.duration"] = "Duration must be a number"
-        elif duration < 0.1 or duration > 60.0:
-            errors["parameters.duration"] = "Duration must be between 0.1 and 60.0 seconds"
+        # Validate transition type
+        if transition_config.type not in valid_types:
+            errors["type"] = (
+                f"Invalid transition type '{transition_config.type}'. Must be one of: {', '.join(valid_types)}"
+            )
+            return errors
 
-        max_blur_radius = transition_config.parameters.get("max_blur_radius")
-        if max_blur_radius is not None:
-            if not isinstance(max_blur_radius, (int, float)):
-                errors["parameters.max_blur_radius"] = "max_blur_radius must be a number"
-            elif max_blur_radius <= 0 or max_blur_radius > 100.0:
-                errors["parameters.max_blur_radius"] = "max_blur_radius must be between 1.0 and 100.0 pixels"
+        # Use factory validation for parameters
+        transition_dict = {"type": transition_config.type, "parameters": transition_config.parameters}
 
-        curve = transition_config.parameters.get("curve")
-        if curve is not None:
-            valid_curves = ["linear", "ease-in", "ease-out", "ease-in-out"]
-            if curve not in valid_curves:
-                errors["parameters.curve"] = f"curve must be one of: {', '.join(valid_curves)}"
+        # Check if it's an LED transition
+        if transition_config.type.startswith("led"):
+            # Use LED transition factory for validation
+            from ..transitions.led_transition_factory import get_led_transition_factory
+
+            led_factory = get_led_transition_factory()
+            if not led_factory.validate_led_transition_config(transition_dict):
+                errors["parameters"] = f"Invalid parameters for LED transition '{transition_config.type}'"
+        else:
+            # Use regular transition factory for validation
+            if not factory.validate_transition_config(transition_dict):
+                errors["parameters"] = f"Invalid parameters for transition '{transition_config.type}'"
+
+        return errors
+
+    except Exception as e:
+        # Fallback to hardcoded validation if factory fails
+        logger.warning(f"Transition factory validation failed, using fallback: {e}")
+        valid_types = ["none", "fade", "blur", "ledfade", "ledblur", "ledrandom"]
+        if transition_config.type not in valid_types:
+            errors["type"] = (
+                f"Invalid transition type '{transition_config.type}'. Must be one of: {', '.join(valid_types)}"
+            )
+
+        # Basic parameter validation for fallback
+        if transition_config.type in ["fade", "ledfade", "ledblur", "ledrandom"]:
+            duration = transition_config.parameters.get("duration")
+            if duration is not None:
+                if not isinstance(duration, (int, float)):
+                    errors["parameters.duration"] = "Duration must be a number"
+                elif duration < 0.1 or duration > 60.0:
+                    errors["parameters.duration"] = "Duration must be between 0.1 and 60.0 seconds"
 
     return errors
 
@@ -1465,52 +1478,74 @@ async def toggle_repeat():
 @app.get("/api/transitions")
 async def get_transition_types():
     """Get available transition types and their schemas."""
-    return {
-        "types": [
-            {"type": "none", "name": "None", "description": "No transition", "parameters": {}},
-            {
-                "type": "fade",
-                "name": "Fade",
-                "description": "Fade in/out transition",
-                "parameters": {
-                    "duration": {
-                        "type": "number",
-                        "default": 1.0,
-                        "min": 0.1,
-                        "max": 10.0,
-                        "description": "Fade duration in seconds",
+    from ..transitions.transition_factory import get_transition_factory
+
+    try:
+        # Get all transition schemas (image + LED)
+        factory = get_transition_factory()
+        all_schemas = factory.get_all_schemas_with_led()
+
+        # Convert to API format with user-friendly names
+        types = []
+
+        # Define display names and descriptions for each transition type
+        transition_info = {
+            "none": {"name": "None", "description": "No transition"},
+            "fade": {"name": "Fade", "description": "Fade in/out transition"},
+            "blur": {"name": "Blur", "description": "Gaussian blur in/out transition"},
+            "ledfade": {"name": "LED Fade", "description": "Direct LED brightness fade (more efficient)"},
+            "ledblur": {"name": "LED Blur", "description": "1D spatial blur effect on LED array"},
+            "ledrandom": {"name": "LED Random", "description": "Random sparkle/lighting pattern effect"},
+        }
+
+        for trans_type, schema in all_schemas.items():
+            info = transition_info.get(
+                trans_type, {"name": trans_type.title(), "description": f"{trans_type} transition"}
+            )
+
+            # Convert schema properties to API format
+            api_parameters = {}
+            if "properties" in schema:
+                for param_name, param_schema in schema["properties"].items():
+                    api_param = {
+                        "type": param_schema.get("type", "string"),
+                        "default": param_schema.get("default"),
+                        "description": param_schema.get("description", ""),
                     }
-                },
-            },
-            {
-                "type": "blur",
-                "name": "Blur",
-                "description": "Gaussian blur in/out transition",
-                "parameters": {
-                    "duration": {
-                        "type": "number",
-                        "default": 1.0,
-                        "min": 0.1,
-                        "max": 60.0,
-                        "description": "Blur transition duration in seconds",
-                    },
-                    "max_blur_radius": {
-                        "type": "number",
-                        "default": 20.0,
-                        "min": 1.0,
-                        "max": 100.0,
-                        "description": "Maximum blur radius in pixels",
-                    },
-                    "curve": {
-                        "type": "string",
-                        "default": "linear",
-                        "options": ["linear", "ease-in", "ease-out", "ease-in-out"],
-                        "description": "Interpolation curve for blur transition",
-                    },
-                },
-            },
-        ]
-    }
+
+                    # Add constraints if present
+                    if "minimum" in param_schema:
+                        api_param["min"] = param_schema["minimum"]
+                    if "maximum" in param_schema:
+                        api_param["max"] = param_schema["maximum"]
+                    if "enum" in param_schema:
+                        api_param["options"] = param_schema["enum"]
+
+                    api_parameters[param_name] = api_param
+
+            types.append(
+                {
+                    "type": trans_type,
+                    "name": info["name"],
+                    "description": info["description"],
+                    "parameters": api_parameters,
+                }
+            )
+
+        return {"types": types}
+
+    except Exception as e:
+        logger.error(f"Error getting transition types: {e}")
+        # Fallback to basic types
+        return {
+            "types": [
+                {"type": "none", "name": "None", "description": "No transition", "parameters": {}},
+                {"type": "fade", "name": "Fade", "description": "Fade in/out transition", "parameters": {}},
+                {"type": "ledfade", "name": "LED Fade", "description": "Direct LED brightness fade", "parameters": {}},
+                {"type": "ledblur", "name": "LED Blur", "description": "1D spatial blur effect", "parameters": {}},
+                {"type": "ledrandom", "name": "LED Random", "description": "Random sparkle effect", "parameters": {}},
+            ]
+        }
 
 
 @app.put("/api/playlist/{item_id}/transitions")

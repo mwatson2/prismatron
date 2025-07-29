@@ -147,6 +147,10 @@ class TransitionProcessor:
             if transition_config["type"] == "none":
                 return False
 
+            # Skip LED transitions - they are handled by LED transition processor
+            if transition_config["type"].startswith("led"):
+                return False
+
             # Create transition instance and check if frame is in transition region
             transition = self._factory.create_transition(transition_config["type"])
             if transition is None:
@@ -176,6 +180,10 @@ class TransitionProcessor:
         try:
             transition_config = transition_context["transition_out"]
             if transition_config["type"] == "none":
+                return False
+
+            # Skip LED transitions - they are handled by LED transition processor
+            if transition_config["type"].startswith("led"):
                 return False
 
             # Create transition instance and check if frame is in transition region

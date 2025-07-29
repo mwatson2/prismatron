@@ -36,6 +36,7 @@ class FrameTimingData:
     read_from_buffer_time: Optional[float] = None  # When frame read from shared buffer
     write_to_led_buffer_time: Optional[float] = None  # When LED data written to LED buffer
     read_from_led_buffer_time: Optional[float] = None  # When LED data read from LED buffer
+    led_transition_time: Optional[float] = None  # When LED transitions completed
     render_time: Optional[float] = None  # When frame actually rendered/sent to hardware
 
     def mark_write_to_buffer(self) -> None:
@@ -54,6 +55,10 @@ class FrameTimingData:
         """Mark when LED data is read from LED buffer."""
         self.read_from_led_buffer_time = time.time()
 
+    def mark_led_transition_complete(self) -> None:
+        """Mark when LED transitions are completed."""
+        self.led_transition_time = time.time()
+
     def mark_render(self) -> None:
         """Mark when frame is actually rendered/sent to hardware."""
         self.render_time = time.time()
@@ -66,7 +71,7 @@ class FrameTimingData:
             List of values: [frame_index, plugin_timestamp, producer_timestamp,
                            write_to_buffer_time, read_from_buffer_time,
                            write_to_led_buffer_time, read_from_led_buffer_time,
-                           render_time, item_duration]
+                           led_transition_time, render_time, item_duration]
         """
         return [
             self.frame_index,
@@ -76,6 +81,7 @@ class FrameTimingData:
             self.read_from_buffer_time or 0.0,
             self.write_to_led_buffer_time or 0.0,
             self.read_from_led_buffer_time or 0.0,
+            self.led_transition_time or 0.0,
             self.render_time or 0.0,
             self.item_duration,
         ]
@@ -96,6 +102,7 @@ class FrameTimingData:
             "read_from_buffer_time",
             "write_to_led_buffer_time",
             "read_from_led_buffer_time",
+            "led_transition_time",
             "render_time",
             "item_duration",
         ]

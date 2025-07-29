@@ -23,6 +23,7 @@ from .adaptive_frame_dropper import AdaptiveFrameDropper
 from .frame_renderer import FrameRenderer
 from .led_buffer import LEDBuffer
 from .led_optimizer import LEDOptimizer
+from .led_transition_processor import LEDTransitionProcessor
 from .preview_sink import PreviewSink, PreviewSinkConfig
 from .test_sink import TestSink, TestSinkConfig
 from .transition_processor import TransitionProcessor
@@ -39,6 +40,7 @@ class ConsumerStats:
     frames_dropped_early: int = 0  # Dropped before optimization
     total_processing_time: float = 0.0
     total_optimization_time: float = 0.0
+    total_led_transition_time: float = 0.0
     optimization_errors: int = 0
     transmission_errors: int = 0
     last_frame_time: float = 0.0
@@ -64,6 +66,12 @@ class ConsumerStats:
         """Get average optimization time per frame."""
         if self.frames_processed > 0:
             return self.total_optimization_time / self.frames_processed
+        return 0.0
+
+    def get_average_led_transition_time(self) -> float:
+        """Get average LED transition time per frame."""
+        if self.frames_processed > 0:
+            return self.total_led_transition_time / self.frames_processed
         return 0.0
 
     def update_consumer_input_fps(self, frame_timestamp: float) -> None:
@@ -119,7 +127,7 @@ class ConsumerProcess:
         enable_test_renderer: bool = False,
         test_renderer_config: Optional[TestSinkConfig] = None,
         timing_log_path: Optional[str] = None,
-        enable_adaptive_frame_dropping: bool = True,
+        enable_adaptive_frame_dropping: bool = False,
     ):
         """
         Initialize consumer process.
@@ -240,6 +248,9 @@ class ConsumerProcess:
 
         # Transition processor for playlist item transitions
         self._transition_processor = TransitionProcessor()
+
+        # LED transition processor for LED-based transitions
+        self._led_transition_processor = LEDTransitionProcessor()
 
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -761,11 +772,25 @@ class ConsumerProcess:
             if not result.converged:
                 self._stats.optimization_errors += 1
 
-            # Store in LED buffer with timestamp (convert to CPU for LED buffer)
+            # Apply LED transitions to optimized LED values (on GPU)
+            led_transition_start = time.time()
             if isinstance(result.led_values, cp.ndarray):
-                led_values_uint8 = cp.asnumpy(result.led_values).astype(np.uint8)
+                # LED values are on GPU, apply LED transitions
+                led_values_gpu = self._led_transition_processor.process_led_values(result.led_values, metadata_dict)
+                # Convert to CPU for LED buffer
+                led_values_uint8 = cp.asnumpy(led_values_gpu).astype(np.uint8)
             else:
-                led_values_uint8 = result.led_values.astype(np.uint8)
+                # LED values already on CPU, convert to GPU for LED transitions then back
+                led_values_gpu = cp.asarray(result.led_values)
+                led_values_with_transitions = self._led_transition_processor.process_led_values(
+                    led_values_gpu, metadata_dict
+                )
+                led_values_uint8 = cp.asnumpy(led_values_with_transitions).astype(np.uint8)
+            led_transition_time = time.time() - led_transition_start
+
+            # Mark LED transition completion time for timing data
+            if timing_data:
+                timing_data.mark_led_transition_complete()
 
             # Check if LED values have non-zero content for logging
             if led_values_uint8.max() > 0:
@@ -816,6 +841,7 @@ class ConsumerProcess:
             self._stats.frames_processed += 1
             self._stats.total_processing_time += total_time
             self._stats.total_optimization_time += optimization_time
+            self._stats.total_led_transition_time += led_transition_time
             self._stats.last_frame_time = start_time
 
             # Update optimization FPS (independent of rendering)
@@ -993,6 +1019,7 @@ class ConsumerProcess:
             "dropped_frames_percentage": self._stats.dropped_frames_percentage_ewma * 100,  # Convert to percentage
             "total_processing_time": self._stats.total_processing_time,
             "average_optimization_time": self._stats.get_average_optimization_time(),
+            "average_led_transition_time": self._stats.get_average_led_transition_time(),
             "optimization_errors": self._stats.optimization_errors,
             "transmission_errors": self._stats.transmission_errors,
             "optimization_iterations": self.optimization_iterations,
@@ -1005,6 +1032,7 @@ class ConsumerProcess:
             "test_renderer_enabled": self.enable_test_renderer,
             "test_renderer_stats": (self._test_renderer.get_statistics() if self._test_renderer else None),
             "led_buffer_stats": self._led_buffer.get_buffer_stats(),
+            "led_transition_stats": self._led_transition_processor.get_statistics(),
             "renderer_stats": self._frame_renderer.get_renderer_stats(),
             "adaptive_frame_dropper_enabled": self.enable_adaptive_frame_dropping,
             "adaptive_frame_dropper_stats": (

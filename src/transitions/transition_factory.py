@@ -13,6 +13,7 @@ import cupy as cp
 from .base_transition import BaseTransition
 from .blur_transition import BlurTransition
 from .fade_transition import FadeTransition
+from .led_transition_factory import get_led_transition_factory
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +176,48 @@ class TransitionFactory:
             if schema is not None:
                 schemas[transition_type] = schema
         return schemas
+
+    def get_all_schemas_with_led(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get parameter schemas for all transition types including LED transitions.
+
+        Returns:
+            Dictionary mapping transition type names to their schemas
+        """
+        schemas = {}
+
+        # Add regular image transitions
+        for transition_type in self.get_available_transitions():
+            schema = self.get_transition_schema(transition_type)
+            if schema is not None:
+                schemas[transition_type] = schema
+
+        # Add LED transitions
+        led_factory = get_led_transition_factory()
+        led_schemas = led_factory.get_all_led_schemas()
+        schemas.update(led_schemas)
+
+        return schemas
+
+    def get_available_transitions_with_led(self) -> List[str]:
+        """
+        Get list of available transition type names including LED transitions.
+
+        Returns:
+            List of all registered transition type names (image + LED)
+        """
+        transitions = self.get_available_transitions()
+
+        # Add LED transitions (excluding duplicates like "none")
+        led_factory = get_led_transition_factory()
+        led_transitions = led_factory.get_available_led_transitions()
+
+        # Add only LED transitions that aren't already in the list
+        for led_transition in led_transitions:
+            if led_transition not in transitions:
+                transitions.append(led_transition)
+
+        return transitions
 
     def apply_transition_to_frame(
         self,
