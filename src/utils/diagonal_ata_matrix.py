@@ -158,9 +158,12 @@ class DiagonalATAMatrix:
             if self.dia_data_gpu is None:
                 self.dia_data_gpu = cupy.asarray(self.dia_data_cpu, dtype=self.output_dtype)
 
-            # Create FP16 version for pure FP16 kernel efficiency
-            # Always create FP16 version for potential pure FP16 usage
-            self.dia_data_gpu_fp16 = cupy.asarray(self.dia_data_cpu, dtype=cupy.float16)
+            # Create FP16 version for pure FP16 kernel efficiency (only if storage_dtype is fp16)
+            # Skip fp16 version when using fp32 storage to avoid overflow with large values
+            if self.storage_dtype == cupy.float16:
+                self.dia_data_gpu_fp16 = cupy.asarray(self.dia_data_cpu, dtype=cupy.float16)
+            else:
+                self.dia_data_gpu_fp16 = None
         else:
             self.dia_data_gpu_fp16 = None
 

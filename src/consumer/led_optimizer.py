@@ -210,10 +210,8 @@ class LEDOptimizer:
             if "diagonal_ata_matrix" in data:
                 logger.debug("Loading A^T@A matrices from diagonal_ata_matrix key")
                 diagonal_ata_dict = data["diagonal_ata_matrix"].item()
-                # Create with FP16 storage for memory efficiency, FP32 output for LED values/gradients
+                # Create with FP32 storage and computation for stability with real hardware patterns
                 self._diagonal_ata_matrix = DiagonalATAMatrix.from_dict(diagonal_ata_dict)
-                # Convert to FP16 storage for memory efficiency while keeping FP32 computation
-                self._convert_ata_to_fp16_storage()
                 logger.info(f"Loaded diagonal A^T@A matrix: {self._diagonal_ata_matrix.led_count} LEDs")
                 logger.info(
                     f"DIA format - bandwidth: {self._diagonal_ata_matrix.bandwidth}, k: {self._diagonal_ata_matrix.k}"
@@ -228,10 +226,8 @@ class LEDOptimizer:
             elif "dia_matrix" in data:
                 logger.debug("Loading A^T@A matrices from dia_matrix key")
                 dia_dict = data["dia_matrix"].item()
-                # Create with FP16 storage for memory efficiency, FP32 output for LED values/gradients
+                # Create with FP32 storage and computation for stability with real hardware patterns
                 self._diagonal_ata_matrix = DiagonalATAMatrix.from_dict(dia_dict)
-                # Convert to FP16 storage for memory efficiency while keeping FP32 computation
-                self._convert_ata_to_fp16_storage()
                 logger.info(f"Loaded DIA A^T@A matrix: {self._diagonal_ata_matrix.led_count} LEDs")
                 logger.info(
                     f"DIA format - bandwidth: {self._diagonal_ata_matrix.bandwidth}, k: {self._diagonal_ata_matrix.k}"
@@ -334,42 +330,6 @@ class LEDOptimizer:
         except Exception as e:
             logger.warning(f"Failed to load precomputed A^T@A matrices: {e}")
             return False
-
-    def _convert_ata_to_fp16_storage(self) -> None:
-        """
-        Convert ATA matrix storage to FP16 while keeping FP32 output for LED values/gradients.
-        This reduces memory usage by ~50% while maintaining computation precision.
-        """
-        if self._diagonal_ata_matrix is None:
-            return
-
-        # Set storage dtype to FP16 for memory efficiency
-        self._diagonal_ata_matrix.storage_dtype = cp.float16
-        # Ensure output dtype remains FP32 for LED values and gradients
-        self._diagonal_ata_matrix.output_dtype = cp.float32
-
-        # Convert existing CPU data to FP16 if present
-        if self._diagonal_ata_matrix.dia_data_cpu is not None:
-            original_dtype = self._diagonal_ata_matrix.dia_data_cpu.dtype
-            if original_dtype != np.float16:
-                logger.info(f"Converting ATA matrix storage from {original_dtype} to FP16")
-                self._diagonal_ata_matrix.dia_data_cpu = self._diagonal_ata_matrix.dia_data_cpu.astype(np.float16)
-
-                # Update GPU data to match
-                self._diagonal_ata_matrix.dia_data_gpu = cp.asarray(
-                    self._diagonal_ata_matrix.dia_data_cpu, dtype=cp.float16
-                )
-
-                # Update cached FP16 data
-                self._diagonal_ata_matrix._update_dia_data_cache()
-
-                # Calculate memory savings
-                original_memory = self._diagonal_ata_matrix.dia_data_cpu.size * 4  # FP32 = 4 bytes
-                new_memory = self._diagonal_ata_matrix.dia_data_cpu.size * 2  # FP16 = 2 bytes
-                savings_mb = (original_memory - new_memory) / (1024 * 1024)
-                logger.info(f"ATA matrix memory reduced by {savings_mb:.1f}MB ({50.0:.1f}% savings)")
-            else:
-                logger.info("ATA matrix already in FP16 storage format")
 
     def _load(self) -> bool:
         """
