@@ -125,28 +125,16 @@ def convert_pattern_file(input_path: str, output_path: str, force_overwrite: boo
             dense_matrices_gpu = cp.zeros((3, led_count, led_count), dtype=dense_matrix.storage_dtype)
 
             for channel in range(3):
-                # Get DIA matrix for this channel
-                dia_channel = dia_matrix.dia_data_gpu[channel]  # Shape: (k, led_count)
+                # Use the existing DiagonalATAMatrix method to get scipy DIA matrix
+                scipy_dia = dia_matrix.get_channel_dia_matrix(channel)
 
-                # Reconstruct dense matrix from diagonal format
-                dense_channel = cp.zeros((led_count, led_count), dtype=dense_matrix.storage_dtype)
+                # Convert scipy DIA to dense
+                dense_channel_cpu = scipy_dia.toarray().astype(
+                    np.float32 if dense_matrix.storage_dtype == cp.float32 else np.float16
+                )
 
-                for diag_idx in range(dia_matrix.k):
-                    offset = diag_idx - dia_matrix.bandwidth
-                    diagonal_values = dia_channel[diag_idx]  # Shape: (led_count,)
-
-                    if offset >= 0:
-                        # Upper diagonal
-                        for i in range(led_count - offset):
-                            j = i + offset
-                            dense_channel[i, j] = diagonal_values[i]
-                    else:
-                        # Lower diagonal
-                        for i in range(-offset, led_count):
-                            j = i + offset
-                            dense_channel[i, j] = diagonal_values[i]
-
-                dense_matrices_gpu[channel] = dense_channel
+                # Move to GPU
+                dense_matrices_gpu[channel] = cp.asarray(dense_channel_cpu, dtype=dense_matrix.storage_dtype)
 
             # Store in dense matrix object
             dense_matrix.dense_matrices_gpu = dense_matrices_gpu

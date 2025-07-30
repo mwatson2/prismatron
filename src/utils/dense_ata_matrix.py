@@ -168,35 +168,30 @@ class DenseATAMatrix:
         if self.dense_matrices_gpu is None:
             self.dense_matrices_gpu = cupy.asarray(self.dense_matrices_cpu, dtype=self.storage_dtype)
 
-        # Prepare output
-        result = cupy.zeros_like(led_values, dtype=output_dtype)
+        # Convert matrices and values to computation dtype if needed
+        ata_matrices = self.dense_matrices_gpu
+        if ata_matrices.dtype != output_dtype:
+            ata_matrices = ata_matrices.astype(output_dtype)
 
-        # Matrix-vector multiplication for each channel
-        for channel in range(self.channels):
-            # Get ATA matrix for this channel
-            ata_matrix = self.dense_matrices_gpu[channel]
+        led_values_comp = led_values.astype(output_dtype)
 
-            # Convert to computation dtype if needed
-            if ata_matrix.dtype != output_dtype:
-                ata_matrix = ata_matrix.astype(output_dtype)
+        # Debug: Check for issues
+        if cupy.any(cupy.isnan(ata_matrices)) or cupy.any(cupy.isinf(ata_matrices)):
+            logger.warning("Dense ATA matrices contain NaN/Inf values")
+        if cupy.any(cupy.isnan(led_values_comp)) or cupy.any(cupy.isinf(led_values_comp)):
+            logger.warning("LED values contain NaN/Inf values")
 
-            # Get LED values for this channel
-            led_channel = led_values[channel].astype(output_dtype)
+        # Single einsum operation for all channels: (3, led_count, led_count) @ (3, led_count) -> (3, led_count)
+        # ijk: ATA matrices (channels, led_count, led_count)
+        # ij:  LED values  (channels, led_count)
+        # ik:  Result      (channels, led_count)
+        result = cupy.einsum("ijk,ij->ik", ata_matrices, led_values_comp)
 
-            # Debug: Check for issues
-            if cupy.any(cupy.isnan(ata_matrix)) or cupy.any(cupy.isinf(ata_matrix)):
-                logger.warning(f"Dense ATA matrix channel {channel} contains NaN/Inf values")
-            if cupy.any(cupy.isnan(led_channel)) or cupy.any(cupy.isinf(led_channel)):
-                logger.warning(f"LED values channel {channel} contain NaN/Inf values")
-
-            # Matrix-vector multiplication: (led_count, led_count) @ (led_count,) -> (led_count,)
-            result[channel] = ata_matrix @ led_channel
-
-            # Debug: Check result
-            if cupy.any(cupy.isnan(result[channel])) or cupy.any(cupy.isinf(result[channel])):
-                logger.warning(f"Result channel {channel} contains NaN/Inf values")
-            if cupy.max(cupy.abs(result[channel])) == 0:
-                logger.warning(f"Result channel {channel} is all zeros")
+        # Debug: Check result
+        if cupy.any(cupy.isnan(result)) or cupy.any(cupy.isinf(result)):
+            logger.warning("Result contains NaN/Inf values")
+        if cupy.max(cupy.abs(result)) == 0:
+            logger.warning("Result is all zeros")
 
         return result
 
