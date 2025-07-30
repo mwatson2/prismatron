@@ -2,8 +2,10 @@
 """
 Standalone tool to compute ATA inverse matrices for diffusion pattern files.
 
-This tool loads a diffusion pattern file, extracts the DIA matrix, computes
-the ATA inverse matrices, and saves them back to the file.
+This tool loads a diffusion pattern file, extracts the DIA or Dense ATA matrix,
+computes the ATA inverse matrices, and saves them back to the file.
+
+Supports both DiagonalATAMatrix (DIA) and DenseATAMatrix formats.
 """
 
 import argparse
@@ -17,9 +19,115 @@ import numpy as np
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
+from src.utils.dense_ata_matrix import DenseATAMatrix
 from src.utils.diagonal_ata_matrix import DiagonalATAMatrix
 
 logger = logging.getLogger(__name__)
+
+
+def compute_ata_inverse_from_dense(
+    dense_matrix: DenseATAMatrix,
+    regularization: float = 1e-6,
+    max_condition_number: float = 1e12,
+    output_fp16: bool = False,
+) -> tuple:
+    """
+    Compute ATA inverse matrices from Dense ATA matrix.
+
+    Args:
+        dense_matrix: DenseATAMatrix instance
+        regularization: Regularization parameter for numerical stability
+        max_condition_number: Maximum condition number to accept
+        output_fp16: Whether to output FP16 format (if input ATA matrix is FP16)
+
+    Returns:
+        Tuple of (ata_inverse, successful_inversions, condition_numbers, avg_condition_number)
+    """
+    print(f"Computing ATA inverse from Dense format: {dense_matrix.led_count} LEDs, {dense_matrix.memory_mb:.1f}MB")
+
+    # Detect input format and decide output format
+    input_storage_fp16 = dense_matrix.storage_dtype == np.float16
+    input_output_fp16 = dense_matrix.output_dtype == np.float16
+
+    # Use FP16 output if storage is FP16, output is FP16, or explicitly requested
+    use_fp16_output = input_storage_fp16 or input_output_fp16 or output_fp16
+    output_dtype = np.float16 if use_fp16_output else np.float32
+
+    if input_storage_fp16:
+        print("  Detected FP16 storage ATA matrix - will output FP16 inverse")
+    elif input_output_fp16:
+        print("  Detected FP16 output ATA matrix - will output FP16 inverse")
+    elif output_fp16:
+        print("  Using FP16 output format as requested")
+    else:
+        print("  Using FP32 output format")
+
+    led_count = dense_matrix.led_count
+    ata_inverse = np.zeros((3, led_count, led_count), dtype=output_dtype)
+    condition_numbers = []
+    successful_inversions = 0
+
+    # Ensure matrices are available on CPU
+    if dense_matrix.dense_matrices_cpu is None:
+        if dense_matrix.dense_matrices_gpu is not None:
+            import cupy as cp
+
+            dense_matrix.dense_matrices_cpu = cp.asnumpy(dense_matrix.dense_matrices_gpu)
+        else:
+            raise RuntimeError("Dense ATA matrices not available on CPU or GPU")
+
+    for c in range(3):
+        channel_name = ["Red", "Green", "Blue"][c]
+        print(f"  Channel {c} ({channel_name})...")
+
+        try:
+            # Get dense matrix for this channel
+            ata_dense = dense_matrix.dense_matrices_cpu[c].astype(np.float32)  # Convert to FP32 for computation
+
+            # Add regularization for numerical stability
+            ata_regularized = ata_dense + regularization * np.eye(led_count, dtype=np.float32)
+
+            # Compute condition number for stability assessment
+            cond_num = np.linalg.cond(ata_regularized)
+            condition_numbers.append(cond_num)
+            print(f"    Condition number: {cond_num:.2e}")
+
+            if cond_num > max_condition_number:
+                print(f"    ⚠️  High condition number ({cond_num:.2e}), using pseudo-inverse")
+                # Use pseudo-inverse for ill-conditioned matrices
+                ata_inverse[c, :, :] = np.linalg.pinv(ata_regularized).astype(output_dtype)
+            else:
+                print("    ✅ Computing dense inverse using linalg.inv")
+                # Use standard matrix inversion
+                ata_inverse[c, :, :] = np.linalg.inv(ata_regularized).astype(output_dtype)
+                successful_inversions += 1
+
+        except Exception as e:
+            print(f"    ❌ Error computing inverse: {e}")
+            print("    Using pseudo-inverse as fallback")
+            condition_numbers.append(float("inf"))
+
+            # Fallback: use pseudo-inverse
+            try:
+                ata_dense = dense_matrix.dense_matrices_cpu[c].astype(np.float32)
+                ata_regularized = ata_dense + regularization * np.eye(led_count, dtype=np.float32)
+                ata_inverse[c, :, :] = np.linalg.pinv(ata_regularized).astype(output_dtype)
+            except Exception as e2:
+                print(f"    ❌ Pseudo-inverse also failed: {e2}")
+                # Last resort: identity matrix scaled by regularization
+                ata_inverse[c, :, :] = np.eye(led_count, dtype=output_dtype) / regularization
+
+    # Calculate average condition number (excluding infinite values)
+    finite_cond_nums = [cn for cn in condition_numbers if cn != float("inf")]
+    avg_condition_number = np.mean(finite_cond_nums) if finite_cond_nums else float("inf")
+
+    print("ATA inverse computation summary:")
+    print(f"  Successful inversions: {successful_inversions}/3")
+    print(f"  Average condition number: {avg_condition_number:.2e}")
+    print(f"  Output shape: {ata_inverse.shape}")
+    print(f"  Memory usage: {ata_inverse.nbytes / 1024 / 1024:.1f} MB")
+
+    return ata_inverse, successful_inversions, condition_numbers, avg_condition_number
 
 
 def compute_ata_inverse_from_dia(
@@ -207,6 +315,12 @@ def main():
         if "ata_inverse" in data:
             has_ata_inverse = True
             print("✅ ATA inverse already exists in file")
+        elif "dense_ata_matrix" in data:
+            # Check if dense ATA matrix has built-in inverse (future feature)
+            dense_dict = data["dense_ata_matrix"].item()
+            if "ata_inverse" in dense_dict:
+                has_ata_inverse = True
+                print("✅ ATA inverse already exists in dense ATA matrix")
         elif "dense_ata" in data:
             dense_ata_dict = data["dense_ata"].item()
             if "ata_inverse" in dense_ata_dict or "dense_ata_inverse_matrices" in dense_ata_dict:
@@ -235,7 +349,40 @@ def main():
         input_was_fp16 = False
 
         # Load DIA matrix or dense ATA matrices
-        if "dia_matrix" in data:
+        if "dense_ata_matrix" in data:
+            print("Loading Dense ATA matrix...")
+            dense_dict = data["dense_ata_matrix"].item()
+            dense_matrix = DenseATAMatrix.from_dict(dense_dict)
+
+            # Check if input is FP16 (check storage dtype for mixed precision)
+            input_was_fp16 = (dense_matrix.storage_dtype == np.float16) or dense_matrix.output_dtype == np.float16
+
+            print(f"Dense ATA matrix loaded: {dense_matrix.led_count} LEDs, {dense_matrix.memory_mb:.1f}MB")
+
+            # Create backup if requested
+            if args.backup:
+                backup_path = pattern_file.with_suffix(".bak.npz")
+                print(f"Creating backup: {backup_path}")
+                import shutil
+
+                shutil.copy2(str(pattern_file), str(backup_path))
+
+            # Compute ATA inverse from Dense matrix
+            start_time = time.perf_counter()
+            (
+                ata_inverse,
+                successful_inversions,
+                condition_numbers,
+                avg_condition_number,
+            ) = compute_ata_inverse_from_dense(
+                dense_matrix,
+                regularization=args.regularization,
+                max_condition_number=args.max_condition,
+                output_fp16=args.fp16,
+            )
+            computation_time = time.perf_counter() - start_time
+
+        elif "dia_matrix" in data:
             print("Loading DIA matrix...")
             dia_dict = data["dia_matrix"].item()
             dia_matrix = DiagonalATAMatrix.from_dict(dia_dict)
@@ -282,6 +429,8 @@ def main():
 
         else:
             print("❌ No DIA matrix or dense ATA matrices found in pattern file")
+            print("   Expected keys: 'dia_matrix' or 'dense_ata_matrix'")
+            print(f"   Available keys: {list(data.keys())}")
             return 1
 
         print(f"ATA inverse computation completed in {computation_time:.2f}s")
