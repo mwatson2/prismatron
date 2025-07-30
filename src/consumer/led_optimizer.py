@@ -22,6 +22,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from ..const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
+from ..utils.dense_ata_matrix import DenseATAMatrix
 from ..utils.diagonal_ata_matrix import DiagonalATAMatrix
 from ..utils.frame_optimizer import (
     load_ata_inverse_from_pattern,
@@ -97,8 +98,9 @@ class LEDOptimizer:
         self.convergence_threshold = 1e-3
         self.step_size_scaling = 0.9
 
-        # ATA matrices: DIA format for efficiency, dense inverse for optimal initialization
-        self._diagonal_ata_matrix = None  # DiagonalATAMatrix instance for sparse ATA operations
+        # ATA matrices: Dense format preferred, DIA format for efficiency, dense inverse for optimal initialization
+        self._dense_ata_matrix = None  # DenseATAMatrix instance for dense ATA operations (preferred)
+        self._diagonal_ata_matrix = None  # DiagonalATAMatrix instance for sparse ATA operations (fallback)
         self._ATA_inverse_gpu = None  # Shape: (3, led_count, led_count) - inverse on GPU
         self._ATA_inverse_cpu = None  # Shape: (3, led_count, led_count) - inverse on CPU
         self._has_ata_inverse = False  # Whether ATA inverse matrices are available
@@ -186,7 +188,12 @@ class LEDOptimizer:
 
             logger.info("LED optimizer initialized successfully")
             logger.info(f"LED count: {self._actual_led_count}")
-            logger.info(f"ATA format: {'DIA sparse' if self._diagonal_ata_matrix else 'None'}")
+            if self._dense_ata_matrix is not None:
+                logger.info("ATA format: Dense (preferred)")
+            elif self._diagonal_ata_matrix is not None:
+                logger.info("ATA format: DIA sparse (fallback)")
+            else:
+                logger.info("ATA format: None")
             logger.info(f"Device: {self.device_info['device']}")
             return True
 
@@ -197,7 +204,7 @@ class LEDOptimizer:
     def _load_precomputed_ata_matrices(self, data: np.lib.npyio.NpzFile) -> bool:
         """
         Load precomputed A^T@A matrices from the pattern file if available.
-        Uses DiagonalATAMatrix for sparse ATA storage and loads dense inverse if available.
+        Prioritizes DenseATAMatrix over DiagonalATAMatrix when both formats are present.
 
         Args:
             data: Loaded NPZ file data
@@ -206,9 +213,21 @@ class LEDOptimizer:
             True if precomputed matrices were loaded successfully, False otherwise
         """
         try:
-            # Check for diagonal ATA matrix first (preferred format)
-            if "diagonal_ata_matrix" in data:
-                logger.debug("Loading A^T@A matrices from diagonal_ata_matrix key")
+            # Check for dense ATA matrix first (preferred format)
+            if "dense_ata_matrix" in data:
+                logger.debug("Loading A^T@A matrices from dense_ata_matrix key (preferred format)")
+                dense_ata_dict = data["dense_ata_matrix"].item()
+                self._dense_ata_matrix = DenseATAMatrix.from_dict(dense_ata_dict)
+                logger.info(f"Loaded dense A^T@A matrix: {self._dense_ata_matrix.led_count} LEDs")
+                logger.info(f"Dense format - shape: {self._dense_ata_matrix.dense_matrices_cpu.shape}")
+
+                # Calculate dense memory usage
+                dense_memory_mb = self._dense_ata_matrix.memory_mb
+                logger.info(f"Dense A^T@A memory: {dense_memory_mb:.1f}MB")
+
+            # Check for diagonal ATA matrix (fallback format)
+            elif "diagonal_ata_matrix" in data:
+                logger.debug("Loading A^T@A matrices from diagonal_ata_matrix key (fallback format)")
                 diagonal_ata_dict = data["diagonal_ata_matrix"].item()
                 # Create with FP32 storage and computation for stability with real hardware patterns
                 self._diagonal_ata_matrix = DiagonalATAMatrix.from_dict(diagonal_ata_dict)
@@ -569,10 +588,15 @@ class LEDOptimizer:
             # Use standardized frame optimizer with ATA inverse
             from ..utils.frame_optimizer import FrameOptimizationResult
 
+            # Determine which ATA matrix to use - prefer dense format
+            ata_matrix = self._dense_ata_matrix if self._dense_ata_matrix is not None else self._diagonal_ata_matrix
+            if ata_matrix is None:
+                raise RuntimeError("No ATA matrix available (neither dense nor DIA format)")
+
             result_frame_opt = optimize_frame_led_values(
                 target_frame=target_frame,
                 at_matrix=self._mixed_tensor,  # Updated parameter name
-                ata_matrix=self._diagonal_ata_matrix,  # Updated parameter name
+                ata_matrix=ata_matrix,  # Use dense matrix if available, otherwise DIA
                 ata_inverse=self._ATA_inverse_cpu,  # Required parameter - use CPU version
                 initial_values=initial_values_frame_opt,
                 max_iterations=max_iterations if max_iterations is not None else self.max_iterations,
@@ -596,11 +620,19 @@ class LEDOptimizer:
                 target_frame=target_frame.copy() if debug else None,
                 precomputation_info=(
                     {
-                        "ata_format": ("DIA_sparse" if self._diagonal_ata_matrix else "None"),
+                        "ata_format": (
+                            "Dense"
+                            if self._dense_ata_matrix is not None
+                            else "DIA_sparse" if self._diagonal_ata_matrix is not None else "None"
+                        ),
                         "ata_memory_mb": (
-                            self._diagonal_ata_matrix.dia_data_cpu.nbytes / (1024 * 1024)
-                            if self._diagonal_ata_matrix and self._diagonal_ata_matrix.dia_data_cpu is not None
-                            else 0
+                            self._dense_ata_matrix.memory_mb
+                            if self._dense_ata_matrix is not None
+                            else (
+                                self._diagonal_ata_matrix.dia_data_cpu.nbytes / (1024 * 1024)
+                                if self._diagonal_ata_matrix and self._diagonal_ata_matrix.dia_data_cpu is not None
+                                else 0
+                            )
                         ),
                         "approach": "standardized_frame_optimizer",
                         "frame_optimizer_timing": result_frame_opt.timing_data,
@@ -879,7 +911,14 @@ class LEDOptimizer:
 
         if self._matrix_loaded:
             ata_info = {}
-            if self._diagonal_ata_matrix:
+            if self._dense_ata_matrix is not None:
+                ata_info = {
+                    "ata_format": "Dense",
+                    "ata_shape": self._dense_ata_matrix.dense_matrices_cpu.shape,
+                    "ata_memory_mb": self._dense_ata_matrix.memory_mb,
+                    "approach_description": "Standardized frame optimizer with mixed tensor and dense ATA matrix",
+                }
+            elif self._diagonal_ata_matrix is not None:
                 ata_info = {
                     "ata_format": "DIA_sparse",
                     "ata_bandwidth": self._diagonal_ata_matrix.bandwidth,
