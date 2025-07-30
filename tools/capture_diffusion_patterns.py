@@ -57,6 +57,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
 from src.consumer.wled_client import WLEDClient, WLEDConfig
+from src.utils.dense_ata_matrix import DenseATAMatrix
 from src.utils.diagonal_ata_matrix import DiagonalATAMatrix
 from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 from src.utils.spatial_ordering import compute_rcm_ordering
@@ -790,6 +791,97 @@ class DiffusionPatternCapture:
 
         return dia_matrix
 
+    def _generate_dense_ata_matrix(self) -> DenseATAMatrix:
+        """
+        Generate DenseATAMatrix from captured mixed tensor.
+
+        Returns:
+            DenseATAMatrix object
+        """
+        logger.info("Building DenseATAMatrix from captured patterns...")
+
+        # Determine dtypes based on precision
+        if self.precision == "fp16":
+            # Mixed precision: FP16 storage, FP32 computation
+            storage_dtype = cp.float16
+            output_dtype = cp.float32
+            logger.info("Using mixed precision: FP16 storage with FP32 computation")
+        else:
+            # Standard FP32 for both storage and computation
+            storage_dtype = cp.float32
+            output_dtype = cp.float32
+            logger.info("Using FP32 storage and computation")
+
+        # Create DenseATAMatrix instance
+        dense_matrix = DenseATAMatrix(
+            led_count=self.led_count, channels=3, storage_dtype=storage_dtype, output_dtype=output_dtype
+        )
+
+        # Convert mixed tensor to sparse matrix for computation
+        logger.info("Converting mixed tensor to sparse matrix for dense ATA computation...")
+        sparse_matrix = self._mixed_tensor_to_sparse_matrix()
+
+        # Build dense matrix from sparse matrix
+        dense_matrix.build_from_diffusion_matrix(sparse_matrix)
+
+        logger.info(f"DenseATAMatrix built: {self.led_count} LEDs, {dense_matrix.memory_mb:.1f}MB")
+        return dense_matrix
+
+    def _choose_ata_format(self) -> str:
+        """
+        Choose optimal ATA matrix format based on captured pattern characteristics.
+
+        Returns:
+            "dia" for diagonal format, "dense" for dense format
+        """
+        # For format selection, we need to estimate the bandwidth from LED positions
+        # Import the function to calculate block positions
+        from tools.led_position_utils import calculate_block_positions
+
+        # Calculate block positions for captured LEDs
+        block_positions = calculate_block_positions(self.led_positions, self.block_size, FRAME_WIDTH, FRAME_HEIGHT)
+
+        # Estimate bandwidth using RCM ordering
+        _, _, expected_diagonals = compute_rcm_ordering(block_positions, self.block_size)
+
+        # Heuristics for format selection (similar to synthetic generator):
+        # - Use dense if bandwidth > 80% of matrix size
+        # - Use dense if expected diagonals > LED count (very dense)
+        # - For captured patterns, be more conservative since they tend to be denser
+
+        bandwidth_ratio = expected_diagonals / (2 * self.led_count - 1) if self.led_count > 1 else 1.0
+
+        # Memory estimates (rough)
+        dia_memory_mb = (3 * expected_diagonals * self.led_count * 4) / (1024 * 1024)  # FP32
+        dense_memory_mb = (3 * self.led_count * self.led_count * 4) / (1024 * 1024)  # FP32
+
+        logger.info(f"ATA format selection analysis for captured patterns:")
+        logger.info(f"  LED count: {self.led_count}")
+        logger.info(f"  Expected diagonals: {expected_diagonals}")
+        logger.info(f"  Bandwidth ratio: {bandwidth_ratio:.3f}")
+        logger.info(f"  Estimated DIA memory: {dia_memory_mb:.1f}MB")
+        logger.info(f"  Estimated dense memory: {dense_memory_mb:.1f}MB")
+
+        # Decision logic - captured patterns tend to be denser, so use lower thresholds
+        if bandwidth_ratio > 0.6:  # Lower threshold for captured data
+            format_choice = "dense"
+            reason = f"High bandwidth ratio ({bandwidth_ratio:.3f} > 0.6)"
+        elif expected_diagonals > self.led_count * 0.8:  # More conservative threshold
+            format_choice = "dense"
+            reason = f"Many diagonals ({expected_diagonals} > {self.led_count * 0.8:.0f})"
+        elif self.led_count < 1000:  # Lower threshold for small matrices
+            format_choice = "dense"
+            reason = f"Small matrix ({self.led_count} LEDs)"
+        elif dense_memory_mb < dia_memory_mb * 1.5:  # Dense is only 50% more memory
+            format_choice = "dense"
+            reason = f"Dense memory overhead acceptable ({dense_memory_mb:.1f}MB vs {dia_memory_mb:.1f}MB)"
+        else:
+            format_choice = "dia"
+            reason = f"Sparse matrix benefits from DIA format"
+
+        logger.info(f"  Selected format: {format_choice.upper()} ({reason})")
+        return format_choice
+
     def _mixed_tensor_to_sparse_matrix(self) -> sp.csc_matrix:
         """
         Convert mixed tensor to equivalent sparse CSC matrix for DIA matrix computation.
@@ -838,8 +930,14 @@ class DiffusionPatternCapture:
                             # Column index for this LED/channel
                             matrix_col_idx = led_id * 3 + channel
 
-                            # Value
-                            value = float(block_np[br, bc])
+                            # Value - normalize uint8 to [0,1] range if needed
+                            raw_value = float(block_np[br, bc])
+                            if self.use_uint8:
+                                # Mixed tensor stores uint8 [0,255], normalize to [0,1] for diffusion matrix
+                                value = raw_value / 255.0
+                            else:
+                                # Mixed tensor stores float32 [0,1], use directly
+                                value = raw_value
 
                             rows.append(pixel_idx)
                             cols.append(matrix_col_idx)
@@ -878,9 +976,19 @@ class DiffusionPatternCapture:
             output_dir = Path(output_path).parent
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Generate DiagonalATAMatrix (DIA format) from mixed tensor
-            logger.info("Generating DiagonalATAMatrix (DIA format)...")
-            dia_matrix = self._generate_dia_matrix()
+            # Choose optimal ATA matrix format based on captured pattern characteristics
+            ata_format = self._choose_ata_format()
+
+            if ata_format == "dense":
+                # Generate DenseATAMatrix
+                logger.info("Generating DenseATAMatrix (dense format)...")
+                ata_matrix = self._generate_dense_ata_matrix()
+                save_dict_key = "dense_ata_matrix"
+            else:
+                # Generate DiagonalATAMatrix (DIA format)
+                logger.info("Generating DiagonalATAMatrix (DIA format)...")
+                ata_matrix = self._generate_dia_matrix()
+                save_dict_key = "dia_matrix"
 
             # Prepare metadata matching synthetic generation tool format
             save_metadata = {
@@ -924,8 +1032,8 @@ class DiffusionPatternCapture:
                 "metadata": save_metadata,
                 # Mixed tensor stored as nested element using to_dict()
                 "mixed_tensor": self.mixed_tensor.to_dict(),
-                # DIA format A^T @ A matrix
-                "dia_matrix": dia_matrix.to_dict(),
+                # ATA matrix in chosen format
+                save_dict_key: ata_matrix.to_dict(),
             }
 
             np.savez_compressed(output_path, **save_dict)
@@ -933,9 +1041,16 @@ class DiffusionPatternCapture:
             # Log file info
             file_size = Path(output_path).stat().st_size / (1024 * 1024)  # MB
 
-            logger.info(f"Saved mixed tensor, DIA matrix, and metadata to {output_path}")
+            logger.info(f"Saved mixed tensor and {ata_format.upper()} ATA matrix to {output_path}")
             logger.info(f"File size: {file_size:.1f} MB")
             logger.info("Mixed tensor format: SingleBlockMixedSparseTensor")
+
+            if ata_format == "dense":
+                logger.info(f"Dense ATA matrix: {ata_matrix.led_count} LEDs, {ata_matrix.memory_mb:.1f}MB")
+            else:
+                logger.info(
+                    f"DIA matrix: {ata_matrix.led_count} LEDs, bandwidth={ata_matrix.bandwidth}, k={ata_matrix.k} diagonals"
+                )
             logger.info(
                 f"Mixed tensor: {self.mixed_tensor.batch_size} LEDs, "
                 f"{self.mixed_tensor.height}x{self.mixed_tensor.width}, "

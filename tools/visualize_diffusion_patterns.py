@@ -58,6 +58,7 @@ FRAME_HEIGHT = 480
 FRAME_WIDTH = 800
 LED_COUNT = 2600
 
+from utils.dense_ata_matrix import DenseATAMatrix
 from utils.diagonal_ata_matrix import DiagonalATAMatrix
 from utils.frame_optimizer import optimize_frame_led_values
 
@@ -94,6 +95,7 @@ class DiffusionPatternVisualizer:
         self.led_spatial_mapping: Optional[Dict] = None
         self.dense_ata_data: Optional[Dict] = None
         self.dia_matrix_data: Optional[Dict] = None
+        self.ata_matrix_format: Optional[str] = None  # "dia" or "dense"
         self.ata_inverse_data: Optional[np.ndarray] = None
 
         # Image directories - relative to project root
@@ -161,10 +163,23 @@ class DiffusionPatternVisualizer:
             if self.led_spatial_mapping is not None and hasattr(self.led_spatial_mapping, "item"):
                 self.led_spatial_mapping = self.led_spatial_mapping.item()
 
-            # Load DIA matrix data if available
+            # Load ATA matrix data - support both DIA and dense formats
             self.dia_matrix_data = data.get("dia_matrix", None)
             if self.dia_matrix_data is not None and hasattr(self.dia_matrix_data, "item"):
                 self.dia_matrix_data = self.dia_matrix_data.item()
+                self.ata_matrix_format = "dia"
+                logger.info("Loaded DIA format ATA matrix")
+
+            self.dense_ata_data = data.get("dense_ata_matrix", None)
+            if self.dense_ata_data is not None and hasattr(self.dense_ata_data, "item"):
+                self.dense_ata_data = self.dense_ata_data.item()
+                self.ata_matrix_format = "dense"
+                logger.info("Loaded dense format ATA matrix")
+
+            # Check if we have both formats (shouldn't happen normally)
+            if self.dia_matrix_data is not None and self.dense_ata_data is not None:
+                logger.warning("Found both DIA and dense formats - using dense format")
+                self.ata_matrix_format = "dense"
 
             # Load ATA inverse data if available
             self.ata_inverse_data = data.get("ata_inverse", None)
@@ -243,8 +258,10 @@ class DiffusionPatternVisualizer:
                     ),
                 }
 
-            # Add DIA matrix info if available
-            if self.dia_matrix_data:
+            # Add ATA matrix information based on format
+            metadata_response["ata_matrix_format"] = self.ata_matrix_format
+
+            if self.ata_matrix_format == "dia" and self.dia_matrix_data:
                 metadata_response["dia_matrix_info"] = {
                     "led_count": self.dia_matrix_data["led_count"],
                     "bandwidth": self.dia_matrix_data["bandwidth"],
@@ -269,6 +286,25 @@ class DiffusionPatternVisualizer:
                     metadata_response["dia_matrix_info"]["storage_dtype"] = str(self.dia_matrix_data["storage_dtype"])
                 if "output_dtype" in self.dia_matrix_data:
                     metadata_response["dia_matrix_info"]["output_dtype"] = str(self.dia_matrix_data["output_dtype"])
+
+            elif self.ata_matrix_format == "dense" and self.dense_ata_data:
+                # Get matrix shape from data or compute it
+                led_count = self.dense_ata_data["led_count"]
+                channels = self.dense_ata_data["channels"]
+                matrix_shape = self.dense_ata_data.get("matrix_shape", [channels, led_count, led_count])
+
+                metadata_response["dense_ata_info"] = {
+                    "led_count": led_count,
+                    "channels": channels,
+                    "memory_mb": self.dense_ata_data["memory_mb"],
+                    "version": self.dense_ata_data["version"],
+                    "matrix_shape": matrix_shape,
+                }
+                # Add storage/output dtype info
+                if "storage_dtype" in self.dense_ata_data:
+                    metadata_response["dense_ata_info"]["storage_dtype"] = str(self.dense_ata_data["storage_dtype"])
+                if "output_dtype" in self.dense_ata_data:
+                    metadata_response["dense_ata_info"]["output_dtype"] = str(self.dense_ata_data["output_dtype"])
 
             # Add ATA inverse info if available
             if self.ata_inverse_data is not None:
@@ -479,32 +515,55 @@ class DiffusionPatternVisualizer:
         @self.app.route("/api/ata_matrix/<int:channel>")
         def get_ata_matrix(channel):
             """Get ATA matrix visualization for a specific channel."""
-            if self.dia_matrix_data is None:
-                return jsonify({"error": "No DIA matrix data available"}), 404
+            if self.ata_matrix_format is None:
+                return jsonify({"error": "No ATA matrix data available"}), 404
 
             if channel < 0 or channel >= 3:
                 return jsonify({"error": "Invalid channel, must be 0, 1, or 2"}), 400
 
             try:
-                # Get the DIA matrix data for this channel
-                dia_data = self.dia_matrix_data["dia_data_3d"][channel]  # Shape: (k, led_count)
-                dia_offsets = self.dia_matrix_data["dia_offsets_3d"]  # Shape: (k,)
-                led_count = self.dia_matrix_data["led_count"]
+                if self.ata_matrix_format == "dia":
+                    # Get the DIA matrix data for this channel
+                    dia_data = self.dia_matrix_data["dia_data_3d"][channel]  # Shape: (k, led_count)
+                    dia_offsets = self.dia_matrix_data["dia_offsets_3d"]  # Shape: (k,)
+                    led_count = self.dia_matrix_data["led_count"]
 
-                # Convert DIA format to dense for visualization
-                dense_matrix = self._dia_to_dense(dia_data, dia_offsets, led_count)
+                    # Convert DIA format to dense for visualization
+                    dense_matrix = self._dia_to_dense(dia_data, dia_offsets, led_count)
 
-                # Use the extracted function to create image response
-                response_data = self._ata_matrix_to_image(dense_matrix, channel)
+                    # Use the extracted function to create image response
+                    response_data = self._ata_matrix_to_image(dense_matrix, channel)
 
-                # Add ATA-specific metadata
-                response_data.update(
-                    {
-                        "bandwidth": self.dia_matrix_data["bandwidth"],
-                        "k_diagonals": self.dia_matrix_data["k"],
-                        "sparsity": self.dia_matrix_data["sparsity"],
-                    }
-                )
+                    # Add DIA-specific metadata
+                    response_data.update(
+                        {
+                            "format": "dia",
+                            "bandwidth": self.dia_matrix_data["bandwidth"],
+                            "k_diagonals": self.dia_matrix_data["k"],
+                            "sparsity": self.dia_matrix_data["sparsity"],
+                        }
+                    )
+
+                elif self.ata_matrix_format == "dense":
+                    # Get the dense matrix data for this channel
+                    dense_matrices = self.dense_ata_data["dense_matrices"]  # Shape: (3, led_count, led_count)
+                    dense_matrix = dense_matrices[channel]  # Shape: (led_count, led_count)
+
+                    # Use the extracted function to create image response
+                    response_data = self._ata_matrix_to_image(dense_matrix, channel)
+
+                    # Add dense-specific metadata
+                    led_count = self.dense_ata_data["led_count"]
+                    channels = self.dense_ata_data["channels"]
+                    matrix_shape = self.dense_ata_data.get("matrix_shape", [channels, led_count, led_count])
+
+                    response_data.update(
+                        {
+                            "format": "dense",
+                            "memory_mb": self.dense_ata_data["memory_mb"],
+                            "matrix_shape": matrix_shape,
+                        }
+                    )
 
                 return jsonify(response_data)
 
@@ -941,8 +1000,8 @@ class DiffusionPatternVisualizer:
                 return None
 
             # Check if we have the required data loaded
-            if self.mixed_tensor is None or self.ata_inverse_data is None or self.dia_matrix_data is None:
-                logger.error("Missing required optimization data (mixed_tensor, ata_inverse, or dia_matrix)")
+            if self.mixed_tensor is None or self.ata_inverse_data is None or self.ata_matrix_format is None:
+                logger.error("Missing required optimization data (mixed_tensor, ata_inverse, or ata_matrix)")
                 return None
 
             # Find source image
@@ -971,16 +1030,29 @@ class DiffusionPatternVisualizer:
 
             logger.info(f"Target frame shape: {target_frame.shape}")
 
-            # Create DiagonalATAMatrix from loaded DIA data
-            ata_matrix = DiagonalATAMatrix.from_dict(self.dia_matrix_data)
+            # Create ATA matrix from loaded data based on format
+            if self.ata_matrix_format == "dia":
+                ata_matrix = DiagonalATAMatrix.from_dict(self.dia_matrix_data)
+                logger.info(f"Using DIA format ATA matrix: {ata_matrix.led_count} LEDs, {ata_matrix.k} diagonals")
+            elif self.ata_matrix_format == "dense":
+                ata_matrix = DenseATAMatrix.from_dict(self.dense_ata_data)
+                logger.info(f"Using dense format ATA matrix: {ata_matrix.led_count} LEDs, {ata_matrix.memory_mb:.1f}MB")
+            else:
+                logger.error(f"Unknown ATA matrix format: {self.ata_matrix_format}")
+                return None
 
             # Run frame optimization using the production frame_optimizer
             logger.info("Running frame optimization...")
+
+            # For dense format, we still use the numpy array ATA inverse
+            # The DenseATAMatrix is only for the forward ATA matrix, not the inverse
+            ata_inverse_to_use = self.ata_inverse_data
+
             result = optimize_frame_led_values(
                 target_frame=target_frame,
                 at_matrix=self.mixed_tensor,
                 ata_matrix=ata_matrix,
-                ata_inverse=self.ata_inverse_data,
+                ata_inverse=ata_inverse_to_use,
                 max_iterations=10,
                 convergence_threshold=0.3,
                 step_size_scaling=0.9,
@@ -1118,7 +1190,7 @@ class DiffusionPatternVisualizer:
         return dense
 
     def _matrix_to_image(self, matrix: np.ndarray) -> str:
-        """Convert matrix to base64 image for visualization."""
+        """Convert matrix to base64 image for visualization using log magnitude color scale."""
         try:
             if not PIL_AVAILABLE:
                 return ""
@@ -1127,90 +1199,208 @@ class DiffusionPatternVisualizer:
             logger.debug(f"Matrix shape: {matrix.shape}, dtype: {matrix.dtype}")
             logger.debug(f"Matrix min: {np.min(matrix)}, max: {np.max(matrix)}")
 
-            # Check if matrix contains mostly zeros (sparse matrix)
-            nonzero_count = np.count_nonzero(matrix)
-            total_elements = matrix.size
-            sparsity = 1.0 - (nonzero_count / total_elements)
-            logger.debug(f"Sparsity: {sparsity:.4f} ({nonzero_count}/{total_elements} non-zero)")
+            # Always use log magnitude with color scale for ATA matrices
+            matrix_abs = np.abs(matrix)
+            nonzero_mask = matrix_abs > 0
 
-            if sparsity > 0.9:  # Very sparse matrix - use log magnitude visualization
-                matrix_abs = np.abs(matrix)
-                nonzero_mask = matrix_abs > 0
+            # Create log magnitude visualization
+            if np.any(nonzero_mask):
+                nonzero_values = matrix_abs[nonzero_mask]
+                min_nonzero = np.min(nonzero_values)
+                max_nonzero = np.max(nonzero_values)
 
-                if np.any(nonzero_mask):
-                    nonzero_values = matrix_abs[nonzero_mask]
-                    min_nonzero = np.min(nonzero_values)
+                logger.debug(f"Value range: {min_nonzero:.2e} to {max_nonzero:.2e}")
 
-                    # Use a reasonable threshold to avoid log issues
-                    threshold = max(min_nonzero * 1e-6, 1e-10)
-                    matrix_clamped = np.where(matrix_abs < threshold, threshold, matrix_abs)
+                # Use a reasonable threshold to avoid log issues
+                # Set floor at 1e-6 of the minimum non-zero value to distinguish from true zeros
+                threshold = max(min_nonzero * 1e-6, 1e-15)
+                matrix_clamped = np.where(matrix_abs < threshold, 0, matrix_abs)  # Keep zeros as zeros
 
-                    # Apply log10 transformation
-                    with np.errstate(divide="ignore", invalid="ignore"):
-                        log_matrix = np.log10(matrix_clamped)
+                # Debug threshold and values
+                original_nonzeros = np.sum(matrix_abs > 0)
+                after_threshold_nonzeros = np.sum(matrix_clamped > 0)
+                logger.debug(f"Threshold: {threshold:.2e}")
+                logger.debug(f"Non-zeros before threshold: {original_nonzeros}, after: {after_threshold_nonzeros}")
 
-                    # Replace any remaining inf/-inf/nan values
-                    log_matrix = np.where(np.isfinite(log_matrix), log_matrix, np.log10(threshold))
+                # Apply log10 transformation only to non-zero values
+                log_matrix = np.zeros_like(matrix_abs, dtype=np.float32)
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    log_values = np.log10(matrix_clamped)
+                    # Only update non-zero positions
+                    valid_mask = np.isfinite(log_values) & (matrix_clamped > 0)
+                    log_matrix[valid_mask] = log_values[valid_mask]
 
-                    # Normalize to 0-255 range
-                    log_min, log_max = np.min(log_matrix), np.max(log_matrix)
-                    logger.debug(f"Log range: {log_min} to {log_max}")
+                # Get log range for normalization (excluding zeros)
+                if np.any(valid_mask):
+                    log_min = np.min(log_matrix[valid_mask])
+                    log_max = np.max(log_matrix[valid_mask])
+                    logger.debug(f"Log range: {log_min:.2f} to {log_max:.2f}")
+
                     if log_max > log_min:
-                        normalized = ((log_matrix - log_min) / (log_max - log_min) * 255).astype(np.uint8)
-                        logger.debug(f"Normalized range: {np.min(normalized)} to {np.max(normalized)}")
+                        # Normalize log values to [0, 1] for non-zero elements
+                        normalized_log = np.zeros_like(log_matrix)
+                        normalized_log[valid_mask] = (log_matrix[valid_mask] - log_min) / (log_max - log_min)
+
+                        # Create RGB color mapping: Red (low) -> Blue (high)
+                        # ALL non-zero values get minimum intensity of 0.2, only true zeros are black
+                        rgb_image = np.zeros((matrix.shape[0], matrix.shape[1], 3), dtype=np.uint8)
+
+                        # Count non-zero elements for debugging
+                        total_nonzero = np.sum(valid_mask)
+                        logger.debug(f"Processing {total_nonzero} non-zero elements out of {matrix.size} total")
+
+                        # Vectorized approach for better performance and debugging
+                        # Get all normalized log values for non-zero elements
+                        nonzero_vals = normalized_log[valid_mask]  # [0, 1] range
+
+                        # Apply minimum intensity floor to ALL non-zero values
+                        intensity_floor = 0.2  # 20% minimum intensity
+
+                        # Debug normalized log value distribution
+                        logger.debug(
+                            f"Normalized log values: min={np.min(nonzero_vals):.3f}, max={np.max(nonzero_vals):.3f}, mean={np.mean(nonzero_vals):.3f}"
+                        )
+
+                        # Check if values are clustered (causing purple issue)
+                        percentiles = [10, 25, 50, 75, 90]
+                        pct_vals = np.percentile(nonzero_vals, percentiles)
+                        logger.debug(f"Percentiles {percentiles}: {pct_vals}")
+
+                        # Calculate bandwidth and diagonal analysis
+                        rows, cols = np.where(valid_mask)
+                        if len(rows) > 0:
+                            distances_from_diagonal = rows - cols  # Signed distance (positive = above diagonal)
+                            max_distance = np.max(np.abs(distances_from_diagonal))  # Maximum absolute distance
+                            min_offset = np.min(distances_from_diagonal)
+                            max_offset = np.max(distances_from_diagonal)
+
+                            # Count actual non-zero diagonals
+                            unique_offsets = np.unique(distances_from_diagonal)
+                            num_nonzero_diagonals = len(unique_offsets)
+
+                            # DIA storage would need this many diagonals
+                            dia_storage_diagonals = max_offset - min_offset + 1
+
+                            diagonal_elements = np.sum(distances_from_diagonal == 0)
+                            near_diagonal = np.sum(np.abs(distances_from_diagonal) <= 10)
+
+                            logger.debug(f"Matrix bandwidth analysis:")
+                            logger.debug(f"  Max distance from diagonal: {max_distance}")
+                            logger.debug(f"  Diagonal offset range: {min_offset} to {max_offset}")
+                            logger.debug(f"  Actual non-zero diagonals: {num_nonzero_diagonals}")
+                            logger.debug(f"  DIA storage would need: {dia_storage_diagonals} diagonals")
+                            logger.debug(f"  Main diagonal elements: {diagonal_elements}")
+                            logger.debug(
+                                f"  Near diagonal (≤10): {near_diagonal}/{len(rows)} ({near_diagonal/len(rows)*100:.1f}%)"
+                            )
+                            logger.debug(f"  Overall sparsity: {(len(rows) / matrix.size) * 100:.2f}% non-zero")
+                        else:
+                            max_distance = 0
+                            num_nonzero_diagonals = 0
+                            logger.debug("No non-zero elements found")
+
+                        # Color mapping: Use aggressive spreading if values are concentrated
+                        val_range = np.max(nonzero_vals) - np.min(nonzero_vals)
+                        if val_range < 0.1:  # Very concentrated values
+                            logger.debug("Values are very concentrated, using histogram equalization")
+                            # Use histogram equalization to spread colors more evenly
+                            sorted_indices = np.argsort(nonzero_vals)
+                            color_vals = np.zeros_like(nonzero_vals)
+                            color_vals[sorted_indices] = np.linspace(0, 1, len(nonzero_vals))
+                        elif val_range < 0.5:  # Somewhat concentrated
+                            logger.debug("Values are concentrated, using power transform")
+                            color_vals = np.power(nonzero_vals, 0.3)  # More aggressive than sqrt
+                        else:
+                            logger.debug("Values are well distributed, using sqrt transform")
+                            color_vals = np.power(nonzero_vals, 0.5)  # Square root
+
+                        logger.debug(
+                            f"After color transform: min={np.min(color_vals):.3f}, max={np.max(color_vals):.3f}"
+                        )
+
+                        # Simple red-to-blue mapping with strong contrast
+                        # Red component: high for low values, zero for high values
+                        r_vals = np.where(
+                            color_vals < 0.5,
+                            intensity_floor + (1.0 - intensity_floor) * (1.0 - 2 * color_vals),
+                            intensity_floor * 0.1,
+                        )  # Very low red for high values
+
+                        # Blue component: zero for low values, high for high values
+                        b_vals = np.where(
+                            color_vals > 0.5,
+                            intensity_floor + (1.0 - intensity_floor) * (2 * color_vals - 1.0),
+                            intensity_floor * 0.1,
+                        )  # Very low blue for low values
+
+                        # Green component: minimal to maintain red-blue contrast
+                        g_vals = np.full_like(color_vals, intensity_floor * 0.1)
+
+                        # Debug color component ranges before conversion
+                        logger.debug(f"Color components before conversion:")
+                        logger.debug(f"  Red: min={np.min(r_vals):.3f}, max={np.max(r_vals):.3f}")
+                        logger.debug(f"  Green: min={np.min(g_vals):.3f}, max={np.max(g_vals):.3f}")
+                        logger.debug(f"  Blue: min={np.min(b_vals):.3f}, max={np.max(b_vals):.3f}")
+
+                        # Convert to 0-255 and assign to RGB image
+                        r_uint8 = np.clip(r_vals * 255, 0, 255).astype(np.uint8)
+                        g_uint8 = np.clip(g_vals * 255, 0, 255).astype(np.uint8)
+                        b_uint8 = np.clip(b_vals * 255, 0, 255).astype(np.uint8)
+
+                        rgb_image[valid_mask, 0] = r_uint8  # Red
+                        rgb_image[valid_mask, 1] = g_uint8  # Green
+                        rgb_image[valid_mask, 2] = b_uint8  # Blue
+
+                        # Debug final uint8 ranges
+                        logger.debug(f"Final uint8 ranges:")
+                        logger.debug(f"  Red: min={np.min(r_uint8)}, max={np.max(r_uint8)}")
+                        logger.debug(f"  Green: min={np.min(g_uint8)}, max={np.max(g_uint8)}")
+                        logger.debug(f"  Blue: min={np.min(b_uint8)}, max={np.max(b_uint8)}")
+
+                        # Debug: Check color distribution
+                        unique_colors = np.unique(rgb_image.reshape(-1, 3), axis=0)
+                        logger.debug(f"Generated {len(unique_colors)} unique colors")
+                        logger.debug(f"Sample colors: {unique_colors[:5]}")
+                        black_pixels = np.sum(np.all(rgb_image == [0, 0, 0], axis=2))
+                        colored_pixels = matrix.size - black_pixels
+                        logger.debug(
+                            f"Black pixels (zeros): {black_pixels}, Colored pixels (non-zeros): {colored_pixels}"
+                        )
+
+                        # Verify our mapping worked
+                        if colored_pixels != total_nonzero:
+                            logger.warning(f"Mismatch: Expected {total_nonzero} colored pixels, got {colored_pixels}")
+
+                        # Additional debug for intensity range
+                        if colored_pixels > 0:
+                            non_black_mask = ~np.all(rgb_image == [0, 0, 0], axis=2)
+                            min_intensity = np.min(rgb_image[non_black_mask])
+                            max_intensity = np.max(rgb_image[non_black_mask])
+                            logger.debug(f"Non-zero pixel intensity range: {min_intensity} to {max_intensity}")
+                            expected_min = int(intensity_floor * 255)
+                            logger.debug(f"Expected minimum intensity: {expected_min}")
+
+                        # else: pixels remain black (0,0,0) for true zeros
+
+                        logger.debug(
+                            f"RGB image range: R[{np.min(rgb_image[:,:,0])}-{np.max(rgb_image[:,:,0])}], "
+                            f"G[{np.min(rgb_image[:,:,1])}-{np.max(rgb_image[:,:,1])}], "
+                            f"B[{np.min(rgb_image[:,:,2])}-{np.max(rgb_image[:,:,2])}]"
+                        )
                     else:
-                        normalized = np.where(nonzero_mask, 128, 0).astype(np.uint8)
-                        logger.debug(f"Flat matrix - using fixed values")
+                        # Flat matrix - use single color
+                        rgb_image = np.zeros((matrix.shape[0], matrix.shape[1], 3), dtype=np.uint8)
+                        rgb_image[valid_mask] = [128, 0, 0]  # Dark red
                 else:
-                    normalized = np.zeros_like(matrix, dtype=np.uint8)
+                    # All zeros
+                    rgb_image = np.zeros((matrix.shape[0], matrix.shape[1], 3), dtype=np.uint8)
             else:
-                # Dense matrix - use linear scaling of absolute values
-                logger.debug("Using dense matrix visualization")
-                matrix_abs = np.abs(matrix)
-                max_abs = np.max(matrix_abs)
-                logger.debug(f"Max absolute value: {max_abs}")
-                if max_abs > 0:
-                    # Debug the exact normalization steps
-                    logger.debug(f"Starting normalization: max_abs = {max_abs} (type: {type(max_abs)})")
+                # All zeros
+                rgb_image = np.zeros((matrix.shape[0], matrix.shape[1], 3), dtype=np.uint8)
 
-                    # Step 1: Division
-                    ratio = matrix_abs / max_abs
-                    logger.debug(f"After division: min={np.min(ratio):.6f}, max={np.max(ratio):.6f}")
-
-                    # Step 2: Scale by 255
-                    scaled = ratio * 255
-                    logger.debug(f"After scaling by 255: min={np.min(scaled):.6f}, max={np.max(scaled):.6f}")
-
-                    # Step 3: Convert to uint8
-                    normalized = scaled.astype(np.uint8)
-                    logger.debug(f"After uint8 conversion: min={np.min(normalized)}, max={np.max(normalized)}")
-
-                    # Check for precision issues
-                    expected_max = int(np.max(scaled))
-                    actual_max = np.max(normalized)
-                    logger.debug(f"Expected max: {expected_max}, Actual max: {actual_max}")
-
-                    logger.debug(f"Sample values from different stages:")
-                    sample_indices = (slice(0, 3), slice(0, 3))
-                    logger.debug(f"  Original: {matrix_abs[sample_indices]}")
-                    logger.debug(f"  Ratio: {ratio[sample_indices]}")
-                    logger.debug(f"  Scaled: {scaled[sample_indices]}")
-                    logger.debug(f"  Final: {normalized[sample_indices]}")
-
-                    logger.debug(f"Non-zero count in normalized: {np.count_nonzero(normalized)}")
-                else:
-                    normalized = np.zeros_like(matrix_abs, dtype=np.uint8)
-                    logger.debug("All zeros - creating black image")
-
-            # Create PIL image
-            img = Image.fromarray(normalized, mode="L")
-            logger.debug(f"PIL image created: size={img.size}, mode={img.mode}")
-
-            # Debug: Check a sample of the PIL image
-            img_array_check = np.array(img)
-            logger.debug(
-                f"PIL image array check: min={np.min(img_array_check)}, max={np.max(img_array_check)}, nonzero={np.count_nonzero(img_array_check)}"
-            )
+            # Create PIL image in RGB mode
+            img = Image.fromarray(rgb_image, mode="RGB")
+            logger.debug(f"PIL RGB image created: size={img.size}, mode={img.mode}")
 
             # Resize if matrix is too large for practical display
             original_size = img.size
@@ -1219,27 +1409,13 @@ class DiffusionPatternVisualizer:
                 max_size = 1000
                 ratio = min(max_size / img.size[0], max_size / img.size[1])
                 new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
-                # Use older PIL syntax for compatibility
+                # Use newer PIL syntax with fallback
                 try:
                     img = img.resize(new_size, Image.LANCZOS)
                 except AttributeError:
-                    # Fallback for even older PIL versions
+                    # Fallback for older PIL versions
                     img = img.resize(new_size, Image.ANTIALIAS)
                 logger.debug(f"Resized from {original_size} to {img.size}")
-
-                # Check image after resize
-                img_array_resized = np.array(img)
-                logger.debug(
-                    f"After resize: min={np.min(img_array_resized)}, max={np.max(img_array_resized)}, nonzero={np.count_nonzero(img_array_resized)}"
-                )
-
-                # Fix contrast loss from resizing by re-normalizing
-                if np.max(img_array_resized) > 0 and np.max(img_array_resized) < 200:
-                    logger.debug("Applying contrast enhancement after resize")
-                    # Re-normalize to full 0-255 range
-                    enhanced = (img_array_resized.astype(np.float32) / np.max(img_array_resized) * 255).astype(np.uint8)
-                    img = Image.fromarray(enhanced, mode="L")
-                    logger.debug(f"After contrast enhancement: min={np.min(enhanced)}, max={np.max(enhanced)}")
 
             # Convert to base64
             buffer = io.BytesIO()
@@ -2008,7 +2184,7 @@ HTML_TEMPLATE = """
                     // Update ATA button visibility based on available data
                     const ataBtn = document.getElementById('ata-btn');
                     const ataInvBtn = document.getElementById('ata-inv-btn');
-                    ataBtn.style.display = data.dia_matrix_info ? 'inline-block' : 'none';
+                    ataBtn.style.display = (data.dia_matrix_info || data.dense_ata_info) ? 'inline-block' : 'none';
                     ataInvBtn.style.display = data.ata_inverse_info ? 'inline-block' : 'none';
 
                 })
@@ -2045,6 +2221,11 @@ HTML_TEMPLATE = """
                 }
             }
 
+            // Add ATA matrix information based on format
+            if (data.ata_matrix_format) {
+                html += `<div><strong>ATA Format:</strong> ${data.ata_matrix_format.toUpperCase()}</div>`;
+            }
+
             if (data.dia_matrix_info) {
                 const info = data.dia_matrix_info;
                 html += `<div><strong>DIA Matrix:</strong> ${info.led_count} LEDs</div>`;
@@ -2059,6 +2240,19 @@ HTML_TEMPLATE = """
                 }
                 if (info.output_dtype) {
                     html += `<div><strong>DIA Output Type:</strong> ${info.output_dtype}</div>`;
+                }
+            }
+
+            if (data.dense_ata_info) {
+                const info = data.dense_ata_info;
+                html += `<div><strong>Dense Matrix:</strong> ${info.led_count} LEDs</div>`;
+                html += `<div><strong>Dense Shape:</strong> ${info.matrix_shape.join(' × ')}</div>`;
+                html += `<div><strong>Dense Memory:</strong> ${info.memory_mb.toFixed(1)} MB</div>`;
+                if (info.storage_dtype) {
+                    html += `<div><strong>Dense Storage Type:</strong> ${info.storage_dtype}</div>`;
+                }
+                if (info.output_dtype) {
+                    html += `<div><strong>Dense Output Type:</strong> ${info.output_dtype}</div>`;
                 }
             }
 

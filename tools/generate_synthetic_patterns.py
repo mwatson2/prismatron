@@ -29,6 +29,7 @@ except ImportError:
 
 # Add path for local imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from src.utils.dense_ata_matrix import DenseATAMatrix
 from src.utils.diagonal_ata_matrix import DiagonalATAMatrix
 from src.utils.led_diffusion_csc_matrix import LEDDiffusionCSCMatrix
 from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
@@ -673,6 +674,109 @@ class SyntheticPatternGenerator:
 
         return dia_matrix
 
+    def _generate_dense_ata_matrix(self, sparse_matrix: sp.csc_matrix) -> "DenseATAMatrix":
+        """
+        Generate DenseATAMatrix from sparse diffusion matrix.
+
+        Args:
+            sparse_matrix: Sparse CSC diffusion matrix (pixels, leds*3)
+
+        Returns:
+            DenseATAMatrix object
+        """
+        logger.info("Building DenseATAMatrix from diffusion matrix...")
+
+        led_count = sparse_matrix.shape[1] // 3
+
+        # Create DenseATAMatrix instance with precision settings
+        if self.use_fp16:
+            # Mixed precision: FP16 storage for memory efficiency, FP32 computation for precision
+            storage_dtype = cp.float16
+            output_dtype = cp.float32
+            logger.info("Using mixed precision: FP16 storage with FP32 computation for DenseATAMatrix")
+        else:
+            # Standard FP32 for both storage and computation
+            storage_dtype = cp.float32
+            output_dtype = cp.float32
+            logger.info("Using FP32 storage and computation for DenseATAMatrix")
+
+        dense_matrix = DenseATAMatrix(
+            led_count=led_count, channels=3, storage_dtype=storage_dtype, output_dtype=output_dtype
+        )
+
+        # Build from diffusion matrix (already in optimal RCM ordering)
+        dense_matrix.build_from_diffusion_matrix(sparse_matrix)
+
+        logger.info(f"DenseATAMatrix built: {led_count} LEDs, {dense_matrix.memory_mb:.1f}MB")
+
+        # Log storage details
+        storage_dtype_str = "FP16" if dense_matrix.storage_dtype == cp.float16 else "FP32"
+        output_dtype_str = "FP16" if dense_matrix.output_dtype == cp.float16 else "FP32"
+        logger.info(f"Storage dtype: {storage_dtype_str}, Output dtype: {output_dtype_str}")
+
+        return dense_matrix
+
+    def _choose_ata_format(self, sparse_matrix: sp.csc_matrix, led_positions: np.ndarray) -> str:
+        """
+        Choose optimal ATA matrix format based on matrix characteristics.
+
+        Args:
+            sparse_matrix: Sparse CSC diffusion matrix
+            led_positions: LED positions array
+
+        Returns:
+            "dia" for diagonal format, "dense" for dense format
+        """
+        led_count = sparse_matrix.shape[1] // 3
+
+        # Import the function if needed
+        from tools.led_position_utils import calculate_block_positions
+
+        # Calculate block positions for bandwidth estimation
+        block_positions = calculate_block_positions(led_positions, self.block_size, self.frame_width, self.frame_height)
+
+        # Estimate bandwidth using RCM ordering
+        _, _, expected_diagonals = compute_rcm_ordering(block_positions, self.block_size)
+
+        # Heuristics for format selection:
+        # - Use dense if bandwidth > 80% of matrix size
+        # - Use dense if expected diagonals > 50% of theoretical maximum
+        # - Use dense for very small matrices where overhead matters
+
+        bandwidth_ratio = expected_diagonals / (2 * led_count - 1) if led_count > 1 else 1.0
+        diagonal_efficiency = expected_diagonals / (2 * led_count - 1) if led_count > 1 else 1.0
+
+        # Memory estimates (rough)
+        dia_memory_mb = (3 * expected_diagonals * led_count * 4) / (1024 * 1024)  # FP32
+        dense_memory_mb = (3 * led_count * led_count * 4) / (1024 * 1024)  # FP32
+
+        logger.info(f"ATA format selection analysis:")
+        logger.info(f"  LED count: {led_count}")
+        logger.info(f"  Expected diagonals: {expected_diagonals}")
+        logger.info(f"  Bandwidth ratio: {bandwidth_ratio:.3f}")
+        logger.info(f"  Estimated DIA memory: {dia_memory_mb:.1f}MB")
+        logger.info(f"  Estimated dense memory: {dense_memory_mb:.1f}MB")
+
+        # Decision logic
+        if bandwidth_ratio > 0.8:
+            format_choice = "dense"
+            reason = f"High bandwidth ratio ({bandwidth_ratio:.3f} > 0.8)"
+        elif expected_diagonals > led_count:
+            format_choice = "dense"
+            reason = f"Many diagonals ({expected_diagonals} > {led_count})"
+        elif led_count < 500:
+            format_choice = "dense"
+            reason = f"Small matrix ({led_count} LEDs)"
+        elif dense_memory_mb < dia_memory_mb * 1.2:  # Dense is only 20% more memory
+            format_choice = "dense"
+            reason = f"Dense memory overhead acceptable ({dense_memory_mb:.1f}MB vs {dia_memory_mb:.1f}MB)"
+        else:
+            format_choice = "dia"
+            reason = f"Sparse matrix benefits from DIA format"
+
+        logger.info(f"  Selected format: {format_choice.upper()} ({reason})")
+        return format_choice
+
     def save_sparse_matrix(
         self,
         diffusion_matrix: LEDDiffusionCSCMatrix,
@@ -721,13 +825,20 @@ class SyntheticPatternGenerator:
             if metadata:
                 save_metadata.update(metadata)
 
-            # Skip dense A^T @ A precomputation - moved to standalone utility
-            logger.info("Skipping dense A^T @ A precomputation (use standalone utility)")
-            dense_ata_data = {}
+            # Choose optimal ATA matrix format
+            sparse_csc = diffusion_matrix.to_csc_matrix()
+            ata_format = self._choose_ata_format(sparse_csc, self.led_positions)
 
-            # Generate DiagonalATAMatrix (DIA format)
-            logger.info("Generating DiagonalATAMatrix (DIA format)...")
-            dia_matrix = self._generate_dia_matrix(diffusion_matrix.to_csc_matrix(), self.led_positions)
+            if ata_format == "dense":
+                # Generate DenseATAMatrix
+                logger.info("Generating DenseATAMatrix (dense format)...")
+                ata_matrix = self._generate_dense_ata_matrix(sparse_csc)
+                save_dict_key = "dense_ata_matrix"
+            else:
+                # Generate DiagonalATAMatrix (DIA format)
+                logger.info("Generating DiagonalATAMatrix (DIA format)...")
+                ata_matrix = self._generate_dia_matrix(sparse_csc, self.led_positions)
+                save_dict_key = "dia_matrix"
 
             # Save everything in a single NPZ file
             save_dict = {
@@ -739,8 +850,8 @@ class SyntheticPatternGenerator:
                 "metadata": save_metadata,
                 # Mixed tensor stored as nested element using to_dict()
                 "mixed_tensor": mixed_tensor.to_dict(),
-                # DIA format A^T @ A matrix
-                "dia_matrix": dia_matrix.to_dict(),
+                # ATA matrix in chosen format
+                save_dict_key: ata_matrix.to_dict(),
             }
 
             np.savez_compressed(output_path, **save_dict)
@@ -748,7 +859,7 @@ class SyntheticPatternGenerator:
             # Log file info
             file_size = Path(output_path).stat().st_size / (1024 * 1024)  # MB
 
-            logger.info(f"Saved mixed tensor, DIA matrix, and dense ATA matrices to {output_path}")
+            logger.info(f"Saved mixed tensor and {ata_format.upper()} ATA matrix to {output_path}")
             logger.info(f"File size: {file_size:.1f} MB")
             logger.info("Mixed tensor format: SingleBlockMixedSparseTensor")
             logger.info(
@@ -756,12 +867,15 @@ class SyntheticPatternGenerator:
                 f"{mixed_tensor.height}x{mixed_tensor.width}, "
                 f"{mixed_tensor.block_size}x{mixed_tensor.block_size} blocks"
             )
-            logger.info(
-                f"DIA matrix: {dia_matrix.led_count} LEDs, bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
-            )
-            storage_shape = dia_matrix.dia_data_cpu.shape if dia_matrix.dia_data_cpu is not None else "None"
-            logger.info(f"DIA matrix storage shape: {storage_shape}")
-            logger.info("Dense A^T @ A matrices: Use standalone compute_ata_inverse.py tool")
+
+            if ata_format == "dense":
+                logger.info(f"Dense ATA matrix: {ata_matrix.led_count} LEDs, {ata_matrix.memory_mb:.1f}MB")
+            else:
+                logger.info(
+                    f"DIA matrix: {ata_matrix.led_count} LEDs, bandwidth={ata_matrix.bandwidth}, k={ata_matrix.k} diagonals"
+                )
+                storage_shape = ata_matrix.dia_data_cpu.shape if ata_matrix.dia_data_cpu is not None else "None"
+                logger.info(f"DIA matrix storage shape: {storage_shape}")
 
             return True
 
