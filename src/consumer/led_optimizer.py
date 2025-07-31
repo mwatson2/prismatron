@@ -34,6 +34,8 @@ from ..utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 
 logger = logging.getLogger(__name__)
 
+USE_DENSE_ATA = False  # Use DIA A^T*A matrices by default
+
 
 @dataclass
 class OptimizationResult:
@@ -214,7 +216,7 @@ class LEDOptimizer:
         """
         try:
             # Check for dense ATA matrix first (preferred format)
-            if "dense_ata_matrix" in data:
+            if USE_DENSE_ATA and "dense_ata_matrix" in data:
                 logger.debug("Loading A^T@A matrices from dense_ata_matrix key (preferred format)")
                 dense_ata_dict = data["dense_ata_matrix"].item()
                 self._dense_ata_matrix = DenseATAMatrix.from_dict(dense_ata_dict)

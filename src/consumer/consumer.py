@@ -18,6 +18,7 @@ import numpy as np
 
 from ..const import FRAME_CHANNELS, FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
 from ..core import ControlState, FrameConsumer
+from ..core.control_state import ProducerState, RendererState
 from ..utils.frame_timing import FrameTimingData, FrameTimingLogger
 from .adaptive_frame_dropper import AdaptiveFrameDropper
 from .frame_renderer import FrameRenderer
@@ -184,7 +185,7 @@ class ConsumerProcess:
         from ..utils.pattern_loader import create_frame_renderer_with_pattern
 
         self._frame_renderer = create_frame_renderer_with_pattern(
-            diffusion_patterns_path, first_frame_delay_ms=100.0, timing_tolerance_ms=5.0
+            diffusion_patterns_path, first_frame_delay_ms=0.0, timing_tolerance_ms=5.0
         )
         logger.info(f"Frame renderer created with LED ordering from {diffusion_patterns_path}")
 
@@ -288,6 +289,9 @@ class ConsumerProcess:
                 logger.error("Failed to connect to control state")
                 return False
 
+            # Set initial renderer state
+            self._control_state.set_renderer_state(RendererState.STOPPED)
+
             # Initialize LED optimizer
             if not self._led_optimizer.initialize():
                 logger.error("Failed to initialize LED optimizer")
@@ -381,6 +385,9 @@ class ConsumerProcess:
             self._shutdown_requested = True
             self._running = False
 
+            # Set renderer state to stopped
+            self._control_state.set_renderer_state(RendererState.STOPPED)
+
             # Signal WLED reconnection thread to stop
             self._wled_reconnection_event.set()
 
@@ -470,17 +477,110 @@ class ConsumerProcess:
 
         logger.info("Optimization thread ended")
 
+    def _handle_renderer_state_transitions(self, control_status) -> None:
+        """
+        Handle renderer state transitions based on buffer status and user commands.
+
+        Args:
+            control_status: Current system status from control state
+        """
+        try:
+            current_renderer_state = control_status.renderer_state
+            buffer_stats = self._led_buffer.get_buffer_stats()
+            buffer_frames = buffer_stats.get("current_count", 0)
+            buffer_capacity = buffer_stats.get("buffer_size", 10)
+
+            # Debug logging (only log every 10th check to reduce spam)
+            if not hasattr(self, "_state_check_counter"):
+                self._state_check_counter = 0
+            self._state_check_counter += 1
+
+            if self._state_check_counter % 10 == 1:  # Log every 10th check
+                logger.info(
+                    f"Renderer transition check: {current_renderer_state} -> producer={control_status.producer_state}, buffer={buffer_frames}/{buffer_capacity}"
+                )
+
+            # Update buffer monitoring in control state
+            self._control_state.update_buffer_status(buffer_frames, buffer_capacity)
+
+            # State transition logic
+            if current_renderer_state == RendererState.STOPPED:
+                # STOPPED state - should only transition via API commands
+                pass
+
+            elif current_renderer_state == RendererState.WAITING:
+                # WAITING for frames - transition to PLAYING when buffer is full
+                if buffer_frames >= buffer_capacity:
+                    logger.info(f"🎬 RENDERER WAITING → PLAYING: LED buffer full ({buffer_frames}/{buffer_capacity})")
+                    success = self._control_state.set_renderer_state(RendererState.PLAYING)
+                    if success:
+                        logger.info("✅ Renderer state successfully set to PLAYING")
+                    else:
+                        logger.error("❌ Failed to set renderer state to PLAYING")
+
+            elif current_renderer_state == RendererState.PLAYING:
+                # Check if buffer is empty and producer is stopped
+                if buffer_frames == 0 and control_status.producer_state == ProducerState.STOPPED:
+                    logger.info("🛑 RENDERER STOPPING: buffer empty and producer stopped")
+                    self._control_state.set_renderer_state(RendererState.STOPPED)
+
+            elif current_renderer_state == RendererState.PAUSED:
+                # Check if buffer is empty and producer is stopped
+                if buffer_frames == 0 and control_status.producer_state == ProducerState.STOPPED:
+                    logger.info("🛑 RENDERER STOPPING FROM PAUSE: buffer empty and producer stopped")
+                    self._control_state.set_renderer_state(RendererState.STOPPED)
+
+            elif (
+                current_renderer_state == RendererState.WAITING
+                and control_status.producer_state == ProducerState.STOPPED
+            ):
+                # If producer stops while we're waiting, go back to stopped
+                logger.info("🛑 RENDERER STOPPING FROM WAITING: producer stopped")
+                self._control_state.set_renderer_state(RendererState.STOPPED)
+
+        except Exception as e:
+            logger.error(f"Error handling renderer state transitions: {e}", exc_info=True)
+
     def _rendering_loop(self) -> None:
         """Rendering thread - handles timestamp-based frame output."""
         logger.info("Renderer thread started")
 
+        # Log initial renderer state
+        initial_status = self._control_state.get_status()
+        if initial_status:
+            logger.info(f"Initial renderer state: {initial_status.renderer_state}")
+
         while self._running and not self._shutdown_requested:
             try:
-                # Get next LED values with timeout
-                led_data = self._led_buffer.read_led_values(timeout=0.1)
+                # Check renderer state and handle transitions
+                control_status = self._control_state.get_status()
+                if control_status:
+                    self._handle_renderer_state_transitions(control_status)
+                else:
+                    logger.warning("Could not get control status for renderer state transitions")
 
-                if led_data is None:
-                    continue  # Timeout - no data available
+                # Handle renderer state
+                if control_status and control_status.renderer_state == RendererState.PLAYING:
+                    # Get next LED values with timeout
+                    led_data = self._led_buffer.read_led_values(timeout=0.1)
+
+                    if led_data is None:
+                        continue  # Timeout - no data available
+
+                elif control_status and control_status.renderer_state == RendererState.PAUSED:
+                    # Paused - keep displaying current frame, don't advance buffer
+                    time.sleep(0.1)
+                    continue
+
+                elif control_status and control_status.renderer_state == RendererState.WAITING:
+                    # Waiting for frames - just wait, state transition will handle the switch to PLAYING
+                    time.sleep(0.1)
+                    continue
+
+                else:
+                    # Stopped - just wait
+                    time.sleep(0.1)
+                    continue
 
                 led_values, timestamp, metadata = led_data
 

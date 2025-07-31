@@ -39,7 +39,7 @@ from pydantic import BaseModel, Field
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT, LED_DATA_SIZE
-from src.core.control_state import ControlState
+from src.core.control_state import ControlState, ProducerState, RendererState
 from src.core.playlist_sync import PlaylistItem as SyncPlaylistItem
 from src.core.playlist_sync import PlaylistState as SyncPlaylistState
 from src.core.playlist_sync import (
@@ -1006,21 +1006,38 @@ async def get_system_status():
 
 @app.post("/api/control/play")
 async def play_content():
-    """Start playback."""
+    """Start producer and resume renderer if paused."""
     try:
-        logger.info("API PLAY REQUEST: Received play command from web interface")
+        logger.info("API PLAY REQUEST: Starting producer and resuming renderer")
 
-        # Send play command to playlist sync service
+        # Start producer via playlist sync service
+        producer_started = False
         if playlist_sync_client and playlist_sync_client.connected:
             success = playlist_sync_client.play()
             if success:
-                return {"status": "playing"}
+                producer_started = True
             else:
                 logger.error("Failed to send play command via sync service")
-                return {"status": "error", "message": "Playlist sync service unavailable"}
         else:
             logger.error("Playlist sync service not connected")
-            return {"status": "error", "message": "Playlist sync service not connected"}
+
+        # Handle renderer state based on current state
+        renderer_handled = False
+        if control_state:
+            status = control_state.get_status()
+            if status:
+                if status.renderer_state == RendererState.PAUSED:
+                    # Resume from pause directly to playing
+                    renderer_handled = control_state.set_renderer_state(RendererState.PLAYING)
+                elif status.renderer_state == RendererState.STOPPED:
+                    # Start from stopped - go to waiting for frames
+                    renderer_handled = control_state.set_renderer_state(RendererState.WAITING)
+                    logger.info("Renderer set to WAITING for frames from producer")
+
+        if producer_started:
+            return {"status": "playing"}
+        else:
+            return {"status": "error", "message": "Failed to start producer"}
 
     except Exception as e:
         logger.error(f"Failed to start playback: {e}")
@@ -1029,22 +1046,72 @@ async def play_content():
 
 @app.post("/api/control/pause")
 async def pause_content():
-    """Pause playback."""
+    """Pause renderer only - producer continues generating frames."""
     try:
-        # Send pause command to playlist sync service
+        logger.info("API PAUSE REQUEST: Pausing renderer only")
+
+        # Pause renderer directly via control state
+        if control_state and control_state.set_renderer_state(RendererState.PAUSED):
+            return {"status": "paused"}
+        else:
+            logger.error("Failed to pause renderer")
+            return {"status": "error", "message": "Control state unavailable"}
+
+    except Exception as e:
+        logger.error(f"Failed to pause renderer: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/control/stop")
+async def stop_content():
+    """Stop producer only - renderer will stop when buffer empties."""
+    try:
+        logger.info("API STOP REQUEST: Stopping producer only")
+
+        # Stop producer via playlist sync service
         if playlist_sync_client and playlist_sync_client.connected:
-            success = playlist_sync_client.pause()
+            success = playlist_sync_client.pause()  # This stops the producer
             if success:
-                return {"status": "paused"}
+                return {"status": "stopped"}
             else:
-                logger.error("Failed to send pause command via sync service")
+                logger.error("Failed to send stop command via sync service")
                 return {"status": "error", "message": "Playlist sync service unavailable"}
         else:
             logger.error("Playlist sync service not connected")
             return {"status": "error", "message": "Playlist sync service not connected"}
 
     except Exception as e:
-        logger.error(f"Failed to pause playback: {e}")
+        logger.error(f"Failed to stop producer: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/control/producer_state")
+async def get_producer_state():
+    """Get current producer state."""
+    try:
+        if control_state:
+            status = control_state.get_status()
+            if status:
+                return {"producer_state": status.producer_state.value}
+        return {"status": "error", "message": "Control state unavailable"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/control/renderer_state")
+async def get_renderer_state():
+    """Get current renderer state."""
+    try:
+        if control_state:
+            status = control_state.get_status()
+            if status:
+                return {
+                    "renderer_state": status.renderer_state.value,
+                    "buffer_frames": status.led_buffer_frames,
+                    "buffer_capacity": status.led_buffer_capacity,
+                }
+        return {"status": "error", "message": "Control state unavailable"}
+    except Exception as e:
         return {"status": "error", "message": str(e)}
 
 

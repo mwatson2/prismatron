@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from ..const import FRAME_CHANNELS, FRAME_HEIGHT, FRAME_WIDTH
-from ..core.control_state import ControlState, PlayState, SystemState
+from ..core.control_state import ControlState, PlayState, ProducerState, SystemState
 from ..core.playlist_sync import PlaylistState as SyncPlaylistState
 from ..core.playlist_sync import PlaylistSyncClient, TransitionConfig
 from ..core.shared_buffer import FrameProducer
@@ -441,7 +441,7 @@ class ProducerProcess:
 
             # Set initial system state
             self._control_state.update_system_state(SystemState.RUNNING)
-            self._control_state.set_play_state(PlayState.STOPPED)
+            self._control_state.set_producer_state(ProducerState.STOPPED)
 
             # Connect to playlist synchronization service
             self._playlist_sync_client = PlaylistSyncClient(client_name="producer")
@@ -631,7 +631,7 @@ class ProducerProcess:
             self._content_finished_processed = False  # Reset flag when producer stops
 
         # Update control state
-        self._control_state.set_play_state(PlayState.STOPPED)
+        self._control_state.set_producer_state(ProducerState.STOPPED)
 
         logger.info("Producer process stopped")
 
@@ -649,16 +649,14 @@ class ProducerProcess:
 
                 # Playlist commands now handled through playlist sync service only
 
-                # Log play state changes for debugging
-                if not hasattr(self, "_last_play_state") or self._last_play_state != status.play_state:
-                    logger.debug(f"Play state changed to {status.play_state}")
-                    self._last_play_state = status.play_state
+                # Log producer state changes for debugging
+                if not hasattr(self, "_last_producer_state") or self._last_producer_state != status.producer_state:
+                    logger.debug(f"Producer state changed to {status.producer_state}")
+                    self._last_producer_state = status.producer_state
 
-                # Handle play state
-                if status.play_state == PlayState.PLAYING:
+                # Handle producer state
+                if status.producer_state == ProducerState.PLAYING:
                     self._handle_playing_state()
-                elif status.play_state == PlayState.PAUSED:
-                    self._handle_paused_state()
                 else:
                     self._handle_stopped_state()
 
@@ -670,16 +668,16 @@ class ProducerProcess:
                 if current_time - self._last_log_time >= self._log_interval:
                     # Only log if we're playing, or if we have frames produced, or every 10 seconds when idle
                     should_log = (
-                        (status and status.play_state == PlayState.PLAYING)
+                        (status and status.producer_state == ProducerState.PLAYING)
                         or self._frames_produced > 0
                         or (current_time - self._last_log_time) >= 10.0
                     )
 
                     if should_log:
                         content_ratio = (self._frames_with_content / max(1, self._frames_produced)) * 100
-                        play_state_str = f"[{status.play_state}]" if status else "[UNKNOWN]"
+                        producer_state_str = f"[{status.producer_state}]" if status else "[UNKNOWN]"
                         logger.info(
-                            f"PRODUCER PIPELINE {play_state_str}: {self._frames_produced} frames produced, "
+                            f"PRODUCER PIPELINE {producer_state_str}: {self._frames_produced} frames produced, "
                             f"{self._frames_with_content} with content ({content_ratio:.1f}%), "
                             f"current: {self._current_item.filepath if self._current_item else 'None'}"
                         )
@@ -702,7 +700,7 @@ class ProducerProcess:
             if not self._ensure_current_content():
                 # No content available, switch to stopped
                 logger.warning("PRODUCER PLAYING: No current content available, switching to STOPPED")
-                self._control_state.set_play_state(PlayState.STOPPED)
+                self._control_state.set_producer_state(ProducerState.STOPPED)
                 return
 
             # Producer should output frames as fast as possible
@@ -751,11 +749,6 @@ class ProducerProcess:
         except Exception as e:
             logger.error(f"Error in playing state: {e}")
             self._control_state.set_error(f"Playback error: {e}")
-
-    def _handle_paused_state(self) -> None:
-        """Handle paused state."""
-        # Just wait, don't produce frames
-        time.sleep(0.1)
 
     def _handle_stopped_state(self) -> None:
         """Handle stopped state."""
@@ -847,7 +840,7 @@ class ProducerProcess:
                     # Note: Don't advance locally - let sync service handle it
             else:
                 logger.warning("Playlist sync client not connected - cannot advance to next content")
-                self._control_state.set_play_state(PlayState.STOPPED)
+                self._control_state.set_producer_state(ProducerState.STOPPED)
 
         except Exception as e:
             logger.error(f"Failed to advance to next content: {e}")
@@ -1430,11 +1423,11 @@ class ProducerProcess:
                 # Mark that content needs to be reloaded to sync with new index
                 self._current_item = None  # Force content reload in _ensure_current_content
 
-            # Update play state based on sync state
+            # Update producer state based on sync state
             if sync_state.is_playing:
-                self._control_state.set_play_state(PlayState.PLAYING)
+                self._control_state.set_producer_state(ProducerState.PLAYING)
             else:
-                self._control_state.set_play_state(PlayState.PAUSED)
+                self._control_state.set_producer_state(ProducerState.STOPPED)
 
             # Playlist state now managed through sync service only
 
@@ -1474,33 +1467,22 @@ class ProducerProcess:
 
 # Control interface functions
 def play() -> bool:
-    """Start playback."""
+    """Start producer."""
     try:
         control = ControlState()
         if control.connect():
-            return control.set_play_state(PlayState.PLAYING)
-        return False
-    except Exception:
-        return False
-
-
-def pause() -> bool:
-    """Pause playback."""
-    try:
-        control = ControlState()
-        if control.connect():
-            return control.set_play_state(PlayState.PAUSED)
+            return control.set_producer_state(ProducerState.PLAYING)
         return False
     except Exception:
         return False
 
 
 def stop() -> bool:
-    """Stop playback."""
+    """Stop producer."""
     try:
         control = ControlState()
         if control.connect():
-            return control.set_play_state(PlayState.STOPPED)
+            return control.set_producer_state(ProducerState.STOPPED)
         return False
     except Exception:
         return False

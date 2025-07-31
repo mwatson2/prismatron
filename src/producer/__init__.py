@@ -16,7 +16,7 @@ from .content_sources import (
     ImageSource,
     VideoSource,
 )
-from .producer import ContentPlaylist, PlaylistItem, ProducerProcess, pause, play, stop
+from .producer import ContentPlaylist, PlaylistItem, ProducerProcess, play, stop
 
 __all__ = [
     "ContentSource",
@@ -30,6 +30,5 @@ __all__ = [
     "PlaylistItem",
     "ProducerProcess",
     "play",
-    "pause",
     "stop",
 ]

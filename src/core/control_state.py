@@ -29,9 +29,27 @@ logger = logging.getLogger(__name__)
 
 
 class PlayState(Enum):
-    """Playback state enumeration."""
+    """Legacy playback state enumeration for compatibility."""
 
     STOPPED = "stopped"
+    PLAYING = "playing"
+    PAUSED = "paused"
+    ERROR = "error"
+
+
+class ProducerState(Enum):
+    """Producer state enumeration for content generation."""
+
+    STOPPED = "stopped"
+    PLAYING = "playing"
+    ERROR = "error"
+
+
+class RendererState(Enum):
+    """Renderer state enumeration for LED playback."""
+
+    STOPPED = "stopped"
+    WAITING = "waiting"
     PLAYING = "playing"
     PAUSED = "paused"
     ERROR = "error"
@@ -54,7 +72,13 @@ class SystemState(Enum):
 class SystemStatus:
     """System status information."""
 
+    # Legacy field for compatibility
     play_state: PlayState = PlayState.STOPPED
+
+    # New decoupled state fields
+    producer_state: ProducerState = ProducerState.STOPPED
+    renderer_state: RendererState = RendererState.STOPPED
+
     system_state: SystemState = SystemState.INITIALIZING
     current_file: str = ""
     brightness: float = 1.0
@@ -76,6 +100,10 @@ class SystemStatus:
 
     # Optimization settings
     optimization_iterations: int = 5
+
+    # Buffer monitoring for state transitions
+    led_buffer_frames: int = 0
+    led_buffer_capacity: int = 0
 
 
 class ControlState:
@@ -137,6 +165,8 @@ class ControlState:
             status_dict = asdict(test_status)
             status_dict["play_state"] = test_status.play_state.value
             status_dict["system_state"] = test_status.system_state.value
+            status_dict["producer_state"] = test_status.producer_state.value
+            status_dict["renderer_state"] = test_status.renderer_state.value
 
             json_data = json.dumps(status_dict, separators=(",", ":"))
             estimated_size = len(json_data.encode("utf-8"))
@@ -229,6 +259,8 @@ class ControlState:
                 # Convert enums to strings (JSON doesn't support enum objects)
                 status_dict["play_state"] = status.play_state.value
                 status_dict["system_state"] = status.system_state.value
+                status_dict["producer_state"] = status.producer_state.value
+                status_dict["renderer_state"] = status.renderer_state.value
 
                 # Serialize to JSON with compact formatting
                 json_data = json.dumps(status_dict, separators=(",", ":"))
@@ -295,6 +327,12 @@ class ControlState:
                 # This is needed because JSON serialization converts enums to strings
                 status_dict["play_state"] = PlayState(status_dict["play_state"])
                 status_dict["system_state"] = SystemState(status_dict["system_state"])
+
+                # Handle new state fields with backward compatibility
+                if "producer_state" in status_dict:
+                    status_dict["producer_state"] = ProducerState(status_dict["producer_state"])
+                if "renderer_state" in status_dict:
+                    status_dict["renderer_state"] = RendererState(status_dict["renderer_state"])
 
                 return SystemStatus(**status_dict)
 
@@ -595,6 +633,8 @@ class ControlState:
             status_dict = asdict(status)
             status_dict["play_state"] = status.play_state.value
             status_dict["system_state"] = status.system_state.value
+            status_dict["producer_state"] = status.producer_state.value
+            status_dict["renderer_state"] = status.renderer_state.value
             return status_dict
         else:
             return {"error": "Failed to read status", "initialized": self._initialized}
@@ -658,6 +698,116 @@ class ControlState:
 
         except Exception as e:
             logger.error(f"Failed to update status fields: {e}")
+            return False
+
+    def set_producer_state(self, state: ProducerState) -> bool:
+        """
+        Set the producer state independently.
+
+        Args:
+            state: New producer state
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            current_status = self._read_status()
+            if current_status:
+                current_status.producer_state = state
+                # Update legacy play_state for compatibility
+                current_status.play_state = self._compute_legacy_play_state(state, current_status.renderer_state)
+                result = self._write_status(current_status)
+                if result:
+                    self._status_updated_event.set()
+                return result
+            return False
+
+        except Exception as e:
+            logger.error(f"Failed to set producer state: {e}")
+            return False
+
+    def set_renderer_state(self, state: RendererState) -> bool:
+        """
+        Set the renderer state independently.
+
+        Args:
+            state: New renderer state
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            current_status = self._read_status()
+            if current_status:
+                current_status.renderer_state = state
+                # Update legacy play_state for compatibility
+                current_status.play_state = self._compute_legacy_play_state(current_status.producer_state, state)
+                result = self._write_status(current_status)
+                if result:
+                    self._status_updated_event.set()
+                return result
+            return False
+
+        except Exception as e:
+            logger.error(f"Failed to set renderer state: {e}")
+            return False
+
+    def _compute_legacy_play_state(self, producer_state: ProducerState, renderer_state: RendererState) -> PlayState:
+        """
+        Compute legacy PlayState from decoupled producer/renderer states.
+
+        This maintains backward compatibility for existing code that relies on PlayState.
+
+        Args:
+            producer_state: Current producer state
+            renderer_state: Current renderer state
+
+        Returns:
+            Effective legacy PlayState
+        """
+        # Error states take priority
+        if producer_state == ProducerState.ERROR or renderer_state == RendererState.ERROR:
+            return PlayState.ERROR
+
+        # If renderer is paused, system is paused regardless of producer
+        if renderer_state == RendererState.PAUSED:
+            return PlayState.PAUSED
+
+        # If both are playing, system is playing
+        if producer_state == ProducerState.PLAYING and renderer_state == RendererState.PLAYING:
+            return PlayState.PLAYING
+
+        # If producer is playing but renderer is waiting, system is playing (starting up)
+        if producer_state == ProducerState.PLAYING and renderer_state == RendererState.WAITING:
+            return PlayState.PLAYING
+
+        # Otherwise system is stopped
+        return PlayState.STOPPED
+
+    def update_buffer_status(self, frames: int, capacity: int) -> bool:
+        """
+        Update LED buffer monitoring information.
+
+        Args:
+            frames: Current number of frames in buffer
+            capacity: Total buffer capacity
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            current_status = self._read_status()
+            if current_status:
+                current_status.led_buffer_frames = frames
+                current_status.led_buffer_capacity = capacity
+                result = self._write_status(current_status)
+                if result:
+                    self._status_updated_event.set()
+                return result
+            return False
+
+        except Exception as e:
+            logger.error(f"Failed to update buffer status: {e}")
             return False
 
     def cleanup(self) -> None:
