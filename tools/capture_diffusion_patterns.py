@@ -782,7 +782,7 @@ class DiffusionPatternCapture:
         # Convert mixed tensor to equivalent sparse CSC matrix
         sparse_matrix = self._mixed_tensor_to_sparse_matrix()
 
-        # Build DIA matrix from sparse matrix
+        # Build DIA matrix from sparse matrix - this now uses proper diagonal filtering
         dia_matrix.build_from_diffusion_matrix(sparse_matrix)
 
         logger.info(

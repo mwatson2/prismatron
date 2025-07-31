@@ -22,7 +22,12 @@ Features:
 import logging
 from typing import Any, Dict, Optional, Tuple, Union
 
-import cupy
+try:
+    import cupy
+except ImportError:
+    # Fallback for systems without CUDA
+    import numpy as cupy
+
 import numpy as np
 import scipy.sparse as sp
 

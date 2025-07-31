@@ -19,13 +19,130 @@ sys.path.append(str(Path(__file__).parent.parent))
 from tools.led_position_utils import analyze_matrix_bandwidth
 
 
+def analyze_captured_ata_matrices(data):
+    """Analyze ATA matrices from captured pattern format."""
+    print("=== Analyzing Captured ATA Matrices ===")
+
+    # Load both matrix formats
+    dense_ata_dict = data["dense_ata_matrix"].item()
+    dia_matrix_dict = data["dia_matrix"].item()
+
+    print("1. Dense ATA Matrix Info:")
+    dense_matrices = dense_ata_dict["dense_matrices"]  # Shape: (3, led_count, led_count)
+    led_count = dense_ata_dict["led_count"]
+    print(f"   Shape: {dense_matrices.shape}")
+    print(f"   LED count: {led_count}")
+    print(f"   Memory: {dense_ata_dict['memory_mb']:.1f} MB")
+    print(f"   Storage dtype: {dense_ata_dict['storage_dtype']}")
+    print()
+
+    print("2. DIA Matrix Info:")
+    dia_data_3d = dia_matrix_dict["dia_data_3d"]  # Shape: (3, k, led_count)
+    dia_offsets_3d = dia_matrix_dict["dia_offsets_3d"]  # Shape: (k,)
+    k_diagonals = dia_matrix_dict["k"]
+    bandwidth = dia_matrix_dict["bandwidth"]
+    sparsity = dia_matrix_dict["sparsity"]
+
+    print(f"   DIA data shape: {dia_data_3d.shape}")
+    print(f"   Number of diagonals: {k_diagonals}")
+    print(f"   Bandwidth: {bandwidth}")
+    print(f"   Sparsity: {sparsity:.2f}%")
+    print(f"   Storage dtype: {dia_matrix_dict['storage_dtype']}")
+    print()
+
+    # Analyze diagonal usage for first channel
+    print("3. Diagonal Usage Analysis (Channel 0):")
+    dia_channel_0 = dia_data_3d[0]  # Shape: (k, led_count)
+
+    # Count how many diagonals actually have non-zero values
+    diagonal_nnz = []
+    for i in range(k_diagonals):
+        diagonal = dia_channel_0[i, :]
+        nnz = np.count_nonzero(diagonal)
+        diagonal_nnz.append(nnz)
+
+    diagonal_nnz = np.array(diagonal_nnz)
+    non_empty_diagonals = np.sum(diagonal_nnz > 0)
+
+    print(f"   Total stored diagonals: {k_diagonals}")
+    print(f"   Non-empty diagonals: {non_empty_diagonals}")
+    print(f"   Empty diagonals: {k_diagonals - non_empty_diagonals}")
+    print(f"   Percentage empty: {(k_diagonals - non_empty_diagonals) / k_diagonals * 100:.1f}%")
+    print()
+
+    # Show diagonal offset distribution
+    print("4. Diagonal Offset Distribution:")
+    print(f"   Offset range: {dia_offsets_3d.min()} to {dia_offsets_3d.max()}")
+
+    # Group by offset ranges to see distribution
+    offset_ranges = [
+        ("Main diagonal", lambda x: x == 0),
+        ("Near diagonal (±1-10)", lambda x: (np.abs(x) >= 1) & (np.abs(x) <= 10)),
+        ("Medium distance (±11-100)", lambda x: (np.abs(x) >= 11) & (np.abs(x) <= 100)),
+        ("Far distance (±101-500)", lambda x: (np.abs(x) >= 101) & (np.abs(x) <= 500)),
+        ("Very far (±501+)", lambda x: np.abs(x) >= 501),
+    ]
+
+    for range_name, range_func in offset_ranges:
+        mask = range_func(dia_offsets_3d)
+        count = np.sum(mask)
+        if count > 0:
+            # Check how many of these diagonals are actually used
+            used_in_range = 0
+            for i in np.where(mask)[0]:
+                if diagonal_nnz[i] > 0:
+                    used_in_range += 1
+            print(f"   {range_name}: {count} stored, {used_in_range} used ({used_in_range/count*100:.1f}% usage)")
+    print()
+
+    # Compare to dense matrix structure
+    print("5. Comparing DIA vs Dense Matrix Structure:")
+    dense_channel_0 = dense_matrices[0]  # Shape: (led_count, led_count)
+
+    # Count actual non-zeros in dense matrix
+    dense_nnz = np.count_nonzero(dense_channel_0)
+    dense_sparsity = (1 - dense_nnz / (led_count * led_count)) * 100
+
+    print(f"   Dense matrix non-zeros: {dense_nnz:,}")
+    print(f"   Dense matrix sparsity: {dense_sparsity:.2f}%")
+
+    # Analyze bandwidth of dense matrix
+    bandwidth_stats = analyze_matrix_bandwidth(dense_channel_0)
+    print(f"   Actual bandwidth from dense: {bandwidth_stats['bandwidth']}")
+    print(f"   Actual diagonals needed: {bandwidth_stats['num_diagonals']}")
+    print()
+
+    # Efficiency comparison
+    print("6. Storage Efficiency Analysis:")
+    dia_storage_size = dia_data_3d.nbytes / (1024 * 1024)  # MB
+    dense_storage_size = dense_matrices.nbytes / (1024 * 1024)  # MB
+
+    print(f"   DIA storage: {dia_storage_size:.1f} MB")
+    print(f"   Dense storage: {dense_storage_size:.1f} MB")
+    print(f"   DIA efficiency: {dense_storage_size / dia_storage_size:.1f}x smaller than dense")
+
+    # But account for empty diagonals
+    actual_diagonals_needed = bandwidth_stats["num_diagonals"]
+    optimal_dia_size = actual_diagonals_needed * led_count * 4 / (1024 * 1024)  # float32
+    efficiency_loss = dia_storage_size / optimal_dia_size
+
+    print(f"   Optimal DIA storage: {optimal_dia_size:.1f} MB")
+    print(f"   Current DIA efficiency loss: {efficiency_loss:.1f}x (due to empty diagonals)")
+
+    if efficiency_loss > 2:
+        print(f"   ❌ DIA matrix is storing {efficiency_loss:.1f}x more data than needed!")
+        print(f"   Recommendation: Optimize DIA matrix to store only {actual_diagonals_needed} diagonals")
+    else:
+        print(f"   ✅ DIA storage is reasonably efficient")
+
+
 def analyze_ata_structure(pattern_file="synthetic_1000_64x64_fixed2.npz"):
     """Analyze A^T A matrix structure in detail."""
     print("=== Analyzing A^T A Matrix Structure ===")
     print(f"Pattern file: {pattern_file}")
     print()
 
-    # Load synthetic patterns
+    # Load patterns - support both old synthetic format and new captured format
     pattern_path = Path(__file__).parent.parent / "diffusion_patterns" / pattern_file
     if not pattern_path.exists():
         print(f"❌ Pattern file not found: {pattern_path}")
@@ -33,6 +150,18 @@ def analyze_ata_structure(pattern_file="synthetic_1000_64x64_fixed2.npz"):
 
     try:
         data = np.load(str(pattern_path), allow_pickle=True)
+
+        # Check for new mixed tensor format (captured data)
+        if "dense_ata_matrix" in data and "dia_matrix" in data:
+            print("Found captured pattern format with both DIA and dense ATA matrices")
+            analyze_captured_ata_matrices(data)
+            return
+
+        # Old synthetic format
+        if "diffusion_matrix" not in data:
+            print(f"❌ No diffusion_matrix found in {pattern_file}")
+            return
+
         diffusion_dict = data["diffusion_matrix"].item()
 
         # Reconstruct diffusion matrix A: (pixels, LEDs*3)
@@ -265,11 +394,15 @@ def compare_adjacency_vs_ata():
 
 
 if __name__ == "__main__":
-    # Analyze the fixed patterns
-    analyze_ata_structure("synthetic_1000_64x64_fixed.npz")
+    import sys
 
-    # Compare with expected adjacency
-    compare_adjacency_vs_ata()
+    if len(sys.argv) > 1:
+        pattern_file = sys.argv[1]
+    else:
+        pattern_file = "capture-0728-01-final-comparison.npz"
+
+    # Analyze the patterns
+    analyze_ata_structure(pattern_file)
 
     print(f"\n{'=' * 80}")
     print("ANALYSIS COMPLETE")

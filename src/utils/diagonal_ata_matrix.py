@@ -10,7 +10,12 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-import cupy
+try:
+    import cupy
+except ImportError:
+    # Fallback for systems without CUDA
+    import numpy as cupy
+
 import numpy as np
 import scipy.sparse as sp
 
@@ -275,16 +280,45 @@ class DiagonalATAMatrix:
             # Compute A^T A for this channel: (leds, pixels) @ (pixels, leds) -> (leds, leds)
             ATA_channel = A_channel.T @ A_channel
 
-            # Convert to DIA format
+            # Convert to DIA format with intelligent sparsity filtering
             ATA_dia = sp.dia_matrix(ATA_channel)
             channel_matrices.append(ATA_channel)
             channel_dia_matrices.append(ATA_dia)
 
-            # Collect all unique diagonal offsets that have non-zero elements
+            # Collect diagonal offsets that contain significant values
+            # Use adaptive thresholding based on matrix statistics
+            matrix_max = ATA_channel.max()
+            matrix_nnz = ATA_channel.nnz
+            total_elements = ATA_channel.shape[0] * ATA_channel.shape[1]
+
+            # Calculate significance threshold: adapt to matrix characteristics
+            if matrix_max > 0:
+                # Primary threshold: 0.1% of maximum value
+                significance_threshold = matrix_max * 0.001
+
+                # Secondary check: diagonal must have sufficient density
+                min_nnz_per_diagonal = max(1, int(self.led_count * 0.01))  # At least 1% density
+            else:
+                significance_threshold = 1e-10
+                min_nnz_per_diagonal = 1
+
+            print(
+                f"    Filtering diagonals: max_val={matrix_max:.3e}, threshold={significance_threshold:.3e}, min_nnz={min_nnz_per_diagonal}"
+            )
+
+            significant_diagonals = 0
             for i, offset in enumerate(ATA_dia.offsets):
                 diagonal_data = ATA_dia.data[i]  # Shape: (leds,)
-                if np.any(np.abs(diagonal_data) > 1e-10):  # Non-zero threshold
+
+                # Count significant values in this diagonal
+                significant_values = np.sum(np.abs(diagonal_data) > significance_threshold)
+
+                # Include diagonal if it has enough significant values
+                if significant_values >= min_nnz_per_diagonal:
                     all_offsets.add(offset)
+                    significant_diagonals += 1
+
+            print(f"    Original diagonals: {len(ATA_dia.offsets)}, significant: {significant_diagonals}")
 
             # Store per-channel metadata
             self.channel_nnz[channel] = ATA_dia.nnz
@@ -323,11 +357,21 @@ class DiagonalATAMatrix:
             for channel in range(self.channels):
                 ATA_dia = channel_dia_matrices[channel]
 
+                # Recalculate thresholds for consistency
+                matrix_max = channel_matrices[channel].max()
+                if matrix_max > 0:
+                    significance_threshold = matrix_max * 0.001
+                    min_nnz_per_diagonal = max(1, int(self.led_count * 0.01))
+                else:
+                    significance_threshold = 1e-10
+                    min_nnz_per_diagonal = 1
+
                 for i, offset in enumerate(ATA_dia.offsets):
                     diagonal_data = ATA_dia.data[i]  # Shape: (leds,)
 
-                    # Only store if this diagonal has non-zero elements
-                    if np.any(np.abs(diagonal_data) > 1e-10):
+                    # Only store if this diagonal has significant values (same criteria as before)
+                    significant_values = np.sum(np.abs(diagonal_data) > significance_threshold)
+                    if significant_values >= min_nnz_per_diagonal and offset in offset_to_idx:
                         unified_idx = offset_to_idx[offset]
                         self.dia_data_cpu[channel, unified_idx, :] = diagonal_data.astype(storage_dtype_np)
 
