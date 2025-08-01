@@ -207,7 +207,9 @@ const HomePage = () => {
 
   const handlePlayPause = async () => {
     try {
-      const endpoint = playlist.is_playing ? '/api/control/pause' : '/api/control/play'
+      // Use renderer state instead of playlist state for play/pause logic
+      const isRendererPlaying = status?.renderer_state === 'playing'
+      const endpoint = isRendererPlaying ? '/api/control/pause' : '/api/control/play'
       await fetch(endpoint, { method: 'POST' })
     } catch (error) {
       console.error('Failed to toggle playback:', error)
@@ -321,12 +323,14 @@ const HomePage = () => {
           )}
 
           {/* Overlay text when not playing */}
-          {!playlist.is_playing && ledPositions && (
+          {status?.renderer_state !== 'playing' && ledPositions && (
             <div className="absolute inset-0 flex items-center justify-center bg-dark-800 bg-opacity-50">
               <div className="text-center">
                 <SpeakerXMarkIcon className="w-12 h-12 text-metal-silver mx-auto mb-2 opacity-50" />
                 <p className="text-metal-silver text-sm font-mono">
-                  {(currentItem || status?.current_file) ? 'PAUSED' : 'NO CONTENT'}
+                  {status?.renderer_state === 'paused' ? 'PAUSED' :
+                   status?.renderer_state === 'waiting' ? 'LOADING...' :
+                   (currentItem || status?.current_file) ? 'STOPPED' : 'NO CONTENT'}
                 </p>
                 <p className="text-metal-silver text-xs font-mono mt-1 opacity-75">
                   {ledPositions.led_count} LEDs ready
@@ -352,11 +356,17 @@ const HomePage = () => {
                   <span>{Math.round(currentItem.duration)}s</span>
                 )}
                 <span className={`px-2 py-1 rounded text-xs ${
-                  playlist.is_playing
+                  status?.renderer_state === 'playing'
                     ? 'bg-neon-green bg-opacity-20 text-neon-green'
+                    : status?.renderer_state === 'paused'
+                    ? 'bg-neon-orange bg-opacity-20 text-neon-orange'
+                    : status?.renderer_state === 'waiting'
+                    ? 'bg-neon-cyan bg-opacity-20 text-neon-cyan'
                     : 'bg-metal-silver bg-opacity-20 text-metal-silver'
                 }`}>
-                  {playlist.is_playing ? 'PLAYING' : 'PAUSED'}
+                  {status?.renderer_state === 'playing' ? 'PLAYING' :
+                   status?.renderer_state === 'paused' ? 'PAUSED' :
+                   status?.renderer_state === 'waiting' ? 'LOADING' : 'STOPPED'}
                 </span>
               </div>
             </div>
@@ -380,9 +390,9 @@ const HomePage = () => {
             onClick={handlePlayPause}
             disabled={!playlist.items?.length}
             className="retro-button p-4 rounded-full text-neon-cyan text-neon disabled:text-metal-silver disabled:cursor-not-allowed"
-            aria-label={playlist.is_playing ? 'Pause' : 'Play'}
+            aria-label={status?.renderer_state === 'playing' ? 'Pause' : 'Play'}
           >
-            {playlist.is_playing ? (
+            {status?.renderer_state === 'playing' ? (
               <PauseIcon className="w-8 h-8" />
             ) : (
               <PlayIcon className="w-8 h-8" />

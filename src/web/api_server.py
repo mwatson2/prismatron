@@ -155,6 +155,7 @@ class SystemStatus(BaseModel):
     current_file: Optional[str] = Field(None, description="Currently playing file")
     playlist_position: int = Field(0, description="Current playlist position")
     rendering_index: int = Field(-1, description="Currently rendering playlist index")
+    renderer_state: str = Field("STOPPED", description="Current renderer state (STOPPED/WAITING/PLAYING/PAUSED)")
     brightness: float = Field(1.0, description="Current brightness")
     frame_rate: float = Field(0.0, description="Current frame rate")
     uptime: float = Field(0.0, description="System uptime in seconds")
@@ -653,11 +654,17 @@ async def preview_broadcast_task():
                 cpu_temp = get_cpu_temperature()
                 gpu_temp = get_gpu_temperature()
 
-                # Get rendering_index from control state
+                # Get rendering_index and renderer state from control state
                 rendering_index_for_status = -1
+                renderer_state_value = "STOPPED"  # Default fallback
                 if control_state:
                     system_status_for_index = control_state.get_status_dict()
                     rendering_index_for_status = system_status_for_index.get("rendering_index", -1)
+
+                    # Get renderer state
+                    status_obj = control_state.get_status()
+                    if status_obj and hasattr(status_obj, "renderer_state"):
+                        renderer_state_value = status_obj.renderer_state.value
 
                 # Broadcast system status
                 status_data = {
@@ -670,6 +677,7 @@ async def preview_broadcast_task():
                     ),
                     "playlist_position": playlist_state.current_index,
                     "rendering_index": rendering_index_for_status,  # Add rendering_index to status broadcast
+                    "renderer_state": renderer_state_value,  # Add renderer state to status broadcast
                     "brightness": system_settings.brightness,
                     "frame_rate": 30.0,  # Will be updated from shared memory below
                     "uptime": uptime,
@@ -972,11 +980,17 @@ async def get_system_status():
     except Exception:
         pass  # Use default frame_rate if shared memory not available
 
-    # Get rendering_index from control state to show currently rendered item
+    # Get rendering_index and renderer state from control state to show currently rendered item
     rendering_index = -1
+    renderer_state_value = "STOPPED"  # Default fallback
     if control_state:
         system_status_dict = control_state.get_status_dict()
         rendering_index = system_status_dict.get("rendering_index", -1)
+
+        # Get renderer state
+        status_obj = control_state.get_status()
+        if status_obj and hasattr(status_obj, "renderer_state"):
+            renderer_state_value = status_obj.renderer_state.value
 
     return SystemStatus(
         is_online=True,
@@ -987,6 +1001,7 @@ async def get_system_status():
         ),
         playlist_position=playlist_state.current_index,
         rendering_index=rendering_index,
+        renderer_state=renderer_state_value,
         brightness=system_settings.brightness,
         frame_rate=frame_rate,
         uptime=uptime,
