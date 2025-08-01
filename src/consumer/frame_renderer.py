@@ -59,6 +59,11 @@ class FrameRenderer:
         self.first_frame_received = False
         self.first_frame_timestamp = None
 
+        # Pause time tracking
+        self.is_paused = False
+        self.pause_start_time = None
+        self.total_pause_time = 0.0
+
         # Output sinks (multiple sink support)
         self.sinks = []  # List of registered sinks
         self.sink_names = {}  # Map sink instances to names for logging
@@ -239,8 +244,8 @@ class FrameRenderer:
         if not self.first_frame_received:
             self.establish_wallclock_delta(frame_timestamp)
 
-        # Calculate target wallclock time
-        target_wallclock = frame_timestamp + self.wallclock_delta
+        # Calculate target wallclock time with pause compensation
+        target_wallclock = frame_timestamp + self.get_adjusted_wallclock_delta()
         current_wallclock = time.time()
 
         # Time difference (negative = early, positive = late)
@@ -502,6 +507,9 @@ class FrameRenderer:
             "first_frame_delay_ms": self.first_frame_delay * 1000,
             "timing_tolerance_ms": self.timing_tolerance * 1000,
             "wallclock_delta_s": self.wallclock_delta,
+            "adjusted_wallclock_delta_s": self.get_adjusted_wallclock_delta(),
+            "total_pause_time_s": self.total_pause_time,
+            "is_paused": self.is_paused,
             "first_frame_received": self.first_frame_received,
             # Output sinks
             "registered_sinks": len(self.sinks),
@@ -536,6 +544,11 @@ class FrameRenderer:
         self.ewma_dropped_fraction = 0.0
         self.last_ewma_update = 0.0
         self.last_frame_timestamp = 0.0
+
+        # Reset pause tracking
+        self.is_paused = False
+        self.pause_start_time = None
+        self.total_pause_time = 0.0
 
         logger.debug("Renderer statistics reset")
 
@@ -631,8 +644,8 @@ class FrameRenderer:
             # If renderer not initialized, we can't determine timing - process the frame
             return False
 
-        # Calculate target wallclock time
-        target_wallclock = frame_timestamp + self.wallclock_delta
+        # Calculate target wallclock time with pause compensation
+        target_wallclock = frame_timestamp + self.get_adjusted_wallclock_delta()
         current_wallclock = time.time()
 
         # Time difference (positive = late)
@@ -640,3 +653,45 @@ class FrameRenderer:
         late_threshold = late_threshold_ms / 1000.0
 
         return time_diff > late_threshold
+
+    def pause_renderer(self) -> None:
+        """
+        Mark the renderer as paused and start tracking pause time.
+        """
+        if not self.is_paused:
+            self.is_paused = True
+            self.pause_start_time = time.time()
+            logger.debug("Renderer paused, started tracking pause time")
+
+    def resume_renderer(self) -> None:
+        """
+        Mark the renderer as resumed and add accumulated pause time to offset.
+        """
+        if self.is_paused and self.pause_start_time is not None:
+            pause_duration = time.time() - self.pause_start_time
+            self.total_pause_time += pause_duration
+            self.is_paused = False
+            self.pause_start_time = None
+            logger.info(
+                f"Renderer resumed, added {pause_duration:.3f}s pause time (total: {self.total_pause_time:.3f}s)"
+            )
+
+    def get_adjusted_wallclock_delta(self) -> float:
+        """
+        Get wallclock delta adjusted for pause time.
+
+        Returns:
+            Adjusted wallclock delta that accounts for time spent in pause
+        """
+        if self.wallclock_delta is None:
+            return 0.0
+
+        # Add total pause time to the delta to compensate for paused periods
+        adjusted_delta = self.wallclock_delta + self.total_pause_time
+
+        # If currently paused, also add the current pause duration
+        if self.is_paused and self.pause_start_time is not None:
+            current_pause_duration = time.time() - self.pause_start_time
+            adjusted_delta += current_pause_duration
+
+        return adjusted_delta

@@ -231,6 +231,9 @@ class ConsumerProcess:
         # Track last rendered playlist item index to detect transitions
         self._last_rendered_item_index = -1
 
+        # Track renderer state for pause/resume handling
+        self._last_renderer_state = None
+
         # Timing logger for performance analysis
         self._timing_logger: Optional[FrameTimingLogger] = None
         if timing_log_path:
@@ -556,6 +559,23 @@ class ConsumerProcess:
                 control_status = self._control_state.get_status()
                 if control_status:
                     self._handle_renderer_state_transitions(control_status)
+
+                    # Handle pause/resume detection for frame renderer timing compensation
+                    if self._last_renderer_state != control_status.renderer_state:
+                        if (
+                            control_status.renderer_state == RendererState.PAUSED
+                            and self._last_renderer_state != RendererState.PAUSED
+                        ):
+                            # Transitioning to PAUSED state
+                            self._frame_renderer.pause_renderer()
+                        elif (
+                            self._last_renderer_state == RendererState.PAUSED
+                            and control_status.renderer_state != RendererState.PAUSED
+                        ):
+                            # Transitioning from PAUSED to any other state (resume)
+                            self._frame_renderer.resume_renderer()
+
+                        self._last_renderer_state = control_status.renderer_state
                 else:
                     logger.warning("Could not get control status for renderer state transitions")
 
