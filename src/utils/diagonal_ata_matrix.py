@@ -19,6 +19,8 @@ except ImportError:
 import numpy as np
 import scipy.sparse as sp
 
+from .base_ata_matrix import BaseATAMatrix
+
 # Note: RCM ordering is now handled by pattern generation tool directly
 
 # Import custom DIA kernels
@@ -51,7 +53,7 @@ except ImportError:
     print("Warning: Pure FP16 DIA kernel not available")
 
 
-class DiagonalATAMatrix:
+class DiagonalATAMatrix(BaseATAMatrix):
     """
     Utility class for diagonal A^T A matrices in LED optimization.
 
