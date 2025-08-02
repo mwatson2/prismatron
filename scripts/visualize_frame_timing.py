@@ -12,10 +12,22 @@ import csv
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import matplotlib
+
+matplotlib.use("Agg")  # Use non-interactive backend for better rendering
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+# Configure matplotlib for high-quality output
+plt.rcParams["figure.dpi"] = 100  # Display DPI
+plt.rcParams["savefig.dpi"] = 300  # Save DPI
+plt.rcParams["lines.antialiased"] = True
+plt.rcParams["text.antialiased"] = True
+plt.rcParams["patch.antialiased"] = True
+plt.rcParams["figure.facecolor"] = "white"
+plt.rcParams["axes.facecolor"] = "white"
 
 
 class FrameTimingVisualizer:
@@ -105,11 +117,26 @@ class FrameTimingVisualizer:
         complete_data = self.complete_frames.head(max_frames).copy()
         incomplete_data = self.incomplete_frames.head(max_frames).copy()
 
-        # Create figure with 3 subplots (content timeline + 2 frame state plots)
-        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(16, 18))
+        # Calculate dynamic figure size based on data
+        # Base figure size, but scale height based on number of frames
+        max_frame_index = max(all_data["frame_index"]) if len(all_data) > 0 else 100
+
+        # Calculate figure height to ensure good pixel density
+        # Target: ~2 pixels per frame unit at 300 DPI
+        frame_spacing = 5
+        total_frame_height = max_frame_index * frame_spacing
+        inches_per_frame_unit = 2.0 / 300  # 2 pixels per frame unit at 300 DPI
+        plot_height_inches = max(6, total_frame_height * inches_per_frame_unit)
+
+        # Limit maximum height to prevent unwieldy images
+        plot_height_inches = min(plot_height_inches, 50)
+        total_fig_height = plot_height_inches * 3 + 3  # 3 plots + margins
+
+        # Create figure with calculated size
+        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(20, total_fig_height))
         fig.suptitle(
             f"Frame Timing Pipeline Analysis ({len(all_data)} total frames, {len(complete_data)} complete, {len(incomplete_data)} dropped)",
-            fontsize=16,
+            fontsize=18,
         )
 
         # Define colors for different frame states
@@ -160,12 +187,39 @@ class FrameTimingVisualizer:
             min_wallclock = 0
 
         def draw_frame_states(ax, data, title_suffix="", show_incomplete=False):
-            """Draw frame states with 2px linewidth and 1px gap between frames."""
-            ax.set_title(f"Frame States Combined{title_suffix}")
+            """Draw frame states with explicit gaps for dropped frames."""
+            ax.set_title(f"Frame States Combined{title_suffix}", fontsize=14)
+
+            # Use larger spacing to prevent overlap and aliasing when zooming
+            frame_spacing = 5  # 5 units per frame for clear separation
+
+            # Calculate consistent bar width for all frame states
+            # Make all bars the same width and prevent overlap
+            bar_width = 1.5  # Consistent width for all bars
+
+            # Create a comprehensive frame map to show gaps
+            if len(all_data) > 0:
+                min_frame_idx = all_data["frame_index"].min()
+                max_frame_idx = all_data["frame_index"].max()
+
+                # Create set of frames that have complete data
+                complete_frame_indices = set(data["frame_index"]) if len(data) > 0 else set()
+                incomplete_frame_indices = (
+                    set(incomplete_data["frame_index"]) if len(incomplete_data) > 0 and show_incomplete else set()
+                )
+                all_frame_indices = set(all_data["frame_index"])
+
+                # Draw a thin background line for ALL possible frame positions to show structure
+                for frame_idx in range(min_frame_idx, max_frame_idx + 1):
+                    frame_y = frame_idx * frame_spacing
+                    if frame_idx in all_frame_indices:
+                        # Frame exists in data - will be drawn below
+                        continue
+                    # Frame missing entirely - will show as gap (no line drawn)
 
             # Plot complete frames
             for _, frame in data.iterrows():
-                frame_y = frame["frame_index"] * 3  # 3px per frame (2px line + 1px gap)
+                frame_y = frame["frame_index"] * frame_spacing
 
                 # Time in shared buffer (with 1px gap at start)
                 if frame["write_to_buffer_time"] > 0 and frame["read_from_buffer_time"] > 0:
@@ -175,10 +229,12 @@ class FrameTimingVisualizer:
                         [start_time, end_time],
                         [frame_y, frame_y],
                         color=state_colors["shared_buffer"],
-                        linewidth=2,
-                        alpha=0.8,
+                        linewidth=bar_width,
+                        alpha=0.9,
                         solid_capstyle="butt",
-                        zorder=3,  # Higher z-order to draw on top of LED queue
+                        antialiased=True,
+                        rasterized=False,
+                        zorder=3,
                     )
 
                 # Optimization time
@@ -189,10 +245,12 @@ class FrameTimingVisualizer:
                         [start_time, end_time],
                         [frame_y, frame_y],
                         color=state_colors["optimization"],
-                        linewidth=2,
-                        alpha=0.8,
+                        linewidth=bar_width,
+                        alpha=0.9,
                         solid_capstyle="butt",
-                        zorder=3,  # Higher z-order to draw on top of LED queue
+                        antialiased=True,
+                        rasterized=False,
+                        zorder=3,
                     )
 
                 # Time in LED buffer
@@ -203,10 +261,12 @@ class FrameTimingVisualizer:
                         [start_time, end_time],
                         [frame_y, frame_y],
                         color=state_colors["led_buffer"],
-                        linewidth=2,
-                        alpha=0.8,
+                        linewidth=bar_width,
+                        alpha=0.9,
                         solid_capstyle="butt",
-                        zorder=3,  # Higher z-order to draw on top of LED queue
+                        antialiased=True,
+                        rasterized=False,
+                        zorder=3,
                     )
 
                 # LED transitions time
@@ -217,10 +277,12 @@ class FrameTimingVisualizer:
                         [start_time, end_time],
                         [frame_y, frame_y],
                         color=state_colors["led_transitions"],
-                        linewidth=2,
-                        alpha=0.8,
+                        linewidth=bar_width,
+                        alpha=0.9,
                         solid_capstyle="butt",
-                        zorder=3,  # Higher z-order to draw on top of LED queue
+                        antialiased=True,
+                        rasterized=False,
+                        zorder=3,
                     )
 
                 # Time in rendered state
@@ -231,16 +293,18 @@ class FrameTimingVisualizer:
                         [start_time, end_time],
                         [frame_y, frame_y],
                         color=state_colors["rendered"],
-                        linewidth=3,  # Make rendered segments thicker for better visibility
-                        alpha=1.0,  # Make rendered segments fully opaque
+                        linewidth=bar_width,
+                        alpha=1.0,
                         solid_capstyle="butt",
-                        zorder=4,  # Highest z-order for rendered segments
+                        antialiased=True,
+                        rasterized=False,
+                        zorder=4,
                     )
 
             # Plot incomplete frames if requested
             if show_incomplete and len(incomplete_data) > 0:
                 for _, frame in incomplete_data.iterrows():
-                    frame_y = frame["frame_index"] * 3  # 3px per frame (2px line + 1px gap)
+                    frame_y = frame["frame_index"] * frame_spacing
 
                     # Show partial states for incomplete frames
                     if frame["write_to_buffer_time"] > 0 and frame["read_from_buffer_time"] > 0:
@@ -250,10 +314,12 @@ class FrameTimingVisualizer:
                             [start_time, end_time],
                             [frame_y, frame_y],
                             color=state_colors["shared_buffer"],
-                            linewidth=2,
-                            alpha=0.4,
+                            linewidth=bar_width,
+                            alpha=0.5,
                             solid_capstyle="butt",
-                            zorder=2,  # Medium z-order for incomplete frames
+                            antialiased=True,
+                            rasterized=False,
+                            zorder=2,
                         )
 
                     if frame["read_from_buffer_time"] > 0 and frame["write_to_led_buffer_time"] > 0:
@@ -263,10 +329,12 @@ class FrameTimingVisualizer:
                             [start_time, end_time],
                             [frame_y, frame_y],
                             color=state_colors["optimization"],
-                            linewidth=2,
-                            alpha=0.4,
+                            linewidth=bar_width,
+                            alpha=0.5,
                             solid_capstyle="butt",
-                            zorder=2,  # Medium z-order for incomplete frames
+                            antialiased=True,
+                            rasterized=False,
+                            zorder=2,
                         )
 
                     if frame["write_to_led_buffer_time"] > 0 and frame["read_from_led_buffer_time"] > 0:
@@ -276,10 +344,12 @@ class FrameTimingVisualizer:
                             [start_time, end_time],
                             [frame_y, frame_y],
                             color=state_colors["led_buffer"],
-                            linewidth=2,
-                            alpha=0.4,
+                            linewidth=bar_width,
+                            alpha=0.5,
                             solid_capstyle="butt",
-                            zorder=2,  # Medium z-order for incomplete frames
+                            antialiased=True,
+                            rasterized=False,
+                            zorder=2,
                         )
 
                     # LED transitions time for incomplete frames
@@ -290,22 +360,24 @@ class FrameTimingVisualizer:
                             [start_time, end_time],
                             [frame_y, frame_y],
                             color=state_colors["led_transitions"],
-                            linewidth=2,
-                            alpha=0.4,
+                            linewidth=bar_width,
+                            alpha=0.5,
                             solid_capstyle="butt",
-                            zorder=2,  # Medium z-order for incomplete frames
+                            antialiased=True,
+                            rasterized=False,
+                            zorder=2,
                         )
 
         def calculate_led_queue_length_square_wave(data):
             """Calculate LED buffer queue length over time as square wave (only complete frames)."""
             events = []
 
-            # Only add events for frames that have BOTH write_to_led_buffer_time AND led_transition_time
-            # This excludes dropped frames that only have one of these timestamps
+            # Queue goes up when frame is written to LED buffer, down when frame is rendered
+            # Only add events for frames that have BOTH write_to_led_buffer_time AND render_time
             for _, frame in data.iterrows():
-                if frame["write_to_led_buffer_time"] > 0 and frame["led_transition_time"] > 0:
+                if frame["write_to_led_buffer_time"] > 0 and frame["render_time"] > 0:
                     events.append((frame["write_to_led_buffer_time"], +1, frame["frame_index"]))
-                    events.append((frame["led_transition_time"], -1, frame["frame_index"]))
+                    events.append((frame["render_time"], -1, frame["frame_index"]))
 
             # Sort by time
             events.sort()
@@ -359,18 +431,22 @@ class FrameTimingVisualizer:
 
         # Plot 2: Complete frames only
         # First, create and configure LED queue axis (behind frame states)
+        ax2_queue = None
         if len(complete_data) > 0:
             queue_times, queue_lengths = calculate_led_queue_length_square_wave(complete_data)
+            print(
+                f"DEBUG: LED queue data - {len(queue_times)} time points, max queue: {max(queue_lengths) if queue_lengths else 0}"
+            )
             if queue_times:
                 ax2_queue = ax2.twinx()
                 ax2_queue.plot(
                     queue_times,
                     queue_lengths,
                     color=state_colors["led_queue"],
-                    linewidth=1.5,
-                    alpha=0.3,  # More transparent so it stays in background
+                    linewidth=2.5,  # Thicker line to make it more visible
+                    alpha=0.8,  # Less transparent so it's more visible
                     label="LED Buffer Queue Length",
-                    zorder=1,  # Lower z-order to draw behind frame states
+                    zorder=5,  # Higher z-order to draw on top
                 )
                 # Set axis to go to at least 10
                 max_queue = max(queue_lengths) if queue_lengths else 0
@@ -382,17 +458,22 @@ class FrameTimingVisualizer:
         # Then draw frame states on top
         draw_frame_states(ax2, complete_data, " (Complete Frames Only)")
 
-        # Add legends for plot 2
-        ax2.plot([], [], color=state_colors["shared_buffer"], linewidth=2, label="Time in Shared Buffer")
-        ax2.plot([], [], color=state_colors["optimization"], linewidth=2, label="Optimization Time")
-        ax2.plot([], [], color=state_colors["led_buffer"], linewidth=2, label="Time in LED Buffer")
-        ax2.plot([], [], color=state_colors["led_transitions"], linewidth=2, label="LED Transitions Time")
-        ax2.plot([], [], color=state_colors["rendered"], linewidth=2, label="Time in Rendered State")
+        # Add legends for plot 2 (use consistent bar width - same as used in draw_frame_states)
+        bar_width = 1.5  # Same as defined in draw_frame_states
+        ax2.plot([], [], color=state_colors["shared_buffer"], linewidth=bar_width, label="Time in Shared Buffer")
+        ax2.plot([], [], color=state_colors["optimization"], linewidth=bar_width, label="Optimization Time")
+        ax2.plot([], [], color=state_colors["led_buffer"], linewidth=bar_width, label="Time in LED Buffer")
+        ax2.plot([], [], color=state_colors["led_transitions"], linewidth=bar_width, label="LED Transitions Time")
+        ax2.plot([], [], color=state_colors["rendered"], linewidth=bar_width, label="Time in Rendered State")
+        # Add LED buffer queue legend entry (if it exists)
+        if ax2_queue is not None:
+            ax2.plot([], [], color=state_colors["led_queue"], linewidth=2.5, alpha=0.8, label="LED Buffer Queue Length")
         ax2.set_ylabel("Frame Index")
         ax2.legend(loc="upper left")
 
         # Plot 3: All frames (complete + incomplete)
         # First, create and configure LED queue axis (behind frame states)
+        ax3_queue = None
         if len(complete_data) > 0:
             queue_times, queue_lengths = calculate_led_queue_length_square_wave(complete_data)
             if queue_times:
@@ -401,10 +482,10 @@ class FrameTimingVisualizer:
                     queue_times,
                     queue_lengths,
                     color=state_colors["led_queue"],
-                    linewidth=1.5,
-                    alpha=0.3,  # More transparent so it stays in background
+                    linewidth=2.5,  # Thicker line to make it more visible
+                    alpha=0.8,  # Less transparent so it's more visible
                     label="LED Buffer Queue Length",
-                    zorder=1,  # Lower z-order to draw behind frame states
+                    zorder=5,  # Higher z-order to draw on top
                 )
                 # Set axis to go to at least 10
                 max_queue = max(queue_lengths) if queue_lengths else 0
@@ -416,15 +497,28 @@ class FrameTimingVisualizer:
         # Then draw frame states on top
         draw_frame_states(ax3, complete_data, " (All Frames)", show_incomplete=True)
 
-        # Add legends for plot 3
-        ax3.plot([], [], color=state_colors["shared_buffer"], linewidth=2, label="Complete: Time in Shared Buffer")
-        ax3.plot([], [], color=state_colors["optimization"], linewidth=2, label="Complete: Optimization Time")
-        ax3.plot([], [], color=state_colors["led_buffer"], linewidth=2, label="Complete: Time in LED Buffer")
-        ax3.plot([], [], color=state_colors["led_transitions"], linewidth=2, label="Complete: LED Transitions Time")
-        ax3.plot([], [], color=state_colors["rendered"], linewidth=2, label="Complete: Time in Rendered State")
+        # Add legends for plot 3 (use consistent bar width - same as used in draw_frame_states)
+        bar_width = 1.5  # Same as defined in draw_frame_states
         ax3.plot(
-            [], [], color=state_colors["shared_buffer"], linewidth=2, alpha=0.4, label="Incomplete: Partial States"
+            [], [], color=state_colors["shared_buffer"], linewidth=bar_width, label="Complete: Time in Shared Buffer"
         )
+        ax3.plot([], [], color=state_colors["optimization"], linewidth=bar_width, label="Complete: Optimization Time")
+        ax3.plot([], [], color=state_colors["led_buffer"], linewidth=bar_width, label="Complete: Time in LED Buffer")
+        ax3.plot(
+            [], [], color=state_colors["led_transitions"], linewidth=bar_width, label="Complete: LED Transitions Time"
+        )
+        ax3.plot([], [], color=state_colors["rendered"], linewidth=bar_width, label="Complete: Time in Rendered State")
+        ax3.plot(
+            [],
+            [],
+            color=state_colors["shared_buffer"],
+            linewidth=bar_width,
+            alpha=0.5,
+            label="Incomplete: Partial States",
+        )
+        # Add LED buffer queue legend entry (if it exists)
+        if ax3_queue is not None:
+            ax3.plot([], [], color=state_colors["led_queue"], linewidth=2.5, alpha=0.8, label="LED Buffer Queue Length")
         ax3.set_xlabel("Time (seconds from processing start)")
         ax3.set_ylabel("Frame Index")
         ax3.legend(loc="upper left")
@@ -457,15 +551,20 @@ class FrameTimingVisualizer:
 
             # Calculate adaptive Y-axis (frame index) scaling
             max_frame_index = max(all_data["frame_index"])
-            max_frame_y = max_frame_index * 3  # Account for 3px per frame (2px line + 1px gap)
+            min_frame_index = min(all_data["frame_index"])
+            frame_spacing = 5  # Must match the spacing used in draw_frame_states
 
-            # Target ~20 labels on Y-axis, interval must be multiple of 10
+            # Set Y limits to exactly match the data range
+            min_frame_y = min_frame_index * frame_spacing - frame_spacing  # Small margin below
+            max_frame_y = max_frame_index * frame_spacing + frame_spacing  # Small margin above
+
+            # Target ~20 labels on Y-axis, interval must be multiple of frame_spacing
             target_y_labels = 20
-            y_range = max_frame_y
-            base_interval = max(15, int(y_range / target_y_labels / 15) * 15)  # Round to nearest 15 (5 frames * 3px)
+            y_range = max_frame_y - min_frame_y
+            base_interval = max(frame_spacing * 5, int(y_range / target_y_labels / frame_spacing) * frame_spacing)
 
-            # Ensure we have at least some reasonable spacing
-            y_interval = max(30, base_interval)  # Minimum 30 (10 frames * 3px)
+            # Ensure we have at least some reasonable spacing (minimum 10 frames)
+            y_interval = max(frame_spacing * 10, base_interval)
 
             # Calculate adaptive X-axis (time) scaling
             # Target ~100 vertical grid lines
@@ -487,12 +586,16 @@ class FrameTimingVisualizer:
             for ax in [ax1, ax2, ax3]:
                 ax.set_xlim(x_min - x_margin, x_max + x_margin)
 
+                # Set Y limits to exactly match data range (no empty space at top)
+                ax.set_ylim(min_frame_y, max_frame_y)
+
                 # Adaptive horizontal gridlines for frame indices
-                h_grid_ticks = np.arange(0, max_frame_y + y_interval, y_interval)
+                h_grid_start = max(0, int(min_frame_y / y_interval) * y_interval)
+                h_grid_ticks = np.arange(h_grid_start, max_frame_y + y_interval, y_interval)
                 ax.set_yticks(h_grid_ticks, minor=False)
 
                 # Convert y-tick positions back to frame numbers for labels
-                ax.set_yticklabels([f"{int(y/3)}" for y in h_grid_ticks])
+                ax.set_yticklabels([f"{int(y/frame_spacing)}" for y in h_grid_ticks])
 
                 ax.grid(True, which="major", axis="y", alpha=0.3, linestyle="-")
 
@@ -507,7 +610,26 @@ class FrameTimingVisualizer:
         plt.tight_layout()
 
         if output_path:
-            plt.savefig(output_path, dpi=300, bbox_inches="tight")
+            # Determine format based on file extension
+            output_path = Path(output_path)
+            if output_path.suffix.lower() == ".png":
+                # For PNG, use very high DPI and no compression
+                plt.savefig(
+                    output_path,
+                    dpi=600,  # Double DPI for better pixel precision
+                    bbox_inches="tight",
+                    facecolor="white",
+                    edgecolor="none",
+                    format="png",
+                    pil_kwargs={"optimize": False, "compress_level": 0},
+                )
+            else:
+                # Default to SVG for vector output (no aliasing, infinite zoom)
+                svg_path = output_path.with_suffix(".svg")
+                plt.savefig(svg_path, bbox_inches="tight", facecolor="white", edgecolor="none", format="svg")
+                print(f"Timeline visualization saved to {svg_path} (SVG format for lossless zoom)")
+                output_path = svg_path
+
             print(f"Timeline visualization saved to {output_path}")
         else:
             plt.show()
@@ -559,7 +681,25 @@ class FrameTimingVisualizer:
         plt.tight_layout()
 
         if output_path:
-            plt.savefig(output_path, dpi=300, bbox_inches="tight")
+            # Determine format based on file extension
+            output_path = Path(output_path)
+            if output_path.suffix.lower() == ".png":
+                # For PNG, use very high DPI and no compression
+                plt.savefig(
+                    output_path,
+                    dpi=600,
+                    bbox_inches="tight",
+                    facecolor="white",
+                    edgecolor="none",
+                    format="png",
+                    pil_kwargs={"optimize": False, "compress_level": 0},
+                )
+            else:
+                # Default to SVG for vector output
+                svg_path = output_path.with_suffix(".svg") if output_path.suffix.lower() != ".svg" else output_path
+                plt.savefig(svg_path, bbox_inches="tight", facecolor="white", edgecolor="none", format="svg")
+                output_path = svg_path
+
             print(f"Latency analysis saved to {output_path}")
         else:
             plt.show()
@@ -678,6 +818,13 @@ def main():
         "--max-frames", "-m", type=int, default=1000, help="Maximum number of frames to visualize (default: 1000)"
     )
     parser.add_argument("--stats-only", "-s", action="store_true", help="Print statistics only, no visualizations")
+    parser.add_argument(
+        "--format",
+        "-f",
+        choices=["svg", "png"],
+        default="svg",
+        help="Output format: svg (vector, lossless zoom) or png (raster, high DPI) - default: svg",
+    )
 
     args = parser.parse_args()
 
@@ -693,12 +840,12 @@ def main():
         visualizer.print_statistics()
 
         if not args.stats_only:
-            # Determine output paths
+            # Determine output paths based on chosen format
             output_dir = Path(args.output_dir) if args.output_dir else csv_path.parent
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            timeline_path = output_dir / f"{csv_path.stem}_timeline.png"
-            latency_path = output_dir / f"{csv_path.stem}_latency.png"
+            timeline_path = output_dir / f"{csv_path.stem}_timeline.{args.format}"
+            latency_path = output_dir / f"{csv_path.stem}_latency.{args.format}"
 
             # Create visualizations
             print(f"\nCreating timeline visualization...")

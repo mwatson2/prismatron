@@ -19,6 +19,7 @@ import numpy as np
 from ..const import FRAME_CHANNELS, FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
 from ..core import ControlState, FrameConsumer
 from ..core.control_state import ProducerState, RendererState
+from ..utils.frame_drop_rate_ewma import FrameDropRateEwma
 from ..utils.frame_timing import FrameTimingData, FrameTimingLogger
 from .adaptive_frame_dropper import AdaptiveFrameDropper
 from .frame_renderer import FrameRenderer
@@ -50,7 +51,6 @@ class ConsumerStats:
     # New FPS tracking
     consumer_input_fps: float = 0.0  # Last measured input FPS from producer
     renderer_output_fps_ewma: float = 0.0  # EWMA of renderer output FPS
-    dropped_frames_percentage_ewma: float = 0.0  # EWMA of dropped frame percentage
 
     # Internal tracking for FPS calculations
     _last_frame_timestamp: float = 0.0
@@ -97,18 +97,6 @@ class ConsumerStats:
         self._last_render_time = current_time
         self._render_count += 1
 
-    def update_dropped_frames_ewma(self, alpha: float = 0.1) -> None:
-        """Update dropped frames percentage using EWMA."""
-        total_frames = self.frames_processed + self.frames_dropped_early
-        if total_frames > 0:
-            current_drop_rate = self.frames_dropped_early / total_frames
-            if self.dropped_frames_percentage_ewma == 0:
-                self.dropped_frames_percentage_ewma = current_drop_rate
-            else:
-                self.dropped_frames_percentage_ewma = (
-                    1 - alpha
-                ) * self.dropped_frames_percentage_ewma + alpha * current_drop_rate
-
 
 class ConsumerProcess:
     """
@@ -128,7 +116,7 @@ class ConsumerProcess:
         enable_test_renderer: bool = False,
         test_renderer_config: Optional[TestSinkConfig] = None,
         timing_log_path: Optional[str] = None,
-        enable_adaptive_frame_dropping: bool = False,
+        enable_adaptive_frame_dropping: bool = True,
     ):
         """
         Initialize consumer process.
@@ -170,13 +158,11 @@ class ConsumerProcess:
         self.enable_adaptive_frame_dropping = enable_adaptive_frame_dropping
         if self.enable_adaptive_frame_dropping:
             self._adaptive_frame_dropper = AdaptiveFrameDropper(
-                led_buffer_low_threshold=3.0,  # Increase drop rate when buffer < 3
-                led_buffer_high_threshold=8.0,  # Decrease drop rate when buffer > 8
-                drop_rate_step_size=0.05,  # 5% step size for target adjustments
+                led_buffer_capacity=10,  # Expected LED buffer capacity
                 led_buffer_ewma_alpha=0.1,  # EWMA alpha for buffer level tracking
-                frame_drop_ewma_alpha=0.1,  # EWMA alpha for drop rate tracking
+                max_drop_rate=0.66,  # Maximum drop rate (supports up to 2x input rate)
             )
-            logger.info("Adaptive frame dropping enabled for LED buffer management")
+            logger.info("Adaptive frame dropping enabled with direct scaling approach")
         else:
             self._adaptive_frame_dropper = None
             logger.info("Adaptive frame dropping disabled")
@@ -234,6 +220,10 @@ class ConsumerProcess:
         # Track renderer state for pause/resume handling
         self._last_renderer_state = None
 
+        # Track expected frame indices for overall drop rate calculation
+        self._last_rendered_frame_index = 0
+        self._expected_next_frame_index = 1
+
         # Timing logger for performance analysis
         self._timing_logger: Optional[FrameTimingLogger] = None
         if timing_log_path:
@@ -244,6 +234,10 @@ class ConsumerProcess:
         self.brightness_scale = 1.0
         self.optimization_iterations = 5
         self.target_fps = 15.0  # Target processing FPS
+
+        # Frame drop rate tracking with EWMA
+        self.pre_optimization_drop_rate_ewma = FrameDropRateEwma(alpha=0.1, name="PreOptimizationDrops")
+        self.overall_drop_rate_ewma = FrameDropRateEwma(alpha=0.1, name="OverallDrops")
 
         # WLED connection management
         self.wled_reconnect_interval = 10.0  # Try to reconnect every 10 seconds
@@ -364,9 +358,6 @@ class ConsumerProcess:
             self._wled_reconnection_thread = threading.Thread(
                 target=self._wled_reconnection_loop, name="WLEDReconnectionThread"
             )
-
-            # Backward compatibility alias
-            self._process_thread = self._optimization_thread
 
             self._optimization_thread.start()
             self._renderer_thread.start()
@@ -615,6 +606,24 @@ class ConsumerProcess:
                 is_first_frame_of_item = metadata and metadata.get("is_first_frame_of_item", False)
                 playlist_item_index = metadata.get("playlist_item_index", -1) if metadata else -1
 
+                # Track overall frame drops based on missing frame indices
+                current_frame_index = None
+                if timing_data and hasattr(timing_data, "frame_index"):
+                    current_frame_index = timing_data.frame_index
+
+                    # Check for missing frames between last rendered and current
+                    if current_frame_index > self._expected_next_frame_index:
+                        # Missing frames detected - mark them as dropped in overall tracking
+                        missing_count = current_frame_index - self._expected_next_frame_index
+                        logger.debug(f"Detected {missing_count} missing frames before frame {current_frame_index}")
+
+                        # Update overall drop rate EWMA for each missing frame
+                        for _ in range(missing_count):
+                            self.overall_drop_rate_ewma.update(dropped=True)
+
+                    # Update expected next frame index
+                    self._expected_next_frame_index = current_frame_index + 1
+
                 should_update_rendering_index = (
                     is_first_frame_of_item
                     and playlist_item_index >= 0
@@ -657,9 +666,17 @@ class ConsumerProcess:
                         if not success:
                             pass  # Log render-failed frame to timing data
 
-                # Update renderer output FPS tracking
+                # Update renderer output FPS tracking and overall drop rate
                 if success:
                     self._stats.update_renderer_output_fps()
+                    # Mark successful render in overall drop rate tracking
+                    if current_frame_index is not None:
+                        self.overall_drop_rate_ewma.update(dropped=False)
+                        self._last_rendered_frame_index = current_frame_index
+                else:
+                    # Mark render failure in overall drop rate tracking
+                    if current_frame_index is not None:
+                        self.overall_drop_rate_ewma.update(dropped=True)
 
                 if not success:
                     logger.warning("Frame rendering failed")
@@ -707,58 +724,16 @@ class ConsumerProcess:
         since reconnection is now handled by _wled_reconnection_loop().
         """
 
-    def _process_frame(self, buffer_info) -> None:
-        """Process a frame (backward compatibility wrapper)."""
-        # Process the frame through optimization
-        self._process_frame_optimization(buffer_info)
-
-        # For backward compatibility with tests, also handle direct transmission
-        # Get the latest LED values from buffer and send to WLED
-        try:
-            led_data = self._led_buffer.read_latest_led_values()
-            if led_data is not None and hasattr(self, "_wled_client"):
-                # Send to WLED directly (for test compatibility)
-                transmission_result = self._wled_client.send_led_data(led_data.led_values)
-                if not transmission_result.success:
-                    self._stats.transmission_errors += 1
-        except Exception as e:
-            logger.debug(f"Backward compatibility transmission failed: {e}")
-            self._stats.transmission_errors += 1
-
-    def _process_loop(self) -> None:
-        """
-        Main processing loop (backward compatibility method).
-
-        This method is provided for test compatibility. The actual implementation
-        uses separate optimization and rendering threads.
-        """
-        logger.info("Starting backward compatibility process loop")
-
-        while self._running and not self._control_state.should_shutdown():
-            try:
-                # Wait for frame to be ready
-                buffer_info = self._frame_consumer.wait_for_ready_buffer(timeout=self.max_frame_wait_timeout)
-
-                if buffer_info is None:
-                    # No frame available, continue
-                    continue
-
-                # Process the frame
-                self._process_frame(buffer_info)
-
-            except Exception as e:
-                logger.error(f"Error in process loop: {e}")
-                self._stats.optimization_errors += 1
-
-        logger.info("Process loop terminated")
-
-    def _process_frame_optimization(self, buffer_info) -> None:
+    def _process_frame_optimization(self, buffer_info) -> bool:
         """
         Process frame for LED optimization only - no rendering.
         Rendering handled by separate renderer thread.
 
         Args:
             buffer_info: Buffer information from frame consumer
+
+        Returns:
+            True if frame was dropped, False if frame was processed successfully
         """
         start_time = time.time()
 
@@ -802,15 +777,28 @@ class ConsumerProcess:
             # Update consumer input FPS tracking
             self._stats.update_consumer_input_fps(timestamp)
 
-            # Adaptive frame dropping based on LED buffer occupancy
+            # Adaptive frame dropping based on LED buffer occupancy - only when renderer is PLAYING
             if self.enable_adaptive_frame_dropping and self._adaptive_frame_dropper:
-                led_buffer_size = len(self._led_buffer)
-                should_drop_adaptive = self._adaptive_frame_dropper.should_drop_frame(timestamp, led_buffer_size)
+                # Get current renderer state for adaptive dropping
+                try:
+                    control_status = self._control_state.get_status()
+                    renderer_state = control_status.renderer_state.value if control_status else "STOPPED"
+                    renderer_is_playing = control_status and control_status.renderer_state == RendererState.PLAYING
+                except Exception as e:
+                    logger.warning(f"Could not get renderer state for adaptive dropping: {e}")
+                    renderer_state = "STOPPED"
+                    renderer_is_playing = False
 
-                if should_drop_adaptive:
+                # Always call adaptive frame dropper, but only apply dropping when renderer is playing
+                led_buffer_size = len(self._led_buffer)
+                should_drop_adaptive = self._adaptive_frame_dropper.should_drop_frame(
+                    timestamp, led_buffer_size, renderer_state
+                )
+
+                if renderer_is_playing and should_drop_adaptive:
                     # Drop frame for LED buffer management
                     self._stats.frames_dropped_early += 1
-                    self._stats.update_dropped_frames_ewma()
+                    self.pre_optimization_drop_rate_ewma.update(dropped=True)
 
                     # Log dropped frame to timing data if configured
                     if timing_data and self._timing_logger:
@@ -820,13 +808,13 @@ class ConsumerProcess:
                     logger.debug(
                         f"Frame {timing_data.frame_index if timing_data else 'unknown'} dropped by adaptive dropper (LED buffer size: {led_buffer_size})"
                     )
-                    return
+                    return True
 
             # Check if frame is already late - drop if so, otherwise proceed with optimization
             if self._frame_renderer.is_frame_late(timestamp, late_threshold_ms=50.0):
                 # Frame already late - drop it
                 self._stats.frames_dropped_early += 1
-                self._stats.update_dropped_frames_ewma()
+                self.pre_optimization_drop_rate_ewma.update(dropped=True)
 
                 # Log dropped frame to timing data if configured (Case 2: Dropped before optimization)
                 if timing_data and self._timing_logger:
@@ -834,12 +822,12 @@ class ConsumerProcess:
                     self._timing_logger.log_frame(timing_data)
                     # Log early-dropped frame to timing data
 
-                return
+                return True
 
             # Validate frame shape
             if frame_array.shape != (FRAME_HEIGHT, FRAME_WIDTH, FRAME_CHANNELS):
                 logger.warning(f"Unexpected frame shape: {frame_array.shape}")
-                return
+                return True  # Invalid shape counts as dropped
 
             # Convert RGBA to RGB (on GPU)
             # TODO; Remove this, we only have RGB
@@ -967,8 +955,8 @@ class ConsumerProcess:
             # Update optimization FPS (independent of rendering)
             self._stats.current_optimization_fps = 1.0 / total_time if total_time > 0 else 0.0
 
-            # Update dropped frames EWMA (includes both early drops and successful processing)
-            self._stats.update_dropped_frames_ewma()
+            # Update pre-optimization drop rate EWMA for successful processing
+            self.pre_optimization_drop_rate_ewma.update(dropped=False)
 
             # Periodic logging for pipeline debugging (every 2 seconds)
             current_time = time.time()
@@ -987,7 +975,7 @@ class ConsumerProcess:
                     f"{self._frames_with_content} with LED content ({content_ratio:.1f}%), "
                     f"input FPS: {self._stats.consumer_input_fps:.1f}, "
                     f"output FPS: {self._stats.renderer_output_fps_ewma:.1f}, "
-                    f"drop rate: {self._stats.dropped_frames_percentage_ewma * 100:.1f}%, "
+                    f"pre-opt drop rate: {self.pre_optimization_drop_rate_ewma.get_rate_percentage():.1f}%, "
                     f"opt time: {avg_opt_time * 1000:.1f}ms, "
                     f"LED buffer depth: {buffer_depth}"
                 )
@@ -995,6 +983,9 @@ class ConsumerProcess:
 
                 # Update consumer statistics in ControlState for IPC with web server
                 self._update_consumer_statistics_in_control_state()
+
+            # Frame was processed successfully
+            return False
 
             # Log performance periodically (every 100 frames)
             if self._stats.frames_processed % 100 == 0:
@@ -1012,6 +1003,7 @@ class ConsumerProcess:
         except Exception as e:
             logger.error(f"Error in optimization: {e}", exc_info=True)
             self._stats.optimization_errors += 1
+            return True  # Processing error counts as dropped
 
     def _extract_metadata_dict(self, metadata) -> Dict[str, Any]:
         """
@@ -1136,7 +1128,9 @@ class ConsumerProcess:
             "average_optimization_fps": self._stats.get_average_fps(),
             "consumer_input_fps": self._stats.consumer_input_fps,
             "renderer_output_fps": self._stats.renderer_output_fps_ewma,
-            "dropped_frames_percentage": self._stats.dropped_frames_percentage_ewma * 100,  # Convert to percentage
+            "dropped_frames_percentage": self.overall_drop_rate_ewma.get_rate_percentage(),  # Overall rate for compatibility
+            "pre_optimization_dropped_frames_percentage": self.pre_optimization_drop_rate_ewma.get_rate_percentage(),
+            "overall_dropped_frames_percentage": self.overall_drop_rate_ewma.get_rate_percentage(),
             "total_processing_time": self._stats.total_processing_time,
             "average_optimization_time": self._stats.get_average_optimization_time(),
             "average_led_transition_time": self._stats.get_average_led_transition_time(),
@@ -1373,10 +1367,11 @@ class ConsumerProcess:
             late_frame_percentage = renderer_stats.get("late_frame_percentage", 0.0)
 
             # Update the control state with consumer statistics
+            # Note: ControlState only has one dropped_frames_percentage field, so we use overall rate
             status_updates = {
                 "consumer_input_fps": self._stats.consumer_input_fps,
                 "renderer_output_fps": self._stats.renderer_output_fps_ewma,
-                "dropped_frames_percentage": self._stats.dropped_frames_percentage_ewma * 100,  # Convert to percentage
+                "dropped_frames_percentage": self.overall_drop_rate_ewma.get_rate_percentage(),
                 "late_frame_percentage": late_frame_percentage,
             }
 

@@ -26,34 +26,25 @@ class AdaptiveFrameDropper:
 
     def __init__(
         self,
-        led_buffer_low_threshold: float = 3.0,
-        led_buffer_high_threshold: float = 8.0,
-        drop_rate_step_size: float = 0.05,
-        led_buffer_ewma_alpha: float = 0.1,
-        frame_drop_ewma_alpha: float = 0.1,
-        initial_target_drop_rate: float = 0.0,
+        led_buffer_capacity: int = 10,
+        led_buffer_ewma_alpha: float = 0.05,
+        max_drop_rate: float = 0.66,
     ):
         """
-        Initialize adaptive frame dropper.
+        Initialize adaptive frame dropper with direct scaling approach.
 
         Args:
-            led_buffer_low_threshold: LED buffer level below which to increase drop rate
-            led_buffer_high_threshold: LED buffer level above which to decrease drop rate
-            drop_rate_step_size: Step size for adjusting target drop rate (e.g., 0.05 = 5%)
+            led_buffer_capacity: Expected LED buffer capacity for normalization
             led_buffer_ewma_alpha: EWMA alpha for LED buffer level tracking
-            frame_drop_ewma_alpha: EWMA alpha for actual drop rate tracking
-            initial_target_drop_rate: Initial target drop rate (0.0 = 0%, 1.0 = 100%)
+            max_drop_rate: Maximum allowed drop rate (0.66 = support up to 2x input rate)
         """
         # Configuration parameters
-        self.led_buffer_low_threshold = led_buffer_low_threshold
-        self.led_buffer_high_threshold = led_buffer_high_threshold
-        self.drop_rate_step_size = drop_rate_step_size
+        self.led_buffer_capacity = led_buffer_capacity
         self.led_buffer_ewma_alpha = led_buffer_ewma_alpha
-        self.frame_drop_ewma_alpha = frame_drop_ewma_alpha
+        self.max_drop_rate = max_drop_rate
 
         # State variables
-        self.target_drop_rate = initial_target_drop_rate
-        self.actual_drop_rate_ewma = 0.0
+        self.target_drop_rate = 0.0
         self.led_buffer_level_ewma = 0.0
 
         # Frame tracking
@@ -64,40 +55,45 @@ class AdaptiveFrameDropper:
         # Statistics
         self.total_frames_processed = 0
         self.total_frames_dropped = 0
-        self.target_adjustments_up = 0
-        self.target_adjustments_down = 0
+        self.rate_calculations = 0
 
         logger.info(
             f"AdaptiveFrameDropper initialized: "
-            f"low_threshold={led_buffer_low_threshold}, "
-            f"high_threshold={led_buffer_high_threshold}, "
-            f"step_size={drop_rate_step_size}, "
-            f"buffer_alpha={led_buffer_ewma_alpha}, "
-            f"drop_alpha={frame_drop_ewma_alpha}"
+            f"buffer_capacity={led_buffer_capacity}, "
+            f"ewma_alpha={led_buffer_ewma_alpha}, "
+            f"max_drop_rate={max_drop_rate:.2f}"
         )
 
-    def should_drop_frame(self, frame_timestamp: float, led_buffer_size: int) -> bool:
+    def should_drop_frame(self, frame_timestamp: float, led_buffer_size: int, renderer_state: str) -> bool:
         """
-        Determine if a frame should be dropped based on adaptive strategy.
+        Determine if a frame should be dropped based on direct scaling strategy.
 
         Args:
             frame_timestamp: Timestamp of the frame being considered
             led_buffer_size: Current LED buffer occupancy
+            renderer_state: Current renderer state (only update EWMA when PLAYING)
 
         Returns:
             True if frame should be dropped, False otherwise
         """
-        # Update LED buffer level EWMA
-        self._update_led_buffer_ewma(led_buffer_size)
+        # Log every call to diagnose issues
+        logger.debug(
+            f"Adaptive frame dropper called: renderer_state={renderer_state}, led_buffer_size={led_buffer_size}, ewma={self.led_buffer_level_ewma:.1f}"
+        )
 
-        # Update target drop rate based on buffer level
-        self._update_target_drop_rate()
-
-        # Determine if we should drop this frame
-        should_drop = self._should_drop_deterministic()
-
-        # Update actual drop rate EWMA
-        self._update_actual_drop_rate_ewma(should_drop)
+        # Only update EWMA and calculate drop rate when renderer is PLAYING (case insensitive)
+        if renderer_state.upper() == "PLAYING":
+            logger.debug("Renderer is PLAYING - updating EWMA and calculating drop rate")
+            self._update_led_buffer_ewma(led_buffer_size, renderer_state)
+            # Calculate drop rate directly from buffer occupancy
+            self._calculate_drop_rate()
+            # Determine if we should drop this frame
+            should_drop = self._should_drop_probabilistic()
+            logger.debug(f"Drop decision: should_drop={should_drop}, target_rate={self.target_drop_rate:.3f}")
+        else:
+            # When not playing, never drop frames
+            should_drop = False
+            logger.debug(f"Renderer not PLAYING ({renderer_state}) - not dropping frame")
 
         # Update statistics
         self.frames_processed += 1
@@ -111,59 +107,96 @@ class AdaptiveFrameDropper:
 
         return should_drop
 
-    def _update_led_buffer_ewma(self, current_buffer_size: int) -> None:
-        """Update LED buffer level EWMA."""
+    def _update_led_buffer_ewma(self, current_buffer_size: int, renderer_state: str) -> None:
+        """Update LED buffer level EWMA with proper initialization for PLAYING state."""
+        old_ewma = self.led_buffer_level_ewma
+
         if self.led_buffer_level_ewma == 0.0:
-            # Initialize on first sample
+            # Initialize EWMA to current buffer size
+            # Note: We theoretically transition to PLAYING when buffer is full, but by the time
+            # adaptive dropping is called, the buffer may have already started draining
             self.led_buffer_level_ewma = float(current_buffer_size)
+            logger.info(f"Initialized LED buffer EWMA to current size: {current_buffer_size} (state={renderer_state})")
         else:
             self.led_buffer_level_ewma = (
                 1 - self.led_buffer_ewma_alpha
             ) * self.led_buffer_level_ewma + self.led_buffer_ewma_alpha * current_buffer_size
 
-    def _update_target_drop_rate(self) -> None:
-        """Update target drop rate based on LED buffer level EWMA."""
+        logger.debug(
+            f"EWMA updated: {old_ewma:.2f} -> {self.led_buffer_level_ewma:.2f} (buffer_size={current_buffer_size})"
+        )
+
+    def _calculate_drop_rate(self) -> None:
+        """Calculate drop rate directly from buffer occupancy using scaling approach."""
         old_target = self.target_drop_rate
 
-        if self.led_buffer_level_ewma < self.led_buffer_low_threshold:
-            # Buffer too low - increase drop rate to reduce load
-            self.target_drop_rate = min(1.0, self.target_drop_rate + self.drop_rate_step_size)
-            if self.target_drop_rate > old_target:
-                self.target_adjustments_up += 1
+        # Normalize buffer occupancy to 0-1 range based on capacity
+        normalized_occupancy = min(1.0, self.led_buffer_level_ewma / self.led_buffer_capacity)
 
-        elif self.led_buffer_level_ewma > self.led_buffer_high_threshold:
-            # Buffer too high - decrease drop rate to process more frames
-            self.target_drop_rate = max(0.0, self.target_drop_rate - self.drop_rate_step_size)
-            if self.target_drop_rate < old_target:
-                self.target_adjustments_down += 1
+        # Drop rate = min(max_drop_rate, 1 - normalized_occupancy)
+        # When buffer is full (1.0), drop rate = 0.0
+        # When buffer is empty (0.0), drop rate = max_drop_rate (0.66)
+        # When buffer is half full (0.5), drop rate = 0.5
+        self.target_drop_rate = min(self.max_drop_rate, 1.0 - normalized_occupancy)
 
-        # Log target adjustments
-        if self.target_drop_rate != old_target:
+        # Update statistics
+        self.rate_calculations += 1
+
+        # Log all drop rate calculations for debugging
+        logger.debug(
+            f"Drop rate calculated: {old_target:.3f} -> {self.target_drop_rate:.3f} "
+            f"(buffer_ewma={self.led_buffer_level_ewma:.1f}, "
+            f"normalized_occupancy={normalized_occupancy:.3f})"
+        )
+
+    def _should_drop_probabilistic(self) -> bool:
+        """
+        Probabilistically decide if frame should be dropped based on target drop rate.
+
+        Uses a pattern-based approach to achieve the target drop rate over time.
+        For example, drop rate 0.66 means drop 2 out of every 3 frames.
+        """
+        if self.target_drop_rate == 0.0:
+            logger.debug("Drop rate is 0.0 - not dropping")
+            return False
+        if self.target_drop_rate >= 1.0:
+            logger.debug(f"Drop rate >= 1.0 ({self.target_drop_rate:.3f}) - dropping")
+            return True
+
+        # Use pattern-based approach for fractional drop rates
+        # Convert drop rate to a pattern over N frames
+        if self.target_drop_rate > 0.0:
+            # Use a repeating pattern approach
+            # For 0.66 drop rate: drop 2 out of 3 frames (pattern length 3)
+            # For 0.5 drop rate: drop 1 out of 2 frames (pattern length 2)
+            # For 0.33 drop rate: drop 1 out of 3 frames (pattern length 3)
+
+            # Find a reasonable pattern length (up to 10 frames)
+            pattern_length = None
+            for length in range(2, 11):
+                expected_drops = round(self.target_drop_rate * length)
+                actual_rate = expected_drops / length
+                # Accept if within 5% of target rate
+                if abs(actual_rate - self.target_drop_rate) < 0.05:
+                    pattern_length = length
+                    break
+
+            if pattern_length is None:
+                # Fallback: use length 10 for fine-grained control
+                pattern_length = 10
+
+            drops_in_pattern = round(self.target_drop_rate * pattern_length)
+            frame_position = self.total_frames_processed % pattern_length
+
+            # Drop the first N frames in each pattern cycle
+            should_drop = frame_position < drops_in_pattern
+
             logger.debug(
-                f"Target drop rate adjusted: {old_target:.3f} -> {self.target_drop_rate:.3f} "
-                f"(buffer_ewma={self.led_buffer_level_ewma:.1f})"
+                f"Pattern length: {pattern_length}, drops: {drops_in_pattern}, position: {frame_position}, frame: {self.total_frames_processed}, should_drop: {should_drop}"
             )
+            return should_drop
 
-    def _should_drop_deterministic(self) -> bool:
-        """
-        Deterministically decide if frame should be dropped.
-
-        Returns True when actual drop rate falls below target.
-        """
-        # If actual drop rate is below target, we should drop more frames
-        return self.actual_drop_rate_ewma < self.target_drop_rate
-
-    def _update_actual_drop_rate_ewma(self, frame_dropped: bool) -> None:
-        """Update actual drop rate EWMA."""
-        drop_sample = 1.0 if frame_dropped else 0.0
-
-        if self.frames_processed == 1:
-            # Initialize on first sample
-            self.actual_drop_rate_ewma = drop_sample
-        else:
-            self.actual_drop_rate_ewma = (
-                1 - self.frame_drop_ewma_alpha
-            ) * self.actual_drop_rate_ewma + self.frame_drop_ewma_alpha * drop_sample
+        return False
 
     def _log_periodic_stats(self) -> None:
         """Log statistics periodically."""
@@ -173,16 +206,16 @@ class AdaptiveFrameDropper:
         if self.frames_processed % 100 == 0 or (current_time - self.last_update_time) > 5.0:
             recent_drop_rate = self.frames_dropped / max(1, self.frames_processed) * 100
             total_drop_rate = self.total_frames_dropped / max(1, self.total_frames_processed) * 100
+            normalized_occupancy = min(1.0, self.led_buffer_level_ewma / self.led_buffer_capacity)
 
             logger.info(
                 f"Frame Drop Stats: "
                 f"target={self.target_drop_rate*100:.1f}%, "
-                f"actual_ewma={self.actual_drop_rate_ewma*100:.1f}%, "
                 f"recent={recent_drop_rate:.1f}%, "
                 f"total={total_drop_rate:.1f}%, "
                 f"buffer_ewma={self.led_buffer_level_ewma:.1f}, "
-                f"adjustments_up={self.target_adjustments_up}, "
-                f"adjustments_down={self.target_adjustments_down}"
+                f"buffer_occupancy={normalized_occupancy:.3f}, "
+                f"rate_calculations={self.rate_calculations}"
             )
 
             # Reset periodic counters
@@ -199,21 +232,20 @@ class AdaptiveFrameDropper:
         """
         total_drop_rate = self.total_frames_dropped / max(1, self.total_frames_processed)
 
+        normalized_occupancy = min(1.0, self.led_buffer_level_ewma / self.led_buffer_capacity)
+
         return {
             "target_drop_rate": self.target_drop_rate,
-            "actual_drop_rate_ewma": self.actual_drop_rate_ewma,
             "led_buffer_level_ewma": self.led_buffer_level_ewma,
+            "normalized_buffer_occupancy": normalized_occupancy,
             "total_frames_processed": self.total_frames_processed,
             "total_frames_dropped": self.total_frames_dropped,
             "total_drop_rate": total_drop_rate,
-            "target_adjustments_up": self.target_adjustments_up,
-            "target_adjustments_down": self.target_adjustments_down,
+            "rate_calculations": self.rate_calculations,
             "config": {
-                "led_buffer_low_threshold": self.led_buffer_low_threshold,
-                "led_buffer_high_threshold": self.led_buffer_high_threshold,
-                "drop_rate_step_size": self.drop_rate_step_size,
+                "led_buffer_capacity": self.led_buffer_capacity,
                 "led_buffer_ewma_alpha": self.led_buffer_ewma_alpha,
-                "frame_drop_ewma_alpha": self.frame_drop_ewma_alpha,
+                "max_drop_rate": self.max_drop_rate,
             },
         }
 
@@ -223,12 +255,10 @@ class AdaptiveFrameDropper:
         self.frames_dropped = 0
         self.total_frames_processed = 0
         self.total_frames_dropped = 0
-        self.target_adjustments_up = 0
-        self.target_adjustments_down = 0
+        self.rate_calculations = 0
         self.last_update_time = time.time()
 
         # Reset EWMA values to start fresh
-        self.actual_drop_rate_ewma = 0.0
         self.led_buffer_level_ewma = 0.0
         self.target_drop_rate = 0.0
 
@@ -236,31 +266,23 @@ class AdaptiveFrameDropper:
 
     def update_config(
         self,
-        led_buffer_low_threshold: Optional[float] = None,
-        led_buffer_high_threshold: Optional[float] = None,
-        drop_rate_step_size: Optional[float] = None,
+        led_buffer_capacity: Optional[int] = None,
         led_buffer_ewma_alpha: Optional[float] = None,
-        frame_drop_ewma_alpha: Optional[float] = None,
+        max_drop_rate: Optional[float] = None,
     ) -> None:
         """
         Update configuration parameters.
 
         Args:
-            led_buffer_low_threshold: New low threshold (optional)
-            led_buffer_high_threshold: New high threshold (optional)
-            drop_rate_step_size: New step size (optional)
+            led_buffer_capacity: New buffer capacity for normalization (optional)
             led_buffer_ewma_alpha: New LED buffer EWMA alpha (optional)
-            frame_drop_ewma_alpha: New frame drop EWMA alpha (optional)
+            max_drop_rate: New maximum drop rate (optional)
         """
-        if led_buffer_low_threshold is not None:
-            self.led_buffer_low_threshold = led_buffer_low_threshold
-        if led_buffer_high_threshold is not None:
-            self.led_buffer_high_threshold = led_buffer_high_threshold
-        if drop_rate_step_size is not None:
-            self.drop_rate_step_size = drop_rate_step_size
+        if led_buffer_capacity is not None:
+            self.led_buffer_capacity = led_buffer_capacity
         if led_buffer_ewma_alpha is not None:
             self.led_buffer_ewma_alpha = led_buffer_ewma_alpha
-        if frame_drop_ewma_alpha is not None:
-            self.frame_drop_ewma_alpha = frame_drop_ewma_alpha
+        if max_drop_rate is not None:
+            self.max_drop_rate = max_drop_rate
 
         logger.info(f"AdaptiveFrameDropper configuration updated: {self.get_stats()['config']}")
