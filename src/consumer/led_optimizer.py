@@ -31,6 +31,7 @@ from ..utils.frame_optimizer import (
 from ..utils.led_diffusion_csc_matrix import LEDDiffusionCSCMatrix
 from ..utils.performance_timing import PerformanceTiming
 from ..utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
+from ..utils.symmetric_diagonal_ata_matrix import SymmetricDiagonalATAMatrix
 
 logger = logging.getLogger(__name__)
 
@@ -100,8 +101,11 @@ class LEDOptimizer:
         self.convergence_threshold = 1e-3
         self.step_size_scaling = 0.9
 
-        # ATA matrices: Dense format preferred, DIA format for efficiency, dense inverse for optimal initialization
+        # ATA matrices: Dense format preferred, Symmetric DIA format for efficiency, DIA format for fallback, dense inverse for optimal initialization
         self._dense_ata_matrix = None  # DenseATAMatrix instance for dense ATA operations (preferred)
+        self._symmetric_ata_matrix = (
+            None  # SymmetricDiagonalATAMatrix instance for efficient ATA operations (preferred over regular DIA)
+        )
         self._diagonal_ata_matrix = None  # DiagonalATAMatrix instance for sparse ATA operations (fallback)
         self._ATA_inverse_gpu = None  # Shape: (3, led_count, led_count) - inverse on GPU
         self._ATA_inverse_cpu = None  # Shape: (3, led_count, led_count) - inverse on CPU
@@ -192,6 +196,8 @@ class LEDOptimizer:
             logger.info(f"LED count: {self._actual_led_count}")
             if self._dense_ata_matrix is not None:
                 logger.info("ATA format: Dense (preferred)")
+            elif self._symmetric_ata_matrix is not None:
+                logger.info("ATA format: Symmetric DIA (efficient)")
             elif self._diagonal_ata_matrix is not None:
                 logger.info("ATA format: DIA sparse (fallback)")
             else:
@@ -243,6 +249,17 @@ class LEDOptimizer:
                     dia_memory_mb = self._diagonal_ata_matrix.dia_data_cpu.nbytes / (1024 * 1024)
                     logger.info(f"DIA A^T@A memory: {dia_memory_mb:.1f}MB")
 
+                # Create symmetric version from the regular DiagonalATAMatrix for better performance
+                try:
+                    logger.info("Creating SymmetricDiagonalATAMatrix from regular DiagonalATAMatrix...")
+                    self._symmetric_ata_matrix = SymmetricDiagonalATAMatrix.from_diagonal_ata_matrix(
+                        self._diagonal_ata_matrix
+                    )
+                    logger.info("Successfully created symmetric ATA matrix")
+                except Exception as e:
+                    logger.warning(f"Failed to create symmetric ATA matrix: {e}. Will use regular DIA matrix.")
+                    self._symmetric_ata_matrix = None
+
             # Check for new dia_matrix format (from pattern generation)
             elif "dia_matrix" in data:
                 logger.debug("Loading A^T@A matrices from dia_matrix key")
@@ -258,6 +275,17 @@ class LEDOptimizer:
                 if self._diagonal_ata_matrix.dia_data_cpu is not None:
                     dia_memory_mb = self._diagonal_ata_matrix.dia_data_cpu.nbytes / (1024 * 1024)
                     logger.info(f"DIA A^T@A memory: {dia_memory_mb:.1f}MB")
+
+                # Create symmetric version from the regular DiagonalATAMatrix for better performance
+                try:
+                    logger.info("Creating SymmetricDiagonalATAMatrix from regular DiagonalATAMatrix...")
+                    self._symmetric_ata_matrix = SymmetricDiagonalATAMatrix.from_diagonal_ata_matrix(
+                        self._diagonal_ata_matrix
+                    )
+                    logger.info("Successfully created symmetric ATA matrix")
+                except Exception as e:
+                    logger.warning(f"Failed to create symmetric ATA matrix: {e}. Will use regular DIA matrix.")
+                    self._symmetric_ata_matrix = None
 
             # Check for dense ATA format (fallback for compatibility)
             elif "dense_ata" in data:
@@ -590,10 +618,15 @@ class LEDOptimizer:
             # Use standardized frame optimizer with ATA inverse
             from ..utils.frame_optimizer import FrameOptimizationResult
 
-            # Determine which ATA matrix to use - prefer dense format
-            ata_matrix = self._dense_ata_matrix if self._dense_ata_matrix is not None else self._diagonal_ata_matrix
-            if ata_matrix is None:
-                raise RuntimeError("No ATA matrix available (neither dense nor DIA format)")
+            # Determine which ATA matrix to use - prefer dense, then symmetric, then regular DIA
+            if self._dense_ata_matrix is not None:
+                ata_matrix = self._dense_ata_matrix
+            elif self._symmetric_ata_matrix is not None:
+                ata_matrix = self._symmetric_ata_matrix
+            elif self._diagonal_ata_matrix is not None:
+                ata_matrix = self._diagonal_ata_matrix
+            else:
+                raise RuntimeError("No ATA matrix available (dense, symmetric, or DIA format)")
 
             result_frame_opt = optimize_frame_led_values(
                 target_frame=target_frame,
@@ -625,15 +658,23 @@ class LEDOptimizer:
                         "ata_format": (
                             "Dense"
                             if self._dense_ata_matrix is not None
-                            else "DIA_sparse" if self._diagonal_ata_matrix is not None else "None"
+                            else (
+                                "Symmetric_DIA"
+                                if self._symmetric_ata_matrix is not None
+                                else "DIA_sparse" if self._diagonal_ata_matrix is not None else "None"
+                            )
                         ),
                         "ata_memory_mb": (
                             self._dense_ata_matrix.memory_mb
                             if self._dense_ata_matrix is not None
                             else (
-                                self._diagonal_ata_matrix.dia_data_cpu.nbytes / (1024 * 1024)
-                                if self._diagonal_ata_matrix and self._diagonal_ata_matrix.dia_data_cpu is not None
-                                else 0
+                                self._symmetric_ata_matrix.dia_data_gpu.nbytes / (1024 * 1024)
+                                if self._symmetric_ata_matrix and self._symmetric_ata_matrix.dia_data_gpu is not None
+                                else (
+                                    self._diagonal_ata_matrix.dia_data_cpu.nbytes / (1024 * 1024)
+                                    if self._diagonal_ata_matrix and self._diagonal_ata_matrix.dia_data_cpu is not None
+                                    else 0
+                                )
                             )
                         ),
                         "approach": "standardized_frame_optimizer",
@@ -919,6 +960,21 @@ class LEDOptimizer:
                     "ata_shape": self._dense_ata_matrix.dense_matrices_cpu.shape,
                     "ata_memory_mb": self._dense_ata_matrix.memory_mb,
                     "approach_description": "Standardized frame optimizer with mixed tensor and dense ATA matrix",
+                }
+            elif self._symmetric_ata_matrix is not None:
+                symmetric_info = self._symmetric_ata_matrix.get_info()
+                ata_info = {
+                    "ata_format": "Symmetric_DIA",
+                    "ata_bandwidth": symmetric_info.get("bandwidth", 0),
+                    "ata_k_upper": symmetric_info.get("k_upper", 0),
+                    "ata_original_k": symmetric_info.get("original_k", 0),
+                    "ata_memory_reduction": symmetric_info.get("memory_reduction", "Unknown"),
+                    "ata_memory_mb": (
+                        self._symmetric_ata_matrix.dia_data_gpu.nbytes / (1024 * 1024)
+                        if self._symmetric_ata_matrix.dia_data_gpu is not None
+                        else 0
+                    ),
+                    "approach_description": "Standardized frame optimizer with mixed tensor and symmetric DIA matrix",
                 }
             elif self._diagonal_ata_matrix is not None:
                 ata_info = {
