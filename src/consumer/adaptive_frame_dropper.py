@@ -27,7 +27,7 @@ class AdaptiveFrameDropper:
     def __init__(
         self,
         led_buffer_capacity: int = 10,
-        led_buffer_ewma_alpha: float = 0.05,
+        led_buffer_ewma_alpha: float = 0.005,
         max_drop_rate: float = 0.66,
     ):
         """
