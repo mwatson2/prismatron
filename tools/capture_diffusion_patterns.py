@@ -25,6 +25,7 @@ Usage:
     python capture_diffusion_patterns.py --wled-host 192.168.7.140 --camera-device 0 --output patterns.npz --preview
     python capture_diffusion_patterns.py --wled-host 192.168.7.140 --output patterns.npz --block-size 64 --precision fp16 --uint8
     python capture_diffusion_patterns.py --wled-host 192.168.7.140 --camera-config camera.json --output patterns.npz --flip-image
+    python capture_diffusion_patterns.py --wled-host 192.168.7.140 --output patterns.npz --gain 4.063512 --preview
 """
 
 import argparse
@@ -73,6 +74,7 @@ class CameraCapture:
         device_id: int = 0,
         crop_region: Optional[Tuple[int, int, int, int]] = None,
         flip_image: bool = False,
+        manual_gain: Optional[float] = None,
     ):
         """
         Initialize camera capture.
@@ -81,10 +83,12 @@ class CameraCapture:
             device_id: Camera device ID (usually 0 for default camera)
             crop_region: Optional crop region (x, y, width, height) for prismatron area
             flip_image: Whether to flip the image 180 degrees (for upside-down camera mounting)
+            manual_gain: Optional manual gain value for consistent LED capture (e.g., from led_gain_calibrator.py)
         """
         self.device_id = device_id
         self.crop_region = crop_region
         self.flip_image = flip_image
+        self.manual_gain = manual_gain
         self.cap: Optional[cv2.VideoCapture] = None
         self.camera_width = 0
         self.camera_height = 0
@@ -96,9 +100,19 @@ class CameraCapture:
         try:
             logger.info(f"Using OpenCV with GStreamer support for camera {self.device_id}")
 
-            # Use the working GStreamer pipeline
+            # Build GStreamer pipeline with optional gain control
+            pipeline_parts = [f"nvarguscamerasrc sensor-id={self.device_id}"]
+
+            # Add manual gain control if specified
+            if self.manual_gain is not None:
+                pipeline_parts.append(f'gainrange="{self.manual_gain} {self.manual_gain}"')
+                pipeline_parts.append("aelock=true")  # Lock auto-exposure for consistent capture
+                pipeline_parts.append("awblock=true")  # Lock auto-white-balance
+                logger.info(f"Setting manual gain: {self.manual_gain} with locked exposure and white balance")
+
+            # Complete the pipeline
             gstreamer_pipeline = (
-                f"nvarguscamerasrc sensor-id={self.device_id} ! "
+                " ".join(pipeline_parts) + " ! "
                 "nvvidconv ! video/x-raw,format=I420 ! "
                 "videoconvert ! video/x-raw,format=BGR ! "
                 "appsink drop=1"
@@ -205,6 +219,7 @@ class DiffusionPatternCapture:
         flip_image: bool = False,
         led_count: Optional[int] = None,
         debug_mode: bool = False,
+        manual_gain: Optional[float] = None,
     ):
         """
         Initialize diffusion pattern capture.
@@ -221,6 +236,7 @@ class DiffusionPatternCapture:
             flip_image: Whether to flip the image 180 degrees (for upside-down camera mounting)
             led_count: Number of LEDs to capture (default: LED_COUNT from config)
             debug_mode: Debug mode - only capture LEDs with physical index multiples of 100
+            manual_gain: Manual camera gain value for consistent LED capture (from led_gain_calibrator.py)
         """
         self.wled_host = wled_host
         self.wled_port = wled_port
@@ -246,7 +262,7 @@ class DiffusionPatternCapture:
         self.wled_client = WLEDClient(wled_config)
 
         # Initialize camera
-        self.camera = CameraCapture(camera_device, crop_region, flip_image)
+        self.camera = CameraCapture(camera_device, crop_region, flip_image, manual_gain)
 
         # Determine output dtype based on precision and format
         if use_uint8:
@@ -1139,6 +1155,11 @@ def main():
         action="store_true",
         help="Debug mode: only capture LEDs with physical index multiples of 100 and save debug images",
     )
+    parser.add_argument(
+        "--gain",
+        type=float,
+        help="Manual camera gain value for consistent LED capture (recommended: use output from led_gain_calibrator.py)",
+    )
 
     args = parser.parse_args()
 
@@ -1210,6 +1231,7 @@ def main():
         flip_image=flip_image,
         led_count=led_count,
         debug_mode=args.debug_mode,
+        manual_gain=args.gain,
     )
 
     try:
