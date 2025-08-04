@@ -38,7 +38,7 @@ def check_ata_formats():
                 print(f"  ✓ ata_inverse: shape={ata_inv.shape}, dtype={ata_inv.dtype}")
                 print(f"    Type: {type(ata_inv)}")
             else:
-                print(f"  ❌ No 'ata_inverse' key")
+                print("  ❌ No 'ata_inverse' key")
 
             # Check for DIA ATA inverse
             if "ata_inverse_dia" in data:
@@ -47,7 +47,7 @@ def check_ata_formats():
                 if isinstance(ata_inv_dia, dict):
                     print(f"    Dict keys: {list(ata_inv_dia.keys())}")
             else:
-                print(f"  ❌ No 'ata_inverse_dia' key")
+                print("  ❌ No 'ata_inverse_dia' key")
 
         except Exception as e:
             print(f"  ❌ Error loading: {e}")

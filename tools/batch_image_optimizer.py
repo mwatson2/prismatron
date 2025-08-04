@@ -434,7 +434,7 @@ class BatchImageOptimizer:
 
         # Print summary
         total_time = time.time() - start_time
-        logger.info(f"\n=== Batch Processing Summary ===")
+        logger.info("\n=== Batch Processing Summary ===")
         logger.info(f"Total images: {self.total_images}")
         logger.info(f"Processed successfully: {self.processed_images}")
         logger.info(f"Failed: {self.failed_images}")

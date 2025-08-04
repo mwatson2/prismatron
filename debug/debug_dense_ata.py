@@ -170,12 +170,12 @@ def test_ata_values():
         # Compare with typical expected ranges
         if matrix_max > 1e6:
             logger.error(f"  PROBLEM: Matrix values are too large (max={matrix_max:.3e})")
-            logger.error(f"  Expected ATA matrices to have values roughly in [0, 1000] range")
-            logger.error(f"  Large values will cause LED optimization to fail")
+            logger.error("  Expected ATA matrices to have values roughly in [0, 1000] range")
+            logger.error("  Large values will cause LED optimization to fail")
 
         if matrix_max < 1e-6:
             logger.error(f"  PROBLEM: Matrix values are too small (max={matrix_max:.3e})")
-            logger.error(f"  This suggests the matrix is nearly singular")
+            logger.error("  This suggests the matrix is nearly singular")
 
 
 if __name__ == "__main__":

@@ -175,7 +175,7 @@ def create_ata_inverse_dia(
     assert channels == 3, f"Expected 3 channels, got {channels}"
     assert ata_inverse.shape == (3, led_count, led_count), f"Unexpected ATA inverse shape: {ata_inverse.shape}"
 
-    logger.info(f"Creating unified DIA format ATA inverse approximation:")
+    logger.info("Creating unified DIA format ATA inverse approximation:")
     logger.info(f"  Input shape: {ata_inverse.shape}")
     logger.info(f"  Diagonal factor: {diagonal_factor}")
     logger.info(f"  Reference bandwidth: {reference_dia_matrix.bandwidth}")

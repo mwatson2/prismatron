@@ -44,7 +44,7 @@ def load_synthetic_data():
     # Load ATA inverse (same for both - we'll use the original one)
     ata_inverse = original_data["ata_inverse"]
 
-    print(f"✅ Loaded synthetic data:")
+    print("✅ Loaded synthetic data:")
     print(f"   Mixed tensor: {mixed_tensor.batch_size} LEDs")
     print(f"   DIA matrix: {dia_matrix.led_count} LEDs, k={dia_matrix.k} diagonals")
     print(f"   Dense matrix: {dense_matrix.led_count} LEDs, {dense_matrix.memory_mb:.1f}MB")
@@ -208,11 +208,11 @@ def main():
             print(f"{result['image']:<15} {status} (max_diff: {result['max_diff']:.3f})")
 
         if all_success:
-            print(f"\n🎉 ALL TESTS PASSED!")
+            print("\n🎉 ALL TESTS PASSED!")
             print("DIA and Dense ATA matrices produce identical optimization results!")
             return 0
         else:
-            print(f"\n❌ SOME TESTS FAILED!")
+            print("\n❌ SOME TESTS FAILED!")
             print("DIA and Dense ATA matrices produce different results!")
             return 1
 

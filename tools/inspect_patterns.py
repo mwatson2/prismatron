@@ -292,7 +292,7 @@ def inspect_matrices(data: Dict[str, Any], verbose: bool = False) -> None:
 def inspect_file_info(file_path: Path) -> None:
     """Inspect file-level information."""
     file_size = file_path.stat().st_size
-    print(f"📁 File Info:")
+    print("📁 File Info:")
     print(f"  path: {file_path}")
     print(f"  size: {format_bytes(file_size)}")
     print(f"  modified: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(file_path.stat().st_mtime))}")

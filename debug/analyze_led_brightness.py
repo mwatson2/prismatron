@@ -228,7 +228,7 @@ def suggest_brightness_scaling():
     coverage_per_led = pattern_area / frame_area
     expected_overlap = led_count * coverage_per_led
 
-    logger.info(f"\nEstimated overlap analysis:")
+    logger.info("\nEstimated overlap analysis:")
     logger.info(f"LED count: {led_count}")
     logger.info(f"Frame area: {frame_area} pixels")
     logger.info(f"Pattern area per LED: {pattern_area} pixels")
@@ -241,7 +241,7 @@ def suggest_brightness_scaling():
         )
         logger.info(f"   This would allow up to {expected_overlap:.1f} LEDs to overlap without clipping")
     else:
-        logger.info(f"\n✅ Current scaling may be acceptable (overlap < 2x)")
+        logger.info("\n✅ Current scaling may be acceptable (overlap < 2x)")
 
 
 if __name__ == "__main__":

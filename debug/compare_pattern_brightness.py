@@ -78,7 +78,7 @@ def analyze_pattern_file(pattern_file: str, name: str):
             "brightness_ratio": float(non_zero_values.max()) / (255 if mixed_tensor.dtype == np.uint8 else 1.0),
         }
 
-        logger.info(f"Pattern brightness analysis:")
+        logger.info("Pattern brightness analysis:")
         logger.info(f"  LED count: {pattern_stats['led_count']}")
         logger.info(f"  Data type: {pattern_stats['dtype']}")
         logger.info(f"  Value range: [{pattern_stats['min_value']:.1f}, {pattern_stats['max_value']:.1f}]")
@@ -221,14 +221,14 @@ def compare_files():
             optimization_results[name] = opt_results
 
     # Compare results
-    logger.info(f"\n=== BRIGHTNESS COMPARISON SUMMARY ===")
+    logger.info("\n=== BRIGHTNESS COMPARISON SUMMARY ===")
 
     for name, stats in pattern_results.items():
         logger.info(
             f"{name}: max={stats['max_value']:.1f}, mean={stats['mean_value']:.1f}, ratio={stats['brightness_ratio']:.3f}"
         )
 
-    logger.info(f"\n=== OPTIMIZATION COMPARISON SUMMARY ===")
+    logger.info("\n=== OPTIMIZATION COMPARISON SUMMARY ===")
 
     for name, results in optimization_results.items():
         logger.info(f"\n{name}:")
@@ -238,7 +238,7 @@ def compare_files():
             )
 
     # Check for scaling differences
-    logger.info(f"\n=== SCALING ANALYSIS ===")
+    logger.info("\n=== SCALING ANALYSIS ===")
 
     # Compare pattern brightness
     if "Synthetic 2624" in pattern_results and "Captured (Fixed)" in pattern_results:
@@ -253,7 +253,7 @@ def compare_files():
                 f"❌ Captured patterns are {brightness_ratio:.1f}x brighter than synthetic - this could cause clipping"
             )
         elif abs(brightness_ratio - 1.0) < 0.1:
-            logger.info(f"✅ Pattern brightness is similar - scaling issue may be elsewhere")
+            logger.info("✅ Pattern brightness is similar - scaling issue may be elsewhere")
 
     # Compare optimization behavior between DIA and dense
     for name in optimization_results:
@@ -272,7 +272,7 @@ def compare_files():
                     f"❌ Dense format clips {clipping_ratio:.1f}x more than DIA - scaling issue in dense implementation"
                 )
             elif abs(clipping_ratio - 1.0) < 0.2:
-                logger.info(f"✅ Similar clipping behavior between DIA and dense formats")
+                logger.info("✅ Similar clipping behavior between DIA and dense formats")
 
 
 if __name__ == "__main__":

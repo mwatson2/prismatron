@@ -50,7 +50,7 @@ def test_dia_multiplication():
     try:
         # Create DIA matrix
         dia_matrix = DiagonalATAMatrix.from_dict(channel_0_data)
-        print(f"DIA matrix created successfully")
+        print("DIA matrix created successfully")
         print(f"DIA matrix led_count: {dia_matrix.led_count}")
         print(f"DIA matrix channels: {dia_matrix.channels}")
 

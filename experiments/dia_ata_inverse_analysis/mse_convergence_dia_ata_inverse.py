@@ -141,7 +141,7 @@ def benchmark_matrix_multiply_performance(
     Returns:
         (dia_time_ms, dense_time_ms): Average times in milliseconds
     """
-    print(f"  Benchmarking matrix multiply performance...")
+    print("  Benchmarking matrix multiply performance...")
     print(f"    Warmup runs: {warmup_runs}, timing runs: {timing_runs}")
 
     try:
@@ -360,7 +360,7 @@ def main():
 
     # Test dense ATA inverse as baseline (using factor 1.0 file)
     try:
-        print(f"\n--- Loading dense baseline ---")
+        print("\n--- Loading dense baseline ---")
         mixed_tensor, dia_matrix, ata_inverse_dia, ata_inverse_dense = load_dia_ata_inverse_patterns(1.0)
 
         # Calculate memory usage for dense case
@@ -436,7 +436,7 @@ def main():
 
     # Generate convergence plot
     if mse_results:
-        print(f"\n=== Generating Convergence Plot ===")
+        print("\n=== Generating Convergence Plot ===")
         plt.figure(figsize=(14, 10))
 
         # Define colors and line styles
@@ -459,7 +459,7 @@ def main():
             )
 
         # Plot DIA factors
-        factor_cases = [key for key in mse_results.keys() if key.startswith("dia_factor_")]
+        factor_cases = [key for key in mse_results if key.startswith("dia_factor_")]
         factor_cases.sort(key=lambda x: float(x.split("_")[-1]))  # Sort by factor value
 
         for i, case in enumerate(factor_cases):
@@ -498,7 +498,7 @@ def main():
         plt.show()
 
     # Print summary table
-    print(f"\n=== Summary ===")
+    print("\n=== Summary ===")
     print("Case                              | Factor | Init MSE  | Final MSE | Reduction | Time (s) | PSNR (dB)")
     print("-" * 100)
 
@@ -511,7 +511,7 @@ def main():
         )
 
     # DIA factors
-    factor_cases = [key for key in metrics_summary.keys() if key.startswith("dia_factor_")]
+    factor_cases = [key for key in metrics_summary if key.startswith("dia_factor_")]
     factor_cases.sort(key=lambda x: float(x.split("_")[-1]))
 
     for case in factor_cases:
@@ -525,7 +525,7 @@ def main():
             )
 
     # Memory analysis
-    print(f"\n=== Memory Analysis ===")
+    print("\n=== Memory Analysis ===")
     if memory_analysis:
         print("Memory Usage Comparison:")
         print("Case                              | Memory (MB) | vs Dense")
@@ -536,7 +536,7 @@ def main():
             print(f"{'Dense ATA inverse (baseline)':33} | {dense_memory:10.1f} | {'1.0x':>8}")
 
         # DIA factors
-        factor_cases = [key for key in memory_analysis.keys() if key.startswith("dia_factor_")]
+        factor_cases = [key for key in memory_analysis if key.startswith("dia_factor_")]
         factor_cases.sort(key=lambda x: float(x.split("_")[-1]))
 
         for case in factor_cases:
@@ -547,7 +547,7 @@ def main():
                 name = f"DIA ATA inverse (factor {factor})"
                 print(f"{name:33} | {dia_memory:10.1f} | {memory_ratio:7.2f}x")
 
-        print(f"\nMemory savings with DIA format:")
+        print("\nMemory savings with DIA format:")
         if dense_memory > 0:
             for case in factor_cases:
                 if case in memory_analysis:
@@ -557,7 +557,7 @@ def main():
                     print(f"  Factor {factor}: {savings_pct:.1f}% memory reduction")
 
     # Performance timing analysis
-    print(f"\n=== Performance Timing Analysis ===")
+    print("\n=== Performance Timing Analysis ===")
     if timing_analysis:
         print("Matrix Multiply Performance (averaged over multiple runs):")
         print("Case                              | DIA (ms) | Dense (ms) | Speedup")
@@ -572,7 +572,7 @@ def main():
             print(f"{'Dense ATA inverse (baseline)':33} | {dia_time:7.2f} | {dense_time:9.2f} | {speedup:6.2f}x")
 
         # DIA factors
-        factor_cases = [key for key in timing_analysis.keys() if key.startswith("dia_factor_")]
+        factor_cases = [key for key in timing_analysis if key.startswith("dia_factor_")]
         factor_cases.sort(key=lambda x: float(x.split("_")[-1]))
 
         for case in factor_cases:
@@ -585,7 +585,7 @@ def main():
                 name = f"DIA ATA inverse (factor {factor})"
                 print(f"{name:33} | {dia_time:7.2f} | {dense_time:9.2f} | {speedup:6.2f}x")
 
-        print(f"\nTiming insights:")
+        print("\nTiming insights:")
         if len(factor_cases) >= 1:
             # Find fastest DIA case
             dia_times = [timing_analysis[case]["dia_time_ms"] for case in factor_cases if case in timing_analysis]
@@ -603,7 +603,7 @@ def main():
                     print(f"  Best DIA speedup vs dense: {speedup_vs_dense:.2f}x")
 
     # Analysis insights
-    print(f"\n=== Analysis Insights ===")
+    print("\n=== Analysis Insights ===")
     if len(factor_cases) >= 2:
         # Compare performance vs diagonal factor
         factors = [float(case.split("_")[-1]) for case in factor_cases if case in metrics_summary]
@@ -626,9 +626,9 @@ def main():
             print(f"  vs Dense baseline: MSE ratio {mse_ratio:.2f}x, PSNR diff {psnr_diff:+.2f} dB")
 
             if mse_ratio < 2.0:
-                print(f"  ✅ DIA approximation is quite good (within 2x MSE of dense)")
+                print("  ✅ DIA approximation is quite good (within 2x MSE of dense)")
             elif mse_ratio < 5.0:
-                print(f"  ⚠️  DIA approximation is reasonable (within 5x MSE of dense)")
+                print("  ⚠️  DIA approximation is reasonable (within 5x MSE of dense)")
             else:
                 print(f"  ❌ DIA approximation may be too coarse (>{mse_ratio:.1f}x MSE of dense)")
 

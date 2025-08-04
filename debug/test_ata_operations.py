@@ -58,7 +58,7 @@ def test_ata_operations():
     dia_magnitude = np.sqrt(np.mean(dia_cpu**2))
     relative_rms = rms_diff / dia_magnitude if dia_magnitude > 0 else float("inf")
 
-    print(f"\nComparison results:")
+    print("\nComparison results:")
     print(f"Max absolute difference: {max_diff:.6f}")
     print(f"Mean absolute difference: {mean_diff:.6f}")
     print(f"RMS difference: {rms_diff:.6f}")
@@ -73,14 +73,14 @@ def test_ata_operations():
         print(f"❌ FAILURE: A^T A @ x operations differ by more than tolerance ({tolerance})")
 
         # Detailed analysis
-        print(f"\nDetailed analysis:")
+        print("\nDetailed analysis:")
         print(f"DIA magnitude: {dia_magnitude:.6f}")
         dense_magnitude = np.sqrt(np.mean(dense_cpu**2))
         print(f"Dense magnitude: {dense_magnitude:.6f}")
         print(f"Magnitude ratio: {dense_magnitude/dia_magnitude:.6f}")
 
         # Show first few values
-        print(f"\nFirst 5 values comparison:")
+        print("\nFirst 5 values comparison:")
         for i in range(min(5, len(dia_cpu.flat))):
             print(
                 f"  [{i}] DIA: {dia_cpu.flat[i]:.6f}, Dense: {dense_cpu.flat[i]:.6f}, Diff: {abs(dia_cpu.flat[i] - dense_cpu.flat[i]):.6f}"

@@ -393,7 +393,8 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
 
         print("    Block conversion completed!")
         print(
-            f"    Total blocks stored: {self.channels} channels × {self.block_diag_count} diagonals × {self.led_blocks} blocks = {self.channels * self.block_diag_count * self.led_blocks}"
+            f"    Total blocks stored: {self.channels} channels × {self.block_diag_count} diagonals × "
+            f"{self.led_blocks} blocks = {self.channels * self.block_diag_count * self.led_blocks}"
         )
         print(f"    Memory usage: {self.block_data_gpu.nbytes / 1024**2:.1f} MB")
 

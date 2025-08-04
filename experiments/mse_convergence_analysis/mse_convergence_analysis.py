@@ -243,7 +243,7 @@ def main():
 
     # Generate convergence plot
     if mse_results:
-        print(f"\n=== Generating Convergence Plot ===")
+        print("\n=== Generating Convergence Plot ===")
         plt.figure(figsize=(12, 8))
 
         colors = ["blue", "red", "green", "orange", "purple"]
@@ -284,7 +284,7 @@ def main():
         plt.show()
 
     # Print summary table
-    print(f"\n=== Summary ===")
+    print("\n=== Summary ===")
     print("Case                              | Init MSE  | Final MSE | Reduction | Time (s) | PSNR (dB)")
     print("-" * 85)
 

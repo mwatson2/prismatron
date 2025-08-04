@@ -300,7 +300,7 @@ def main():
 
     # Generate convergence plot
     if mse_results:
-        print(f"\n=== Generating Convergence Plot ===")
+        print("\n=== Generating Convergence Plot ===")
         plt.figure(figsize=(14, 10))
 
         colors = ["blue", "red", "green", "orange", "purple", "brown", "pink", "gray", "olive"]
@@ -347,7 +347,7 @@ def main():
         plt.show()
 
     # Print summary table
-    print(f"\n=== Summary ===")
+    print("\n=== Summary ===")
     print("Case                                    | Init MSE  | Final MSE | Reduction | Time (s) | PSNR (dB)")
     print("-" * 95)
 
@@ -373,7 +373,7 @@ def main():
 
     # Print DIA approximation analysis
     if any(case.startswith("dia_factor_") for case in cases):
-        print(f"\n=== DIA Approximation Analysis ===")
+        print("\n=== DIA Approximation Analysis ===")
         print("Factor | Bandwidth | K     | Memory Ratio | Approx Error | Final MSE")
         print("-" * 70)
 

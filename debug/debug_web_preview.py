@@ -599,7 +599,7 @@ class WebPreviewDebugger:
         logger.info(f"Saved LED values comparison to {comparison_file}")
 
         # Summary
-        logger.info(f"LED Values Comparison Summary:")
+        logger.info("LED Values Comparison Summary:")
         logger.info(f"  API LED values collected: {len(self.collected_api_led_values)}")
         logger.info(f"  Logged spatial LED files found: {len(spatial_files)}")
         logger.info(f"  Logged physical LED files found: {len(physical_files)}")
@@ -657,14 +657,14 @@ class WebPreviewDebugger:
             f.write(f"\nFrame dimensions: {self.api_frame_dimensions}\n")
 
             # Rendering results
-            f.write(f"\nRendering Results:\n")
+            f.write("\nRendering Results:\n")
             f.write(f"  Target frames: {self.target_frames}\n")
             f.write(f"  Frames rendered: {self.frames_rendered}\n")
             f.write(f"  Unique frame hashes: {len(self.frame_hashes)}\n")
             f.write(f"  API LED values collected: {len(self.collected_api_led_values)}\n")
 
             # Generated files
-            f.write(f"\nGenerated Files:\n")
+            f.write("\nGenerated Files:\n")
             for file in sorted(self.output_dir.glob("*")):
                 if file.is_file() and file.name != "web_debug_report.txt":
                     f.write(f"  {file.name}\n")

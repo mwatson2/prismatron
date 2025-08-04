@@ -90,7 +90,7 @@ def main():
 
     # Load DIA matrix info
     dia_dict = data["dia_matrix"].item()
-    print(f"\nDIA Matrix Info from file:")
+    print("\nDIA Matrix Info from file:")
     print(f"  LED count: {dia_dict['led_count']}")
     print(f"  Reported k diagonals: {dia_dict['k']}")
     print(f"  Reported bandwidth: {dia_dict['bandwidth']}")
@@ -100,7 +100,7 @@ def main():
     dense_dict = data["dense_ata_matrix"].item()
     dense_matrices = dense_dict["dense_matrices"]
 
-    print(f"\nDense Matrix Info from file:")
+    print("\nDense Matrix Info from file:")
     print(f"  LED count: {dense_dict['led_count']}")
     print(f"  Memory: {dense_dict['memory_mb']:.1f}MB")
     print(f"  Matrix shape: {dense_matrices.shape}")
@@ -137,7 +137,7 @@ def main():
             # Show sample of where non-zeros are located
             rows, cols = np.nonzero(channel_matrix)
             if len(rows) > 0:
-                print(f"\nSample non-zero locations (first 10):")
+                print("\nSample non-zero locations (first 10):")
                 for i in range(min(10, len(rows))):
                     r, c = rows[i], cols[i]
                     offset = c - r

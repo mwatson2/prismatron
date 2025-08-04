@@ -121,27 +121,27 @@ def compare_dia_vs_dense_ata_inverse():
 
     ATb_cpu_real = cp.asnumpy(ATb_gpu_real)
 
-    print(f"\nA^T @ b from frame optimizer method:")
+    print("\nA^T @ b from frame optimizer method:")
     print(f"  Shape: {ATb_gpu_real.shape}")
     print(f"  Range: [{ATb_cpu_real.min():.2f}, {ATb_cpu_real.max():.2f}]")
     print(f"  RMS: {np.sqrt(np.mean(ATb_cpu_real**2)):.2f}")
     print(f"  Dtype: {ATb_gpu_real.dtype}")
 
     # NOW TEST: Replace with random values of same dtype and similar range
-    print(f"\n🧪 TESTING 1: Using uniform random A^T @ b with same dtype/range...")
+    print("\n🧪 TESTING 1: Using uniform random A^T @ b with same dtype/range...")
     np.random.seed(42)
     ATb_uniform = np.random.rand(3, 2624).astype(np.float32) * 2500.0  # Similar range [0, 2500]
     ATb_uniform_gpu = cp.asarray(ATb_uniform)
     ATb_uniform_cpu = cp.asnumpy(ATb_uniform_gpu)
 
-    print(f"Uniform random A^T @ b:")
+    print("Uniform random A^T @ b:")
     print(f"  Shape: {ATb_uniform_gpu.shape}")
     print(f"  Range: [{ATb_uniform_cpu.min():.2f}, {ATb_uniform_cpu.max():.2f}]")
     print(f"  RMS: {np.sqrt(np.mean(ATb_uniform_cpu**2)):.2f}")
     print(f"  Dtype: {ATb_uniform_gpu.dtype}")
 
     # NEW TEST: Element-by-element copy from actual ATb values (no random sampling)
-    print(f"\n🧪 TESTING 2: Using element-by-element copy from real A^T @ b values...")
+    print("\n🧪 TESTING 2: Using element-by-element copy from real A^T @ b values...")
     # Create a copy by explicitly copying each element (to test if storage layout matters)
     ATb_copied = np.zeros_like(ATb_cpu_real, dtype=np.float32)
     for c in range(3):
@@ -151,14 +151,14 @@ def compare_dia_vs_dense_ata_inverse():
     ATb_copied_gpu = cp.asarray(ATb_copied)
     ATb_copied_cpu = cp.asnumpy(ATb_copied_gpu)
 
-    print(f"Element-by-element copied from real A^T @ b:")
+    print("Element-by-element copied from real A^T @ b:")
     print(f"  Shape: {ATb_copied_gpu.shape}")
     print(f"  Range: [{ATb_copied_cpu.min():.2f}, {ATb_copied_cpu.max():.2f}]")
     print(f"  RMS: {np.sqrt(np.mean(ATb_copied_cpu**2)):.2f}")
     print(f"  Dtype: {ATb_copied_gpu.dtype}")
 
     # NEW TEST: Random sampling from actual ATb values (create before analysis)
-    print(f"\n🧪 TESTING 3: Using random sampling from real A^T @ b values...")
+    print("\n🧪 TESTING 3: Using random sampling from real A^T @ b values...")
     np.random.seed(123)  # Different seed for variety
     # Flatten real ATb, sample with replacement, reshape
     ATb_real_flat = ATb_cpu_real.flatten()
@@ -167,15 +167,15 @@ def compare_dia_vs_dense_ata_inverse():
     ATb_sampled_gpu = cp.asarray(ATb_sampled)
     ATb_sampled_cpu = cp.asnumpy(ATb_sampled_gpu)
 
-    print(f"Sampled from real A^T @ b:")
+    print("Sampled from real A^T @ b:")
     print(f"  Shape: {ATb_sampled_gpu.shape}")
     print(f"  Range: [{ATb_sampled_cpu.min():.2f}, {ATb_sampled_cpu.max():.2f}]")
     print(f"  RMS: {np.sqrt(np.mean(ATb_sampled_cpu**2)):.2f}")
     print(f"  Dtype: {ATb_sampled_gpu.dtype}")
 
     # 🔍 TENSOR PROPERTIES INVESTIGATION
-    print(f"\n🔍 DETAILED TENSOR PROPERTIES INVESTIGATION:")
-    print(f"=" * 60)
+    print("\n🔍 DETAILED TENSOR PROPERTIES INVESTIGATION:")
+    print("=" * 60)
 
     def analyze_tensor_properties(tensor, name):
         print(f"\n📊 {name}:")
@@ -223,10 +223,10 @@ def compare_dia_vs_dense_ata_inverse():
     analyze_tensor_properties(ATb_sampled_gpu, "Sampled from real ATb")
 
     # Additional deep inspection of the problematic tensor
-    print(f"\n🔬 DEEP INSPECTION OF ORIGINAL ATb TENSOR:")
-    print(f"=" * 60)
-    print(f"Original ATb tensor creation path analysis:")
-    print(f"1. Created by: mixed_tensor.transpose_dot_product_3d(target_gpu)")
+    print("\n🔬 DEEP INSPECTION OF ORIGINAL ATb TENSOR:")
+    print("=" * 60)
+    print("Original ATb tensor creation path analysis:")
+    print("1. Created by: mixed_tensor.transpose_dot_product_3d(target_gpu)")
     print(f"2. Mixed tensor dtype: {mixed_tensor.dtype}")
     print(f"3. Target dtype: {target_frame.dtype}")
 
@@ -247,12 +247,12 @@ def compare_dia_vs_dense_ata_inverse():
     dense_real_rms = np.sqrt(np.mean(result_dense_real_cpu**2))
 
     # Check if we can force contiguity and see if that fixes it
-    print(f"\n🧪 TESTING CONTIGUITY FIX:")
+    print("\n🧪 TESTING CONTIGUITY FIX:")
     ATb_contiguous = cp.ascontiguousarray(ATb_gpu_real)
     analyze_tensor_properties(ATb_contiguous, "Contiguous copy of real ATb")
 
     # Test if the contiguous version works correctly
-    print(f"\n9️⃣ DIA @ Contiguous Real ATb:")
+    print("\n9️⃣ DIA @ Contiguous Real ATb:")
     print("  🔍 Testing if making the tensor contiguous fixes the issue...")
     result_dia_contiguous = ata_inverse_dia.multiply_3d(ATb_contiguous, debug_logging=True)
     result_dia_contiguous_cpu = cp.asnumpy(result_dia_contiguous)
@@ -263,14 +263,14 @@ def compare_dia_vs_dense_ata_inverse():
     print(f"   Scaling vs dense: {contiguous_scaling:.2f}x")
 
     if abs(contiguous_scaling - 1.0) < 0.1:
-        print(f"   ✅ CONTIGUOUS COPY FIXES THE ISSUE!")
-        print(f"   → The problem is NON-CONTIGUOUS memory layout from mixed tensor operation")
+        print("   ✅ CONTIGUOUS COPY FIXES THE ISSUE!")
+        print("   → The problem is NON-CONTIGUOUS memory layout from mixed tensor operation")
     else:
         print(f"   ❌ Contiguous copy still has issues ({contiguous_scaling:.2f}x)")
-        print(f"   → The problem is deeper than just memory contiguity")
+        print("   → The problem is deeper than just memory contiguity")
 
     # NEW TEST: Random sampling from actual ATb values (create before analysis)
-    print(f"\n🧪 TESTING 3: Using random sampling from real A^T @ b values...")
+    print("\n🧪 TESTING 3: Using random sampling from real A^T @ b values...")
     np.random.seed(123)  # Different seed for variety
     # Flatten real ATb, sample with replacement, reshape
     ATb_real_flat = ATb_cpu_real.flatten()
@@ -279,7 +279,7 @@ def compare_dia_vs_dense_ata_inverse():
     ATb_sampled_gpu = cp.asarray(ATb_sampled)
     ATb_sampled_cpu = cp.asnumpy(ATb_sampled_gpu)
 
-    print(f"Sampled from real A^T @ b:")
+    print("Sampled from real A^T @ b:")
     print(f"  Shape: {ATb_sampled_gpu.shape}")
     print(f"  Range: [{ATb_sampled_cpu.min():.2f}, {ATb_sampled_cpu.max():.2f}]")
     print(f"  RMS: {np.sqrt(np.mean(ATb_sampled_cpu**2)):.2f}")
@@ -366,14 +366,14 @@ def compare_dia_vs_dense_ata_inverse():
     atb_copied_rms = np.sqrt(np.mean(ATb_copied_cpu**2))
     atb_sampled_rms = np.sqrt(np.mean(ATb_sampled_cpu**2))
 
-    print(f"\n📊 Input RMS values:")
+    print("\n📊 Input RMS values:")
     print(f"   Real ATb: {atb_real_rms:.2f}")
     print(f"   Uniform random: {atb_uniform_rms:.2f}")
     print(f"   Element-by-element copied: {atb_copied_rms:.2f}")
     print(f"   Sampled from real: {atb_sampled_rms:.2f}")
 
     # Dense behavior analysis
-    print(f"\n📊 Dense matrix behavior:")
+    print("\n📊 Dense matrix behavior:")
     print(f"   Real ATb → RMS: {dense_real_rms:.6f}")
     print(f"   Uniform → RMS: {dense_uniform_rms:.6f}")
     print(f"   Element-by-element copied → RMS: {dense_copied_rms:.6f}")
@@ -383,7 +383,7 @@ def compare_dia_vs_dense_ata_inverse():
     print(f"   Scaling sampled/real: {dense_sampled_rms/dense_real_rms:.2f}x")
 
     # DIA behavior analysis
-    print(f"\n📊 DIA matrix behavior:")
+    print("\n📊 DIA matrix behavior:")
     print(f"   Real ATb → RMS: {dia_real_rms:.6f}")
     print(f"   Uniform → RMS: {dia_uniform_rms:.6f}")
     print(f"   Element-by-element copied → RMS: {dia_copied_rms:.6f}")
@@ -393,7 +393,7 @@ def compare_dia_vs_dense_ata_inverse():
     print(f"   Scaling sampled/real: {dia_sampled_rms/dia_real_rms:.2f}x")
 
     # Cross comparisons: DIA vs Dense scaling
-    print(f"\n🔍 DIA vs Dense scaling factors:")
+    print("\n🔍 DIA vs Dense scaling factors:")
     real_scaling = dia_real_rms / dense_real_rms
     uniform_scaling = dia_uniform_rms / dense_uniform_rms
     copied_scaling = dia_copied_rms / dense_copied_rms
@@ -405,35 +405,35 @@ def compare_dia_vs_dense_ata_inverse():
     print(f"   Sampled: {sampled_scaling:.2f}x")
 
     # Key insight: does value distribution matter?
-    print(f"\n🔍 Key insight - Value distribution vs memory layout impact:")
+    print("\n🔍 Key insight - Value distribution vs memory layout impact:")
     print(f"   🔍 Element-by-element copy test: {copied_scaling:.2f}x")
     print(f"   🔍 Random sampling test: {sampled_scaling:.2f}x")
     print(f"   🔍 Real ATb test: {real_scaling:.2f}x")
 
     if abs(copied_scaling - real_scaling) < 1.0:
         print(f"   ❌ Element-by-element copy STILL has the same issue ({copied_scaling:.2f}x vs {real_scaling:.2f}x)")
-        print(f"   → This proves it's NOT a memory layout or storage format issue")
-        print(f"   → The issue is the SPATIAL ARRANGEMENT of the values themselves")
+        print("   → This proves it's NOT a memory layout or storage format issue")
+        print("   → The issue is the SPATIAL ARRANGEMENT of the values themselves")
     else:
         print(f"   ✅ Element-by-element copy behaves differently ({copied_scaling:.2f}x vs {real_scaling:.2f}x)")
-        print(f"   → This suggests a memory layout or storage format issue")
+        print("   → This suggests a memory layout or storage format issue")
 
     if abs(sampled_scaling - real_scaling) < 1.0:
         print(f"   ❌ Sampled values behave like real ({sampled_scaling:.2f}x vs {real_scaling:.2f}x)")
-        print(f"   → The issue is likely the VALUE DISTRIBUTION, not specific A^T @ b calculation")
+        print("   → The issue is likely the VALUE DISTRIBUTION, not specific A^T @ b calculation")
     else:
         print(f"   ✅ Sampled values behave differently ({sampled_scaling:.2f}x vs {real_scaling:.2f}x)")
-        print(f"   → The issue is likely the SPECIFIC A^T @ b calculation process")
+        print("   → The issue is likely the SPECIFIC A^T @ b calculation process")
 
     if abs(uniform_scaling - 1.0) < 0.1:
         print(f"   ✅ Uniform distribution works correctly ({uniform_scaling:.2f}x ≈ 1.0)")
-        print(f"   → This confirms DIA matrix implementation itself is correct")
+        print("   → This confirms DIA matrix implementation itself is correct")
     else:
         print(f"   ❌ Even uniform distribution has issues ({uniform_scaling:.2f}x)")
-        print(f"   → This suggests fundamental DIA matrix implementation issues")
+        print("   → This suggests fundamental DIA matrix implementation issues")
 
     # Sample value comparison
-    print(f"\n📋 Sample values comparison:")
+    print("\n📋 Sample values comparison:")
     for i in range(min(3, result_dense_real_cpu.shape[1])):
         print(f"   LED {i}:")
         print(
@@ -444,7 +444,7 @@ def compare_dia_vs_dense_ata_inverse():
         )
 
     # Visualize the input patterns
-    print(f"\n📊 VISUALIZATION: Input tensor patterns")
+    print("\n📊 VISUALIZATION: Input tensor patterns")
     print("=" * 60)
 
     import matplotlib.pyplot as plt
@@ -494,7 +494,7 @@ def compare_dia_vs_dense_ata_inverse():
     plt.show()
 
     # Print some statistics about spatial correlation
-    print(f"\n📈 Spatial correlation analysis:")
+    print("\n📈 Spatial correlation analysis:")
 
     # Check channel correlations
     for i in range(3):
@@ -526,7 +526,7 @@ def compare_dia_vs_dense_ata_inverse():
     )
 
     # Check for potential transposition issues by looking at value patterns
-    print(f"\n🔍 Potential transposition check:")
+    print("\n🔍 Potential transposition check:")
     print(f"   Real ATb first 10 values Ch0: {ATb_cpu_real[0, :10]}")
     print(f"   Real ATb first 10 values Ch1: {ATb_cpu_real[1, :10]}")
     print(f"   Real ATb first 10 values Ch2: {ATb_cpu_real[2, :10]}")
@@ -598,7 +598,7 @@ def test_diagonal_reduction_effect():
 
     full_rms = np.sqrt(np.mean(result_full_cpu**2))
 
-    print(f"\nComparison between full (10.0) and reduced (1.0) diagonals:")
+    print("\nComparison between full (10.0) and reduced (1.0) diagonals:")
     print(f"Max difference: {max_diff:.6f}")
     print(f"Mean difference: {mean_diff:.6f}")
     print(f"RMS difference: {rms_diff:.6f}")
@@ -616,7 +616,7 @@ def test_diagonal_reduction_effect():
     rms_diff_dense = np.sqrt(np.mean((result_dense_cpu - result_reduced_cpu) ** 2))
     dense_rms = np.sqrt(np.mean(result_dense_cpu**2))
 
-    print(f"\nComparison between reduced (1.0) and dense reference:")
+    print("\nComparison between reduced (1.0) and dense reference:")
     print(f"Max difference: {max_diff_dense:.6f}")
     print(f"RMS difference: {rms_diff_dense:.6f}")
     if dense_rms > 1e-10:

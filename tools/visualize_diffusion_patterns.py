@@ -1284,7 +1284,7 @@ class DiffusionPatternVisualizer:
                             diagonal_elements = np.sum(distances_from_diagonal == 0)
                             near_diagonal = np.sum(np.abs(distances_from_diagonal) <= 10)
 
-                            logger.debug(f"Matrix bandwidth analysis:")
+                            logger.debug("Matrix bandwidth analysis:")
                             logger.debug(f"  Max distance from diagonal: {max_distance}")
                             logger.debug(f"  Diagonal offset range: {min_offset} to {max_offset}")
                             logger.debug(f"  Actual non-zero diagonals: {num_nonzero_diagonals}")
@@ -1337,7 +1337,7 @@ class DiffusionPatternVisualizer:
                         g_vals = np.full_like(color_vals, intensity_floor * 0.1)
 
                         # Debug color component ranges before conversion
-                        logger.debug(f"Color components before conversion:")
+                        logger.debug("Color components before conversion:")
                         logger.debug(f"  Red: min={np.min(r_vals):.3f}, max={np.max(r_vals):.3f}")
                         logger.debug(f"  Green: min={np.min(g_vals):.3f}, max={np.max(g_vals):.3f}")
                         logger.debug(f"  Blue: min={np.min(b_vals):.3f}, max={np.max(b_vals):.3f}")
@@ -1352,7 +1352,7 @@ class DiffusionPatternVisualizer:
                         rgb_image[valid_mask, 2] = b_uint8  # Blue
 
                         # Debug final uint8 ranges
-                        logger.debug(f"Final uint8 ranges:")
+                        logger.debug("Final uint8 ranges:")
                         logger.debug(f"  Red: min={np.min(r_uint8)}, max={np.max(r_uint8)}")
                         logger.debug(f"  Green: min={np.min(g_uint8)}, max={np.max(g_uint8)}")
                         logger.debug(f"  Blue: min={np.min(b_uint8)}, max={np.max(b_uint8)}")

@@ -121,21 +121,21 @@ def benchmark_batch_vs_single(at_matrix, ata_matrix, ata_inverse, batch_frames, 
     batch_time = time.time() - batch_start
 
     # Print results
-    print(f"\nBenchmark Results:")
+    print("\nBenchmark Results:")
     print(f"Single frame processing: {single_time:.3f}s ({single_time/batch_size:.3f}s per frame)")
     print(f"Batch processing: {batch_time:.3f}s ({batch_time/batch_size:.3f}s per frame)")
     print(f"Speedup: {single_time/batch_time:.2f}x")
 
     # Print timing breakdown for batch processing
     if batch_result.timing_data:
-        print(f"\nBatch processing timing breakdown:")
+        print("\nBatch processing timing breakdown:")
         total_time = sum(batch_result.timing_data.values())
         for section, time_val in batch_result.timing_data.items():
             percentage = (time_val / total_time) * 100
             print(f"  {section}: {time_val:.3f}s ({percentage:.1f}%)")
 
     # Verify results are similar
-    print(f"\nResult verification:")
+    print("\nResult verification:")
     max_diff = 0
     for i in range(batch_size):
         single_led = single_results[i].led_values
@@ -179,7 +179,7 @@ def main():
 
     # Test both batch sizes
     for batch_size in [8, 16]:
-        print(f"\n" + "=" * 50)
+        print("\n" + "=" * 50)
         print(f"Testing batch size: {batch_size}")
         print("=" * 50)
 
@@ -190,7 +190,7 @@ def main():
         batch_result = benchmark_batch_vs_single(at_matrix, ata_matrix, ata_inverse, test_frames, max_iterations=5)
 
         # Test DIA to dense conversion
-        print(f"\nTesting ATA DIA to dense conversion...")
+        print("\nTesting ATA DIA to dense conversion...")
         dense_start = time.time()
         ata_dense = convert_ata_dia_to_dense(ata_matrix)
         dense_time = time.time() - dense_start

@@ -90,7 +90,7 @@ def test_timing_logger():
         print(f"✓ CSV file created: {csv_file}")
 
         # Read and verify content
-        with open(csv_file, "r") as f:
+        with open(csv_file) as f:
             lines = f.readlines()
             print(f"✓ CSV has {len(lines)} lines (including header)")
 
@@ -154,15 +154,15 @@ def main():
         # Test visualization
         visualization_success = test_visualization(csv_file)
 
-        print(f"\n=== Test Results ===")
-        print(f"CSV Logging: ✓ PASS")
+        print("\n=== Test Results ===")
+        print("CSV Logging: ✓ PASS")
         print(f"Visualization: {'✓ PASS' if visualization_success else '✗ FAIL'}")
 
         if visualization_success:
-            print(f"\nAll tests passed! Check the 'timing_test_output' directory for results.")
+            print("\nAll tests passed! Check the 'timing_test_output' directory for results.")
             return 0
         else:
-            print(f"\nSome tests failed. Check error messages above.")
+            print("\nSome tests failed. Check error messages above.")
             return 1
 
     except Exception as e:

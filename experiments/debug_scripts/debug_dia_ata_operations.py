@@ -60,7 +60,7 @@ def test_dia_vs_dense_operations():
     mean_diff = np.mean(np.abs(result_dense_cpu - result_dia_cpu))
     rms_diff = np.sqrt(np.mean((result_dense_cpu - result_dia_cpu) ** 2))
 
-    print(f"\nDifferences:")
+    print("\nDifferences:")
     print(f"  Max difference: {max_diff:.6f}")
     print(f"  Mean difference: {mean_diff:.6f}")
     print(f"  RMS difference: {rms_diff:.6f}")
@@ -69,13 +69,13 @@ def test_dia_vs_dense_operations():
     dense_rms = np.sqrt(np.mean(result_dense_cpu**2))
     dia_rms = np.sqrt(np.mean(result_dia_cpu**2))
 
-    print(f"\nMagnitudes:")
+    print("\nMagnitudes:")
     print(f"  Dense RMS: {dense_rms:.6f}")
     print(f"  DIA RMS: {dia_rms:.6f}")
     print(f"  Relative error: {rms_diff/dense_rms*100:.2f}%")
 
     # Test if DIA matrix reconstructs the original dense matrix approximately
-    print(f"\n=== Testing DIA Matrix Reconstruction ===")
+    print("\n=== Testing DIA Matrix Reconstruction ===")
 
     # Convert DIA back to dense for comparison
     dia_data_cpu = cp.asnumpy(ata_inverse_dia.dia_data_gpu)  # (3, k, led_count)
@@ -105,13 +105,13 @@ def test_dia_vs_dense_operations():
     reconstruction_rms_diff = np.sqrt(np.mean((ata_inverse_dense - reconstructed_dense) ** 2))
     original_rms = np.sqrt(np.mean(ata_inverse_dense**2))
 
-    print(f"Reconstruction vs original dense:")
+    print("Reconstruction vs original dense:")
     print(f"  Max difference: {reconstruction_max_diff:.6f}")
     print(f"  RMS difference: {reconstruction_rms_diff:.6f}")
     print(f"  Relative error: {reconstruction_rms_diff/original_rms*100:.2f}%")
 
     # Check some specific elements
-    print(f"\n=== Sample Value Comparison ===")
+    print("\n=== Sample Value Comparison ===")
     for i in range(min(5, led_count)):
         for j in range(min(5, led_count)):
             dense_val = ata_inverse_dense[0, i, j]

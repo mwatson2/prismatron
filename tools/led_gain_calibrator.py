@@ -500,7 +500,7 @@ class LEDGainCalibrator:
             and max_observed <= 255  # Within valid range
         )
 
-        logger.info(f"Validation results:")
+        logger.info("Validation results:")
         logger.info(f"  Saturated LEDs: {saturated_count}/{len(validation_leds)}")
         logger.info(f"  Max observed pixel: {max_observed}")
         logger.info(f"  Validation {'PASSED' if validation_passed else 'FAILED'}")

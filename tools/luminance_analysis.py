@@ -486,7 +486,7 @@ class LuminanceAnalyzer:
             # Calculate file size change
             file_size_mb = Path(self.patterns_file).stat().st_size / (1024 * 1024)
 
-            logger.info(f"Successfully updated NPZ file with luminance analysis")
+            logger.info("Successfully updated NPZ file with luminance analysis")
             logger.info(f"Updated file size: {file_size_mb:.1f} MB")
             logger.info(
                 f"Analysis includes: statistics, percentiles, and {downsampled_luminance.shape} downsampled frame"

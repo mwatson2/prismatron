@@ -307,7 +307,7 @@ def run_comprehensive_benchmark():
     at_matrix, ata_matrix, ata_inverse, led_count, frame_height, frame_width = load_2624_patterns(pattern_path)
 
     # One-time ATA conversion (excluded from timing)
-    print(f"\nPerforming one-time ATA DIA to dense conversion...")
+    print("\nPerforming one-time ATA DIA to dense conversion...")
     conversion_start = time.time()
     ata_dense = convert_ata_dia_to_dense(ata_matrix)
     conversion_time = time.time() - conversion_start
@@ -324,7 +324,7 @@ def run_comprehensive_benchmark():
     results = {}
 
     for batch_size in [8, 16]:
-        print(f"\n" + "=" * 60)
+        print("\n" + "=" * 60)
         print(f"BATCH SIZE: {batch_size} frames")
         print("=" * 60)
 
@@ -343,12 +343,12 @@ def run_comprehensive_benchmark():
         results[batch_size] = {"single": single_stats, "batch": batch_stats}
 
         # Print results
-        print(f"\nSingle Frame Processing Results:")
+        print("\nSingle Frame Processing Results:")
         print(f"  Total time: {single_stats['total_time_mean']:.3f} ± {single_stats['total_time_std']:.3f}s")
         print(f"  Per frame: {single_stats['per_frame_mean']:.3f} ± {single_stats['per_frame_std']:.3f}s")
         print(f"  FPS: {single_stats['frames_per_second']:.1f}")
 
-        print(f"\nBatch Processing Results (excluding ATA conversion):")
+        print("\nBatch Processing Results (excluding ATA conversion):")
         print(
             f"  Total time: {batch_stats['optimization_time_mean']:.3f} ± {batch_stats['optimization_time_std']:.3f}s"
         )
@@ -367,7 +367,7 @@ def run_comprehensive_benchmark():
                 section_times = [t["breakdown"][section] for t in batch_stats["detailed_timings"]]
                 avg_timing[section] = np.mean(section_times)
 
-            print(f"\nDetailed Timing Breakdown (average):")
+            print("\nDetailed Timing Breakdown (average):")
             total_optimization = sum(avg_timing.values())
             for section, time_val in sorted(avg_timing.items(), key=lambda x: x[1], reverse=True):
                 percentage = (time_val / total_optimization) * 100
@@ -375,14 +375,14 @@ def run_comprehensive_benchmark():
                 print(f"  {section}: {time_val:.3f}s ({percentage:.1f}%, {per_frame:.3f}s per frame)")
 
         # Memory analysis
-        print(f"\nMemory Analysis:")
+        print("\nMemory Analysis:")
         print(f"  LED count: {led_count}")
         print(f"  Frame size: {frame_height}x{frame_width}")
         print(f"  Batch frames memory: {test_frames.nbytes / 1024 / 1024:.1f} MB")
         print(f"  ATA dense memory: {ata_dense.nbytes / 1024 / 1024:.1f} MB")
 
         # Performance per LED
-        print(f"\nPer-LED Performance:")
+        print("\nPer-LED Performance:")
         print(f"  Single: {single_stats['per_frame_mean'] * 1000 / led_count:.3f} ms per LED")
         print(f"  Batch: {batch_stats['per_frame_mean'] * 1000 / led_count:.3f} ms per LED")
 
@@ -391,7 +391,7 @@ def run_comprehensive_benchmark():
         gc.collect()
 
     # Summary comparison
-    print(f"\n" + "=" * 60)
+    print("\n" + "=" * 60)
     print("SUMMARY COMPARISON")
     print("=" * 60)
 
@@ -399,7 +399,7 @@ def run_comprehensive_benchmark():
     print(f"Iterations: {test_params['max_iterations']}")
     print(f"Trials: {test_params['num_trials']}")
 
-    print(f"\nPer-Frame Performance (seconds):")
+    print("\nPer-Frame Performance (seconds):")
     print(f"{'Method':<20} {'8-frame':<12} {'16-frame':<12} {'Speedup 8x':<12} {'Speedup 16x':<12}")
     print("-" * 68)
 
@@ -413,7 +413,7 @@ def run_comprehensive_benchmark():
         f"{'Batch Processing':<20} {batch_8:.4f}      {batch_16:.4f}      {single_8/batch_8:.2f}x        {single_16/batch_16:.2f}x"
     )
 
-    print(f"\nFrames Per Second:")
+    print("\nFrames Per Second:")
     print(f"{'Method':<20} {'8-frame':<12} {'16-frame':<12}")
     print("-" * 44)
     print(
@@ -423,7 +423,7 @@ def run_comprehensive_benchmark():
         f"{'Batch Processing':<20} {results[8]['batch']['frames_per_second']:.1f}         {results[16]['batch']['frames_per_second']:.1f}"
     )
 
-    print(f"\nKey Insights:")
+    print("\nKey Insights:")
     print(f"  - ATA conversion is one-time cost: {conversion_time:.3f}s")
     print(f"  - Batch processing achieves {single_8/batch_8:.1f}x speedup on 8 frames")
     print(f"  - Batch processing achieves {single_16/batch_16:.1f}x speedup on 16 frames")

@@ -156,7 +156,7 @@ def compare_ata_matrices(pattern_file: str) -> bool:
             max_error_overall = max(max_error_overall, max_error)
 
         # Summary
-        logger.info(f"\n=== COMPARISON SUMMARY ===")
+        logger.info("\n=== COMPARISON SUMMARY ===")
         logger.info(f"Overall maximum error: {max_error_overall:.2e}")
 
         if all_tests_passed:

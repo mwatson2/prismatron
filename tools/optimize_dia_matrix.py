@@ -71,7 +71,7 @@ def analyze_dense_matrix_sparsity(dense_matrix: np.ndarray, name: str) -> Dict[s
 
 def create_optimized_dia_from_dense(dense_matrices: np.ndarray, led_count: int) -> Dict[str, Any]:
     """Create optimized DIA matrix from dense matrices using scipy sparse conversion."""
-    print(f"\n=== Creating Optimized DIA Matrix ===")
+    print("\n=== Creating Optimized DIA Matrix ===")
 
     # Analyze each channel to find optimal storage
     all_offsets = set()
@@ -91,7 +91,7 @@ def create_optimized_dia_from_dense(dense_matrices: np.ndarray, led_count: int) 
     optimized_offsets = sorted(all_offsets)
     num_diagonals = len(optimized_offsets)
 
-    print(f"Optimized DIA structure:")
+    print("Optimized DIA structure:")
     print(f"  Diagonals needed: {num_diagonals}")
     print(f"  Offset range: [{min(optimized_offsets)}, {max(optimized_offsets)}]")
 
@@ -131,7 +131,7 @@ def create_optimized_dia_from_dense(dense_matrices: np.ndarray, led_count: int) 
     total_nonzero = sum(analysis["nonzero_elements"] for analysis in channel_analyses if not analysis["empty"])
     actual_sparsity = (1 - total_nonzero / total_elements) * 100
 
-    print(f"Final optimized DIA matrix:")
+    print("Final optimized DIA matrix:")
     print(f"  Bandwidth: {bandwidth}")
     print(f"  Diagonals: {num_diagonals}")
     print(f"  Sparsity: {actual_sparsity:.2f}%")
@@ -187,7 +187,7 @@ def optimize_pattern_file(input_path: str, output_path: Optional[str] = None, in
         old_dia_bandwidth = old_dia_dict["bandwidth"]
         old_dia_sparsity = old_dia_dict["sparsity"]
 
-        print(f"Current DIA matrix:")
+        print("Current DIA matrix:")
         print(f"  Diagonals: {old_dia_k}")
         print(f"  Bandwidth: {old_dia_bandwidth}")
         print(f"  Sparsity: {old_dia_sparsity:.2f}%")
@@ -205,7 +205,7 @@ def optimize_pattern_file(input_path: str, output_path: Optional[str] = None, in
         new_memory = optimized_dia["k"] * led_count * 3 * 4 / (1024 * 1024)
         memory_reduction = (old_memory - new_memory) / old_memory * 100
 
-        print(f"\nOptimization results:")
+        print("\nOptimization results:")
         print(f"  Diagonal reduction: {diagonal_reduction:.1f}% ({old_dia_k} → {optimized_dia['k']})")
         print(f"  Memory reduction: {memory_reduction:.1f}% ({old_memory:.1f}MB → {new_memory:.1f}MB)")
         print(f"  Storage efficiency: {optimized_dia['k']}/{old_dia_k} = {optimized_dia['k']/old_dia_k:.1%}")
@@ -255,12 +255,12 @@ def optimize_pattern_file(input_path: str, output_path: Optional[str] = None, in
             output_size = output_file.stat().st_size / (1024 * 1024)
             size_change = (output_size - input_size) / input_size * 100
 
-            print(f"\nFile size comparison:")
+            print("\nFile size comparison:")
             print(f"  Input: {input_size:.1f}MB")
             print(f"  Output: {output_size:.1f}MB")
             print(f"  Change: {size_change:+.1f}%")
 
-        print(f"\n✅ DIA matrix optimization completed successfully!")
+        print("\n✅ DIA matrix optimization completed successfully!")
         return True
 
     except Exception as e:

@@ -19,22 +19,52 @@ TARGET_DIR = .
 
 # Source and target files
 KERNEL_SRC = $(SRC_DIR)/batch_mma_kernel.cu
+KERNEL8_SRC = $(SRC_DIR)/batch8_mma_kernel.cu
+KERNEL8_PAIR_SRC = $(SRC_DIR)/batch8_block_pair_kernel.cu
+KERNEL8_VERTICAL_SRC = $(SRC_DIR)/batch8_vertical_pair_kernel.cu
 KERNEL_MODULE = $(TARGET_DIR)/batch_mma_kernel.ptx
+KERNEL8_MODULE = $(TARGET_DIR)/batch8_mma_kernel.ptx
+KERNEL8_PAIR_MODULE = $(TARGET_DIR)/batch8_block_pair_kernel.ptx
+KERNEL8_VERTICAL_MODULE = $(TARGET_DIR)/batch8_vertical_pair_kernel.ptx
 
 # Python library information (for include paths)
 PYTHON_INCLUDE = $(shell python3 -c "import sysconfig; print(sysconfig.get_path('include'))")
 NUMPY_INCLUDE = $(shell python3 -c "import numpy; print(numpy.get_include())")
 
 # Default target
-all: $(KERNEL_MODULE)
+all: $(KERNEL_MODULE) $(KERNEL8_MODULE) $(KERNEL8_PAIR_MODULE) $(KERNEL8_VERTICAL_MODULE)
 
 # Create build directory
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-# Compile CUDA kernel to CUBIN module
+# Compile CUDA kernel to PTX module
 $(KERNEL_MODULE): $(KERNEL_SRC) | $(BUILD_DIR)
 	@echo "Compiling CUDA MMA kernels to PTX module..."
+	@echo "CUDA Architecture: sm_87"
+	@echo "NVCC Flags: $(NVCC_FLAGS)"
+	$(NVCC) $(NVCC_FLAGS) -o $@ $<
+	@echo "Successfully compiled: $@"
+
+# Compile 8-frame CUDA kernel to PTX module
+$(KERNEL8_MODULE): $(KERNEL8_SRC) | $(BUILD_DIR)
+	@echo "Compiling 8-frame CUDA MMA kernels to PTX module..."
+	@echo "CUDA Architecture: sm_87"
+	@echo "NVCC Flags: $(NVCC_FLAGS)"
+	$(NVCC) $(NVCC_FLAGS) -o $@ $<
+	@echo "Successfully compiled: $@"
+
+# Compile 8-frame block pair CUDA kernel to PTX module
+$(KERNEL8_PAIR_MODULE): $(KERNEL8_PAIR_SRC) | $(BUILD_DIR)
+	@echo "Compiling 8-frame block pair CUDA MMA kernels to PTX module..."
+	@echo "CUDA Architecture: sm_87"
+	@echo "NVCC Flags: $(NVCC_FLAGS)"
+	$(NVCC) $(NVCC_FLAGS) -o $@ $<
+	@echo "Successfully compiled: $@"
+
+# Compile 8-frame vertical pair CUDA kernel to PTX module
+$(KERNEL8_VERTICAL_MODULE): $(KERNEL8_VERTICAL_SRC) | $(BUILD_DIR)
+	@echo "Compiling 8-frame vertical pair CUDA MMA kernels to PTX module..."
 	@echo "CUDA Architecture: sm_87"
 	@echo "NVCC Flags: $(NVCC_FLAGS)"
 	$(NVCC) $(NVCC_FLAGS) -o $@ $<
@@ -48,7 +78,7 @@ check-gpu:
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)
-	rm -f $(KERNEL_MODULE)
+	rm -f $(KERNEL_MODULE) $(KERNEL8_MODULE) $(KERNEL8_PAIR_MODULE) $(KERNEL8_VERTICAL_MODULE)
 
 # Install dependencies (if needed)
 install-deps:
@@ -57,9 +87,12 @@ install-deps:
 	@echo "CUDA toolkit found: $$(nvcc --version | grep release)"
 
 # Test compilation
-test: $(KERNEL_MODULE)
-	@echo "Testing kernel module..."
-	@python3 -c "import os; print('✓ Kernel module exists') if os.path.exists('$(KERNEL_MODULE)') else print('✗ Kernel module missing')"
+test: $(KERNEL_MODULE) $(KERNEL8_MODULE) $(KERNEL8_PAIR_MODULE) $(KERNEL8_VERTICAL_MODULE)
+	@echo "Testing kernel modules..."
+	@python3 -c "import os; print('✓ 16-frame kernel module exists') if os.path.exists('$(KERNEL_MODULE)') else print('✗ 16-frame kernel module missing')"
+	@python3 -c "import os; print('✓ 8-frame kernel module exists') if os.path.exists('$(KERNEL8_MODULE)') else print('✗ 8-frame kernel module missing')"
+	@python3 -c "import os; print('✓ 8-frame block pair kernel module exists') if os.path.exists('$(KERNEL8_PAIR_MODULE)') else print('✗ 8-frame block pair kernel module missing')"
+	@python3 -c "import os; print('✓ 8-frame vertical pair kernel module exists') if os.path.exists('$(KERNEL8_VERTICAL_MODULE)') else print('✗ 8-frame vertical pair kernel module missing')"
 
 # Help target
 help:

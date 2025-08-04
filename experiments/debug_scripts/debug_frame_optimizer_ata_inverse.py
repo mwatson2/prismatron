@@ -87,7 +87,7 @@ def debug_ata_inverse_in_frame_optimizer():
     print(f"DIA ATA inverse: k={ata_inverse_dia.k}, bandwidth={ata_inverse_dia.bandwidth}")
 
     # Test 1: Use DIA as primary, dense as comparison
-    print(f"\n" + "=" * 60)
+    print("\n" + "=" * 60)
     print("TEST 1: DIA Primary, Dense Comparison")
     print("=" * 60)
 
@@ -105,7 +105,7 @@ def debug_ata_inverse_in_frame_optimizer():
     print(f"DIA primary result: Initial MSE = {result_dia.mse_per_iteration[0]:.6f}")
 
     # Test 2: Use dense as primary, DIA as comparison
-    print(f"\n" + "=" * 60)
+    print("\n" + "=" * 60)
     print("TEST 2: Dense Primary, DIA Comparison")
     print("=" * 60)
 
@@ -123,7 +123,7 @@ def debug_ata_inverse_in_frame_optimizer():
     print(f"Dense primary result: Initial MSE = {result_dense.mse_per_iteration[0]:.6f}")
 
     # Summary
-    print(f"\n" + "=" * 60)
+    print("\n" + "=" * 60)
     print("SUMMARY")
     print("=" * 60)
     print(f"DIA as primary:  Initial MSE = {result_dia.mse_per_iteration[0]:.6f}")

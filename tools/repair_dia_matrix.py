@@ -256,7 +256,7 @@ def repair_pattern_file(input_path: Path, output_path: Path = None, dry_run: boo
                 f"  ⚠️  NEEDS REPAIR: storing {current_analysis['bandwidth_efficiency_ratio']:.1f}x more diagonals than reasonable"
             )
         else:
-            print(f"  ✅ Already efficient")
+            print("  ✅ Already efficient")
             if not dry_run:
                 print("File doesn't need repair - skipping")
                 return True

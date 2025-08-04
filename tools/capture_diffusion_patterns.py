@@ -852,7 +852,6 @@ class DiffusionPatternCapture:
         """
         # For format selection, we need to estimate the bandwidth from LED positions
         # Import the function to calculate block positions
-        from tools.led_position_utils import calculate_block_positions
 
         # Calculate block positions for captured LEDs
         block_positions = calculate_block_positions(self.led_positions, self.block_size, FRAME_WIDTH, FRAME_HEIGHT)
@@ -871,7 +870,7 @@ class DiffusionPatternCapture:
         dia_memory_mb = (3 * expected_diagonals * self.led_count * 4) / (1024 * 1024)  # FP32
         dense_memory_mb = (3 * self.led_count * self.led_count * 4) / (1024 * 1024)  # FP32
 
-        logger.info(f"ATA format selection analysis for captured patterns:")
+        logger.info("ATA format selection analysis for captured patterns:")
         logger.info(f"  LED count: {self.led_count}")
         logger.info(f"  Expected diagonals: {expected_diagonals}")
         logger.info(f"  Bandwidth ratio: {bandwidth_ratio:.3f}")
@@ -893,7 +892,7 @@ class DiffusionPatternCapture:
             reason = f"Dense memory overhead acceptable ({dense_memory_mb:.1f}MB vs {dia_memory_mb:.1f}MB)"
         else:
             format_choice = "dia"
-            reason = f"Sparse matrix benefits from DIA format"
+            reason = "Sparse matrix benefits from DIA format"
 
         logger.info(f"  Selected format: {format_choice.upper()} ({reason})")
         return format_choice
@@ -1194,7 +1193,7 @@ def main():
 
     if args.camera_config:
         try:
-            with open(args.camera_config, "r") as f:
+            with open(args.camera_config) as f:
                 camera_config = json.load(f)
 
             # Override camera device from config if not explicitly provided

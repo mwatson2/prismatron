@@ -79,7 +79,7 @@ def convert_pattern_file(input_path: str, output_path: str, force_overwrite: boo
         diagonal_ratio = dia_matrix.k / (2 * led_count - 1) if led_count > 1 else 1.0
         bandwidth_ratio = dia_matrix.bandwidth / led_count if led_count > 0 else 1.0
 
-        logger.info(f"Matrix analysis:")
+        logger.info("Matrix analysis:")
         logger.info(f"  Diagonal ratio: {diagonal_ratio:.3f} ({dia_matrix.k}/{2*led_count-1} diagonals)")
         logger.info(f"  Bandwidth ratio: {bandwidth_ratio:.3f} ({dia_matrix.bandwidth}/{led_count})")
 
@@ -185,7 +185,7 @@ def convert_pattern_file(input_path: str, output_path: str, force_overwrite: boo
         input_size = input_file.stat().st_size / (1024 * 1024)
         output_size = output_file.stat().st_size / (1024 * 1024)
 
-        logger.info(f"Conversion completed successfully")
+        logger.info("Conversion completed successfully")
         logger.info(f"Input file size: {input_size:.1f}MB")
         logger.info(f"Output file size: {output_size:.1f}MB ({output_size/input_size:.1f}x)")
         logger.info(f"Removed DIA matrix ({dia_memory_mb:.1f}MB)")

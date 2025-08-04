@@ -91,12 +91,12 @@ def analyze_tensor_memory_layout(tensor: cp.ndarray, name: str) -> None:
         cpu_data = cp.asnumpy(tensor)
 
         # Sample first few elements from each channel
-        print(f"  First 5 elements of each channel:")
+        print("  First 5 elements of each channel:")
         for c in range(3):
             print(f"    Channel {c}: {cpu_data[c, :5]}")
 
         # Check if channels have similar statistics (might indicate interleaving)
-        print(f"  Channel statistics:")
+        print("  Channel statistics:")
         for c in range(3):
             ch_data = cpu_data[c]
             print(
@@ -132,7 +132,7 @@ def investigate_mixed_tensor_atb_output():
     print(f"Target frame: shape={target_frame.shape}, dtype={target_frame.dtype}")
 
     # Replicate frame optimizer's ATb calculation exactly
-    print(f"\n🔍 REPLICATING FRAME OPTIMIZER ATb CALCULATION:")
+    print("\n🔍 REPLICATING FRAME OPTIMIZER ATb CALCULATION:")
     print("=" * 60)
 
     # Step 1: Convert to planar uint8 format (same as frame optimizer)
@@ -149,7 +149,7 @@ def investigate_mixed_tensor_atb_output():
     print(f"Target C-contiguous: {target_planar_uint8.flags.c_contiguous}")
 
     # Step 2: Calculate ATb using mixed tensor exactly like frame optimizer
-    print(f"\n🧮 CALCULATING A^T @ b:")
+    print("\n🧮 CALCULATING A^T @ b:")
     print("-" * 40)
 
     if mixed_tensor.dtype == cp.uint8:
@@ -166,7 +166,7 @@ def investigate_mixed_tensor_atb_output():
     analyze_tensor_memory_layout(target_gpu, "Input target_gpu (before mixed tensor operation)")
 
     # Perform the mixed tensor operation that produces the problematic output
-    print(f"\n🔬 MIXED TENSOR TRANSPOSE DOT PRODUCT:")
+    print("\n🔬 MIXED TENSOR TRANSPOSE DOT PRODUCT:")
     print("-" * 50)
 
     ATb_gpu_raw = mixed_tensor.transpose_dot_product_3d(target_gpu)
@@ -176,7 +176,7 @@ def investigate_mixed_tensor_atb_output():
     analyze_tensor_memory_layout(ATb_gpu_raw, "Raw ATb from mixed tensor (before transposition)")
 
     # Step 3: Convert to (3, led_count) format as frame optimizer does
-    print(f"\n🔄 CONVERTING TO (3, led_count) FORMAT:")
+    print("\n🔄 CONVERTING TO (3, led_count) FORMAT:")
     print("-" * 45)
 
     if ATb_gpu_raw.shape[0] != 3:
@@ -188,7 +188,7 @@ def investigate_mixed_tensor_atb_output():
         print("ATb already in (3, led_count) format - no transposition needed")
 
     # Step 4: Apply ascontiguousarray fix (the critical fix we identified)
-    print(f"\n🛠️  APPLYING ASCONTIGUOUSARRAY FIX:")
+    print("\n🛠️  APPLYING ASCONTIGUOUSARRAY FIX:")
     print("-" * 40)
 
     print("Before fix:")
@@ -200,7 +200,7 @@ def investigate_mixed_tensor_atb_output():
     analyze_tensor_memory_layout(ATb_gpu_fixed, "ATb after ascontiguousarray")
 
     # Step 5: Compare memory patterns between problematic and fixed versions
-    print(f"\n🔍 MEMORY PATTERN COMPARISON:")
+    print("\n🔍 MEMORY PATTERN COMPARISON:")
     print("-" * 35)
 
     # Convert to CPU for detailed analysis
@@ -216,7 +216,7 @@ def investigate_mixed_tensor_atb_output():
         print(f"Maximum difference: {max_diff}")
 
     # Examine the first few elements to see if there's a pattern
-    print(f"\nFirst 10 elements comparison:")
+    print("\nFirst 10 elements comparison:")
     print("Problematic version (F-contiguous or non-contiguous):")
     for c in range(3):
         print(f"  Channel {c}: {ATb_transposed_cpu[c, :10]}")
@@ -226,7 +226,7 @@ def investigate_mixed_tensor_atb_output():
         print(f"  Channel {c}: {ATb_fixed_cpu[c, :10]}")
 
     # Step 6: Investigate why transpose produces non-contiguous output
-    print(f"\n🧪 INVESTIGATING TRANSPOSE OPERATION:")
+    print("\n🧪 INVESTIGATING TRANSPOSE OPERATION:")
     print("-" * 40)
 
     print("Creating test tensors to understand transpose behavior...")
@@ -247,7 +247,7 @@ def investigate_mixed_tensor_atb_output():
     analyze_tensor_memory_layout(test_fixed, "Test tensor after ascontiguousarray")
 
     # Step 7: Demonstrate the specific issue with mixed tensor output
-    print(f"\n🎯 ROOT CAUSE ANALYSIS:")
+    print("\n🎯 ROOT CAUSE ANALYSIS:")
     print("-" * 25)
 
     print("The mixed tensor transpose_dot_product_3d() operation:")
@@ -258,7 +258,7 @@ def investigate_mixed_tensor_atb_output():
     print("5. DIA kernels expect C-contiguous layout (row-major)")
     print("6. F-contiguous layout causes kernels to read wrong memory locations")
 
-    print(f"\nMemory layout implications:")
+    print("\nMemory layout implications:")
     print(f"- Original (led_count, channels): C-contiguous, strides {ATb_gpu_raw.strides}")
     print(f"- After .T (channels, led_count): F-contiguous, strides {ATb_gpu_transposed.strides}")
     print(f"- After fix (channels, led_count): C-contiguous, strides {ATb_gpu_fixed.strides}")
@@ -268,7 +268,7 @@ def investigate_mixed_tensor_atb_output():
     print(f"- Expected C-contiguous strides: {expected_strides}")
 
     # Step 8: Show how this affects DIA kernel performance
-    print(f"\n⚡ PERFORMANCE IMPLICATIONS:")
+    print("\n⚡ PERFORMANCE IMPLICATIONS:")
     print("-" * 30)
 
     print("F-contiguous layout causes:")
@@ -277,7 +277,7 @@ def investigate_mixed_tensor_atb_output():
     print("3. Incorrect results due to wrong memory offsets")
     print("4. DIA diagonal access patterns break completely")
 
-    print(f"\nSolution:")
+    print("\nSolution:")
     print("Always use cp.ascontiguousarray() after tensor transpose operations")
     print("before passing to DIA kernels or other CUDA kernels expecting C-contiguous layout")
 
@@ -292,7 +292,7 @@ def investigate_mixed_tensor_atb_output():
 def demonstrate_kernel_behavior():
     """Demonstrate how different memory layouts affect kernel behavior."""
 
-    print(f"\n" + "=" * 70)
+    print("\n" + "=" * 70)
     print("KERNEL BEHAVIOR DEMONSTRATION")
     print("=" * 70)
 
@@ -318,7 +318,7 @@ def demonstrate_kernel_behavior():
     print(f"Contiguous shape: {test_contiguous.shape}")
 
     # Show the difference in memory layout
-    print(f"\nMemory layout comparison:")
+    print("\nMemory layout comparison:")
     print(f"Original (led, ch): C-contig={test_gpu.flags.c_contiguous}, strides={test_gpu.strides}")
     print(
         f"Transposed (ch, led): C-contig={test_transposed.flags.c_contiguous}, F-contig={test_transposed.flags.f_contiguous}, strides={test_transposed.strides}"
@@ -326,8 +326,8 @@ def demonstrate_kernel_behavior():
     print(f"Contiguous (ch, led): C-contig={test_contiguous.flags.c_contiguous}, strides={test_contiguous.strides}")
 
     # Show how this affects data access
-    print(f"\nData access pattern check:")
-    print(f"Values should be: Ch0[0,1,2]==[0,1,2], Ch1[0,1,2]==[0,2,4], Ch2[0,1,2]==[0,3,6]")
+    print("\nData access pattern check:")
+    print("Values should be: Ch0[0,1,2]==[0,1,2], Ch1[0,1,2]==[0,2,4], Ch2[0,1,2]==[0,3,6]")
 
     # Check transposed view
     trans_cpu = cp.asnumpy(test_transposed)
@@ -359,7 +359,7 @@ if __name__ == "__main__":
     # Demonstration of kernel behavior
     demonstrate_kernel_behavior()
 
-    print(f"\n" + "=" * 70)
+    print("\n" + "=" * 70)
     print("SUMMARY AND RECOMMENDATIONS")
     print("=" * 70)
     print("1. Mixed tensor transpose_dot_product_3d() returns (led_count, 3) format")

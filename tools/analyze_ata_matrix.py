@@ -133,7 +133,7 @@ def analyze_captured_ata_matrices(data):
         print(f"   ❌ DIA matrix is storing {efficiency_loss:.1f}x more data than needed!")
         print(f"   Recommendation: Optimize DIA matrix to store only {actual_diagonals_needed} diagonals")
     else:
-        print(f"   ✅ DIA storage is reasonably efficient")
+        print("   ✅ DIA storage is reasonably efficient")
 
 
 def analyze_ata_structure(pattern_file="synthetic_1000_64x64_fixed2.npz"):

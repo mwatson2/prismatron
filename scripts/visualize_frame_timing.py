@@ -72,7 +72,7 @@ class FrameTimingVisualizer:
 
             # Sort by frame_index to handle out-of-order entries
             self.timing_data = self.timing_data.sort_values("frame_index").reset_index(drop=True)
-            print(f"Data sorted by frame_index")
+            print("Data sorted by frame_index")
 
             # Separate complete and incomplete frames (zeros indicate late drops)
             complete_mask = (
@@ -745,7 +745,7 @@ class FrameTimingVisualizer:
 
         # Additional analysis for incomplete frames only
         if len(incomplete_data) > 0:
-            print(f"\n=== Incomplete Frame Details ===")
+            print("\n=== Incomplete Frame Details ===")
             print(f"Total incomplete frames: {len(incomplete_data)}")
 
             for stage_col, stage_name in stages:
@@ -793,7 +793,7 @@ class FrameTimingVisualizer:
         if len(all_data) > 1:
             plugin_frame_interval = np.diff(all_data["plugin_timestamp"]).mean()
 
-            print(f"\n=== Frame Rates ===")
+            print("\n=== Frame Rates ===")
             print(
                 f"Plugin frame rate: {1.0/plugin_frame_interval:.1f} fps (interval: {plugin_frame_interval*1000:.1f}ms)"
             )
@@ -806,7 +806,7 @@ class FrameTimingVisualizer:
                 print(f"Frame completion rate: {len(complete_data)/len(all_data)*100:.1f}%")
             else:
                 print("Render frame rate: N/A (no complete frames)")
-                print(f"Frame completion rate: 0.0%")
+                print("Frame completion rate: 0.0%")
 
 
 def main():
@@ -848,11 +848,11 @@ def main():
             latency_path = output_dir / f"{csv_path.stem}_latency.{args.format}"
 
             # Create visualizations
-            print(f"\nCreating timeline visualization...")
+            print("\nCreating timeline visualization...")
             visualizer.create_timeline_visualization(str(timeline_path), args.max_frames)
 
             if len(visualizer.complete_frames) > 0:
-                print(f"Creating latency analysis...")
+                print("Creating latency analysis...")
                 visualizer.create_latency_analysis(str(latency_path))
             else:
                 print("Skipping latency analysis - no complete frames")

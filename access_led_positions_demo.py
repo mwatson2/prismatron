@@ -58,7 +58,7 @@ def access_led_positions_via_optimizer(pattern_path: str):
     try:
         from consumer.led_optimizer import LEDOptimizer
 
-        print(f"Accessing LED positions via LEDOptimizer...")
+        print("Accessing LED positions via LEDOptimizer...")
 
         # Initialize the optimizer with the pattern file
         optimizer = LEDOptimizer(diffusion_patterns_path=pattern_path)
@@ -106,7 +106,7 @@ def analyze_led_positions(led_positions, led_spatial_mapping, title="LED Positio
     print(f"Y range: {y_min} to {y_max}")
 
     # Sample positions
-    print(f"First 5 LED positions:")
+    print("First 5 LED positions:")
     for i in range(min(5, len(led_positions))):
         x, y = led_positions[i]
         print(f"  LED {i}: ({x}, {y})")
@@ -168,7 +168,8 @@ def main():
         if original_id is not None:
             position = led_positions_direct[original_id]
             print(
-                f"  Optimized index {optimized_index} -> Original LED {original_id} -> Position ({position[0]}, {position[1]})"
+                f"  Optimized index {optimized_index} -> Original LED {original_id} -> "
+                f"Position ({position[0]}, {position[1]})"
             )
 
         # Example: Get position of original LED ID 0
@@ -177,7 +178,8 @@ def main():
             position = led_positions_direct[original_id]
             optimized_index = mapping_direct.get(original_id, "unknown")
             print(
-                f"  Original LED {original_id} -> Position ({position[0]}, {position[1]}) -> Optimized index {optimized_index}"
+                f"  Original LED {original_id} -> Position ({position[0]}, {position[1]}) -> "
+                f"Optimized index {optimized_index}"
             )
 
 

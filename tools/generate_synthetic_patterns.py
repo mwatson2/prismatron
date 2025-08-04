@@ -750,7 +750,7 @@ class SyntheticPatternGenerator:
         dia_memory_mb = (3 * expected_diagonals * led_count * 4) / (1024 * 1024)  # FP32
         dense_memory_mb = (3 * led_count * led_count * 4) / (1024 * 1024)  # FP32
 
-        logger.info(f"ATA format selection analysis:")
+        logger.info("ATA format selection analysis:")
         logger.info(f"  LED count: {led_count}")
         logger.info(f"  Expected diagonals: {expected_diagonals}")
         logger.info(f"  Bandwidth ratio: {bandwidth_ratio:.3f}")
@@ -772,7 +772,7 @@ class SyntheticPatternGenerator:
             reason = f"Dense memory overhead acceptable ({dense_memory_mb:.1f}MB vs {dia_memory_mb:.1f}MB)"
         else:
             format_choice = "dia"
-            reason = f"Sparse matrix benefits from DIA format"
+            reason = "Sparse matrix benefits from DIA format"
 
         logger.info(f"  Selected format: {format_choice.upper()} ({reason})")
         return format_choice

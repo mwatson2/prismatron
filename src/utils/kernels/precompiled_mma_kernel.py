@@ -261,7 +261,8 @@ class PrecompiledBatch8CorrectedSymmetricWMMAMatMul:
 
             kernel_type = "PTX" if use_ptx else "CUBIN"
             print(
-                f"Precompiled corrected 8-frame MMA tensor core kernels loaded successfully from {kernel_type}: {kernel_path}"
+                f"Precompiled corrected 8-frame MMA tensor core kernels loaded successfully "
+                f"from {kernel_type}: {kernel_path}"
             )
 
         except Exception as e:

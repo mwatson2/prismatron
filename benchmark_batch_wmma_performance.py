@@ -308,7 +308,7 @@ def main():
     num_warmup = 10
     num_trials = 50
 
-    print(f"Benchmark parameters:")
+    print("Benchmark parameters:")
     print(f"  LED count: {led_count}")
     print(f"  Batch size: {batch_size}")
     print(f"  Warmup iterations: {num_warmup}")
@@ -360,13 +360,13 @@ def main():
         print(f"Batch WMMA throughput:     {batch_results['throughput_fps']:.1f} frames/sec")
         print(f"Throughput improvement:    {throughput_improvement:.2f}x")
         print()
-        print(f"Matrix operations per second:")
+        print("Matrix operations per second:")
         print(f"  Sequential: {sequential_results['throughput_fps']:.1f} ops/sec")
         print(f"  Batch WMMA: {batch_results['throughput_fps']:.1f} ops/sec")
 
         # Memory and computational analysis
         matrix_ops_per_frame = led_count * symmetric_matrix.nnz  # Approximate
-        print(f"\nComputational analysis:")
+        print("\nComputational analysis:")
         print(f"  Matrix size: {led_count}×{led_count}")
         print(f"  Non-zeros: {symmetric_matrix.nnz:,}")
         print(f"  Approx ops per frame: {matrix_ops_per_frame:,}")

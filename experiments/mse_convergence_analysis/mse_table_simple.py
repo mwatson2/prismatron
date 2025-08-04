@@ -172,7 +172,7 @@ def run_mse_comparison(max_iterations: int = 8) -> Dict:
 
                     logger.info(f"    ✅ Final MSE: {mse_values[-1]:.6f}")
                 else:
-                    logger.warning(f"    ❌ No MSE values returned")
+                    logger.warning("    ❌ No MSE values returned")
 
             except Exception as e:
                 logger.error(f"    ❌ Error: {e}")

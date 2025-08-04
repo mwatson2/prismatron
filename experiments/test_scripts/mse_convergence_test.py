@@ -162,7 +162,7 @@ def analyze_convergence_cost(mse_results: Dict[str, List[float]]) -> None:
     uncompressed_mse = mse_results["Uncompressed"]
     final_uncompressed_mse = uncompressed_mse[-1]
 
-    logger.info(f"\nConvergence Analysis:")
+    logger.info("\nConvergence Analysis:")
     logger.info(f"Uncompressed final MSE: {final_uncompressed_mse:.6f}")
     logger.info(f"Uncompressed MSE progression: {uncompressed_mse}")
 

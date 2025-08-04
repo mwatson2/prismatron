@@ -68,7 +68,7 @@ def compare_matrices_elementwise(file_path: str):
             print(f"  [{i:3d}, {j:3d}]: DIA={dia_val:12.6e}, Dense={dense_val:12.6e}, Ratio={ratio}")
 
     # Check matrix statistics
-    print(f"\n=== Matrix Statistics ===")
+    print("\n=== Matrix Statistics ===")
     print(f"DIA matrix - min: {dia_dense.min():.6e}, max: {dia_dense.max():.6e}, mean: {dia_dense.mean():.6e}")
     print(f"Dense matrix - min: {dense_cpu.min():.6e}, max: {dense_cpu.max():.6e}, mean: {dense_cpu.mean():.6e}")
 
@@ -77,7 +77,7 @@ def compare_matrices_elementwise(file_path: str):
     if np.any(nonzero_mask):
         ratios = dia_dense[nonzero_mask] / dense_cpu[nonzero_mask]
         unique_ratios = np.unique(np.round(ratios, 10))
-        print(f"\nRatio analysis (non-zero elements):")
+        print("\nRatio analysis (non-zero elements):")
         print(f"  Unique ratios count: {len(unique_ratios)}")
         if len(unique_ratios) <= 10:
             print(f"  Unique ratios: {unique_ratios}")
@@ -87,7 +87,7 @@ def compare_matrices_elementwise(file_path: str):
         print(f"  Ratio std: {ratios.std():.6e}")
 
     # Test with a simple vector multiplication
-    print(f"\n=== Vector Multiplication Test ===")
+    print("\n=== Vector Multiplication Test ===")
     test_vector = cp.ones((3, dia_matrix.led_count), dtype=cp.float32) * 0.5
 
     # DIA result
@@ -107,7 +107,7 @@ def compare_matrices_elementwise(file_path: str):
     )
 
     # Sample result values
-    print(f"\nSample result values (channel 0):")
+    print("\nSample result values (channel 0):")
     for i in [0, 1, 10, 100]:
         if i < dia_result_cpu.shape[1]:
             dia_val = dia_result_cpu[0, i]

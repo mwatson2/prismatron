@@ -194,7 +194,7 @@ def main():
 
     # Generate convergence plot
     if mse_results:
-        print(f"\n=== Generating Convergence Plot ===")
+        print("\n=== Generating Convergence Plot ===")
         plt.figure(figsize=(12, 8))
 
         colors = ["blue", "green", "red", "purple", "orange", "brown", "pink"]
@@ -244,7 +244,7 @@ def main():
         plt.show()
 
     # Print summary table
-    print(f"\n=== Summary Table ===")
+    print("\n=== Summary Table ===")
     print("Factor | Bandwidth | K     | Memory Ratio | Init MSE  | Final MSE | Reduction | PSNR (dB)")
     print("-" * 85)
 
@@ -283,7 +283,7 @@ def main():
                     f"{metrics['mse_reduction_pct']:6.1f}% | {metrics['final_psnr']:8.2f}"
                 )
 
-    print(f"\n=== Analysis Complete ===")
+    print("\n=== Analysis Complete ===")
     print("Key findings:")
     print("- Memory usage decreases significantly with lower diagonal factors")
     print("- Convergence behavior shows the impact of ATA inverse approximation quality")

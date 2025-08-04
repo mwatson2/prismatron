@@ -1,8 +1,8 @@
 /*
  * 8-Frame Batch WMMA Kernel with Corrected Vertical Pair Processing
- * 
+ *
  * Uses 32x8x16 WMMA operations with FP32 input/output, half precision internally
- * 
+ *
  * Key Architecture:
  * - ATA matrix divided into 32x16 fragments A_{i,j} (vertical pairs of 16x16 blocks)
  * - Input tensor divided into 16x8 fragments B_j
@@ -32,7 +32,7 @@ __global__ void batch8_symmetric_block_pair_multiply_wmma(
 ) {
     // Grid: (channels, led_blocks/2) - each block processes one 32x16 vertical pair (i index)
     // Block: 32 threads (1 warp for WMMA)
-    
+
     int channel_idx = blockIdx.x;
     int block_pair_i = blockIdx.y;  // i index: which 32x16 vertical pair (0, 1, 2, ...)
     int lane_id = threadIdx.x % 32;
@@ -45,7 +45,7 @@ __global__ void batch8_symmetric_block_pair_multiply_wmma(
     // Calculate the two block row indices in this vertical pair A_{i,j}
     int block_row_top = block_pair_i * 2;      // Even row (0, 2, 4, ...)
     int block_row_bottom = block_row_top + 1;  // Odd row (1, 3, 5, ...)
-    
+
     // WMMA fragments for 32x8x16 operations with half precision
     wmma::fragment<wmma::matrix_a, 32, 8, 16, half, wmma::row_major> a_frag;
     wmma::fragment<wmma::matrix_b, 32, 8, 16, half, wmma::row_major> b_frag;  // Fixed: should be row_major to match loading
@@ -54,7 +54,7 @@ __global__ void batch8_symmetric_block_pair_multiply_wmma(
     // Shared memory for processing
     __shared__ half shared_a[32 * 16];     // Vertical pair A_{i,j}: 32x16 (half for WMMA)
     __shared__ half shared_b[16 * 8];      // Input slice B_j: 16x8 (half for WMMA)
-    
+
     // Accumulator for final results
     __shared__ float block_results[32][8];  // [output_led][batch_frame]
 
@@ -68,17 +68,17 @@ __global__ void batch8_symmetric_block_pair_multiply_wmma(
 
     // Sum over j: iterate through all possible block columns
     for (int block_col_j = 0; block_col_j < led_blocks; block_col_j++) {
-        
+
         // Find the top and bottom blocks for this vertical pair A_{i,j}
         const float* top_block_ptr = nullptr;
         const float* bottom_block_ptr = nullptr;
         bool use_transpose_top = false;
         bool use_transpose_bottom = false;
-        
+
         // Check each diagonal to find blocks (block_row_top, block_col_j) and (block_row_bottom, block_col_j)
         for (int diag_idx = 0; diag_idx < block_diag_count; diag_idx++) {
             int offset = block_offsets[diag_idx];
-            
+
             // Top block: (block_row_top, block_col_j)
             if (top_block_ptr == nullptr) {
                 if (block_row_top + offset == block_col_j) {
@@ -91,7 +91,7 @@ __global__ void batch8_symmetric_block_pair_multiply_wmma(
                     use_transpose_top = true;
                 }
             }
-            
+
             // Bottom block: (block_row_bottom, block_col_j)
             if (bottom_block_ptr == nullptr && block_row_bottom < led_blocks) {
                 if (block_row_bottom + offset == block_col_j) {
@@ -105,12 +105,12 @@ __global__ void batch8_symmetric_block_pair_multiply_wmma(
                 }
             }
         }
-        
+
         // Skip if both blocks are empty (not found in any diagonal)
         if (top_block_ptr == nullptr && bottom_block_ptr == nullptr) {
             continue;
         }
-        
+
         // Load input tensor slice B_j (16x8)
         int elements_per_thread = (16 * 8 + 31) / 32;
         for (int elem = 0; elem < elements_per_thread; elem++) {
@@ -119,7 +119,7 @@ __global__ void batch8_symmetric_block_pair_multiply_wmma(
                 int row = idx / 8;      // LED index within 16x8 block (0-15)
                 int col = idx % 8;      // Batch frame index (0-7)
                 int led_idx = block_col_j * 16 + row;
-                
+
                 float value = 0.0f;
                 if (led_idx < leds) {
                     // Load from input_batch[col, channel_idx, led_idx]
@@ -139,7 +139,7 @@ __global__ void batch8_symmetric_block_pair_multiply_wmma(
                 int row = idx / 16;
                 int col = idx % 16;
                 float value = 0.0f;
-                
+
                 if (row < 16) {
                     // Top block (rows 0-15)
                     if (top_block_ptr != nullptr) {
@@ -195,7 +195,7 @@ __global__ void batch8_symmetric_block_pair_multiply_wmma(
             int led_idx = block_pair_i * 32 + lane_id;  // 32 LEDs per vertical pair
             if (led_idx < leds) {
                 // Store to output_batch[batch_col, channel_idx, led_idx]
-                output_batch[batch_col * channels * leds + channel_idx * leds + led_idx] = 
+                output_batch[batch_col * channels * leds + channel_idx * leds + led_idx] =
                     block_results[lane_id][batch_col];
             }
         }
@@ -218,7 +218,7 @@ __global__ void batch8_symmetric_block_pair_multiply_wmma_optimized(
     // - Pre-computed block lookup tables
     // - Better memory access patterns
     // - Reduced shared memory usage
-    
+
     // Placeholder - not implemented
     return;
 }

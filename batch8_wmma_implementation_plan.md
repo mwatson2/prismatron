@@ -68,7 +68,7 @@ WMMA Operation: A[32x16] × B[16x8] → Result[32x8]
 - Stack two 16x16 blocks to form 32x16 matrix A
 - Load corresponding 16x8 input tensor slice for matrix B
 - Use 32x8x16 WMMA operations
-- Accumulate results appropriately into output: sub-block Aij, beginning at row i*32 column j*16 will multiply by sub-block Bj beginning at row j*16 and accumulate into output sub-block beginning at row i*32. We will sum over j, skipping the cases where the pair of blocks that form Aij are empty. 
+- Accumulate results appropriately into output: sub-block Aij, beginning at row i*32 column j*16 will multiply by sub-block Bj beginning at row j*16 and accumulate into output sub-block beginning at row i*32. We will sum over j, skipping the cases where the pair of blocks that form Aij are empty.
 
 **Kernel signature**:
 ```c
@@ -227,7 +227,7 @@ Output[i:i+32, :] = Σ_j WMMA(A_{i,j}, B_{j})
 
 ### Challenge 1: Vertical Block Pair Identification
 **Problem**: Finding vertical pairs in diagonal storage format
-**Solution**: 
+**Solution**:
 - Pre-compute vertical block pair mapping during matrix construction
 - Handle diagonal boundaries where vertical pairs may span different diagonals
 - Optimize lookup table for runtime pair discovery
