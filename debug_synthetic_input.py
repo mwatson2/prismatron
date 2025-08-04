@@ -94,7 +94,7 @@ def test_32x32_identity_synthetic():
 
         # Compute with corrected WMMA kernel
         print("\nComputing with corrected 8-frame WMMA kernel...")
-        result_wmma = batch_matrix.multiply_batch8_3d(input_batch_gpu, optimized_kernel=False, debug_logging=True)
+        result_wmma = batch_matrix.multiply_batch8_3d(input_batch_gpu, debug_logging=True)
         result_wmma_cpu = cupy.asnumpy(result_wmma)
 
         print(f"\nWMMA result shape: {result_wmma_cpu.shape}")

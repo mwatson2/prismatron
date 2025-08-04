@@ -202,25 +202,5 @@ __global__ void batch8_symmetric_block_pair_multiply_wmma(
     }
 }
 
-__global__ void batch8_symmetric_block_pair_multiply_wmma_optimized(
-    const float* block_data,
-    const int* block_offsets,
-    const float* input_batch,
-    float* output_batch,
-    int batch_size,
-    int channels,
-    int led_blocks,
-    int block_diag_count,
-    int leds
-) {
-    // Optimized version - for now delegate to basic version
-    // Future optimizations could include:
-    // - Pre-computed block lookup tables
-    // - Better memory access patterns
-    // - Reduced shared memory usage
-
-    // Placeholder - not implemented
-    return;
-}
 
 } // extern "C"

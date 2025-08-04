@@ -203,19 +203,5 @@ __global__ void batch_symmetric_block_dia_multiply_wmma(
     }
 }
 
-__global__ void batch_symmetric_block_dia_multiply_wmma_optimized(
-    const float* block_data,
-    const int* block_offsets,
-    const float* input_batch,
-    float* output_batch,
-    int batch_size,
-    int channels,
-    int led_blocks,
-    int block_diag_count,
-    int padded_leds
-) {
-    // Copy the corrected logic from basic version once it works
-    // For now, just call the basic version
-}
 
 } // extern "C"

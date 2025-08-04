@@ -139,7 +139,7 @@ def test_integer_correctness(num_diagonals=1, test_name=""):
 
         # Method 1: WMMA kernel
         print("\nComputing with 8-frame WMMA kernel...")
-        result_wmma = batch_matrix.multiply_batch8_3d(input_batch_gpu, optimized_kernel=False, debug_logging=False)
+        result_wmma = batch_matrix.multiply_batch8_3d(input_batch_gpu, debug_logging=False)
         result_wmma_cpu = cupy.asnumpy(result_wmma)
 
         # Method 2: Dense numpy reference

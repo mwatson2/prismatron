@@ -37,17 +37,12 @@ class PrecompiledMMAKernel:
     compilation issues with MMA headers.
     """
 
-    def __init__(self, use_optimized: bool = True):
+    def __init__(self):
         """
         Initialize precompiled MMA kernel loader.
-
-        Args:
-            use_optimized: Whether to use the optimized kernel variant
         """
-        self.use_optimized = use_optimized
         self.lib = None
         self.kernel_basic = None
-        self.kernel_optimized = None
 
         # Load precompiled shared library
         self._load_library()
@@ -70,10 +65,9 @@ class PrecompiledMMAKernel:
 
             # Get function pointers
             self.kernel_basic = self.lib.batch_symmetric_block_dia_multiply_wmma
-            self.kernel_optimized = self.lib.batch_symmetric_block_dia_multiply_wmma_optimized
 
             # Set argument types for better error checking
-            for kernel in [self.kernel_basic, self.kernel_optimized]:
+            for kernel in [self.kernel_basic]:
                 kernel.argtypes = [
                     ctypes.c_void_p,  # block_data
                     ctypes.c_void_p,  # block_offsets
@@ -134,16 +128,10 @@ class PrecompiledMMAKernel:
             block_offsets = block_offsets.astype(cupy.int32)
 
         # Kernel launch configuration
-        if self.use_optimized:
-            # 3D grid for optimized kernel: (batch_size, channels, led_blocks)
-            grid = (batch_size, channels, (led_blocks + 3) // 4)  # 4 warps per block
-            block = (128,)  # 4 warps * 32 threads
-            kernel = self.kernel_optimized
-        else:
-            # 1D grid for basic kernel
-            grid = (batch_size * channels * ((led_blocks + 7) // 8),)  # 8 warps per block
-            block = (256,)  # 8 warps * 32 threads
-            kernel = self.kernel_basic
+        # 1D grid for basic kernel
+        grid = (batch_size * channels * ((led_blocks + 7) // 8),)  # 8 warps per block
+        block = (256,)  # 8 warps * 32 threads
+        kernel = self.kernel_basic
 
         # Launch kernel using CuPy's raw kernel interface
         # We need to use CuPy's kernel launch mechanism, not ctypes directly
@@ -215,15 +203,10 @@ class PrecompiledBatch8CorrectedSymmetricWMMAMatMul:
     This uses the fixed implementation with proper accumulation logic and FP32 input/output.
     """
 
-    def __init__(self, use_optimized: bool = False):
+    def __init__(self):
         """
         Initialize precompiled corrected 8-frame WMMA kernel.
-
-        Args:
-            use_optimized: Whether to use the optimized kernel variant (placeholder for now)
         """
-        self.use_optimized = use_optimized
-
         # Load precompiled corrected kernel using CuPy's RawModule
         self._kernel = None
         self._load_precompiled_corrected_kernel()
@@ -252,12 +235,10 @@ class PrecompiledBatch8CorrectedSymmetricWMMAMatMul:
             # Create a RawModule from the kernel file
             self._module = cupy.RawModule(path=kernel_path)
 
-            # Get the corrected kernel functions
+            # Get the corrected kernel function
             kernel_name_basic = "batch8_symmetric_block_pair_multiply_wmma"
-            kernel_name_optimized = "batch8_symmetric_block_pair_multiply_wmma_optimized"
 
             self._kernel_basic_func = self._module.get_function(kernel_name_basic)
-            self._kernel_optimized_func = self._module.get_function(kernel_name_optimized)
 
             kernel_type = "PTX" if use_ptx else "CUBIN"
             print(
@@ -315,12 +296,8 @@ class PrecompiledBatch8CorrectedSymmetricWMMAMatMul:
             block_offsets = block_offsets.astype(cupy.int32)
 
         # Select kernel and launch configuration
-        if self.use_optimized:
-            kernel_func = self._kernel_optimized_func
-            block_x, block_y, block_z = 32, 1, 1  # 1 warp per block
-        else:
-            kernel_func = self._kernel_basic_func
-            block_x, block_y, block_z = 32, 1, 1  # 1 warp per block
+        kernel_func = self._kernel_basic_func
+        block_x, block_y, block_z = 32, 1, 1  # 1 warp per block
 
         # 2D grid for corrected 8-frame kernel: (channels, led_blocks/2)
         # Each kernel processes one vertical pair (32x16 block) for 8-frame batch
@@ -354,15 +331,10 @@ class PrecompiledBatch8SymmetricWMMAMatMul:
     batch processing. Processes vertically adjacent 16x16 blocks in pairs to form 32x16 matrices.
     """
 
-    def __init__(self, use_optimized: bool = True):
+    def __init__(self):
         """
         Initialize precompiled 8-frame WMMA kernel.
-
-        Args:
-            use_optimized: Whether to use the optimized kernel variant
         """
-        self.use_optimized = use_optimized
-
         # Load precompiled 8-frame kernel using CuPy's RawModule
         self._kernel = None
         self._load_precompiled_8frame_kernel()
@@ -391,12 +363,10 @@ class PrecompiledBatch8SymmetricWMMAMatMul:
             # Create a RawModule from the kernel file
             self._module = cupy.RawModule(path=kernel_path)
 
-            # Get the 8-frame vertical pair kernel functions
+            # Get the 8-frame vertical pair kernel function
             kernel_name_basic = "batch8_vertical_pair_multiply_wmma"
-            kernel_name_optimized = "batch8_vertical_pair_multiply_wmma_optimized"
 
             self._kernel_basic_func = self._module.get_function(kernel_name_basic)
-            self._kernel_optimized_func = self._module.get_function(kernel_name_optimized)
 
             kernel_type = "PTX" if use_ptx else "CUBIN"
             print(f"Precompiled 8-frame MMA tensor core kernels loaded successfully from {kernel_type}: {kernel_path}")
@@ -451,14 +421,9 @@ class PrecompiledBatch8SymmetricWMMAMatMul:
             block_offsets = block_offsets.astype(cupy.int32)
 
         # Select kernel and launch configuration
-        if self.use_optimized:
-            kernel_func = self._kernel_optimized_func
-            # Optimized kernel: same threads as basic but with optimized memory access
-            block_x, block_y, block_z = 32, 1, 1  # 1 warp per block (optimized memory patterns)
-        else:
-            kernel_func = self._kernel_basic_func
-            # Basic kernel uses 1 warp (32 threads)
-            block_x, block_y, block_z = 32, 1, 1  # 1 warp per block
+        kernel_func = self._kernel_basic_func
+        # Basic kernel uses 1 warp (32 threads)
+        block_x, block_y, block_z = 32, 1, 1  # 1 warp per block
 
         # 2D grid for 8-frame vertical pair kernel: (channels, led_blocks/2)
         # Each kernel processes one vertical pair (32x16 block) for 8-frame batch
@@ -492,15 +457,10 @@ class PrecompiledBatchSymmetricWMMAMatMul:
     but uses ahead-of-time compiled kernels instead of runtime compilation.
     """
 
-    def __init__(self, use_optimized: bool = True):
+    def __init__(self):
         """
         Initialize precompiled WMMA kernel.
-
-        Args:
-            use_optimized: Whether to use the optimized kernel variant
         """
-        self.use_optimized = use_optimized
-
         # For now, fallback to a simpler approach using CuPy's LoadLibrary
         self._kernel = None
         self._load_precompiled_kernel()
@@ -534,12 +494,10 @@ class PrecompiledBatchSymmetricWMMAMatMul:
             # Both PTX and CUBIN can be loaded using path parameter
             self._module = cupy.RawModule(path=kernel_path)
 
-            # Get the kernel functions
+            # Get the kernel function
             kernel_name_basic = "batch_symmetric_block_dia_multiply_wmma"
-            kernel_name_optimized = "batch_symmetric_block_dia_multiply_wmma_optimized"
 
             self._kernel_basic_func = self._module.get_function(kernel_name_basic)
-            self._kernel_optimized_func = self._module.get_function(kernel_name_optimized)
 
             kernel_type = "PTX" if use_ptx else "CUBIN"
             print(f"Precompiled MMA tensor core kernels loaded successfully from {kernel_type}: {kernel_path}")
@@ -591,18 +549,11 @@ class PrecompiledBatchSymmetricWMMAMatMul:
             block_offsets = block_offsets.astype(cupy.int32)
 
         # Select kernel and launch configuration
-        if self.use_optimized:
-            kernel_func = self._kernel_optimized_func
-            # 2D grid for optimized kernel: (channels, led_blocks)
-            # Each kernel processes entire batch (16 vectors) simultaneously
-            grid_x, grid_y, grid_z = channels, led_blocks, 1
-            block_x, block_y, block_z = 32, 1, 1  # 1 warp per block
-        else:
-            kernel_func = self._kernel_basic_func
-            # 2D grid for basic kernel: (channels, led_blocks)
-            # Each kernel processes entire batch (16 vectors) simultaneously
-            grid_x, grid_y, grid_z = channels, led_blocks, 1
-            block_x, block_y, block_z = 32, 1, 1  # 1 warp per block
+        kernel_func = self._kernel_basic_func
+        # 2D grid for basic kernel: (channels, led_blocks)
+        # Each kernel processes entire batch (16 vectors) simultaneously
+        grid_x, grid_y, grid_z = channels, led_blocks, 1
+        block_x, block_y, block_z = 32, 1, 1  # 1 warp per block
 
         # Launch the precompiled kernel directly using CuPy's RawKernel interface
         # kernel_func is already a CuPy function from RawModule.get_function()
@@ -678,7 +629,7 @@ if __name__ == "__main__":
         print("✓ Precompiled MMA kernels are available")
 
         try:
-            kernel = PrecompiledBatchSymmetricWMMAMatMul(use_optimized=True)
+            kernel = PrecompiledBatchSymmetricWMMAMatMul()
             print("✓ Precompiled kernel loader initialized successfully")
         except Exception as e:
             print(f"✗ Failed to initialize precompiled kernel loader: {e}")

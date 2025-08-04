@@ -151,20 +151,18 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
             )
 
         # Use precompiled tensor core kernels only
-        self.wmma_kernel_basic = PrecompiledBatchSymmetricWMMAMatMul(use_optimized=False)
-        self.wmma_kernel_optimized = PrecompiledBatchSymmetricWMMAMatMul(use_optimized=True)
+        self.wmma_kernel_basic = PrecompiledBatchSymmetricWMMAMatMul()
+
+        # Initialize 8-frame kernels to None (will be created when needed)
+        self.wmma_kernel_8frame_basic = None
 
         # Initialize 8-frame kernels if available (prefer corrected version)
         if batch_size == 8 and BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
             print("Using corrected 8-frame WMMA kernels")
-            self.wmma_kernel_8frame_basic = PrecompiledBatch8CorrectedSymmetricWMMAMatMul(use_optimized=False)
-            self.wmma_kernel_8frame_optimized = PrecompiledBatch8CorrectedSymmetricWMMAMatMul(
-                use_optimized=False
-            )  # Optimized is placeholder
+            self.wmma_kernel_8frame_basic = PrecompiledBatch8CorrectedSymmetricWMMAMatMul()
         elif batch_size == 8 and BATCH8_WMMA_KERNEL_AVAILABLE:
             print("Using original 8-frame WMMA kernels")
-            self.wmma_kernel_8frame_basic = PrecompiledBatch8SymmetricWMMAMatMul(use_optimized=False)
-            self.wmma_kernel_8frame_optimized = PrecompiledBatch8SymmetricWMMAMatMul(use_optimized=True)
+            self.wmma_kernel_8frame_basic = PrecompiledBatch8SymmetricWMMAMatMul()
         elif batch_size == 8:
             print("Warning: 8-frame kernels not available, will use sequential fallback for batch_size=8")
 
@@ -401,7 +399,6 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
     def multiply_batch_3d(
         self,
         led_values_batch: cupy.ndarray,
-        optimized_kernel: bool = True,
         debug_logging: bool = False,
     ) -> cupy.ndarray:
         """
@@ -414,7 +411,6 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
 
         Args:
             led_values_batch: Batch LED values (batch_size, 3, leds)
-            optimized_kernel: Whether to use optimized kernel variant
             debug_logging: Enable detailed logging
 
         Returns:
@@ -429,7 +425,7 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
         if batch_size == 8:
             if debug_logging:
                 print("Routing 8-frame batch to multiply_batch8_3d")
-            return self.multiply_batch8_3d(led_values_batch, optimized_kernel, debug_logging)
+            return self.multiply_batch8_3d(led_values_batch, debug_logging)
 
         # For non-8-frame batches, continue with original 16-frame logic
         if batch_size != self.batch_size:
@@ -453,30 +449,17 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
             led_values_batch = padded_input
 
         # Perform batch WMMA matrix-vector multiplication
-        if optimized_kernel:
-            if debug_logging:
-                print("Batch multiply_3d: Using OPTIMIZED BatchSymmetricWMMAMatMul kernel")
-            if self.wmma_kernel_optimized is None:
-                self.wmma_kernel_optimized = PrecompiledBatchSymmetricWMMAMatMul(use_optimized=True)
-            result_gpu = self.wmma_kernel_optimized(
-                self.block_data_gpu,  # (channels, block_diag_count, 16, 16)
-                self.block_offsets_upper,  # (block_diag_count,)
-                led_values_batch,  # (batch_size, channels, leds)
-                self.led_blocks,
-                self.padded_led_count,
-            )
-        else:
-            if debug_logging:
-                print("Batch multiply_3d: Using BASIC BatchSymmetricWMMAMatMul kernel")
-            if self.wmma_kernel_basic is None:
-                self.wmma_kernel_basic = PrecompiledBatchSymmetricWMMAMatMul(use_optimized=False)
-            result_gpu = self.wmma_kernel_basic(
-                self.block_data_gpu,
-                self.block_offsets_upper,
-                led_values_batch,
-                self.led_blocks,
-                self.padded_led_count,
-            )
+        if debug_logging:
+            print("Batch multiply_3d: Using BatchSymmetricWMMAMatMul kernel")
+        if self.wmma_kernel_basic is None:
+            self.wmma_kernel_basic = PrecompiledBatchSymmetricWMMAMatMul()
+        result_gpu = self.wmma_kernel_basic(
+            self.block_data_gpu,
+            self.block_offsets_upper,
+            led_values_batch,
+            self.led_blocks,
+            self.padded_led_count,
+        )
 
         # Convert output to desired dtype and trim to original LED count
         if result_gpu.dtype != self.output_dtype:
@@ -490,7 +473,6 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
     def multiply_batch8_3d(
         self,
         led_values_batch: cupy.ndarray,
-        optimized_kernel: bool = False,  # Use basic kernel by default (optimized is placeholder)
         debug_logging: bool = False,
     ) -> cupy.ndarray:
         """
@@ -501,7 +483,6 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
 
         Args:
             led_values_batch: Batch LED values (8, 3, leds)
-            optimized_kernel: Whether to use optimized kernel variant (False=basic working kernel, True=placeholder)
             debug_logging: Enable detailed logging
 
         Returns:
@@ -553,60 +534,31 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
                 print("Using original 8-frame kernel (with padding)")
 
         # Perform 8-frame batch WMMA matrix-vector multiplication
-        if optimized_kernel:
-            if debug_logging:
-                print("Batch8 multiply_3d: Using OPTIMIZED kernel")
-            if self.wmma_kernel_8frame_optimized is None:
-                if BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
-                    self.wmma_kernel_8frame_optimized = PrecompiledBatch8CorrectedSymmetricWMMAMatMul(
-                        use_optimized=False
-                    )  # Placeholder
-                else:
-                    self.wmma_kernel_8frame_optimized = PrecompiledBatch8SymmetricWMMAMatMul(use_optimized=True)
-
-            # Call kernel with appropriate signature
+        if debug_logging:
+            print("Batch8 multiply_3d: Using kernel")
+        if self.wmma_kernel_8frame_basic is None:
             if BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
-                result_gpu = self.wmma_kernel_8frame_optimized(
-                    self.block_data_gpu,  # (channels, block_diag_count, 16, 16)
-                    self.block_offsets_upper,  # (block_diag_count,)
-                    led_values_batch,  # (8, channels, leds)
-                    self.led_blocks,
-                    self.led_count,  # Use led_count for corrected kernel
-                )
+                self.wmma_kernel_8frame_basic = PrecompiledBatch8CorrectedSymmetricWMMAMatMul()
             else:
-                result_gpu = self.wmma_kernel_8frame_optimized(
-                    self.block_data_gpu,
-                    self.block_offsets_upper,
-                    led_values_batch,
-                    self.led_blocks,
-                    self.padded_led_count,  # Use padded_led_count for original kernel
-                )
+                self.wmma_kernel_8frame_basic = PrecompiledBatch8SymmetricWMMAMatMul()
+
+        # Call kernel with appropriate signature
+        if BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
+            result_gpu = self.wmma_kernel_8frame_basic(
+                self.block_data_gpu,
+                self.block_offsets_upper,
+                led_values_batch,
+                self.led_blocks,
+                self.led_count,  # Use led_count for corrected kernel
+            )
         else:
-            if debug_logging:
-                print("Batch8 multiply_3d: Using BASIC kernel")
-            if self.wmma_kernel_8frame_basic is None:
-                if BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
-                    self.wmma_kernel_8frame_basic = PrecompiledBatch8CorrectedSymmetricWMMAMatMul(use_optimized=False)
-                else:
-                    self.wmma_kernel_8frame_basic = PrecompiledBatch8SymmetricWMMAMatMul(use_optimized=False)
-
-            # Call kernel with appropriate signature
-            if BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
-                result_gpu = self.wmma_kernel_8frame_basic(
-                    self.block_data_gpu,
-                    self.block_offsets_upper,
-                    led_values_batch,
-                    self.led_blocks,
-                    self.led_count,  # Use led_count for corrected kernel
-                )
-            else:
-                result_gpu = self.wmma_kernel_8frame_basic(
-                    self.block_data_gpu,
-                    self.block_offsets_upper,
-                    led_values_batch,
-                    self.led_blocks,
-                    self.padded_led_count,  # Use padded_led_count for original kernel
-                )
+            result_gpu = self.wmma_kernel_8frame_basic(
+                self.block_data_gpu,
+                self.block_offsets_upper,
+                led_values_batch,
+                self.led_blocks,
+                self.padded_led_count,  # Use padded_led_count for original kernel
+            )
 
         # Convert output to desired dtype and trim to original LED count
         if result_gpu.dtype != self.output_dtype:
@@ -673,7 +625,7 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
             single_frame = led_values_batch[i]  # Shape: (3, leds)
 
             # Process single frame
-            result = self.multiply_3d(single_frame, optimized_kernel=True, debug_logging=False)
+            result = self.multiply_3d(single_frame, debug_logging=False)
             results.append(result)
 
         # Stack results back into batch format
@@ -684,14 +636,12 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
     def g_ata_g_batch_3d(
         self,
         gradient_batch: cupy.ndarray,
-        optimized_kernel: bool = True,
     ) -> cupy.ndarray:
         """
         Compute batch g^T (A^T A) g for step size calculation using WMMA kernels.
 
         Args:
             gradient_batch: Batch gradient arrays (batch_size, 3, leds)
-            optimized_kernel: Whether to use optimized kernel variant
 
         Returns:
             Result batch (batch_size, 3) - one value per channel per batch item
@@ -704,7 +654,7 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
             gradient_batch = gradient_batch.astype(self.compute_dtype)
 
         # Compute (A^T A) @ g_batch using WMMA kernels
-        ata_g_batch = self.multiply_batch_3d(gradient_batch, optimized_kernel=optimized_kernel, debug_logging=False)
+        ata_g_batch = self.multiply_batch_3d(gradient_batch, debug_logging=False)
 
         # Compute g^T @ (A^T A @ g) for each batch item and channel
         # (batch_size, channels, leds) * (batch_size, channels, leds) -> (batch_size, channels)
@@ -719,7 +669,6 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
     def multiply_3d(
         self,
         led_values: cupy.ndarray,
-        optimized_kernel: bool = True,
         output_dtype: Optional[cupy.dtype] = None,
         debug_logging: bool = False,
     ) -> cupy.ndarray:
@@ -728,7 +677,6 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
 
         Args:
             led_values: LED values array (3, leds)
-            optimized_kernel: Whether to use optimized kernel variant
             output_dtype: Desired output data type
             debug_logging: Enable detailed logging
 
@@ -743,9 +691,7 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
         led_values_batch = led_values.reshape(1, led_values.shape[0], led_values.shape[1])
 
         # Call batch version
-        result_batch = self.multiply_batch_3d(
-            led_values_batch, optimized_kernel=optimized_kernel, debug_logging=debug_logging
-        )
+        result_batch = self.multiply_batch_3d(led_values_batch, debug_logging=debug_logging)
 
         # Extract single result
         result = result_batch[0]
@@ -759,7 +705,6 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
     def g_ata_g_3d(
         self,
         gradient: cupy.ndarray,
-        optimized_kernel: bool = True,
         output_dtype: Optional[cupy.dtype] = None,
     ) -> cupy.ndarray:
         """
@@ -767,7 +712,6 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
 
         Args:
             gradient: Gradient array (3, leds)
-            optimized_kernel: Whether to use optimized kernel variant
             output_dtype: Desired output data type
 
         Returns:
@@ -781,7 +725,7 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
         gradient_batch = gradient.reshape(1, gradient.shape[0], gradient.shape[1])
 
         # Call batch version
-        result_batch = self.g_ata_g_batch_3d(gradient_batch, optimized_kernel=optimized_kernel)
+        result_batch = self.g_ata_g_batch_3d(gradient_batch)
 
         # Extract single result
         result = result_batch[0]
@@ -838,9 +782,9 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
 
         results = {}
 
-        # Basic WMMA kernel
+        # WMMA kernel benchmark
         for i in range(num_warmup):
-            _ = self.multiply_batch_3d(test_batches_gpu[i], optimized_kernel=False)
+            _ = self.multiply_batch_3d(test_batches_gpu[i])
         cupy.cuda.Stream.null.synchronize()
 
         times = []
@@ -849,31 +793,12 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
             end_event = cupy.cuda.Event()
 
             start_event.record()
-            _ = self.multiply_batch_3d(test_batches_gpu[i], optimized_kernel=False)
+            _ = self.multiply_batch_3d(test_batches_gpu[i])
             end_event.record()
             end_event.synchronize()
 
             times.append(cupy.cuda.get_elapsed_time(start_event, end_event))
 
-        results["batch_wmma_basic"] = np.mean(times)
-
-        # Optimized WMMA kernel
-        for i in range(num_warmup):
-            _ = self.multiply_batch_3d(test_batches_gpu[i], optimized_kernel=True)
-        cupy.cuda.Stream.null.synchronize()
-
-        times = []
-        for i in range(num_warmup, num_warmup + num_trials):
-            start_event = cupy.cuda.Event()
-            end_event = cupy.cuda.Event()
-
-            start_event.record()
-            _ = self.multiply_batch_3d(test_batches_gpu[i], optimized_kernel=True)
-            end_event.record()
-            end_event.synchronize()
-
-            times.append(cupy.cuda.get_elapsed_time(start_event, end_event))
-
-        results["batch_wmma_optimized"] = np.mean(times)
+        results["batch_wmma"] = np.mean(times)
 
         return results
