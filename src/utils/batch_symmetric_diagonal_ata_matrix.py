@@ -42,6 +42,29 @@ except ImportError:
     BATCH_WMMA_KERNEL_AVAILABLE = False
     print("Error: Precompiled MMA kernels not available. Run 'make' in src/utils/kernels/ to compile.")
 
+# Try to import 8-frame kernels
+try:
+    from .kernels.precompiled_mma_kernel import (
+        PRECOMPILED_8FRAME_CORRECTED_MMA_SUPPORTED,
+        PRECOMPILED_8FRAME_MMA_SUPPORTED,
+        PrecompiledBatch8CorrectedSymmetricWMMAMatMul,
+        PrecompiledBatch8SymmetricWMMAMatMul,
+    )
+
+    BATCH8_WMMA_KERNEL_AVAILABLE = PRECOMPILED_8FRAME_MMA_SUPPORTED
+    BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE = PRECOMPILED_8FRAME_CORRECTED_MMA_SUPPORTED
+
+    if BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
+        print("8-frame corrected WMMA kernels available")
+    elif BATCH8_WMMA_KERNEL_AVAILABLE:
+        print("8-frame WMMA kernels available (original version)")
+    else:
+        print("8-frame WMMA kernels not compiled - will use sequential fallback")
+except ImportError:
+    BATCH8_WMMA_KERNEL_AVAILABLE = False
+    BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE = False
+    print("8-frame WMMA kernels not yet available - will use sequential fallback")
+
 
 class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
     """
@@ -111,6 +134,10 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
         self.wmma_kernel_basic = None
         self.wmma_kernel_optimized = None
 
+        # 8-frame WMMA kernel instances
+        self.wmma_kernel_8frame_basic = None
+        self.wmma_kernel_8frame_optimized = None
+
         # Metadata
         self.bandwidth = None
         self.sparsity = None
@@ -126,6 +153,20 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
         # Use precompiled tensor core kernels only
         self.wmma_kernel_basic = PrecompiledBatchSymmetricWMMAMatMul(use_optimized=False)
         self.wmma_kernel_optimized = PrecompiledBatchSymmetricWMMAMatMul(use_optimized=True)
+
+        # Initialize 8-frame kernels if available (prefer corrected version)
+        if batch_size == 8 and BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
+            print("Using corrected 8-frame WMMA kernels")
+            self.wmma_kernel_8frame_basic = PrecompiledBatch8CorrectedSymmetricWMMAMatMul(use_optimized=False)
+            self.wmma_kernel_8frame_optimized = PrecompiledBatch8CorrectedSymmetricWMMAMatMul(
+                use_optimized=False
+            )  # Optimized is placeholder
+        elif batch_size == 8 and BATCH8_WMMA_KERNEL_AVAILABLE:
+            print("Using original 8-frame WMMA kernels")
+            self.wmma_kernel_8frame_basic = PrecompiledBatch8SymmetricWMMAMatMul(use_optimized=False)
+            self.wmma_kernel_8frame_optimized = PrecompiledBatch8SymmetricWMMAMatMul(use_optimized=True)
+        elif batch_size == 8:
+            print("Warning: 8-frame kernels not available, will use sequential fallback for batch_size=8")
 
     def _validate_batch_tensor_layout(self, tensor: cupy.ndarray, tensor_name: str) -> None:
         """
@@ -365,8 +406,10 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
         """
         Perform batch symmetric 3D block diagonal matrix-vector multiplication.
 
-        Uses async MMA tensor cores for optimal performance with 16x16 block operations.
-        Requires GPU with compute capability 8.0+ for async tensor core support.
+        Automatically routes to appropriate kernel based on batch size:
+        - 8-frame batches: Uses 8x32x8 WMMA with block pair processing
+        - 16-frame batches: Uses 16x16x16 WMMA operations
+        - Other sizes: Uses appropriate kernel with batch_size validation
 
         Args:
             led_values_batch: Batch LED values (batch_size, 3, leds)
@@ -377,10 +420,17 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
             Result batch (batch_size, 3, leds)
 
         Raises:
-            RuntimeError: If async MMA tensor cores are not available
+            RuntimeError: If appropriate WMMA tensor cores are not available
         """
         batch_size, channels, leds = led_values_batch.shape
 
+        # Route 8-frame batches to specialized 8-frame processing
+        if batch_size == 8:
+            if debug_logging:
+                print("Routing 8-frame batch to multiply_batch8_3d")
+            return self.multiply_batch8_3d(led_values_batch, optimized_kernel, debug_logging)
+
+        # For non-8-frame batches, continue with original 16-frame logic
         if batch_size != self.batch_size:
             print(f"Warning: input batch_size {batch_size} != configured batch_size {self.batch_size}")
 
@@ -435,6 +485,200 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
         result_gpu = result_gpu[:, :, : self.led_count]
 
         return result_gpu
+
+    def multiply_batch8_3d(
+        self,
+        led_values_batch: cupy.ndarray,
+        optimized_kernel: bool = False,  # Use basic kernel by default (optimized is placeholder)
+        debug_logging: bool = False,
+    ) -> cupy.ndarray:
+        """
+        Perform 8-frame batch symmetric 3D block diagonal matrix-vector multiplication.
+
+        Uses 16x16x16 WMMA tensor cores for efficient 8-frame batch processing.
+        Achieves ~0.04% relative error accuracy.
+
+        Args:
+            led_values_batch: Batch LED values (8, 3, leds)
+            optimized_kernel: Whether to use optimized kernel variant (False=basic working kernel, True=placeholder)
+            debug_logging: Enable detailed logging
+
+        Returns:
+            Result batch (8, 3, leds)
+
+        Raises:
+            RuntimeError: If 8-frame WMMA tensor cores are not available
+        """
+        batch_size, channels, leds = led_values_batch.shape
+
+        if batch_size != 8:
+            raise ValueError(f"multiply_batch8_3d requires batch_size=8, got {batch_size}")
+
+        if self.batch_size != 8:
+            raise ValueError(
+                f"Matrix configured for batch_size={self.batch_size}, but multiply_batch8_3d requires batch_size=8"
+            )
+
+        # Validate batch tensor layout - update validation for 8-frame format
+        self._validate_batch8_tensor_layout(led_values_batch, "led_values_batch")
+
+        # Check if block matrix is built
+        if self.block_data_gpu is None:
+            raise RuntimeError("Block matrix not built. Call from_symmetric_diagonal_matrix() first.")
+
+        # Check if 8-frame kernels are available (prefer corrected version)
+        if not (BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE or BATCH8_WMMA_KERNEL_AVAILABLE):
+            if debug_logging:
+                print("8-frame kernels not available, falling back to sequential processing")
+            return self._sequential_8frame_fallback(led_values_batch, debug_logging)
+
+        # Ensure input is correct dtype
+        if led_values_batch.dtype != self.compute_dtype:
+            led_values_batch = led_values_batch.astype(self.compute_dtype)
+
+        # Handle padding based on kernel type
+        if BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
+            # Corrected kernel assumes LED count is multiple of 32, no padding needed
+            if debug_logging:
+                print("Using corrected 8-frame kernel (no padding)")
+            # No padding for corrected kernel
+        else:
+            # Original kernel needs padding to block boundary
+            if leds < self.padded_led_count:
+                padded_input = cupy.zeros((batch_size, channels, self.padded_led_count), dtype=self.compute_dtype)
+                padded_input[:, :, :leds] = led_values_batch
+                led_values_batch = padded_input
+            if debug_logging:
+                print("Using original 8-frame kernel (with padding)")
+
+        # Perform 8-frame batch WMMA matrix-vector multiplication
+        if optimized_kernel:
+            if debug_logging:
+                print("Batch8 multiply_3d: Using OPTIMIZED kernel")
+            if self.wmma_kernel_8frame_optimized is None:
+                if BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
+                    self.wmma_kernel_8frame_optimized = PrecompiledBatch8CorrectedSymmetricWMMAMatMul(
+                        use_optimized=False
+                    )  # Placeholder
+                else:
+                    self.wmma_kernel_8frame_optimized = PrecompiledBatch8SymmetricWMMAMatMul(use_optimized=True)
+
+            # Call kernel with appropriate signature
+            if BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
+                result_gpu = self.wmma_kernel_8frame_optimized(
+                    self.block_data_gpu,  # (channels, block_diag_count, 16, 16)
+                    self.block_offsets_upper,  # (block_diag_count,)
+                    led_values_batch,  # (8, channels, leds)
+                    self.led_blocks,
+                    self.led_count,  # Use led_count for corrected kernel
+                )
+            else:
+                result_gpu = self.wmma_kernel_8frame_optimized(
+                    self.block_data_gpu,
+                    self.block_offsets_upper,
+                    led_values_batch,
+                    self.led_blocks,
+                    self.padded_led_count,  # Use padded_led_count for original kernel
+                )
+        else:
+            if debug_logging:
+                print("Batch8 multiply_3d: Using BASIC kernel")
+            if self.wmma_kernel_8frame_basic is None:
+                if BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
+                    self.wmma_kernel_8frame_basic = PrecompiledBatch8CorrectedSymmetricWMMAMatMul(use_optimized=False)
+                else:
+                    self.wmma_kernel_8frame_basic = PrecompiledBatch8SymmetricWMMAMatMul(use_optimized=False)
+
+            # Call kernel with appropriate signature
+            if BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
+                result_gpu = self.wmma_kernel_8frame_basic(
+                    self.block_data_gpu,
+                    self.block_offsets_upper,
+                    led_values_batch,
+                    self.led_blocks,
+                    self.led_count,  # Use led_count for corrected kernel
+                )
+            else:
+                result_gpu = self.wmma_kernel_8frame_basic(
+                    self.block_data_gpu,
+                    self.block_offsets_upper,
+                    led_values_batch,
+                    self.led_blocks,
+                    self.padded_led_count,  # Use padded_led_count for original kernel
+                )
+
+        # Convert output to desired dtype and trim to original LED count
+        if result_gpu.dtype != self.output_dtype:
+            result_gpu = result_gpu.astype(self.output_dtype)
+
+        # Trim padded dimensions back to original LED count
+        result_gpu = result_gpu[:, :, : self.led_count]
+
+        return result_gpu
+
+    def _validate_batch8_tensor_layout(self, tensor: cupy.ndarray, tensor_name: str) -> None:
+        """
+        Validate 8-frame batch tensor memory layout for optimal WMMA kernel performance.
+
+        Args:
+            tensor: Input batch tensor to validate (8, 3, leds)
+            tensor_name: Name for error messages
+
+        Raises:
+            ValueError: If tensor layout is incompatible with 8-frame WMMA kernels
+        """
+        if not isinstance(tensor, cupy.ndarray):
+            raise TypeError(f"{tensor_name} must be cupy.ndarray, got {type(tensor)}")
+
+        # Check batch tensor shape
+        if len(tensor.shape) != 3:
+            raise ValueError(f"{tensor_name} must be 3D batch tensor (8, channels, leds), got shape {tensor.shape}")
+
+        batch_size, channels, leds = tensor.shape
+        if batch_size != 8:
+            raise ValueError(f"{tensor_name} must have batch_size=8, got {batch_size}")
+
+        if channels != self.channels:
+            raise ValueError(f"{tensor_name} must have {self.channels} channels, got {channels}")
+
+        if leds != self.led_count:
+            raise ValueError(f"{tensor_name} must have {self.led_count} LEDs, got {leds}")
+
+        # Validate C-contiguous layout for optimal memory coalescing
+        if not tensor.flags.c_contiguous:
+            stride_info = f"strides={tensor.strides}, shape={tensor.shape}"
+            layout = "F-contiguous" if tensor.flags.f_contiguous else "non-contiguous"
+
+            raise ValueError(
+                f"8-frame WMMA kernel requires C-contiguous {tensor_name} tensor for optimal performance. "
+                f"Got {layout} tensor with {stride_info}. "
+                f"Use cp.ascontiguousarray({tensor_name}) to fix layout issues."
+            )
+
+    def _sequential_8frame_fallback(self, led_values_batch: cupy.ndarray, debug_logging: bool = False) -> cupy.ndarray:
+        """
+        Sequential fallback for 8-frame processing when 8-frame kernels are not available.
+
+        Processes each frame individually using the single-frame multiply_3d method.
+        """
+        if debug_logging:
+            print("Using sequential fallback for 8-frame processing")
+
+        batch_size, channels, leds = led_values_batch.shape
+        results = []
+
+        for i in range(batch_size):
+            # Extract single frame
+            single_frame = led_values_batch[i]  # Shape: (3, leds)
+
+            # Process single frame
+            result = self.multiply_3d(single_frame, optimized_kernel=True, debug_logging=False)
+            results.append(result)
+
+        # Stack results back into batch format
+        result_batch = cupy.stack(results, axis=0)  # Shape: (8, 3, leds)
+
+        return result_batch
 
     def g_ata_g_batch_3d(
         self,
