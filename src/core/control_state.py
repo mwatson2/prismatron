@@ -98,6 +98,15 @@ class SystemStatus:
     # Rendering index to track which item is actually being rendered
     rendering_index: int = -1
 
+    # Audio beat detection state
+    audio_enabled: bool = False
+    current_bpm: float = 120.0
+    beat_count: int = 0
+    last_beat_time: float = 0.0
+    last_downbeat_time: float = 0.0
+    beat_confidence: float = 0.0
+    audio_intensity: float = 0.0
+
     # Optimization settings
     optimization_iterations: int = 5
 

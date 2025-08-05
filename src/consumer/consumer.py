@@ -22,6 +22,7 @@ from ..core.control_state import ProducerState, RendererState
 from ..utils.frame_drop_rate_ewma import FrameDropRateEwma
 from ..utils.frame_timing import FrameTimingData, FrameTimingLogger
 from .adaptive_frame_dropper import AdaptiveFrameDropper
+from .audio_beat_analyzer import AudioBeatAnalyzer, BeatEvent
 from .frame_renderer import FrameRenderer
 from .led_buffer import LEDBuffer
 from .led_optimizer import LEDOptimizer
@@ -117,6 +118,8 @@ class ConsumerProcess:
         test_renderer_config: Optional[TestSinkConfig] = None,
         timing_log_path: Optional[str] = None,
         enable_adaptive_frame_dropping: bool = True,
+        enable_audio_reactive: bool = False,
+        audio_device: str = "auto",
     ):
         """
         Initialize consumer process.
@@ -131,6 +134,8 @@ class ConsumerProcess:
             test_renderer_config: Test renderer configuration
             timing_log_path: Path to CSV file for timing data logging (optional)
             enable_adaptive_frame_dropping: Enable adaptive frame dropping for LED buffer management
+            enable_audio_reactive: Enable audio-reactive effects with beat detection
+            audio_device: Audio device selection ('auto', 'cuda', 'cpu')
         """
         self.buffer_name = buffer_name
         self.control_name = control_name
@@ -141,6 +146,17 @@ class ConsumerProcess:
         self._led_optimizer = LEDOptimizer(
             diffusion_patterns_path=diffusion_patterns_path,
         )
+
+        # Audio beat analyzer (optional)
+        self._audio_beat_analyzer: Optional[AudioBeatAnalyzer] = None
+        self._enable_audio_reactive = enable_audio_reactive
+        if enable_audio_reactive:
+            try:
+                self._audio_beat_analyzer = AudioBeatAnalyzer(beat_callback=self._on_beat_detected, device=audio_device)
+                logger.info("Audio beat analyzer initialized")
+            except Exception as e:
+                logger.error(f"Failed to initialize audio beat analyzer: {e}")
+                self._enable_audio_reactive = False
 
         # Note: Playlist sync handled by producer, consumer just tracks rendered items
         # Configure WLED client
@@ -246,6 +262,32 @@ class ConsumerProcess:
 
         # Transition processor for playlist item transitions
         self._transition_processor = TransitionProcessor()
+
+    def _on_beat_detected(self, beat_event: BeatEvent):
+        """Handle detected beat events and update control state"""
+        try:
+            # Update control state with beat information
+            self._control_state.update_status(
+                audio_enabled=self._enable_audio_reactive,
+                current_bpm=beat_event.bpm,
+                beat_count=beat_event.beat_count,
+                last_beat_time=beat_event.timestamp,
+                beat_confidence=beat_event.confidence,
+                audio_intensity=beat_event.intensity,
+            )
+
+            # Update downbeat time if this is a downbeat
+            if beat_event.is_downbeat:
+                self._control_state.update_status(last_downbeat_time=beat_event.timestamp)
+
+            logger.debug(
+                f"Beat event: BPM={beat_event.bpm:.1f}, "
+                f"Downbeat={beat_event.is_downbeat}, "
+                f"Intensity={beat_event.intensity:.2f}"
+            )
+
+        except Exception as e:
+            logger.error(f"Error handling beat event: {e}")
 
         # LED transition processor for LED-based transitions
         self._led_transition_processor = LEDTransitionProcessor()
@@ -363,6 +405,14 @@ class ConsumerProcess:
             self._renderer_thread.start()
             self._wled_reconnection_thread.start()
 
+            # Start audio beat analyzer if enabled
+            if self._enable_audio_reactive and self._audio_beat_analyzer:
+                try:
+                    self._audio_beat_analyzer.start_analysis()
+                    logger.info("Audio beat analysis started")
+                except Exception as e:
+                    logger.error(f"Failed to start audio beat analysis: {e}")
+
             logger.info("Consumer process started with optimization, renderer, and WLED reconnection threads")
             return True
 
@@ -384,6 +434,14 @@ class ConsumerProcess:
 
             # Signal WLED reconnection thread to stop
             self._wled_reconnection_event.set()
+
+            # Stop audio beat analyzer if running
+            if self._audio_beat_analyzer:
+                try:
+                    self._audio_beat_analyzer.stop_analysis()
+                    logger.info("Audio beat analysis stopped")
+                except Exception as e:
+                    logger.error(f"Error stopping audio beat analysis: {e}")
 
             logger.info("Stopping consumer process...")
 
