@@ -70,13 +70,12 @@ class PrecompiledMMAKernel:
             for kernel in [self.kernel_basic]:
                 kernel.argtypes = [
                     ctypes.c_void_p,  # block_data
-                    ctypes.c_void_p,  # block_offsets
                     ctypes.c_void_p,  # input_batch
                     ctypes.c_void_p,  # output_batch
                     ctypes.c_int,  # batch_size
                     ctypes.c_int,  # channels
                     ctypes.c_int,  # led_blocks
-                    ctypes.c_int,  # block_diag_count
+                    ctypes.c_int,  # max_block_diag
                     ctypes.c_int,  # padded_leds
                 ]
                 kernel.restype = None
@@ -196,6 +195,142 @@ class PrecompiledMMAKernel:
             raise RuntimeError(f"Failed to launch precompiled kernel: {e}") from e
 
 
+class PrecompiledBatch8ExperimentalSymmetricWMMAMatMul:
+    """
+    8-frame batch symmetric WMMA matrix multiplication using experimental kernel.
+
+    This uses the experimental version of the corrected kernel for testing improvements.
+    """
+
+    def __init__(self):
+        """
+        Initialize precompiled experimental 8-frame WMMA kernel.
+        """
+        # Load precompiled experimental kernel using CuPy's RawModule
+        self._kernel = None
+        self._load_precompiled_experimental_kernel()
+
+    def _load_precompiled_experimental_kernel(self):
+        """Load precompiled experimental 8-frame kernel using CuPy's RawModule with PTX or CUBIN."""
+        kernel_dir = os.path.dirname(os.path.abspath(__file__))
+        ptx_path = os.path.join(kernel_dir, "batch8_experimental_kernel.ptx")
+        cubin_path = os.path.join(kernel_dir, "batch8_experimental_kernel.cubin")
+
+        # Try PTX first, then fall back to CUBIN
+        if os.path.exists(ptx_path):
+            kernel_path = ptx_path
+            use_ptx = True
+        elif os.path.exists(cubin_path):
+            kernel_path = cubin_path
+            use_ptx = False
+        else:
+            raise RuntimeError(
+                f"Precompiled experimental 8-frame MMA kernel module not found. "
+                f"Expected {ptx_path} or {cubin_path}. "
+                f"Run 'make' in {kernel_dir} to compile the kernels."
+            )
+
+        try:
+            # Create a RawModule from the kernel file
+            self._module = cupy.RawModule(path=kernel_path)
+
+            # Get the experimental kernel function
+            kernel_name_basic = "batch8_symmetric_block_pair_multiply_wmma_experimental"
+
+            self._kernel_basic_func = self._module.get_function(kernel_name_basic)
+
+            kernel_type = "PTX" if use_ptx else "CUBIN"
+            print(
+                f"Precompiled experimental 8-frame MMA tensor core kernels loaded successfully "
+                f"from {kernel_type}: {kernel_path}"
+            )
+
+        except Exception as e:
+            raise RuntimeError(f"Failed to load precompiled experimental 8-frame MMA kernels: {e}") from e
+
+    def __call__(
+        self,
+        block_data_gpu: cupy.ndarray,
+        input_batch: cupy.ndarray,
+        led_blocks: int,
+        max_block_diag: int,
+        led_count: int,
+    ) -> cupy.ndarray:
+        """
+        Perform 8-frame batch WMMA matrix multiplication using experimental implementation with 5D storage.
+
+        Args:
+            block_data_gpu: Block diagonal data (channels, max_block_diag, led_blocks, 16, 16)
+            input_batch: Batch input vectors (8, channels, leds)
+            led_blocks: Number of 16x16 blocks per dimension
+            max_block_diag: Maximum block diagonal index (bandwidth-based)
+            led_count: LED count (multiple of 32, no padding needed)
+
+        Returns:
+            Output batch (8, channels, leds)
+        """
+        if not hasattr(self, "_module"):
+            raise RuntimeError("Precompiled experimental 8-frame kernels not loaded")
+
+        batch_size, channels, leds = input_batch.shape
+
+        if batch_size != 8:
+            raise ValueError(f"Experimental 8-frame kernel requires batch_size=8, got {batch_size}")
+
+        # Validate input shapes for 5D storage format
+        if len(block_data_gpu.shape) != 5:
+            raise ValueError(
+                f"Block data must be 5D (channels, max_block_diag, led_blocks, 16, 16), got shape {block_data_gpu.shape}"
+            )
+        if block_data_gpu.shape[3:] != (16, 16):
+            raise ValueError("Block data must have 16x16 blocks")
+        if block_data_gpu.shape[0] != channels:
+            raise ValueError(f"Channel count mismatch: block_data has {block_data_gpu.shape[0]}, input has {channels}")
+        if block_data_gpu.shape[1] != max_block_diag:
+            raise ValueError(
+                f"max_block_diag mismatch: block_data has {block_data_gpu.shape[1]}, expected {max_block_diag}"
+            )
+        if block_data_gpu.shape[2] != led_blocks:
+            raise ValueError(f"led_blocks mismatch: block_data has {block_data_gpu.shape[2]}, expected {led_blocks}")
+        if leds != led_count:
+            raise ValueError("Input LED count must match expected count")
+
+        # Initialize output
+        output_batch = cupy.zeros_like(input_batch)
+
+        # Ensure correct data types
+        if block_data_gpu.dtype != cupy.float32:
+            block_data_gpu = block_data_gpu.astype(cupy.float32)
+        if input_batch.dtype != cupy.float32:
+            input_batch = input_batch.astype(cupy.float32)
+
+        # Select kernel and launch configuration
+        kernel_func = self._kernel_basic_func
+        block_x, block_y, block_z = 32, 1, 1  # 1 warp per block
+
+        # 2D grid for experimental 8-frame kernel: (channels, led_blocks/2)
+        # Each kernel processes one vertical pair (32x16 block) for 8-frame batch
+        grid_x, grid_y, grid_z = channels, (led_blocks + 1) // 2, 1
+
+        # Launch the experimental kernel with proper signature
+        kernel_func(
+            (grid_x, grid_y, grid_z),  # grid
+            (block_x, block_y, block_z),  # block
+            (
+                block_data_gpu,
+                input_batch,
+                output_batch,
+                cupy.int32(batch_size),  # Always 8
+                cupy.int32(channels),
+                cupy.int32(led_blocks),
+                cupy.int32(max_block_diag),
+                cupy.int32(led_count),  # Use led_count instead of padded_led_count
+            ),
+        )
+
+        return output_batch
+
+
 class PrecompiledBatch8CorrectedSymmetricWMMAMatMul:
     """
     8-frame batch symmetric WMMA matrix multiplication using corrected kernel.
@@ -252,19 +387,19 @@ class PrecompiledBatch8CorrectedSymmetricWMMAMatMul:
     def __call__(
         self,
         block_data_gpu: cupy.ndarray,
-        block_offsets: cupy.ndarray,
         input_batch: cupy.ndarray,
         led_blocks: int,
+        max_block_diag: int,
         led_count: int,  # Changed from padded_led_count to led_count
     ) -> cupy.ndarray:
         """
-        Perform 8-frame batch WMMA matrix multiplication using corrected implementation.
+        Perform 8-frame batch WMMA matrix multiplication using corrected implementation with 5D storage.
 
         Args:
-            block_data_gpu: Block diagonal data (channels, block_diag_count, 16, 16)
-            block_offsets: Block offset array (block_diag_count,)
+            block_data_gpu: Block diagonal data (channels, max_block_diag, led_blocks, 16, 16)
             input_batch: Batch input vectors (8, channels, leds)
             led_blocks: Number of 16x16 blocks per dimension
+            max_block_diag: Maximum block diagonal index (bandwidth-based)
             led_count: LED count (multiple of 32, no padding needed)
 
         Returns:
@@ -278,9 +413,21 @@ class PrecompiledBatch8CorrectedSymmetricWMMAMatMul:
         if batch_size != 8:
             raise ValueError(f"Corrected 8-frame kernel requires batch_size=8, got {batch_size}")
 
-        # Validate input shapes
-        if block_data_gpu.shape[2:] != (16, 16):
+        # Validate input shapes for 5D storage format
+        if len(block_data_gpu.shape) != 5:
+            raise ValueError(
+                f"Block data must be 5D (channels, max_block_diag, led_blocks, 16, 16), got shape {block_data_gpu.shape}"
+            )
+        if block_data_gpu.shape[3:] != (16, 16):
             raise ValueError("Block data must have 16x16 blocks")
+        if block_data_gpu.shape[0] != channels:
+            raise ValueError(f"Channel count mismatch: block_data has {block_data_gpu.shape[0]}, input has {channels}")
+        if block_data_gpu.shape[1] != max_block_diag:
+            raise ValueError(
+                f"max_block_diag mismatch: block_data has {block_data_gpu.shape[1]}, expected {max_block_diag}"
+            )
+        if block_data_gpu.shape[2] != led_blocks:
+            raise ValueError(f"led_blocks mismatch: block_data has {block_data_gpu.shape[2]}, expected {led_blocks}")
         if leds != led_count:
             raise ValueError("Input LED count must match expected count")
 
@@ -292,8 +439,6 @@ class PrecompiledBatch8CorrectedSymmetricWMMAMatMul:
             block_data_gpu = block_data_gpu.astype(cupy.float32)
         if input_batch.dtype != cupy.float32:
             input_batch = input_batch.astype(cupy.float32)
-        if block_offsets.dtype != cupy.int32:
-            block_offsets = block_offsets.astype(cupy.int32)
 
         # Select kernel and launch configuration
         kernel_func = self._kernel_basic_func
@@ -309,13 +454,12 @@ class PrecompiledBatch8CorrectedSymmetricWMMAMatMul:
             (block_x, block_y, block_z),  # block
             (
                 block_data_gpu,
-                block_offsets,
                 input_batch,
                 output_batch,
                 cupy.int32(batch_size),  # Always 8
                 cupy.int32(channels),
                 cupy.int32(led_blocks),
-                cupy.int32(len(block_offsets)),
+                cupy.int32(max_block_diag),
                 cupy.int32(led_count),  # Use led_count instead of padded_led_count
             ),
         )
@@ -508,19 +652,19 @@ class PrecompiledBatchSymmetricWMMAMatMul:
     def __call__(
         self,
         block_data_gpu: cupy.ndarray,
-        block_offsets: cupy.ndarray,
         input_batch: cupy.ndarray,
         led_blocks: int,
+        max_block_diag: int,
         padded_led_count: int,
     ) -> cupy.ndarray:
         """
-        Perform batch WMMA matrix multiplication.
+        Perform batch WMMA matrix multiplication using 5D storage format.
 
         Args:
-            block_data_gpu: Block diagonal data
-            block_offsets: Block offset array
+            block_data_gpu: Block diagonal data (channels, max_block_diag, led_blocks, 16, 16)
             input_batch: Batch input vectors
             led_blocks: Number of 16x16 blocks per dimension
+            max_block_diag: Maximum block diagonal index (bandwidth-based)
             padded_led_count: Padded LED count (multiple of 16)
 
         Returns:
@@ -531,9 +675,21 @@ class PrecompiledBatchSymmetricWMMAMatMul:
 
         batch_size, channels, padded_leds = input_batch.shape
 
-        # Validate input shapes
-        if block_data_gpu.shape[2:] != (16, 16):
+        # Validate input shapes for 5D storage format
+        if len(block_data_gpu.shape) != 5:
+            raise ValueError(
+                f"Block data must be 5D (channels, max_block_diag, led_blocks, 16, 16), got shape {block_data_gpu.shape}"
+            )
+        if block_data_gpu.shape[3:] != (16, 16):
             raise ValueError("Block data must have 16x16 blocks")
+        if block_data_gpu.shape[0] != channels:
+            raise ValueError(f"Channel count mismatch: block_data has {block_data_gpu.shape[0]}, input has {channels}")
+        if block_data_gpu.shape[1] != max_block_diag:
+            raise ValueError(
+                f"max_block_diag mismatch: block_data has {block_data_gpu.shape[1]}, expected {max_block_diag}"
+            )
+        if block_data_gpu.shape[2] != led_blocks:
+            raise ValueError(f"led_blocks mismatch: block_data has {block_data_gpu.shape[2]}, expected {led_blocks}")
         if padded_leds != padded_led_count:
             raise ValueError("Input LED count must match padded count")
 
@@ -545,8 +701,6 @@ class PrecompiledBatchSymmetricWMMAMatMul:
             block_data_gpu = block_data_gpu.astype(cupy.float32)
         if input_batch.dtype != cupy.float32:
             input_batch = input_batch.astype(cupy.float32)
-        if block_offsets.dtype != cupy.int32:
-            block_offsets = block_offsets.astype(cupy.int32)
 
         # Select kernel and launch configuration
         kernel_func = self._kernel_basic_func
@@ -562,13 +716,12 @@ class PrecompiledBatchSymmetricWMMAMatMul:
             (block_x, block_y, block_z),  # block
             (
                 block_data_gpu,
-                block_offsets,
                 input_batch,
                 output_batch,
                 cupy.int32(batch_size),
                 cupy.int32(channels),
                 cupy.int32(led_blocks),
-                cupy.int32(len(block_offsets)),
+                cupy.int32(max_block_diag),
                 cupy.int32(padded_led_count),
             ),
         )
@@ -616,10 +769,24 @@ def check_precompiled_8frame_corrected_mma_support() -> bool:
         return False
 
 
+def check_precompiled_8frame_experimental_mma_support() -> bool:
+    """Check if precompiled experimental 8-frame MMA kernels are available."""
+    try:
+        kernel_dir = os.path.dirname(os.path.abspath(__file__))
+        ptx_path = os.path.join(kernel_dir, "batch8_experimental_kernel.ptx")
+        cubin_path = os.path.join(kernel_dir, "batch8_experimental_kernel.cubin")
+
+        # Check if PTX or CUBIN file exists
+        return os.path.exists(ptx_path) or os.path.exists(cubin_path)
+    except Exception:
+        return False
+
+
 # Module-level availability flags
 PRECOMPILED_MMA_SUPPORTED = check_precompiled_mma_support()
 PRECOMPILED_8FRAME_MMA_SUPPORTED = check_precompiled_8frame_mma_support()
 PRECOMPILED_8FRAME_CORRECTED_MMA_SUPPORTED = check_precompiled_8frame_corrected_mma_support()
+PRECOMPILED_8FRAME_EXPERIMENTAL_MMA_SUPPORTED = check_precompiled_8frame_experimental_mma_support()
 
 if __name__ == "__main__":
     # Test precompiled kernel loading

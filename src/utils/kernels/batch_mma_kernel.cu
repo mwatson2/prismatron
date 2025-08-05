@@ -1,5 +1,10 @@
 /*
- * Corrected Batch MMA Kernel for symmetric block diagonal matrix multiplication.
+ * 16-Frame Batch WMMA Kernel for symmetric block diagonal matrix multiplication.
+ *
+ * Updated for 5D storage format: (channels, max_block_diag, led_blocks, 16, 16)
+ * - Uses bandwidth-based storage optimization (max_block_diag ~= bandwidth/16)
+ * - Block diagonals stored in implicit order: 0, 1, 2, ..., max_block_diag-1
+ * - No block_offsets parameter needed - offset = block_diag_idx
  *
  * For single 16x16 block case:
  * - We want: result[batch_i] = A_matrix * input_vector[batch_i] for each batch_i
@@ -17,14 +22,13 @@ using namespace nvcuda;
 extern "C" {
 
 __global__ void batch_symmetric_block_dia_multiply_wmma(
-    const float* block_data,      // Shape: (channels, block_diag_count, 16, 16)
-    const int* block_offsets,     // Shape: (block_diag_count,)
+    const float* block_data,      // Shape: (channels, max_block_diag, led_blocks, 16, 16)
     const float* input_batch,     // Shape: (batch_size, channels, padded_leds)
     float* output_batch,          // Shape: (batch_size, channels, padded_leds)
     int batch_size,
     int channels,
     int led_blocks,
-    int block_diag_count,
+    int max_block_diag,
     int padded_leds
 ) {
     // Grid configuration: (channels, led_blocks)
@@ -61,18 +65,20 @@ __global__ void batch_symmetric_block_dia_multiply_wmma(
     }
     __syncwarp();
 
-    // Process each block diagonal
-    for (int block_diag_idx = 0; block_diag_idx < block_diag_count; block_diag_idx++) {
-        int block_offset = block_offsets[block_diag_idx];
-        int block_col = block_row + block_offset;
+    // Process each block diagonal (implicit ordering: diag 0, 1, 2, ...)
+    for (int block_diag_idx = 0; block_diag_idx < max_block_diag; block_diag_idx++) {
+        int block_col = block_row + block_diag_idx;  // block_offset = block_diag_idx
 
         if (block_col < led_blocks) {
             // Initialize WMMA accumulator
             wmma::fill_fragment(c_frag, 0.0f);
 
-            // Load ATA block matrix A (16x16)
+            // Load ATA block matrix A (16x16) from 5D storage
+            // 5D indexing: [channel][block_diag][block_row][i][j]
             const float* block_ptr = block_data +
-                (channel_idx * block_diag_count + block_diag_idx) * 16 * 16;
+                (channel_idx * max_block_diag * led_blocks * 16 * 16 +
+                 block_diag_idx * led_blocks * 16 * 16 +
+                 block_row * 16 * 16);
 
             if (lane_id < 16) {
                 for (int i = 0; i < 16; i++) {
@@ -126,7 +132,7 @@ __global__ void batch_symmetric_block_dia_multiply_wmma(
             }
 
             // Handle symmetric contribution for off-diagonal blocks
-            if (block_offset > 0) {
+            if (block_diag_idx > 0) {  // block_offset = block_diag_idx
                 // Symmetric contribution: result[block_col] += A^T * input[block_row]
 
                 // Load input vectors from block_row position for all batch items

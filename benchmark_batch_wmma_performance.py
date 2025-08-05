@@ -118,7 +118,7 @@ def benchmark_sequential_symmetric(symmetric_matrix, test_inputs, num_warmup=10,
         results = []
         for frame_idx in range(batch_size):
             frame_input = batch_input[frame_idx]  # Shape: (3, 2624)
-            result = symmetric_matrix.multiply_3d(frame_input, use_custom_kernel=True, optimized_kernel=True)
+            result = symmetric_matrix.multiply_3d(frame_input, use_custom_kernel=True, optimized_kernel=False)
             results.append(result)
 
         # Combine results (not timed)
@@ -144,7 +144,7 @@ def benchmark_sequential_symmetric(symmetric_matrix, test_inputs, num_warmup=10,
         results = []
         for frame_idx in range(batch_size):
             frame_input = batch_input[frame_idx]  # Shape: (3, 2624)
-            result = symmetric_matrix.multiply_3d(frame_input, use_custom_kernel=True, optimized_kernel=True)
+            result = symmetric_matrix.multiply_3d(frame_input, use_custom_kernel=True, optimized_kernel=False)
             results.append(result)
 
         # Combine results
@@ -190,9 +190,7 @@ def benchmark_batch_wmma(batch_matrix, test_inputs, num_warmup=10, num_trials=50
     print(f"Running {num_warmup} warmup iterations...")
     for i in range(num_warmup):
         batch_input = test_inputs[i]  # Shape: (16, 3, 2624)
-        result = batch_matrix.multiply_batch_3d(
-            batch_input, optimized_kernel=False, debug_logging=False  # Use basic WMMA kernel
-        )
+        result = batch_matrix.multiply_batch_3d(batch_input, debug_logging=False)
 
     cp.cuda.Stream.null.synchronize()
     print("Warmup completed.")
@@ -211,9 +209,7 @@ def benchmark_batch_wmma(batch_matrix, test_inputs, num_warmup=10, num_trials=50
         start_event.record()
 
         # Process entire batch at once with WMMA tensor cores
-        batch_result = batch_matrix.multiply_batch_3d(
-            batch_input, optimized_kernel=False, debug_logging=False  # Use basic WMMA kernel
-        )
+        batch_result = batch_matrix.multiply_batch_3d(batch_input, debug_logging=False)
 
         end_event.record()
         end_event.synchronize()
@@ -256,14 +252,14 @@ def verify_correctness(symmetric_matrix, batch_matrix, test_input):
     sequential_results = []
     for frame_idx in range(batch_size):
         frame_input = test_input[frame_idx]  # Shape: (3, 2624)
-        result = symmetric_matrix.multiply_3d(frame_input, use_custom_kernel=True, optimized_kernel=True)
+        result = symmetric_matrix.multiply_3d(frame_input, use_custom_kernel=True, optimized_kernel=False)
         sequential_results.append(result)
 
     sequential_batch = cp.stack(sequential_results, axis=0)  # Shape: (16, 3, 2624)
 
     # Batch processing
     print("Computing batch WMMA results...")
-    batch_result = batch_matrix.multiply_batch_3d(test_input, optimized_kernel=False, debug_logging=False)
+    batch_result = batch_matrix.multiply_batch_3d(test_input, debug_logging=False)
 
     # Compare results
     print("Comparing results...")

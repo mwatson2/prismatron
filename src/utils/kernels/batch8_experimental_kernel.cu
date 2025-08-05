@@ -1,5 +1,5 @@
 /*
- * 8-Frame Batch WMMA Kernel with Corrected Vertical Pair Processing
+ * 8-Frame Batch WMMA Kernel - EXPERIMENTAL VERSION
  *
  * Updated for 5D storage format: (channels, max_block_diag, led_blocks, 16, 16)
  * - Uses bandwidth-based storage optimization (max_block_diag ~= bandwidth/16)
@@ -7,6 +7,7 @@
  * - No block_offsets parameter needed - direct block access via diag_idx = col - row
  * - Simplified block search using 5D indexing
  *
+ * Experimental copy of the corrected kernel for testing improvements
  * Uses 32x8x16 WMMA operations with FP32 input/output, half precision internally
  *
  * Key Architecture:
@@ -25,7 +26,7 @@ using namespace nvcuda;
 
 extern "C" {
 
-__global__ void batch8_symmetric_block_pair_multiply_wmma(
+__global__ void batch8_symmetric_block_pair_multiply_wmma_experimental(
     const float* block_data,      // (channels, max_block_diag, led_blocks, 16, 16)
     const float* input_batch,     // (8, 3, leds)
     float* output_batch,          // (8, 3, leds)

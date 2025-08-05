@@ -46,15 +46,20 @@ except ImportError:
 try:
     from .kernels.precompiled_mma_kernel import (
         PRECOMPILED_8FRAME_CORRECTED_MMA_SUPPORTED,
+        PRECOMPILED_8FRAME_EXPERIMENTAL_MMA_SUPPORTED,
         PRECOMPILED_8FRAME_MMA_SUPPORTED,
         PrecompiledBatch8CorrectedSymmetricWMMAMatMul,
+        PrecompiledBatch8ExperimentalSymmetricWMMAMatMul,
         PrecompiledBatch8SymmetricWMMAMatMul,
     )
 
     BATCH8_WMMA_KERNEL_AVAILABLE = PRECOMPILED_8FRAME_MMA_SUPPORTED
     BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE = PRECOMPILED_8FRAME_CORRECTED_MMA_SUPPORTED
+    BATCH8_EXPERIMENTAL_WMMA_KERNEL_AVAILABLE = PRECOMPILED_8FRAME_EXPERIMENTAL_MMA_SUPPORTED
 
-    if BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
+    if BATCH8_EXPERIMENTAL_WMMA_KERNEL_AVAILABLE:
+        print("8-frame experimental WMMA kernels available")
+    elif BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
         print("8-frame corrected WMMA kernels available")
     elif BATCH8_WMMA_KERNEL_AVAILABLE:
         print("8-frame WMMA kernels available (original version)")
@@ -63,6 +68,7 @@ try:
 except ImportError:
     BATCH8_WMMA_KERNEL_AVAILABLE = False
     BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE = False
+    BATCH8_EXPERIMENTAL_WMMA_KERNEL_AVAILABLE = False
     print("8-frame WMMA kernels not yet available - will use sequential fallback")
 
 
@@ -90,6 +96,7 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
         batch_size: int = 16,
         block_size: int = 16,
         output_dtype: Optional[cupy.dtype] = None,
+        use_experimental_kernel: bool = False,
     ):
         """
         Initialize batch symmetric diagonal A^T A matrix container.
@@ -100,11 +107,13 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
             batch_size: Number of vectors to process simultaneously (8 or 16 recommended)
             block_size: Size of matrix blocks (fixed at 16 for WMMA)
             output_dtype: Data type for output tensors (cupy.float32 recommended)
+            use_experimental_kernel: Use experimental 8-frame kernel for testing (8-frame batches only)
         """
         self.led_count = led_count
         self.crop_size = crop_size
         self.channels = 3  # RGB
         self.batch_size = batch_size
+        self.use_experimental_kernel = use_experimental_kernel
 
         # Block configuration for WMMA tensor cores
         if block_size != 16:
@@ -115,9 +124,9 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
         self.led_blocks = math.ceil(led_count / block_size)  # Number of blocks per dimension
         self.padded_led_count = self.led_blocks * block_size  # Padded to block boundary
 
-        # Validate batch size for optimal tensor core usage
+        # Require exact batch sizes for tensor core usage - no fallbacks
         if batch_size not in [8, 16]:
-            print(f"Warning: batch_size {batch_size} not optimal for tensor cores. Recommended: 8 or 16")
+            raise ValueError(f"batch_size must be 8 or 16 for tensor cores, got {batch_size}. No fallbacks provided.")
 
         # Data type configuration
         self.output_dtype = output_dtype or cupy.float32
@@ -136,7 +145,7 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
 
         # 8-frame WMMA kernel instances
         self.wmma_kernel_8frame_basic = None
-        self.wmma_kernel_8frame_optimized = None
+        self.wmma_kernel_8frame_experimental = None
 
         # Metadata
         self.bandwidth = None
@@ -156,15 +165,20 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
         # Initialize 8-frame kernels to None (will be created when needed)
         self.wmma_kernel_8frame_basic = None
 
-        # Initialize 8-frame kernels if available (prefer corrected version)
-        if batch_size == 8 and BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
+        # Initialize 8-frame kernels if available (priority: experimental > corrected > original)
+        if batch_size == 8 and use_experimental_kernel and BATCH8_EXPERIMENTAL_WMMA_KERNEL_AVAILABLE:
+            print("Using experimental 8-frame WMMA kernels")
+            self.wmma_kernel_8frame_experimental = PrecompiledBatch8ExperimentalSymmetricWMMAMatMul()
+        elif batch_size == 8 and BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
             print("Using corrected 8-frame WMMA kernels")
             self.wmma_kernel_8frame_basic = PrecompiledBatch8CorrectedSymmetricWMMAMatMul()
         elif batch_size == 8 and BATCH8_WMMA_KERNEL_AVAILABLE:
             print("Using original 8-frame WMMA kernels")
             self.wmma_kernel_8frame_basic = PrecompiledBatch8SymmetricWMMAMatMul()
         elif batch_size == 8:
-            print("Warning: 8-frame kernels not available, will use sequential fallback for batch_size=8")
+            raise RuntimeError(
+                "8-frame kernels not available. Compile kernels or use batch_size=16. No fallbacks provided."
+            )
 
     def _validate_batch_tensor_layout(self, tensor: cupy.ndarray, tensor_name: str) -> None:
         """
@@ -246,13 +260,16 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
         return batch_matrix
 
     @staticmethod
-    def from_diagonal_ata_matrix(regular_matrix, batch_size: int = 16) -> "BatchSymmetricDiagonalATAMatrix":
+    def from_diagonal_ata_matrix(
+        regular_matrix, batch_size: int = 16, use_experimental_kernel: bool = False
+    ) -> "BatchSymmetricDiagonalATAMatrix":
         """
         Create batch version directly from regular DiagonalATAMatrix.
 
         Args:
             regular_matrix: Instance of DiagonalATAMatrix
             batch_size: Batch size for processing (8 or 16 recommended)
+            use_experimental_kernel: Use experimental 8-frame kernel for testing (8-frame batches only)
 
         Returns:
             BatchSymmetricDiagonalATAMatrix with 16x16 block storage
@@ -265,6 +282,7 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
             crop_size=regular_matrix.crop_size,
             batch_size=batch_size,
             output_dtype=cupy.float32,  # Use FP32 output
+            use_experimental_kernel=use_experimental_kernel,
         )
 
         # Copy metadata
@@ -309,8 +327,8 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
         """
         Convert element-wise diagonal storage to 16x16 block storage.
 
-        Simple approach: reconstruct dense matrix, divide into 16x16 blocks,
-        store only upper triangular blocks in memory.
+        CORRECTED VERSION: Uses proper 5D storage (channels, max_block_diag, led_blocks, 16, 16)
+        to store ALL blocks correctly, not just the last one per diagonal.
 
         Args:
             dia_data_gpu: Element diagonal data (channels, k_upper, leds)
@@ -345,34 +363,46 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
 
             dense_matrices.append(dense_matrix)
 
-        # Step 2: Simple approach - store ALL upper triangular blocks
-        print("    Dividing into 16x16 blocks...")
+        # Step 2: CORRECTED - Calculate optimal block diagonals based on bandwidth
+        print("    Calculating optimal block diagonal count...")
 
-        # Calculate maximum number of block diagonals needed
-        max_block_diag = self.led_blocks - 1  # From (0,0) to (0, led_blocks-1)
+        # Calculate max_block_diag based on actual bandwidth, not LED count
+        max_element_offset = int(np.max(dia_offsets_upper)) if len(dia_offsets_upper) > 0 else 0
+        max_block_diag = math.ceil(max_element_offset / self.block_size) + 1  # +1 for main diagonal
 
-        # We'll store block diagonals 0, 1, 2, ..., max_block_diag
-        block_offsets_cpu = np.arange(max_block_diag + 1, dtype=np.int32)
-        self.block_offsets_upper = cupy.asarray(block_offsets_cpu, dtype=cupy.int32)
-        self.block_diag_count = len(block_offsets_cpu)
+        # Ensure we don't exceed matrix dimensions
+        max_possible = self.led_blocks
+        max_block_diag = min(max_block_diag, max_possible)
+
+        self.max_block_diag = max_block_diag
+        self.block_diag_count = max_block_diag  # For compatibility
+
+        # Remove block_offsets_upper - no longer needed
+        self.block_offsets_upper = None
 
         print(f"    Led blocks: {self.led_blocks}x{self.led_blocks}")
-        print(f"    Block diagonals: {self.block_diag_count} (offsets 0 to {max_block_diag})")
+        print(f"    Element bandwidth: {max_element_offset}")
+        print(f"    Block diagonals needed: {max_block_diag} (vs {max_possible} if storing all)")
+        print(f"    Storage reduction: {max_block_diag / max_possible * 100:.1f}% of full storage")
 
-        # Step 3: Initialize block storage
-        block_shape = (self.channels, self.block_diag_count, self.block_size, self.block_size)
+        # Step 3: Initialize CORRECTED 5D block storage
+        block_shape = (self.channels, max_block_diag, self.led_blocks, self.block_size, self.block_size)
         self.block_data_gpu = cupy.zeros(block_shape, dtype=self.compute_dtype)
 
-        # Step 4: Extract all 16x16 blocks from dense matrix
+        print(f"    5D storage shape: {block_shape}")
+
+        # Step 4: Extract all 16x16 blocks from dense matrix - CORRECTED VERSION
         print("    Extracting blocks...")
 
+        blocks_stored = 0
         for channel in range(self.channels):
             dense_matrix = dense_matrices[channel]
 
-            for block_diag_idx, block_offset in enumerate(cupy.asnumpy(self.block_offsets_upper)):
-                # Extract all blocks along this block diagonal
+            # Iterate through block diagonals 0, 1, 2, ..., max_block_diag-1
+            for block_diag_idx in range(max_block_diag):
+                # For each block diagonal, extract all blocks along that diagonal
                 for block_row in range(self.led_blocks):
-                    block_col = block_row + block_offset
+                    block_col = block_row + block_diag_idx
 
                     if block_col < self.led_blocks:
                         # Extract 16x16 block (padded matrix ensures this is always 16x16)
@@ -384,17 +414,19 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
                         # Extract block directly (no padding needed since matrix is pre-padded)
                         block = dense_matrix[row_start:row_end, col_start:col_end].copy()
 
-                        # Store block
-                        self.block_data_gpu[channel, block_diag_idx, :, :] = cupy.asarray(
+                        # Store block at CORRECT location in 5D storage
+                        self.block_data_gpu[channel, block_diag_idx, block_row, :, :] = cupy.asarray(
                             block, dtype=self.compute_dtype
                         )
+                        blocks_stored += 1
 
         print("    Block conversion completed!")
-        print(
-            f"    Total blocks stored: {self.channels} channels × {self.block_diag_count} diagonals × "
-            f"{self.led_blocks} blocks = {self.channels * self.block_diag_count * self.led_blocks}"
-        )
+        print(f"    Total blocks stored: {blocks_stored}")
+        print(f"    5D Storage: {self.channels} channels × {max_block_diag} diagonals × {self.led_blocks} rows × 16×16")
         print(f"    Memory usage: {self.block_data_gpu.nbytes / 1024**2:.1f} MB")
+        print(
+            f"    Memory efficiency: {blocks_stored / (self.channels * max_block_diag * self.led_blocks) * 100:.1f}% blocks non-zero"
+        )
 
     def multiply_batch_3d(
         self,
@@ -429,7 +461,9 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
 
         # For non-8-frame batches, continue with original 16-frame logic
         if batch_size != self.batch_size:
-            print(f"Warning: input batch_size {batch_size} != configured batch_size {self.batch_size}")
+            raise ValueError(
+                f"Input batch_size {batch_size} must exactly match configured batch_size {self.batch_size}. No fallbacks provided."
+            )
 
         # Validate batch tensor layout
         self._validate_batch_tensor_layout(led_values_batch, "led_values_batch")
@@ -455,9 +489,9 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
             self.wmma_kernel_basic = PrecompiledBatchSymmetricWMMAMatMul()
         result_gpu = self.wmma_kernel_basic(
             self.block_data_gpu,
-            self.block_offsets_upper,
             led_values_batch,
             self.led_blocks,
+            self.max_block_diag,
             self.padded_led_count,
         )
 
@@ -508,18 +542,27 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
         if self.block_data_gpu is None:
             raise RuntimeError("Block matrix not built. Call from_symmetric_diagonal_matrix() first.")
 
-        # Check if 8-frame kernels are available (prefer corrected version)
-        if not (BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE or BATCH8_WMMA_KERNEL_AVAILABLE):
-            if debug_logging:
-                print("8-frame kernels not available, falling back to sequential processing")
-            return self._sequential_8frame_fallback(led_values_batch, debug_logging)
+        # Check if 8-frame kernels are available (prefer experimental > corrected > original)
+        if not (
+            BATCH8_EXPERIMENTAL_WMMA_KERNEL_AVAILABLE
+            or BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE
+            or BATCH8_WMMA_KERNEL_AVAILABLE
+        ):
+            raise RuntimeError(
+                "8-frame kernels not available for batch multiplication. Compile kernels first. No fallbacks provided."
+            )
 
         # Ensure input is correct dtype
         if led_values_batch.dtype != self.compute_dtype:
             led_values_batch = led_values_batch.astype(self.compute_dtype)
 
         # Handle padding based on kernel type
-        if BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
+        if self.use_experimental_kernel and BATCH8_EXPERIMENTAL_WMMA_KERNEL_AVAILABLE:
+            # Experimental kernel assumes LED count is multiple of 32, no padding needed
+            if debug_logging:
+                print("Using experimental 8-frame kernel (no padding)")
+            # No padding for experimental kernel
+        elif BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
             # Corrected kernel assumes LED count is multiple of 32, no padding needed
             if debug_logging:
                 print("Using corrected 8-frame kernel (no padding)")
@@ -536,19 +579,32 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
         # Perform 8-frame batch WMMA matrix-vector multiplication
         if debug_logging:
             print("Batch8 multiply_3d: Using kernel")
-        if self.wmma_kernel_8frame_basic is None:
+
+        # Initialize kernels if not already done
+        if self.use_experimental_kernel and BATCH8_EXPERIMENTAL_WMMA_KERNEL_AVAILABLE:
+            if self.wmma_kernel_8frame_experimental is None:
+                self.wmma_kernel_8frame_experimental = PrecompiledBatch8ExperimentalSymmetricWMMAMatMul()
+        elif self.wmma_kernel_8frame_basic is None:
             if BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
                 self.wmma_kernel_8frame_basic = PrecompiledBatch8CorrectedSymmetricWMMAMatMul()
             else:
                 self.wmma_kernel_8frame_basic = PrecompiledBatch8SymmetricWMMAMatMul()
 
         # Call kernel with appropriate signature
-        if BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
-            result_gpu = self.wmma_kernel_8frame_basic(
+        if self.use_experimental_kernel and BATCH8_EXPERIMENTAL_WMMA_KERNEL_AVAILABLE:
+            result_gpu = self.wmma_kernel_8frame_experimental(
                 self.block_data_gpu,
-                self.block_offsets_upper,
                 led_values_batch,
                 self.led_blocks,
+                self.max_block_diag,
+                self.led_count,  # Use led_count for experimental kernel
+            )
+        elif BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
+            result_gpu = self.wmma_kernel_8frame_basic(
+                self.block_data_gpu,
+                led_values_batch,
+                self.led_blocks,
+                self.max_block_diag,
                 self.led_count,  # Use led_count for corrected kernel
             )
         else:
@@ -607,31 +663,6 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
                 f"Got {layout} tensor with {stride_info}. "
                 f"Use cp.ascontiguousarray({tensor_name}) to fix layout issues."
             )
-
-    def _sequential_8frame_fallback(self, led_values_batch: cupy.ndarray, debug_logging: bool = False) -> cupy.ndarray:
-        """
-        Sequential fallback for 8-frame processing when 8-frame kernels are not available.
-
-        Processes each frame individually using the single-frame multiply_3d method.
-        """
-        if debug_logging:
-            print("Using sequential fallback for 8-frame processing")
-
-        batch_size, channels, leds = led_values_batch.shape
-        results = []
-
-        for i in range(batch_size):
-            # Extract single frame
-            single_frame = led_values_batch[i]  # Shape: (3, leds)
-
-            # Process single frame
-            result = self.multiply_3d(single_frame, debug_logging=False)
-            results.append(result)
-
-        # Stack results back into batch format
-        result_batch = cupy.stack(results, axis=0)  # Shape: (8, 3, leds)
-
-        return result_batch
 
     def g_ata_g_batch_3d(
         self,
@@ -735,6 +766,65 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
             result = result.astype(output_dtype)
 
         return result
+
+    def get_element(self, channel: int, row: int, col: int) -> float:
+        """
+        Read a single element from the symmetric block diagonal matrix.
+
+        Args:
+            channel: Channel index (0=Red, 1=Green, 2=Blue)
+            row: Row index in the matrix
+            col: Column index in the matrix
+
+        Returns:
+            The value at position (channel, row, col)
+
+        Raises:
+            ValueError: If indices are out of bounds
+            RuntimeError: If matrix not built
+        """
+        # Validate inputs
+        if not 0 <= channel < self.channels:
+            raise ValueError(f"Channel must be 0-{self.channels-1}, got {channel}")
+        if not 0 <= row < self.led_count:
+            raise ValueError(f"Row must be 0-{self.led_count-1}, got {row}")
+        if not 0 <= col < self.led_count:
+            raise ValueError(f"Column must be 0-{self.led_count-1}, got {col}")
+
+        if self.block_data_gpu is None:
+            raise RuntimeError("Block matrix not built. Call from_diagonal_ata_matrix() first.")
+
+        # Determine which block contains this element
+        block_row = row // self.block_size
+        block_col = col // self.block_size
+
+        # Position within the block
+        within_block_row = row % self.block_size
+        within_block_col = col % self.block_size
+
+        # For symmetric matrix, we may need to transpose
+        if block_col < block_row:
+            # Element is in lower triangle, use symmetry
+            block_row, block_col = block_col, block_row
+            within_block_row, within_block_col = within_block_col, within_block_row
+
+        # Calculate block diagonal index
+        block_diag_idx = block_col - block_row
+
+        # Check if this block diagonal is stored
+        if block_diag_idx >= self.max_block_diag:
+            return 0.0  # Block not stored, sparse zero
+
+        # Check if block indices are valid
+        if block_row >= self.led_blocks or block_col >= self.led_blocks:
+            return 0.0  # Outside matrix bounds
+
+        # Read the value from 5D storage
+        # Shape: (channels, max_block_diag, led_blocks, 16, 16)
+        value = self.block_data_gpu[channel, block_diag_idx, block_row, within_block_row, within_block_col]
+
+        # Convert to Python float
+        return float(cupy.asnumpy(value))
 
     def get_info(self):
         """Get summary information about the batch block matrix."""

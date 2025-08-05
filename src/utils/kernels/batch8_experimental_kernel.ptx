@@ -10,21 +10,21 @@
 .target sm_87
 .address_size 64
 
-	// .globl	batch8_symmetric_block_pair_multiply_wmma
-// _ZZ41batch8_symmetric_block_pair_multiply_wmmaE8shared_a has been demoted
-// _ZZ41batch8_symmetric_block_pair_multiply_wmmaE8shared_b has been demoted
-// _ZZ41batch8_symmetric_block_pair_multiply_wmmaE13block_results has been demoted
-// _ZZ41batch8_symmetric_block_pair_multiply_wmmaE6temp_c has been demoted
+	// .globl	batch8_symmetric_block_pair_multiply_wmma_experimental
+// _ZZ54batch8_symmetric_block_pair_multiply_wmma_experimentalE8shared_a has been demoted
+// _ZZ54batch8_symmetric_block_pair_multiply_wmma_experimentalE8shared_b has been demoted
+// _ZZ54batch8_symmetric_block_pair_multiply_wmma_experimentalE13block_results has been demoted
+// _ZZ54batch8_symmetric_block_pair_multiply_wmma_experimentalE6temp_c has been demoted
 
-.visible .entry batch8_symmetric_block_pair_multiply_wmma(
-	.param .u64 batch8_symmetric_block_pair_multiply_wmma_param_0,
-	.param .u64 batch8_symmetric_block_pair_multiply_wmma_param_1,
-	.param .u64 batch8_symmetric_block_pair_multiply_wmma_param_2,
-	.param .u32 batch8_symmetric_block_pair_multiply_wmma_param_3,
-	.param .u32 batch8_symmetric_block_pair_multiply_wmma_param_4,
-	.param .u32 batch8_symmetric_block_pair_multiply_wmma_param_5,
-	.param .u32 batch8_symmetric_block_pair_multiply_wmma_param_6,
-	.param .u32 batch8_symmetric_block_pair_multiply_wmma_param_7
+.visible .entry batch8_symmetric_block_pair_multiply_wmma_experimental(
+	.param .u64 batch8_symmetric_block_pair_multiply_wmma_experimental_param_0,
+	.param .u64 batch8_symmetric_block_pair_multiply_wmma_experimental_param_1,
+	.param .u64 batch8_symmetric_block_pair_multiply_wmma_experimental_param_2,
+	.param .u32 batch8_symmetric_block_pair_multiply_wmma_experimental_param_3,
+	.param .u32 batch8_symmetric_block_pair_multiply_wmma_experimental_param_4,
+	.param .u32 batch8_symmetric_block_pair_multiply_wmma_experimental_param_5,
+	.param .u32 batch8_symmetric_block_pair_multiply_wmma_experimental_param_6,
+	.param .u32 batch8_symmetric_block_pair_multiply_wmma_experimental_param_7
 )
 {
 	.reg .pred 	%p<70>;
@@ -33,20 +33,20 @@
 	.reg .b32 	%r<226>;
 	.reg .b64 	%rd<214>;
 	// demoted variable
-	.shared .align 2 .b8 _ZZ41batch8_symmetric_block_pair_multiply_wmmaE8shared_a[1024];
+	.shared .align 2 .b8 _ZZ54batch8_symmetric_block_pair_multiply_wmma_experimentalE8shared_a[1024];
 	// demoted variable
-	.shared .align 2 .b8 _ZZ41batch8_symmetric_block_pair_multiply_wmmaE8shared_b[256];
+	.shared .align 2 .b8 _ZZ54batch8_symmetric_block_pair_multiply_wmma_experimentalE8shared_b[256];
 	// demoted variable
-	.shared .align 4 .b8 _ZZ41batch8_symmetric_block_pair_multiply_wmmaE13block_results[1024];
+	.shared .align 4 .b8 _ZZ54batch8_symmetric_block_pair_multiply_wmma_experimentalE13block_results[1024];
 	// demoted variable
-	.shared .align 4 .b8 _ZZ41batch8_symmetric_block_pair_multiply_wmmaE6temp_c[1024];
+	.shared .align 4 .b8 _ZZ54batch8_symmetric_block_pair_multiply_wmma_experimentalE6temp_c[1024];
 
-	ld.param.u64 	%rd52, [batch8_symmetric_block_pair_multiply_wmma_param_0];
-	ld.param.u64 	%rd54, [batch8_symmetric_block_pair_multiply_wmma_param_1];
-	ld.param.u32 	%r51, [batch8_symmetric_block_pair_multiply_wmma_param_4];
-	ld.param.u32 	%r52, [batch8_symmetric_block_pair_multiply_wmma_param_5];
-	ld.param.u32 	%r53, [batch8_symmetric_block_pair_multiply_wmma_param_6];
-	ld.param.u32 	%r54, [batch8_symmetric_block_pair_multiply_wmma_param_7];
+	ld.param.u64 	%rd52, [batch8_symmetric_block_pair_multiply_wmma_experimental_param_0];
+	ld.param.u64 	%rd54, [batch8_symmetric_block_pair_multiply_wmma_experimental_param_1];
+	ld.param.u32 	%r51, [batch8_symmetric_block_pair_multiply_wmma_experimental_param_4];
+	ld.param.u32 	%r52, [batch8_symmetric_block_pair_multiply_wmma_experimental_param_5];
+	ld.param.u32 	%r53, [batch8_symmetric_block_pair_multiply_wmma_experimental_param_6];
+	ld.param.u32 	%r54, [batch8_symmetric_block_pair_multiply_wmma_experimental_param_7];
 	cvta.to.global.u64 	%rd1, %rd54;
 	cvta.to.global.u64 	%rd2, %rd52;
 	mov.u32 	%r1, %tid.x;
@@ -60,7 +60,7 @@
 	@%p3 bra 	$L__BB0_120;
 
 	shl.b32 	%r55, %r2, 5;
-	mov.u32 	%r56, _ZZ41batch8_symmetric_block_pair_multiply_wmmaE13block_results;
+	mov.u32 	%r56, _ZZ54batch8_symmetric_block_pair_multiply_wmma_experimentalE13block_results;
 	add.s32 	%r6, %r56, %r55;
 	mov.u32 	%r223, 0;
 	st.shared.u32 	[%r6], %r223;
@@ -82,7 +82,7 @@
 	mad.lo.s32 	%r60, %r59, %r51, %r3;
 	mul.lo.s32 	%r10, %r60, %r54;
 	shl.b32 	%r61, %r2, 1;
-	mov.u32 	%r62, _ZZ41batch8_symmetric_block_pair_multiply_wmmaE8shared_b;
+	mov.u32 	%r62, _ZZ54batch8_symmetric_block_pair_multiply_wmma_experimentalE8shared_b;
 	add.s32 	%r11, %r62, %r61;
 	or.b32  	%r63, %r2, 32;
 	shr.u32 	%r215, %r63, 3;
@@ -90,9 +90,9 @@
 	shr.u32 	%r216, %r64, 3;
 	or.b32  	%r65, %r2, 96;
 	shr.u32 	%r217, %r65, 3;
-	mov.u32 	%r67, _ZZ41batch8_symmetric_block_pair_multiply_wmmaE6temp_c;
+	mov.u32 	%r67, _ZZ54batch8_symmetric_block_pair_multiply_wmma_experimentalE6temp_c;
 	add.s32 	%r15, %r67, %r55;
-	mov.u32 	%r68, _ZZ41batch8_symmetric_block_pair_multiply_wmmaE8shared_a;
+	mov.u32 	%r68, _ZZ54batch8_symmetric_block_pair_multiply_wmma_experimentalE8shared_a;
 	add.s32 	%r16, %r68, %r61;
 	and.b32  	%r69, %r1, 15;
 	shr.u32 	%r70, %r63, 4;
@@ -1190,9 +1190,9 @@ $L__BB0_98:
 	st.shared.u16 	[%r16+960], %rs59;
 
 $L__BB0_116:
-	mov.u32 	%r212, _ZZ41batch8_symmetric_block_pair_multiply_wmmaE6temp_c;
-	mov.u32 	%r211, _ZZ41batch8_symmetric_block_pair_multiply_wmmaE8shared_b;
-	mov.u32 	%r210, _ZZ41batch8_symmetric_block_pair_multiply_wmmaE8shared_a;
+	mov.u32 	%r212, _ZZ54batch8_symmetric_block_pair_multiply_wmma_experimentalE6temp_c;
+	mov.u32 	%r211, _ZZ54batch8_symmetric_block_pair_multiply_wmma_experimentalE8shared_b;
+	mov.u32 	%r210, _ZZ54batch8_symmetric_block_pair_multiply_wmma_experimentalE8shared_a;
 	bar.warp.sync 	-1;
 	mov.u32 	%r182, 16;
 	wmma.load.a.sync.aligned.row.m32n8k16.shared.f16 	{%r184, %r185, %r186, %r187, %r188, %r189, %r190, %r191}, [%r210], %r182;
@@ -1258,9 +1258,9 @@ $L__BB0_118:
 	setp.ge.s32 	%p67, %r50, %r54;
 	@%p67 bra 	$L__BB0_120;
 
-	ld.param.u64 	%rd200, [batch8_symmetric_block_pair_multiply_wmma_param_2];
+	ld.param.u64 	%rd200, [batch8_symmetric_block_pair_multiply_wmma_experimental_param_2];
 	mov.u32 	%r209, %ctaid.x;
-	ld.param.u32 	%r208, [batch8_symmetric_block_pair_multiply_wmma_param_4];
+	ld.param.u32 	%r208, [batch8_symmetric_block_pair_multiply_wmma_experimental_param_4];
 	ld.shared.f32 	%f182, [%r6];
 	mad.lo.s32 	%r204, %r209, %r54, %r50;
 	cvta.to.global.u64 	%rd189, %rd200;

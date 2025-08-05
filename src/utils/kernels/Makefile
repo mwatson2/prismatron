@@ -20,15 +20,17 @@ TARGET_DIR = .
 # Source and target files
 KERNEL_SRC = $(SRC_DIR)/batch_mma_kernel.cu
 KERNEL8_CORRECTED_SRC = $(SRC_DIR)/batch8_corrected_kernel.cu
+KERNEL8_EXPERIMENTAL_SRC = $(SRC_DIR)/batch8_experimental_kernel.cu
 KERNEL_MODULE = $(TARGET_DIR)/batch_mma_kernel.ptx
 KERNEL8_CORRECTED_MODULE = $(TARGET_DIR)/batch8_corrected_kernel.ptx
+KERNEL8_EXPERIMENTAL_MODULE = $(TARGET_DIR)/batch8_experimental_kernel.ptx
 
 # Python library information (for include paths)
 PYTHON_INCLUDE = $(shell python3 -c "import sysconfig; print(sysconfig.get_path('include'))")
 NUMPY_INCLUDE = $(shell python3 -c "import numpy; print(numpy.get_include())")
 
 # Default target
-all: $(KERNEL_MODULE) $(KERNEL8_CORRECTED_MODULE)
+all: $(KERNEL_MODULE) $(KERNEL8_CORRECTED_MODULE) $(KERNEL8_EXPERIMENTAL_MODULE)
 
 # Create build directory
 $(BUILD_DIR):
@@ -50,6 +52,14 @@ $(KERNEL8_CORRECTED_MODULE): $(KERNEL8_CORRECTED_SRC) | $(BUILD_DIR)
 	$(NVCC) $(NVCC_FLAGS) -o $@ $<
 	@echo "Successfully compiled: $@"
 
+# Compile 8-frame experimental CUDA kernel to PTX module
+$(KERNEL8_EXPERIMENTAL_MODULE): $(KERNEL8_EXPERIMENTAL_SRC) | $(BUILD_DIR)
+	@echo "Compiling 8-frame experimental CUDA MMA kernels to PTX module..."
+	@echo "CUDA Architecture: sm_87"
+	@echo "NVCC Flags: $(NVCC_FLAGS)"
+	$(NVCC) $(NVCC_FLAGS) -o $@ $<
+	@echo "Successfully compiled: $@"
+
 # Check GPU compute capability
 check-gpu:
 	@echo "Checking GPU compute capability..."
@@ -58,7 +68,7 @@ check-gpu:
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)
-	rm -f $(KERNEL_MODULE) $(KERNEL8_CORRECTED_MODULE)
+	rm -f $(KERNEL_MODULE) $(KERNEL8_CORRECTED_MODULE) $(KERNEL8_EXPERIMENTAL_MODULE)
 
 # Install dependencies (if needed)
 install-deps:
@@ -67,10 +77,11 @@ install-deps:
 	@echo "CUDA toolkit found: $$(nvcc --version | grep release)"
 
 # Test compilation
-test: $(KERNEL_MODULE) $(KERNEL8_CORRECTED_MODULE)
+test: $(KERNEL_MODULE) $(KERNEL8_CORRECTED_MODULE) $(KERNEL8_EXPERIMENTAL_MODULE)
 	@echo "Testing kernel modules..."
 	@python3 -c "import os; print('✓ 16-frame kernel module exists') if os.path.exists('$(KERNEL_MODULE)') else print('✗ 16-frame kernel module missing')"
 	@python3 -c "import os; print('✓ 8-frame corrected kernel module exists') if os.path.exists('$(KERNEL8_CORRECTED_MODULE)') else print('✗ 8-frame corrected kernel module missing')"
+	@python3 -c "import os; print('✓ 8-frame experimental kernel module exists') if os.path.exists('$(KERNEL8_EXPERIMENTAL_MODULE)') else print('✗ 8-frame experimental kernel module missing')"
 
 # Help target
 help:
