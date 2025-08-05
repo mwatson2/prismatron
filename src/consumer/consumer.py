@@ -187,7 +187,11 @@ class ConsumerProcess:
         from ..utils.pattern_loader import create_frame_renderer_with_pattern
 
         self._frame_renderer = create_frame_renderer_with_pattern(
-            diffusion_patterns_path, first_frame_delay_ms=0.0, timing_tolerance_ms=5.0
+            diffusion_patterns_path,
+            first_frame_delay_ms=0.0,
+            timing_tolerance_ms=5.0,
+            control_state=self._control_state,
+            audio_beat_analyzer=self._audio_beat_analyzer,
         )
         logger.info(f"Frame renderer created with LED ordering from {diffusion_patterns_path}")
 

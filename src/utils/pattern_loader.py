@@ -56,6 +56,8 @@ def create_frame_renderer_with_pattern(
     first_frame_delay_ms: float = 100.0,
     timing_tolerance_ms: float = 5.0,
     late_frame_log_threshold_ms: float = 50.0,
+    control_state=None,
+    audio_beat_analyzer=None,
 ):
     """
     Create a frame renderer with LED ordering loaded from a pattern file.
@@ -65,6 +67,8 @@ def create_frame_renderer_with_pattern(
         first_frame_delay_ms: Default delay for first frame buffering
         timing_tolerance_ms: Acceptable timing deviation
         late_frame_log_threshold_ms: Log late frames above this threshold
+        control_state: ControlState instance for audio reactive settings
+        audio_beat_analyzer: AudioBeatAnalyzer instance for beat state access
 
     Returns:
         FrameRenderer instance configured with LED ordering from pattern
@@ -88,6 +92,8 @@ def create_frame_renderer_with_pattern(
         first_frame_delay_ms=first_frame_delay_ms,
         timing_tolerance_ms=timing_tolerance_ms,
         late_frame_log_threshold_ms=late_frame_log_threshold_ms,
+        control_state=control_state,
+        audio_beat_analyzer=audio_beat_analyzer,
     )
 
     if led_ordering is not None:

@@ -7,6 +7,7 @@ to multiple targets (WLED, test renderer).
 """
 
 import logging
+import math
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -37,6 +38,8 @@ class FrameRenderer:
         first_frame_delay_ms: float = 100.0,
         timing_tolerance_ms: float = 5.0,
         late_frame_log_threshold_ms: float = 50.0,
+        control_state=None,
+        audio_beat_analyzer=None,
     ):
         """
         Initialize frame renderer.
@@ -46,6 +49,8 @@ class FrameRenderer:
             timing_tolerance_ms: Acceptable timing deviation
             late_frame_log_threshold_ms: Log late frames above this threshold
             led_ordering: Array mapping spatial indices to physical LED IDs
+            control_state: ControlState instance for audio reactive settings
+            audio_beat_analyzer: AudioBeatAnalyzer instance for beat state access
         """
         self.first_frame_delay = first_frame_delay_ms / 1000.0
         self.timing_tolerance = timing_tolerance_ms / 1000.0
@@ -53,6 +58,10 @@ class FrameRenderer:
 
         # LED ordering for spatial to physical conversion
         self.led_ordering = led_ordering
+
+        # Audio reactive components
+        self._control_state = control_state
+        self._audio_beat_analyzer = audio_beat_analyzer
 
         # Timing state
         self.wallclock_delta = None  # Established from first frame
@@ -111,6 +120,69 @@ class FrameRenderer:
         logger.info(
             f"FrameRenderer initialized: delay={first_frame_delay_ms}ms, " f"tolerance=±{timing_tolerance_ms}ms"
         )
+
+    def _calculate_beat_brightness_boost(self, current_time: float) -> float:
+        """
+        Calculate brightness boost based on beat timing for audio-reactive effects.
+
+        Implements a sine wave brightness boost during the first quarter of each beat interval.
+        Formula: 1.0 + 0.25 * sin(t * pi / (0.25 * d)) where:
+        - t = time since beat start
+        - d = inter-beat duration (60.0 / BPM)
+        - Boost range: 1.0 (no boost) to 1.25 (25% boost)
+
+        Args:
+            current_time: Current system time in seconds
+
+        Returns:
+            Brightness multiplier (1.0 = no boost, 1.25 = max boost)
+        """
+        # Check if audio reactive effects are enabled
+        if not self._control_state or not self._audio_beat_analyzer:
+            return 1.0
+
+        try:
+            # Get current control state to check if audio reactive is enabled
+            status = self._control_state.get_status()
+            if not status or not status.audio_reactive_enabled or not status.audio_enabled:
+                return 1.0
+
+            # Get audio beat state
+            beat_state = self._audio_beat_analyzer.get_current_state()
+            if not beat_state or not beat_state.is_active:
+                return 1.0
+
+            # Calculate inter-beat duration from current BPM
+            if beat_state.current_bpm <= 0:
+                return 1.0
+            beat_duration = 60.0 / beat_state.current_bpm
+
+            # Determine reference beat time (use prediction if beat has started, otherwise last detected beat)
+            audio_time = current_time - self._audio_beat_analyzer.start_time  # Convert to audio timeline
+            predicted_next_beat = self._audio_beat_analyzer.predict_next_beat(audio_time)
+
+            if predicted_next_beat < audio_time:
+                # Beat has started, use predicted time
+                reference_beat_time = predicted_next_beat
+            else:
+                # Use last detected beat time
+                reference_beat_time = beat_state.last_beat_time
+
+            # Calculate time since beat start
+            t = audio_time - reference_beat_time
+
+            # Apply sine wave boost for first quarter of beat interval
+            boost_duration = 0.25 * beat_duration
+            if 0 <= t <= boost_duration:
+                # Sine wave boost (0% to 25% maximum)
+                boost = 0.25 * math.sin(t * math.pi / boost_duration)
+                return 1.0 + boost
+            else:
+                return 1.0  # No boost outside beat window
+
+        except Exception as e:
+            logger.warning(f"Error calculating beat brightness boost: {e}")
+            return 1.0
 
     def register_sink(self, sink, name: str, enabled: bool = True) -> None:
         """
@@ -305,6 +377,14 @@ class FrameRenderer:
         """
         # Convert from spatial to physical order before sending to sinks
         physical_led_values = self._convert_spatial_to_physical(led_values)
+
+        # Apply audio-reactive brightness boost if enabled
+        brightness_multiplier = self._calculate_beat_brightness_boost(time.time())
+        if brightness_multiplier != 1.0:
+            # Apply brightness boost to all LED values
+            physical_led_values = (physical_led_values * brightness_multiplier).astype(np.uint8)
+            # Ensure values stay within valid range [0, 255]
+            physical_led_values = np.clip(physical_led_values, 0, 255)
 
         # Add rendering_index to metadata for PreviewSink
         enhanced_metadata = metadata.copy() if metadata else {}

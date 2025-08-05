@@ -107,6 +107,9 @@ class SystemStatus:
     beat_confidence: float = 0.0
     audio_intensity: float = 0.0
 
+    # Audio reactive effects control
+    audio_reactive_enabled: bool = False
+
     # Optimization settings
     optimization_iterations: int = 5
 
