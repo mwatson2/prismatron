@@ -14,6 +14,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
 import numpy as np
+import pytest
 
 try:
     import cupy
@@ -23,7 +24,8 @@ try:
 except ImportError:
     print("CUDA not available")
     GPU_AVAILABLE = False
-    sys.exit(1)
+    # Don't exit in test mode
+    cupy = None
 
 
 def create_test_diagonal_ata_matrix(led_count: int, channels: int = 3):
@@ -102,6 +104,7 @@ def compute_individual_matvec(block_data, block_offsets, input_vectors, led_bloc
     return np.stack(results, axis=0)  # (batch_size, channels, padded_leds)
 
 
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="CUDA not available")
 def test_8frame_correctness():
     """Test 8-frame vertical pair WMMA correctness."""
     print("\n=== Testing 8-Frame Vertical Pair WMMA Correctness ===")
@@ -134,7 +137,7 @@ def test_8frame_correctness():
 
         # Method 1: 8-frame vertical pair WMMA (TF32 precision)
         print("\nComputing with 8-frame vertical pair WMMA...")
-        result_wmma = batch_matrix.multiply_batch8_3d(input_batch_gpu, optimized_kernel=False)
+        result_wmma = batch_matrix.multiply_batch8_3d(input_batch_gpu)
         result_wmma_cpu = cupy.asnumpy(result_wmma)
 
         # Method 2: Individual diagonal ATA matvec operations (FP32 precision)

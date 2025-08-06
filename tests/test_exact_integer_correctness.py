@@ -13,6 +13,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
 import numpy as np
+import pytest
 
 try:
     import cupy
@@ -22,7 +23,8 @@ try:
 except ImportError:
     print("CUDA not available")
     GPU_AVAILABLE = False
-    sys.exit(1)
+    # Don't exit in test mode
+    cupy = None
 
 
 def create_integer_ata_matrix(led_count=64, channels=3, num_diagonals=1, max_value=7):
@@ -93,6 +95,7 @@ def create_integer_input_batch(batch_size=8, channels=3, led_count=64, max_value
     return input_batch
 
 
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="CUDA not available")
 def test_integer_correctness(num_diagonals=1, test_name=""):
     """Test WMMA kernel against dense numpy with exact integer arithmetic."""
     print(f"\n=== Testing {test_name} ({num_diagonals} diagonal{'s' if num_diagonals > 1 else ''}) ===")
