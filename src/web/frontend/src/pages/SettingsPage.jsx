@@ -6,7 +6,8 @@ import {
   ServerIcon,
   PowerIcon,
   InformationCircleIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  SpeakerWaveIcon
 } from '@heroicons/react/24/outline'
 import { useWebSocket } from '../hooks/useWebSocket'
 
@@ -92,6 +93,24 @@ const SettingsPage = () => {
       }
     } catch (error) {
       console.error('Failed to set brightness:', error)
+    }
+  }
+
+  const setAudioReactiveEnabled = async (enabled) => {
+    try {
+      const response = await fetch('/api/settings/audio-reactive', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ enabled })
+      })
+
+      if (response.ok) {
+        updateSetting('audio_reactive_enabled', enabled)
+      }
+    } catch (error) {
+      console.error('Failed to set audio reactive:', error)
     }
   }
 
@@ -195,6 +214,37 @@ const SettingsPage = () => {
                 className="sr-only peer"
               />
               <div className="w-11 h-6 bg-dark-700 peer-focus:outline-none rounded-retro peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-neon-cyan after:rounded-retro after:h-5 after:w-5 after:transition-all peer-checked:bg-neon-cyan peer-checked:bg-opacity-30"></div>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      {/* Audio Settings */}
+      <div className="retro-container">
+        <h3 className="text-lg font-retro text-neon-green mb-4 flex items-center gap-2">
+          <SpeakerWaveIcon className="w-5 h-5" />
+          AUDIO REACTIVE EFFECTS
+        </h3>
+
+        <div className="space-y-6">
+          {/* Audio Reactive Toggle */}
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-sm font-retro text-neon-cyan">
+                BEAT PULSE EFFECT
+              </label>
+              <p className="text-xs text-metal-silver font-mono mt-1">
+                Brightness pulses synchronized with detected beats
+              </p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={currentSettings.audio_reactive_enabled || false}
+                onChange={(e) => setAudioReactiveEnabled(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-dark-700 peer-focus:outline-none rounded-retro peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-neon-green after:rounded-retro after:h-5 after:w-5 after:transition-all peer-checked:bg-neon-green peer-checked:bg-opacity-30"></div>
             </label>
           </div>
         </div>

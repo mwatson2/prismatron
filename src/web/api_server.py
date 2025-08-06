@@ -135,6 +135,7 @@ class SystemSettings(BaseModel):
     display_resolution: Dict[str, int] = Field(default_factory=lambda: {"width": FRAME_WIDTH, "height": FRAME_HEIGHT})
     auto_start_playlist: bool = Field(True, description="Auto-start playlist on boot")
     preview_enabled: bool = Field(True, description="Enable live preview")
+    audio_reactive_enabled: bool = Field(False, description="Enable audio reactive effects")
 
 
 class EffectPreset(BaseModel):
@@ -1698,7 +1699,21 @@ async def update_item_transitions(item_id: str, transition_in: TransitionConfig,
 @app.get("/api/settings", response_model=SystemSettings)
 async def get_settings():
     """Get current system settings."""
-    return system_settings
+    # Get current audio reactive setting from control state
+    audio_reactive_enabled = False
+    if control_state:
+        try:
+            status = control_state.get_status()
+            if status:
+                audio_reactive_enabled = status.audio_reactive_enabled
+        except Exception as e:
+            logger.warning(f"Failed to get audio reactive status: {e}")
+
+    # Update system settings with current control state values
+    current_settings = system_settings.copy()
+    current_settings.audio_reactive_enabled = audio_reactive_enabled
+
+    return current_settings
 
 
 @app.post("/api/settings")
@@ -1727,6 +1742,32 @@ async def set_brightness(brightness: float):
     await manager.broadcast({"type": "brightness_changed", "brightness": brightness})
 
     return {"brightness": brightness}
+
+
+class AudioReactiveRequest(BaseModel):
+    """Request model for audio reactive setting."""
+
+    enabled: bool = Field(..., description="Whether audio reactive effects are enabled")
+
+
+@app.post("/api/settings/audio-reactive")
+async def set_audio_reactive_enabled(request: AudioReactiveRequest):
+    """Set audio reactive effects enabled/disabled."""
+    try:
+        # Update in control state if available
+        if control_state:
+            control_state.update_status(audio_reactive_enabled=request.enabled)
+            logger.info(f"Updated audio reactive enabled to {request.enabled}")
+        else:
+            logger.warning("Control state not available - audio reactive setting not updated")
+
+        await manager.broadcast({"type": "audio_reactive_changed", "enabled": request.enabled})
+
+        return {"enabled": request.enabled, "status": "updated"}
+
+    except Exception as e:
+        logger.error(f"Failed to set audio reactive enabled: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 class OptimizationIterationsRequest(BaseModel):

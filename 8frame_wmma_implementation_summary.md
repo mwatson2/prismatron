@@ -25,7 +25,7 @@ The 8-frame batch WMMA system has been **successfully implemented** with perfect
   - Fixed WMMA fragment layout (col_major → row_major for matrix B)
   - Correct accumulation logic: Output[i*32:(i+1)*32, :] = Σ_j WMMA(A_{i,j}, B_j)
   - FP32 input/output with half-precision WMMA operations
-  
+
 ### Python Integration
 - **`batch_symmetric_diagonal_ata_matrix.py`**: Extended class with 8-frame support
   - `multiply_batch8_3d()` method for explicit 8-frame processing

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Test correctness of 8-frame vertical pair WMMA against individual diagonal ATA matvec operations.
 
@@ -10,8 +9,8 @@ vs FP32 precision differences in tensor cores.
 import sys
 from pathlib import Path
 
-# Add project root to path
-project_root = Path(__file__).parent
+# Add project root to path for tests
+project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
 import numpy as np

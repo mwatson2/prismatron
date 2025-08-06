@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Test script for beat pulse effect integration.
 
@@ -13,10 +12,11 @@ import sys
 import time
 from pathlib import Path
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+# Add src to path for tests
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import numpy as np
+import pytest
 
 from src.consumer.audio_beat_analyzer import AudioBeatAnalyzer, AudioState
 from src.consumer.frame_renderer import FrameRenderer
@@ -196,32 +196,4 @@ def test_configuration_states():
     print()
 
 
-def main():
-    """Run all tests."""
-    print("Beat Pulse Effect Integration Test")
-    print("=" * 50)
-
-    try:
-        test_beat_pulse_brightness_calculation()
-        test_led_value_processing()
-        test_configuration_states()
-
-        print("✅ All tests completed successfully!")
-        print("\nTo enable the beat pulse effect in production:")
-        print("1. Start the consumer with enable_audio_reactive=True")
-        print("2. Set audio_reactive_enabled=True in the control state")
-        print("3. Ensure audio is enabled and working")
-        print("4. The LED brightness will pulse with detected beats")
-
-    except Exception as e:
-        print(f"❌ Test failed: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return 1
-
-    return 0
-
-
-if __name__ == "__main__":
-    exit(main())
+# Tests can be run with pytest
