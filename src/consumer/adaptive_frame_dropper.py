@@ -66,6 +66,11 @@ class AdaptiveFrameDropper:
         self.target_drop_rate = 0.0
         self.led_buffer_level_ewma = 0.0
 
+        # Timer-based EWMA tracking
+        self.ewma_update_interval = 0.05  # Update every 50ms for true average tracking
+        self.last_ewma_update_time = 0.0
+        self.current_buffer_size = 0  # Track current buffer size for timer updates
+
         # PID controller state
         self.target_buffer_level = float(
             target_buffer_level if target_buffer_level is not None else led_buffer_capacity
@@ -113,11 +118,15 @@ class AdaptiveFrameDropper:
             f"Adaptive frame dropper called: renderer_state={renderer_state}, led_buffer_size={led_buffer_size}, ewma={self.led_buffer_level_ewma:.1f}"
         )
 
+        # Always update current buffer size for timer-based EWMA
+        self.current_buffer_size = led_buffer_size
+
         # Update EWMA and calculate drop rate
         # Both controllers only active when renderer is PLAYING
         if renderer_state.upper() == "PLAYING":
             logger.debug("Updating EWMA and calculating drop rate")
-            self._update_led_buffer_ewma(led_buffer_size, renderer_state)
+            self._update_led_buffer_ewma_timer_based(frame_timestamp, renderer_state)
+
             # Calculate drop rate using either PID or legacy proportional control
             if self.use_pid_controller:
                 self._calculate_drop_rate_pid(frame_timestamp, wait_time_penalty)
@@ -161,6 +170,30 @@ class AdaptiveFrameDropper:
         logger.debug(
             f"EWMA updated: {old_ewma:.2f} -> {self.led_buffer_level_ewma:.2f} (buffer_size={current_buffer_size})"
         )
+
+    def _update_led_buffer_ewma_timer_based(self, current_time: float, renderer_state: str) -> None:
+        """Update LED buffer level EWMA on a timer basis for true average tracking."""
+        # Check if it's time to update EWMA (every 50ms)
+        if current_time - self.last_ewma_update_time >= self.ewma_update_interval:
+            old_ewma = self.led_buffer_level_ewma
+
+            if self.led_buffer_level_ewma == 0.0:
+                # Initialize EWMA to current buffer size
+                self.led_buffer_level_ewma = float(self.current_buffer_size)
+                logger.info(
+                    f"Timer-based EWMA initialized to current size: {self.current_buffer_size} (state={renderer_state})"
+                )
+            else:
+                # Update EWMA with current buffer size
+                self.led_buffer_level_ewma = (
+                    1 - self.led_buffer_ewma_alpha
+                ) * self.led_buffer_level_ewma + self.led_buffer_ewma_alpha * self.current_buffer_size
+
+            self.last_ewma_update_time = current_time
+
+            logger.debug(
+                f"Timer-based EWMA updated: {old_ewma:.2f} -> {self.led_buffer_level_ewma:.2f} (buffer_size={self.current_buffer_size}, interval={current_time - (self.last_ewma_update_time - self.ewma_update_interval):.3f}s)"
+            )
 
     def _calculate_drop_rate_legacy(self) -> None:
         """Calculate drop rate directly from buffer occupancy using legacy scaling approach."""
@@ -248,11 +281,13 @@ class AdaptiveFrameDropper:
         # Normalize PID output by buffer capacity to get proportional response
         normalized_pid = pid_output / self.led_buffer_capacity
 
-        # Map to drop rate: center at max_drop_rate/2, with CORRECT sign
-        # Positive PID output (buffer above target) -> FEWER drops (MINUS sign)
-        # Negative PID output (buffer below target) -> MORE drops (MINUS sign)
-        center_drop_rate = self.max_drop_rate / 2  # 0.33 for max_drop_rate=0.66
-        scale_factor = self.max_drop_rate / 2  # 0.33 for max_drop_rate=0.66
+        # Map to drop rate: center at zero for asymmetric control
+        # When buffer below target: positive drop rate (can only increase dropping)
+        # When buffer above target: negative drop rate → clamped to 0% (natural balance)
+        # Positive PID output (buffer above target) → FEWER drops (MINUS sign)
+        # Negative PID output (buffer below target) → MORE drops (MINUS sign)
+        center_drop_rate = 0.0  # Zero center point for asymmetric control
+        scale_factor = self.max_drop_rate / 2  # 0.33 for max_drop_rate=0.66 - allows full range
 
         self.target_drop_rate = center_drop_rate - (normalized_pid * scale_factor)  # Note: MINUS sign (correct)
 
@@ -394,6 +429,10 @@ class AdaptiveFrameDropper:
         # Reset EWMA values to start fresh
         self.led_buffer_level_ewma = 0.0
         self.target_drop_rate = 0.0
+
+        # Reset timer-based EWMA state
+        self.last_ewma_update_time = 0.0
+        self.current_buffer_size = 0
 
         # Reset PID controller state
         self.error_integral = 0.0
