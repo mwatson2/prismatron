@@ -175,10 +175,15 @@ class ConsumerProcess:
         if self.enable_adaptive_frame_dropping:
             self._adaptive_frame_dropper = AdaptiveFrameDropper(
                 led_buffer_capacity=10,  # Expected LED buffer capacity
-                led_buffer_ewma_alpha=0.1,  # EWMA alpha for buffer level tracking
+                led_buffer_ewma_alpha=0.03,  # Balanced EWMA - responsive but still smoothing
                 max_drop_rate=0.66,  # Maximum drop rate (supports up to 2x input rate)
+                use_pid_controller=True,  # Use PID controller for better buffer management
+                kp=1.0,  # Proportional gain
+                ki=0.3,  # Integral gain for steady-state error elimination
+                kd=2.0,  # Derivative gain for oscillation damping
+                target_buffer_level=10,  # Maintain buffer at capacity for smooth playback
             )
-            logger.info("Adaptive frame dropping enabled with direct scaling approach")
+            logger.info("Adaptive frame dropping enabled with PID controller")
         else:
             self._adaptive_frame_dropper = None
             logger.info("Adaptive frame dropping disabled")

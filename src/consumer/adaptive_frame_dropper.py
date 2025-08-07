@@ -29,23 +29,50 @@ class AdaptiveFrameDropper:
         led_buffer_capacity: int = 10,
         led_buffer_ewma_alpha: float = 0.005,
         max_drop_rate: float = 0.66,
+        use_pid_controller: bool = True,
+        kp: float = 1.0,
+        ki: float = 0.2,
+        kd: float = 0.05,
+        utilization_penalty_coefficient: float = 1.0,
+        target_buffer_level: int = None,
     ):
         """
-        Initialize adaptive frame dropper with direct scaling approach.
+        Initialize adaptive frame dropper with PID control.
 
         Args:
             led_buffer_capacity: Expected LED buffer capacity for normalization
             led_buffer_ewma_alpha: EWMA alpha for LED buffer level tracking
             max_drop_rate: Maximum allowed drop rate (0.66 = support up to 2x input rate)
+            use_pid_controller: Whether to use PID controller (True) or legacy proportional-only (False)
+            kp: Proportional gain for PID controller
+            ki: Integral gain for PID controller
+            kd: Derivative gain for PID controller
+            utilization_penalty_coefficient: Coefficient for wait time penalty in PID error calculation
+            target_buffer_level: Target buffer level for PID controller (defaults to capacity if None)
         """
         # Configuration parameters
         self.led_buffer_capacity = led_buffer_capacity
         self.led_buffer_ewma_alpha = led_buffer_ewma_alpha
         self.max_drop_rate = max_drop_rate
+        self.use_pid_controller = use_pid_controller
+
+        # PID controller parameters
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+        self.utilization_penalty_coefficient = utilization_penalty_coefficient
 
         # State variables
         self.target_drop_rate = 0.0
         self.led_buffer_level_ewma = 0.0
+
+        # PID controller state
+        self.target_buffer_level = float(
+            target_buffer_level if target_buffer_level is not None else led_buffer_capacity
+        )
+        self.error_integral = 0.0
+        self.previous_error = 0.0
+        self.previous_time = None
 
         # Frame tracking
         self.frames_processed = 0
@@ -61,10 +88,14 @@ class AdaptiveFrameDropper:
             f"AdaptiveFrameDropper initialized: "
             f"buffer_capacity={led_buffer_capacity}, "
             f"ewma_alpha={led_buffer_ewma_alpha}, "
-            f"max_drop_rate={max_drop_rate:.2f}"
+            f"max_drop_rate={max_drop_rate:.2f}, "
+            f"use_pid={'PID' if use_pid_controller else 'Proportional'}, "
+            f"gains=({kp:.2f}, {ki:.2f}, {kd:.2f})"
         )
 
-    def should_drop_frame(self, frame_timestamp: float, led_buffer_size: int, renderer_state: str) -> bool:
+    def should_drop_frame(
+        self, frame_timestamp: float, led_buffer_size: int, renderer_state: str, wait_time_penalty: float = 0.0
+    ) -> bool:
         """
         Determine if a frame should be dropped based on direct scaling strategy.
 
@@ -72,6 +103,7 @@ class AdaptiveFrameDropper:
             frame_timestamp: Timestamp of the frame being considered
             led_buffer_size: Current LED buffer occupancy
             renderer_state: Current renderer state (only update EWMA when PLAYING)
+            wait_time_penalty: Wait time EWMA for LED buffer space (utilization penalty)
 
         Returns:
             True if frame should be dropped, False otherwise
@@ -81,19 +113,23 @@ class AdaptiveFrameDropper:
             f"Adaptive frame dropper called: renderer_state={renderer_state}, led_buffer_size={led_buffer_size}, ewma={self.led_buffer_level_ewma:.1f}"
         )
 
-        # Only update EWMA and calculate drop rate when renderer is PLAYING (case insensitive)
+        # Update EWMA and calculate drop rate
+        # Both controllers only active when renderer is PLAYING
         if renderer_state.upper() == "PLAYING":
-            logger.debug("Renderer is PLAYING - updating EWMA and calculating drop rate")
+            logger.debug("Updating EWMA and calculating drop rate")
             self._update_led_buffer_ewma(led_buffer_size, renderer_state)
-            # Calculate drop rate directly from buffer occupancy
-            self._calculate_drop_rate()
+            # Calculate drop rate using either PID or legacy proportional control
+            if self.use_pid_controller:
+                self._calculate_drop_rate_pid(frame_timestamp, wait_time_penalty)
+            else:
+                self._calculate_drop_rate_legacy()
             # Determine if we should drop this frame
             should_drop = self._should_drop_probabilistic()
             logger.debug(f"Drop decision: should_drop={should_drop}, target_rate={self.target_drop_rate:.3f}")
         else:
-            # When not playing, never drop frames
+            # Legacy controller when not playing: never drop frames
             should_drop = False
-            logger.debug(f"Renderer not PLAYING ({renderer_state}) - not dropping frame")
+            logger.debug(f"Legacy controller - Renderer not PLAYING ({renderer_state}) - not dropping frame")
 
         # Update statistics
         self.frames_processed += 1
@@ -126,8 +162,8 @@ class AdaptiveFrameDropper:
             f"EWMA updated: {old_ewma:.2f} -> {self.led_buffer_level_ewma:.2f} (buffer_size={current_buffer_size})"
         )
 
-    def _calculate_drop_rate(self) -> None:
-        """Calculate drop rate directly from buffer occupancy using scaling approach."""
+    def _calculate_drop_rate_legacy(self) -> None:
+        """Calculate drop rate directly from buffer occupancy using legacy scaling approach."""
         old_target = self.target_drop_rate
 
         # Normalize buffer occupancy to 0-1 range based on capacity
@@ -144,9 +180,96 @@ class AdaptiveFrameDropper:
 
         # Log all drop rate calculations for debugging
         logger.debug(
-            f"Drop rate calculated: {old_target:.3f} -> {self.target_drop_rate:.3f} "
+            f"Legacy drop rate: {old_target:.3f} -> {self.target_drop_rate:.3f} "
             f"(buffer_ewma={self.led_buffer_level_ewma:.1f}, "
             f"normalized_occupancy={normalized_occupancy:.3f})"
+        )
+
+    def _calculate_drop_rate_pid(self, current_time: float, wait_time_penalty: float = 0.0) -> None:
+        """Calculate drop rate using PID controller to maintain target buffer level."""
+        old_target = self.target_drop_rate
+
+        # Calculate error: actual_level - target_level
+        # Positive error means buffer is above target (need MORE dropping to drain buffer)
+        # Negative error means buffer is below target (need LESS dropping to let buffer fill)
+        buffer_error = self.led_buffer_level_ewma - self.target_buffer_level
+
+        # Add utilization penalty: High wait times indicate underutilization (wasted optimization capacity)
+        # This creates positive error that drives drop rate down, letting more frames through
+        utilization_penalty = wait_time_penalty * self.utilization_penalty_coefficient
+
+        # Combined error: buffer level error + utilization penalty
+        error = buffer_error + utilization_penalty
+
+        # Initialize time tracking for derivative term
+        if self.previous_time is None:
+            self.previous_time = current_time
+            self.previous_error = error
+            # Don't update drop rate on first call, need time differential
+            logger.debug(f"PID controller initialized at t={current_time:.3f}, error={error:.2f}")
+            return
+
+        # Calculate time differential
+        dt = current_time - self.previous_time
+        if dt <= 0:
+            logger.debug(f"Invalid time differential dt={dt:.6f}, skipping PID update")
+            return
+
+        # Proportional term: directly proportional to current error
+        p_term = self.kp * error
+
+        # Integral term: accumulate error over time (with anti-windup)
+        # Only accumulate if Ki > 0 to avoid confusion in logs
+        if self.ki > 0:
+            self.error_integral += error * dt
+            # Anti-windup: clamp integral based on buffer capacity, not Ki value
+            # Allow integral to accumulate error equivalent to ~5x buffer capacity
+            max_integral = 5.0 * self.led_buffer_capacity  # Allow substantial integral buildup
+            self.error_integral = max(-max_integral, min(max_integral, self.error_integral))
+            i_term = self.ki * self.error_integral
+        else:
+            # Ki = 0, so no integral accumulation
+            self.error_integral = 0.0
+            i_term = 0.0
+
+        # Derivative term: rate of change of error
+        error_derivative = (error - self.previous_error) / dt
+        d_term = self.kd * error_derivative
+
+        # Combine PID terms to get control output
+        # More positive = need less dropping, more negative = need more dropping
+        pid_output = p_term + i_term + d_term
+
+        # Convert PID output to drop rate
+        # Scale PID output to drop rate range [0, max_drop_rate]
+        # When error > 0 (buffer above target), we want FEWER drops to slow production and drain buffer
+        # When error < 0 (buffer below target), we want MORE drops to speed production and fill buffer
+
+        # Normalize PID output by buffer capacity to get proportional response
+        normalized_pid = pid_output / self.led_buffer_capacity
+
+        # Map to drop rate: center at max_drop_rate/2, with CORRECT sign
+        # Positive PID output (buffer above target) -> FEWER drops (MINUS sign)
+        # Negative PID output (buffer below target) -> MORE drops (MINUS sign)
+        center_drop_rate = self.max_drop_rate / 2  # 0.33 for max_drop_rate=0.66
+        scale_factor = self.max_drop_rate / 2  # 0.33 for max_drop_rate=0.66
+
+        self.target_drop_rate = center_drop_rate - (normalized_pid * scale_factor)  # Note: MINUS sign (correct)
+
+        # Clamp to valid range [0, max_drop_rate]
+        self.target_drop_rate = max(0.0, min(self.max_drop_rate, self.target_drop_rate))
+
+        # Update state for next iteration
+        self.previous_error = error
+        self.previous_time = current_time
+        self.rate_calculations += 1
+
+        # Comprehensive PID logging
+        logger.info(
+            f"PID drop rate: {old_target:.3f} -> {self.target_drop_rate:.3f} "
+            f"(buffer_error={buffer_error:.2f}, util_penalty={utilization_penalty:.3f}, total_error={error:.2f}, "
+            f"P={p_term:.3f}, I={i_term:.3f}, D={d_term:.3f}, "
+            f"pid_output={pid_output:.3f}, dt={dt:.3f}s, buffer_ewma={self.led_buffer_level_ewma:.1f})"
         )
 
     def _should_drop_probabilistic(self) -> bool:
@@ -242,10 +365,20 @@ class AdaptiveFrameDropper:
             "total_frames_dropped": self.total_frames_dropped,
             "total_drop_rate": total_drop_rate,
             "rate_calculations": self.rate_calculations,
+            "pid_state": {
+                "error_integral": self.error_integral,
+                "previous_error": self.previous_error,
+                "target_buffer_level": self.target_buffer_level,
+            },
             "config": {
                 "led_buffer_capacity": self.led_buffer_capacity,
                 "led_buffer_ewma_alpha": self.led_buffer_ewma_alpha,
                 "max_drop_rate": self.max_drop_rate,
+                "use_pid_controller": self.use_pid_controller,
+                "kp": self.kp,
+                "ki": self.ki,
+                "kd": self.kd,
+                "utilization_penalty_coefficient": self.utilization_penalty_coefficient,
             },
         }
 
@@ -262,13 +395,23 @@ class AdaptiveFrameDropper:
         self.led_buffer_level_ewma = 0.0
         self.target_drop_rate = 0.0
 
-        logger.info("AdaptiveFrameDropper statistics reset")
+        # Reset PID controller state
+        self.error_integral = 0.0
+        self.previous_error = 0.0
+        self.previous_time = None
+
+        logger.info("AdaptiveFrameDropper statistics and PID state reset")
 
     def update_config(
         self,
         led_buffer_capacity: Optional[int] = None,
         led_buffer_ewma_alpha: Optional[float] = None,
         max_drop_rate: Optional[float] = None,
+        use_pid_controller: Optional[bool] = None,
+        kp: Optional[float] = None,
+        ki: Optional[float] = None,
+        kd: Optional[float] = None,
+        utilization_penalty_coefficient: Optional[float] = None,
     ) -> None:
         """
         Update configuration parameters.
@@ -277,12 +420,38 @@ class AdaptiveFrameDropper:
             led_buffer_capacity: New buffer capacity for normalization (optional)
             led_buffer_ewma_alpha: New LED buffer EWMA alpha (optional)
             max_drop_rate: New maximum drop rate (optional)
+            use_pid_controller: Whether to use PID controller (optional)
+            kp: Proportional gain (optional)
+            ki: Integral gain (optional)
+            kd: Derivative gain (optional)
+            utilization_penalty_coefficient: Coefficient for wait time penalty (optional)
         """
         if led_buffer_capacity is not None:
             self.led_buffer_capacity = led_buffer_capacity
+            self.target_buffer_level = float(led_buffer_capacity)  # Update PID target
         if led_buffer_ewma_alpha is not None:
             self.led_buffer_ewma_alpha = led_buffer_ewma_alpha
         if max_drop_rate is not None:
             self.max_drop_rate = max_drop_rate
+        if use_pid_controller is not None:
+            if self.use_pid_controller != use_pid_controller:
+                # Reset PID state when switching controller type
+                self.reset_stats()
+            self.use_pid_controller = use_pid_controller
+        if kp is not None:
+            self.kp = kp
+        if ki is not None:
+            old_ki = self.ki
+            self.ki = ki
+            if ki == 0.0:
+                # Always reset integral term when using proportional-only control
+                self.error_integral = 0.0
+                self.previous_error = 0.0
+                self.previous_time = None
+                logger.info(f"Reset PID state for proportional-only control (Ki changed {old_ki} -> {ki})")
+        if kd is not None:
+            self.kd = kd
+        if utilization_penalty_coefficient is not None:
+            self.utilization_penalty_coefficient = utilization_penalty_coefficient
 
         logger.info(f"AdaptiveFrameDropper configuration updated: {self.get_stats()['config']}")
