@@ -30,9 +30,9 @@ class AdaptiveFrameDropper:
         led_buffer_ewma_alpha: float = 0.005,
         max_drop_rate: float = 0.66,
         use_pid_controller: bool = True,
-        kp: float = 1.0,
-        ki: float = 0.2,
-        kd: float = 0.05,
+        kp: float = 3.0,
+        ki: float = 0.5,
+        kd: float = 1.0,
         utilization_penalty_coefficient: float = 1.0,
         target_buffer_level: int = None,
     ):
@@ -70,6 +70,10 @@ class AdaptiveFrameDropper:
         self.ewma_update_interval = 0.05  # Update every 50ms for true average tracking
         self.last_ewma_update_time = 0.0
         self.current_buffer_size = 0  # Track current buffer size for timer updates
+        
+        # Adaptive EWMA state (starts "empty" and builds up weight)
+        self.ewma_weighted_sum = 0.0  # Numerator: sum of α*(1-α)^i * x_i for i>=0
+        self.ewma_total_weight = 0.0  # Denominator: sum of α*(1-α)^i for i>=0
 
         # PID controller state
         self.target_buffer_level = float(
@@ -172,27 +176,35 @@ class AdaptiveFrameDropper:
         )
 
     def _update_led_buffer_ewma_timer_based(self, current_time: float, renderer_state: str) -> None:
-        """Update LED buffer level EWMA on a timer basis for true average tracking."""
+        """Update LED buffer level EWMA on a timer basis with adaptive initialization."""
         # Check if it's time to update EWMA (every 50ms)
         if current_time - self.last_ewma_update_time >= self.ewma_update_interval:
             old_ewma = self.led_buffer_level_ewma
 
-            if self.led_buffer_level_ewma == 0.0:
-                # Initialize EWMA to current buffer size
-                self.led_buffer_level_ewma = float(self.current_buffer_size)
-                logger.info(
-                    f"Timer-based EWMA initialized to current size: {self.current_buffer_size} (state={renderer_state})"
-                )
+            # Adaptive EWMA: Build up weighted sum and total weight incrementally
+            # This avoids assuming infinite past data and responds faster at startup
+            
+            # Add current observation with weight α
+            self.ewma_weighted_sum = (
+                (1 - self.led_buffer_ewma_alpha) * self.ewma_weighted_sum + 
+                self.led_buffer_ewma_alpha * self.current_buffer_size
+            )
+            self.ewma_total_weight = (
+                (1 - self.led_buffer_ewma_alpha) * self.ewma_total_weight + 
+                self.led_buffer_ewma_alpha
+            )
+            
+            # Calculate adaptive EWMA = weighted_sum / total_weight
+            if self.ewma_total_weight > 0:
+                self.led_buffer_level_ewma = self.ewma_weighted_sum / self.ewma_total_weight
             else:
-                # Update EWMA with current buffer size
-                self.led_buffer_level_ewma = (
-                    1 - self.led_buffer_ewma_alpha
-                ) * self.led_buffer_level_ewma + self.led_buffer_ewma_alpha * self.current_buffer_size
+                self.led_buffer_level_ewma = float(self.current_buffer_size)
 
             self.last_ewma_update_time = current_time
 
             logger.debug(
-                f"Timer-based EWMA updated: {old_ewma:.2f} -> {self.led_buffer_level_ewma:.2f} (buffer_size={self.current_buffer_size}, interval={current_time - (self.last_ewma_update_time - self.ewma_update_interval):.3f}s)"
+                f"Adaptive EWMA updated: {old_ewma:.2f} -> {self.led_buffer_level_ewma:.2f} "
+                f"(buffer_size={self.current_buffer_size}, weight={self.ewma_total_weight:.3f})"
             )
 
     def _calculate_drop_rate_legacy(self) -> None:
@@ -433,6 +445,10 @@ class AdaptiveFrameDropper:
         # Reset timer-based EWMA state
         self.last_ewma_update_time = 0.0
         self.current_buffer_size = 0
+        
+        # Reset adaptive EWMA state
+        self.ewma_weighted_sum = 0.0
+        self.ewma_total_weight = 0.0
 
         # Reset PID controller state
         self.error_integral = 0.0

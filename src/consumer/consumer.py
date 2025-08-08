@@ -178,9 +178,9 @@ class ConsumerProcess:
                 led_buffer_ewma_alpha=0.03,  # Balanced EWMA - responsive but still smoothing
                 max_drop_rate=0.66,  # Maximum drop rate (supports up to 2x input rate)
                 use_pid_controller=True,  # Use PID controller for better buffer management
-                kp=1.0,  # Proportional gain
-                ki=0.3,  # Integral gain for steady-state error elimination
-                kd=2.0,  # Derivative gain for oscillation damping
+                kp=3.0,  # Proportional gain
+                ki=0.5,  # Integral gain for steady-state error elimination
+                kd=1.0,  # Derivative gain for oscillation damping
                 target_buffer_level=10,  # Maintain buffer at capacity for smooth playback
             )
             logger.info("Adaptive frame dropping enabled with PID controller")
