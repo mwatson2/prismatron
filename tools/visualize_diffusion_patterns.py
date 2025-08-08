@@ -64,6 +64,7 @@ from utils.frame_optimizer import optimize_frame_led_values
 
 # Now import from utils as a package
 from utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
+from utils.symmetric_diagonal_ata_matrix import SymmetricDiagonalATAMatrix
 
 DIAGONAL_ATA_AVAILABLE = True
 FRAME_OPTIMIZER_AVAILABLE = True
@@ -95,7 +96,8 @@ class DiffusionPatternVisualizer:
         self.led_spatial_mapping: Optional[Dict] = None
         self.dense_ata_data: Optional[Dict] = None
         self.dia_matrix_data: Optional[Dict] = None
-        self.ata_matrix_format: Optional[str] = None  # "dia" or "dense"
+        self.symmetric_dia_data: Optional[Dict] = None
+        self.ata_matrix_format: Optional[str] = None  # "dia", "dense", or "symmetric_dia"
         self.ata_inverse_data: Optional[np.ndarray] = None
 
         # Image directories - relative to project root
@@ -109,6 +111,44 @@ class DiffusionPatternVisualizer:
 
         # Setup routes
         self._setup_routes()
+
+    def _add_block_borders(self, image_array: np.ndarray, block_size: int = 64) -> np.ndarray:
+        """Add a green border around the entire 64x64 LED diffusion pattern.
+
+        This is for individual LED images only (thumbnails and detail pages).
+        Simply adds a 2-pixel green border around the entire 64x64 block.
+
+        Args:
+            image_array: RGB image array of shape (height, width, 3) - typically (64, 64, 3)
+            block_size: Not used, kept for compatibility
+
+        Returns:
+            RGB image array with a green border around the entire block
+        """
+        if len(image_array.shape) != 3 or image_array.shape[2] != 3:
+            # Not an RGB image, return as-is
+            return image_array
+
+        height, width, channels = image_array.shape
+
+        # For individual LED blocks, add a border around the entire 64x64 region
+        # This shows the boundary of the captured diffusion pattern
+        border_width = 2
+        result = np.zeros((height + 2 * border_width, width + 2 * border_width, 3), dtype=np.uint8)
+
+        # Green color for border (RGB: 0, 255, 0)
+        green_color = np.array([0, 255, 0], dtype=np.uint8)
+
+        # Copy the original image to the center
+        result[border_width:-border_width, border_width:-border_width] = image_array
+
+        # Draw the border around the entire 64x64 block
+        result[0:border_width, :] = green_color  # Top
+        result[-border_width:, :] = green_color  # Bottom
+        result[:, 0:border_width] = green_color  # Left
+        result[:, -border_width:] = green_color  # Right
+
+        return result
 
     def load_patterns(self) -> bool:
         """Load diffusion patterns from new nested format file."""
@@ -163,7 +203,7 @@ class DiffusionPatternVisualizer:
             if self.led_spatial_mapping is not None and hasattr(self.led_spatial_mapping, "item"):
                 self.led_spatial_mapping = self.led_spatial_mapping.item()
 
-            # Load ATA matrix data - support both DIA and dense formats
+            # Load ATA matrix data - support DIA, dense, and symmetric DIA formats
             self.dia_matrix_data = data.get("dia_matrix", None)
             if self.dia_matrix_data is not None and hasattr(self.dia_matrix_data, "item"):
                 self.dia_matrix_data = self.dia_matrix_data.item()
@@ -176,10 +216,22 @@ class DiffusionPatternVisualizer:
                 self.ata_matrix_format = "dense"
                 logger.info("Loaded dense format ATA matrix")
 
-            # Check if we have both formats (shouldn't happen normally)
-            if self.dia_matrix_data is not None and self.dense_ata_data is not None:
-                logger.warning("Found both DIA and dense formats - using dense format")
+            self.symmetric_dia_data = data.get("symmetric_dia_matrix", None)
+            if self.symmetric_dia_data is not None and hasattr(self.symmetric_dia_data, "item"):
+                self.symmetric_dia_data = self.symmetric_dia_data.item()
+                self.ata_matrix_format = "symmetric_dia"
+                logger.info("Loaded symmetric DIA format ATA matrix")
+
+            # Check priority order: prefer symmetric_dia > dense > dia
+            if self.symmetric_dia_data is not None:
+                self.ata_matrix_format = "symmetric_dia"
+                logger.info("Using symmetric DIA format (preferred)")
+            elif self.dense_ata_data is not None:
                 self.ata_matrix_format = "dense"
+                logger.info("Using dense format")
+            elif self.dia_matrix_data is not None:
+                self.ata_matrix_format = "dia"
+                logger.info("Using DIA format")
 
             # Load ATA inverse data if available
             self.ata_inverse_data = data.get("ata_inverse", None)
@@ -243,13 +295,13 @@ class DiffusionPatternVisualizer:
                     mixed_dtype_str = str(mixed_dtype).replace("<class 'numpy.", "").replace("'>", "")
 
                 metadata_response["mixed_tensor_info"] = {
-                    "batch_size": block_summary["batch_size"],
-                    "channels": block_summary["channels"],
-                    "height": self.mixed_tensor.height,
-                    "width": self.mixed_tensor.width,
-                    "block_size": block_summary["block_size"],
-                    "total_blocks": block_summary["total_blocks"],
-                    "memory_mb": memory_info["total_mb"],
+                    "batch_size": int(block_summary["batch_size"]),
+                    "channels": int(block_summary["channels"]),
+                    "height": int(self.mixed_tensor.height),
+                    "width": int(self.mixed_tensor.width),
+                    "block_size": int(block_summary["block_size"]),
+                    "total_blocks": int(block_summary["total_blocks"]),
+                    "memory_mb": float(memory_info["total_mb"]),
                     "dtype": mixed_dtype_str,
                     "sparse_values_dtype": (
                         self.mixed_tensor.sparse_values.dtype.name
@@ -263,17 +315,17 @@ class DiffusionPatternVisualizer:
 
             if self.ata_matrix_format == "dia" and self.dia_matrix_data:
                 metadata_response["dia_matrix_info"] = {
-                    "led_count": self.dia_matrix_data["led_count"],
-                    "bandwidth": self.dia_matrix_data["bandwidth"],
-                    "k_diagonals": self.dia_matrix_data["k"],
-                    "sparsity": self.dia_matrix_data["sparsity"],
-                    "version": self.dia_matrix_data["version"],
+                    "led_count": int(self.dia_matrix_data["led_count"]),
+                    "bandwidth": int(self.dia_matrix_data["bandwidth"]),
+                    "k_diagonals": int(self.dia_matrix_data["k"]),
+                    "sparsity": float(self.dia_matrix_data["sparsity"]),
+                    "version": str(self.dia_matrix_data["version"]),
                 }
                 if "dia_data_3d" in self.dia_matrix_data:
                     dia_shape = self.dia_matrix_data["dia_data_3d"].shape
                     metadata_response["dia_matrix_info"]["dia_data_shape"] = list(dia_shape)
-                    metadata_response["dia_matrix_info"]["memory_mb"] = self.dia_matrix_data["dia_data_3d"].nbytes / (
-                        1024 * 1024
+                    metadata_response["dia_matrix_info"]["memory_mb"] = float(
+                        self.dia_matrix_data["dia_data_3d"].nbytes / (1024 * 1024)
                     )
                     # Get proper dtype name
                     dia_dtype = self.dia_matrix_data["dia_data_3d"].dtype
@@ -289,16 +341,16 @@ class DiffusionPatternVisualizer:
 
             elif self.ata_matrix_format == "dense" and self.dense_ata_data:
                 # Get matrix shape from data or compute it
-                led_count = self.dense_ata_data["led_count"]
-                channels = self.dense_ata_data["channels"]
+                led_count = int(self.dense_ata_data["led_count"])
+                channels = int(self.dense_ata_data["channels"])
                 matrix_shape = self.dense_ata_data.get("matrix_shape", [channels, led_count, led_count])
 
                 metadata_response["dense_ata_info"] = {
                     "led_count": led_count,
                     "channels": channels,
-                    "memory_mb": self.dense_ata_data["memory_mb"],
-                    "version": self.dense_ata_data["version"],
-                    "matrix_shape": matrix_shape,
+                    "memory_mb": float(self.dense_ata_data["memory_mb"]),
+                    "version": str(self.dense_ata_data["version"]),
+                    "matrix_shape": [int(x) for x in matrix_shape],
                 }
                 # Add storage/output dtype info
                 if "storage_dtype" in self.dense_ata_data:
@@ -306,11 +358,46 @@ class DiffusionPatternVisualizer:
                 if "output_dtype" in self.dense_ata_data:
                     metadata_response["dense_ata_info"]["output_dtype"] = str(self.dense_ata_data["output_dtype"])
 
+            elif self.ata_matrix_format == "symmetric_dia" and self.symmetric_dia_data:
+                # Symmetric DIA matrix info
+                metadata_response["symmetric_dia_info"] = {
+                    "led_count": int(self.symmetric_dia_data["led_count"]),
+                    "channels": int(self.symmetric_dia_data["channels"]),
+                    "k_upper": int(self.symmetric_dia_data["k_upper"]),
+                    "bandwidth": int(self.symmetric_dia_data["bandwidth"]),
+                    "sparsity": float(self.symmetric_dia_data["sparsity"]),
+                    "nnz": int(self.symmetric_dia_data["nnz"]),
+                }
+                if "dia_data_gpu" in self.symmetric_dia_data:
+                    dia_shape = self.symmetric_dia_data["dia_data_gpu"].shape
+                    metadata_response["symmetric_dia_info"]["dia_data_shape"] = list(dia_shape)
+                    metadata_response["symmetric_dia_info"]["memory_mb"] = float(
+                        self.symmetric_dia_data["dia_data_gpu"].nbytes / (1024 * 1024)
+                    )
+                    # Get proper dtype name
+                    dia_dtype = self.symmetric_dia_data["dia_data_gpu"].dtype
+                    metadata_response["symmetric_dia_info"]["dtype"] = (
+                        dia_dtype.name if hasattr(dia_dtype, "name") else str(dia_dtype)
+                    )
+                # Add memory reduction info
+                if "original_k" in self.symmetric_dia_data:
+                    original_k = int(self.symmetric_dia_data["original_k"])
+                    k_upper = int(self.symmetric_dia_data["k_upper"])
+                    if original_k and k_upper:
+                        reduction = (1.0 - k_upper / original_k) * 100
+                        metadata_response["symmetric_dia_info"]["memory_reduction_percent"] = float(reduction)
+                        metadata_response["symmetric_dia_info"]["original_k"] = original_k
+                # Add output dtype info
+                if "output_dtype" in self.symmetric_dia_data:
+                    metadata_response["symmetric_dia_info"]["output_dtype"] = str(
+                        self.symmetric_dia_data["output_dtype"]
+                    )
+
             # Add ATA inverse info if available
             if self.ata_inverse_data is not None:
                 metadata_response["ata_inverse_info"] = {
-                    "shape": list(self.ata_inverse_data.shape),
-                    "memory_mb": self.ata_inverse_data.nbytes / (1024 * 1024),
+                    "shape": [int(x) for x in self.ata_inverse_data.shape],
+                    "memory_mb": float(self.ata_inverse_data.nbytes / (1024 * 1024)),
                     "dtype": str(self.ata_inverse_data.dtype),
                 }
 
@@ -553,15 +640,48 @@ class DiffusionPatternVisualizer:
                     response_data = self._ata_matrix_to_image(dense_matrix, channel)
 
                     # Add dense-specific metadata
-                    led_count = self.dense_ata_data["led_count"]
-                    channels = self.dense_ata_data["channels"]
-                    matrix_shape = self.dense_ata_data.get("matrix_shape", [channels, led_count, led_count])
+                    led_count = int(self.dense_ata_data["led_count"])
+                    channels = int(self.dense_ata_data["channels"])
+                    matrix_shape = [int(channels), int(led_count), int(led_count)]
 
                     response_data.update(
                         {
                             "format": "dense",
-                            "memory_mb": self.dense_ata_data["memory_mb"],
+                            "memory_mb": float(self.dense_ata_data["memory_mb"]),
                             "matrix_shape": matrix_shape,
+                        }
+                    )
+
+                elif self.ata_matrix_format == "symmetric_dia":
+                    # Get the symmetric DIA matrix data for this channel
+                    dia_data = self.symmetric_dia_data["dia_data_gpu"][channel]  # Shape: (k_upper, led_count)
+                    dia_offsets_upper = self.symmetric_dia_data["dia_offsets_upper"]  # Shape: (k_upper,)
+                    led_count = self.symmetric_dia_data["led_count"]
+
+                    # Convert symmetric DIA format to dense for visualization
+                    dense_matrix = self._symmetric_dia_to_dense(dia_data, dia_offsets_upper, led_count)
+
+                    # Use the extracted function to create image response
+                    response_data = self._ata_matrix_to_image(dense_matrix, channel)
+
+                    # Add symmetric DIA-specific metadata
+                    response_data.update(
+                        {
+                            "format": "symmetric_dia",
+                            "bandwidth": int(self.symmetric_dia_data["bandwidth"]),
+                            "k_upper": int(self.symmetric_dia_data["k_upper"]),
+                            "sparsity": float(self.symmetric_dia_data["sparsity"]),
+                            "nnz": int(self.symmetric_dia_data["nnz"]),
+                            "memory_reduction_percent": (
+                                (
+                                    1.0
+                                    - int(self.symmetric_dia_data["k_upper"])
+                                    / int(self.symmetric_dia_data["original_k"])
+                                )
+                                * 100
+                                if self.symmetric_dia_data.get("original_k")
+                                else None
+                            ),
                         }
                     )
 
@@ -843,17 +963,30 @@ class DiffusionPatternVisualizer:
             if not PIL_AVAILABLE:
                 return ""
 
-            # Normalize pattern to 0-255
+            # Normalize pattern to 0-255 based on data type
             if len(pattern.shape) == 3:
                 # RGB pattern
-                normalized = np.clip(pattern * 255, 0, 255).astype(np.uint8)
+                if self.mixed_tensor.dtype == cp.uint8:
+                    # Data is already in [0,255] range
+                    normalized = np.clip(pattern, 0, 255).astype(np.uint8)
+                else:
+                    # Data is in [0,1] range, scale to [0,255]
+                    normalized = np.clip(pattern * 255, 0, 255).astype(np.uint8)
             else:
                 # Single channel - convert to RGB
-                normalized = np.clip(pattern * 255, 0, 255).astype(np.uint8)
+                if self.mixed_tensor.dtype == cp.uint8:
+                    # Data is already in [0,255] range
+                    normalized = np.clip(pattern, 0, 255).astype(np.uint8)
+                else:
+                    # Data is in [0,1] range, scale to [0,255]
+                    normalized = np.clip(pattern * 255, 0, 255).astype(np.uint8)
                 normalized = np.stack([normalized] * 3, axis=-1)
 
+            # Add green borders around 64x64 blocks
+            normalized_with_borders = self._add_block_borders(normalized, block_size=64)
+
             # Create PIL image
-            img = Image.fromarray(normalized, mode="RGB")
+            img = Image.fromarray(normalized_with_borders, mode="RGB")
 
             # Resize to thumbnail size
             img = img.resize(size, Image.Resampling.LANCZOS)
@@ -883,8 +1016,11 @@ class DiffusionPatternVisualizer:
                 # Data is in [0,1] range, scale to [0,255]
                 normalized = np.clip(pattern * 255, 0, 255).astype(np.uint8)
 
+            # Add green borders around 64x64 blocks
+            normalized_with_borders = self._add_block_borders(normalized, block_size=64)
+
             # Create PIL image
-            img = Image.fromarray(normalized, mode="RGB")
+            img = Image.fromarray(normalized_with_borders, mode="RGB")
 
             # Convert to base64
             buffer = io.BytesIO()
@@ -911,8 +1047,14 @@ class DiffusionPatternVisualizer:
                 # Data is in [0,1] range, scale to [0,255]
                 normalized = np.clip(pattern * 255, 0, 255).astype(np.uint8)
 
-            # Create PIL image
-            img = Image.fromarray(normalized, mode="L")
+            # Convert grayscale to RGB for border drawing
+            normalized_rgb = np.stack([normalized] * 3, axis=-1)
+
+            # Add green borders around 64x64 blocks
+            normalized_with_borders = self._add_block_borders(normalized_rgb, block_size=64)
+
+            # Create PIL image from RGB array
+            img = Image.fromarray(normalized_with_borders, mode="RGB")
 
             # Convert to base64
             buffer = io.BytesIO()
@@ -1037,6 +1179,27 @@ class DiffusionPatternVisualizer:
             elif self.ata_matrix_format == "dense":
                 ata_matrix = DenseATAMatrix.from_dict(self.dense_ata_data)
                 logger.info(f"Using dense format ATA matrix: {ata_matrix.led_count} LEDs, {ata_matrix.memory_mb:.1f}MB")
+            elif self.ata_matrix_format == "symmetric_dia":
+                # Create SymmetricDiagonalATAMatrix from stored data
+                ata_matrix = SymmetricDiagonalATAMatrix(
+                    led_count=self.symmetric_dia_data["led_count"],
+                    crop_size=self.symmetric_dia_data.get("crop_size", 64),
+                    output_dtype=cp.float32,
+                )
+                # Restore the internal state from saved data
+                ata_matrix.k_upper = self.symmetric_dia_data["k_upper"]
+                ata_matrix.dia_offsets_upper = self.symmetric_dia_data["dia_offsets_upper"]
+                ata_matrix.bandwidth = self.symmetric_dia_data["bandwidth"]
+                ata_matrix.sparsity = self.symmetric_dia_data["sparsity"]
+                ata_matrix.nnz = self.symmetric_dia_data["nnz"]
+                ata_matrix.original_k = self.symmetric_dia_data.get("original_k")
+                # Convert GPU data back to CuPy arrays with proper data types
+                ata_matrix.dia_data_gpu = cp.asarray(self.symmetric_dia_data["dia_data_gpu"], dtype=cp.float32)
+                ata_matrix.dia_offsets_upper_gpu = cp.asarray(ata_matrix.dia_offsets_upper, dtype=cp.int32)
+
+                logger.info(
+                    f"Using symmetric DIA format ATA matrix: {ata_matrix.led_count} LEDs, {ata_matrix.k_upper} upper diagonals, {ata_matrix.bandwidth} bandwidth"
+                )
             else:
                 logger.error(f"Unknown ATA matrix format: {self.ata_matrix_format}")
                 return None
@@ -1189,6 +1352,32 @@ class DiffusionPatternVisualizer:
 
         return dense
 
+    def _symmetric_dia_to_dense(self, dia_data: np.ndarray, dia_offsets_upper: np.ndarray, size: int) -> np.ndarray:
+        """Convert symmetric DIA format matrix to dense format for visualization."""
+        dense = np.zeros((size, size), dtype=dia_data.dtype)
+
+        for i, offset in enumerate(dia_offsets_upper):
+            diagonal = dia_data[i, :]
+
+            # For symmetric DIA, we only store upper diagonals (offset >= 0)
+            # But we need to fill both upper and lower parts (except main diagonal)
+
+            # Fill upper diagonal: A[j, j+offset]
+            diag_len = size - offset
+            for j in range(diag_len):
+                if j + offset < size and offset < len(diagonal):
+                    # DIA format: diagonal data starts at column index = offset
+                    dense[j, j + offset] = diagonal[j + offset]
+
+            # Fill symmetric lower diagonal: A[j+offset, j] = A[j, j+offset]
+            # Skip main diagonal (offset=0) to avoid double-counting
+            if offset > 0:
+                for j in range(diag_len):
+                    if j + offset < size and offset < len(diagonal):
+                        dense[j + offset, j] = diagonal[j + offset]
+
+        return dense
+
     def _matrix_to_image(self, matrix: np.ndarray) -> str:
         """Convert matrix to base64 image for visualization using log magnitude color scale."""
         try:
@@ -1254,7 +1443,7 @@ class DiffusionPatternVisualizer:
                         nonzero_vals = normalized_log[valid_mask]  # [0, 1] range
 
                         # Apply minimum intensity floor to ALL non-zero values
-                        intensity_floor = 0.2  # 20% minimum intensity
+                        intensity_floor = 0.1  # 10% minimum intensity (was too high at 20%)
 
                         # Debug normalized log value distribution
                         logger.debug(
@@ -1318,23 +1507,24 @@ class DiffusionPatternVisualizer:
                             f"After color transform: min={np.min(color_vals):.3f}, max={np.max(color_vals):.3f}"
                         )
 
-                        # Simple red-to-blue mapping with strong contrast
-                        # Red component: high for low values, zero for high values
+                        # Simple red-to-blue mapping with high brightness and strong contrast
+                        # Red component: bright for low values, dim for high values
                         r_vals = np.where(
                             color_vals < 0.5,
-                            intensity_floor + (1.0 - intensity_floor) * (1.0 - 2 * color_vals),
-                            intensity_floor * 0.1,
-                        )  # Very low red for high values
+                            0.3 + 0.7 * (1.0 - 2 * color_vals),  # Range from 1.0 (lowest) to 0.3 (middle)
+                            0.1,  # Very low red for high values
+                        )
 
-                        # Blue component: zero for low values, high for high values
+                        # Blue component: dim for low values, bright for high values
                         b_vals = np.where(
                             color_vals > 0.5,
-                            intensity_floor + (1.0 - intensity_floor) * (2 * color_vals - 1.0),
-                            intensity_floor * 0.1,
-                        )  # Very low blue for low values
+                            0.3 + 0.7 * (2 * color_vals - 1.0),  # Range from 0.3 (middle) to 1.0 (highest)
+                            0.1,  # Very low blue for low values
+                        )
 
-                        # Green component: minimal to maintain red-blue contrast
-                        g_vals = np.full_like(color_vals, intensity_floor * 0.1)
+                        # Green component: moderate values for better overall brightness
+                        # Provide some green to make the image brighter overall
+                        g_vals = 0.2 + 0.4 * (1.0 - np.abs(2 * color_vals - 1.0))  # Peak at middle values
 
                         # Debug color component ranges before conversion
                         logger.debug("Color components before conversion:")
@@ -1470,7 +1660,11 @@ class DiffusionPatternVisualizer:
                 and DIAGONAL_ATA_AVAILABLE
                 and self.mixed_tensor is not None
                 and self.ata_inverse_data is not None
-                and self.dia_matrix_data is not None
+                and (
+                    self.dia_matrix_data is not None
+                    or self.dense_ata_data is not None
+                    or self.symmetric_dia_data is not None
+                )
             )
 
             # Create pair info
@@ -2184,7 +2378,7 @@ HTML_TEMPLATE = """
                     // Update ATA button visibility based on available data
                     const ataBtn = document.getElementById('ata-btn');
                     const ataInvBtn = document.getElementById('ata-inv-btn');
-                    ataBtn.style.display = (data.dia_matrix_info || data.dense_ata_info) ? 'inline-block' : 'none';
+                    ataBtn.style.display = (data.dia_matrix_info || data.dense_ata_info || data.symmetric_dia_info) ? 'inline-block' : 'none';
                     ataInvBtn.style.display = data.ata_inverse_info ? 'inline-block' : 'none';
 
                 })
@@ -2253,6 +2447,25 @@ HTML_TEMPLATE = """
                 }
                 if (info.output_dtype) {
                     html += `<div><strong>Dense Output Type:</strong> ${info.output_dtype}</div>`;
+                }
+            }
+
+            if (data.symmetric_dia_info) {
+                const info = data.symmetric_dia_info;
+                html += `<div><strong>Symmetric DIA Matrix:</strong> ${info.led_count} LEDs</div>`;
+                html += `<div><strong>Symmetric DIA Bandwidth:</strong> ${info.bandwidth}</div>`;
+                html += `<div><strong>Symmetric DIA Upper Diagonals:</strong> ${info.k_upper}</div>`;
+                html += `<div><strong>Symmetric DIA Memory:</strong> ${info.memory_mb.toFixed(1)} MB</div>`;
+                html += `<div><strong>Symmetric DIA Sparsity:</strong> ${info.sparsity.toFixed(2)}%</div>`;
+                html += `<div><strong>Symmetric DIA Non-zeros:</strong> ${info.nnz.toLocaleString()}</div>`;
+                if (info.memory_reduction_percent) {
+                    html += `<div><strong>Memory Reduction:</strong> ${info.memory_reduction_percent.toFixed(1)}%</div>`;
+                }
+                if (info.dtype) {
+                    html += `<div><strong>Symmetric DIA Data Type:</strong> ${info.dtype}</div>`;
+                }
+                if (info.output_dtype) {
+                    html += `<div><strong>Symmetric DIA Output Type:</strong> ${info.output_dtype}</div>`;
                 }
             }
 
