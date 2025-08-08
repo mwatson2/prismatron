@@ -3,12 +3,13 @@
 Synthetic Diffusion Pattern Generator.
 
 This tool generates synthetic diffusion patterns for LED optimization testing
-and development. It's the centralized source for synthetic pattern generation
-across the Prismatron system.
+and development. It creates mixed sparse tensor format with LED positions and
+ordering. Use tools/compute_matrices.py to generate ATA matrices afterward.
 
 Usage:
     python generate_synthetic_patterns.py --output patterns.npz --led-count 3200
     python generate_synthetic_patterns.py --output test_patterns.npz --led-count 100 --seed 42
+    python tools/compute_matrices.py patterns.npz  # Generate ATA matrices
 """
 
 import argparse
@@ -29,8 +30,6 @@ except ImportError:
 
 # Add path for local imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from src.utils.dense_ata_matrix import DenseATAMatrix
-from src.utils.diagonal_ata_matrix import DiagonalATAMatrix
 from src.utils.led_diffusion_csc_matrix import LEDDiffusionCSCMatrix
 from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 from src.utils.spatial_ordering import compute_rcm_ordering, reorder_matrix_columns
@@ -599,185 +598,7 @@ class SyntheticPatternGenerator:
         # Return the mixed tensor object
         return mixed_tensor
 
-    def _generate_dia_matrix(self, sparse_matrix: sp.csc_matrix, led_positions: np.ndarray) -> "DiagonalATAMatrix":
-        """
-        Generate DiagonalATAMatrix from sparse diffusion matrix.
-
-        Args:
-            sparse_matrix: Sparse CSC diffusion matrix (pixels, leds*3)
-            led_positions: LED positions array (leds, 2)
-
-        Returns:
-            DiagonalATAMatrix object with 3D DIA format
-        """
-        logger.info("Building DiagonalATAMatrix from diffusion matrix...")
-
-        led_count = sparse_matrix.shape[1] // 3
-
-        # Create DiagonalATAMatrix instance with mixed precision if FP16 is requested
-        if self.use_fp16:
-            # Mixed precision: FP16 storage for memory efficiency, FP32 computation for precision
-            storage_dtype = cp.float16
-            output_dtype = cp.float32
-            logger.info("Using mixed precision: FP16 storage with FP32 computation for DiagonalATAMatrix")
-        else:
-            # Standard FP32 for both storage and computation
-            storage_dtype = cp.float32
-            output_dtype = cp.float32
-            logger.info("Using FP32 storage and computation for DiagonalATAMatrix")
-
-        dia_matrix = DiagonalATAMatrix(
-            led_count, crop_size=self.block_size, output_dtype=output_dtype, storage_dtype=storage_dtype
-        )
-
-        # Build from diffusion matrix (already in optimal RCM ordering)
-        dia_matrix.build_from_diffusion_matrix(sparse_matrix)
-
-        logger.info(
-            f"DiagonalATAMatrix built: {led_count} LEDs, bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
-        )
-
-        # Log storage details
-        storage_dtype_str = "FP16" if dia_matrix.storage_dtype == cp.float16 else "FP32"
-        output_dtype_str = "FP16" if dia_matrix.output_dtype == cp.float16 else "FP32"
-        logger.info(f"Storage dtype: {storage_dtype_str}, Output dtype: {output_dtype_str}")
-
-        # Calculate memory usage
-        if dia_matrix.dia_data_cpu is not None:
-            memory_mb = dia_matrix.dia_data_cpu.nbytes / (1024 * 1024)
-            logger.info(f"ATA matrix memory usage: {memory_mb:.1f} MB")
-
-            if self.use_fp16:
-                # Calculate savings compared to FP32
-                fp32_memory = dia_matrix.dia_data_cpu.size * 4  # 4 bytes per float32
-                fp16_memory = dia_matrix.dia_data_cpu.nbytes  # actual bytes used
-                savings_mb = (fp32_memory - fp16_memory) / (1024 * 1024)
-                logger.info(f"Memory saved with FP16 storage: {savings_mb:.1f} MB (50% reduction)")
-        else:
-            logger.info("No ATA matrix data stored")
-
-        # Compare expected vs actual diagonal counts
-        if hasattr(self, "expected_ata_diagonals"):
-            expected = self.expected_ata_diagonals
-            actual = dia_matrix.k
-            ratio = actual / expected if expected > 0 else float("inf")
-            if ratio > 2.0:
-                logger.warning(
-                    f"DIA matrix diagonal count mismatch: expected={expected}, "
-                    f"actual={actual} ({ratio:.1f}x more than expected!)"
-                )
-                logger.warning("This indicates pattern generation may not be following adjacency structure properly")
-            else:
-                logger.info(
-                    f"DIA matrix diagonal count: expected={expected}, actual={actual} ({ratio:.1f}x expected - good!)"
-                )
-
-        return dia_matrix
-
-    def _generate_dense_ata_matrix(self, sparse_matrix: sp.csc_matrix) -> "DenseATAMatrix":
-        """
-        Generate DenseATAMatrix from sparse diffusion matrix.
-
-        Args:
-            sparse_matrix: Sparse CSC diffusion matrix (pixels, leds*3)
-
-        Returns:
-            DenseATAMatrix object
-        """
-        logger.info("Building DenseATAMatrix from diffusion matrix...")
-
-        led_count = sparse_matrix.shape[1] // 3
-
-        # Create DenseATAMatrix instance with precision settings
-        if self.use_fp16:
-            # Mixed precision: FP16 storage for memory efficiency, FP32 computation for precision
-            storage_dtype = cp.float16
-            output_dtype = cp.float32
-            logger.info("Using mixed precision: FP16 storage with FP32 computation for DenseATAMatrix")
-        else:
-            # Standard FP32 for both storage and computation
-            storage_dtype = cp.float32
-            output_dtype = cp.float32
-            logger.info("Using FP32 storage and computation for DenseATAMatrix")
-
-        dense_matrix = DenseATAMatrix(
-            led_count=led_count, channels=3, storage_dtype=storage_dtype, output_dtype=output_dtype
-        )
-
-        # Build from diffusion matrix (already in optimal RCM ordering)
-        dense_matrix.build_from_diffusion_matrix(sparse_matrix)
-
-        logger.info(f"DenseATAMatrix built: {led_count} LEDs, {dense_matrix.memory_mb:.1f}MB")
-
-        # Log storage details
-        storage_dtype_str = "FP16" if dense_matrix.storage_dtype == cp.float16 else "FP32"
-        output_dtype_str = "FP16" if dense_matrix.output_dtype == cp.float16 else "FP32"
-        logger.info(f"Storage dtype: {storage_dtype_str}, Output dtype: {output_dtype_str}")
-
-        return dense_matrix
-
-    def _choose_ata_format(self, sparse_matrix: sp.csc_matrix, led_positions: np.ndarray) -> str:
-        """
-        Choose optimal ATA matrix format based on matrix characteristics.
-
-        Args:
-            sparse_matrix: Sparse CSC diffusion matrix
-            led_positions: LED positions array
-
-        Returns:
-            "dia" for diagonal format, "dense" for dense format
-        """
-        led_count = sparse_matrix.shape[1] // 3
-
-        # Import the function if needed
-        from tools.led_position_utils import calculate_block_positions
-
-        # Calculate block positions for bandwidth estimation
-        block_positions = calculate_block_positions(led_positions, self.block_size, self.frame_width, self.frame_height)
-
-        # Estimate bandwidth using RCM ordering
-        _, _, expected_diagonals = compute_rcm_ordering(block_positions, self.block_size)
-
-        # Heuristics for format selection:
-        # - Use dense if bandwidth > 80% of matrix size
-        # - Use dense if expected diagonals > 50% of theoretical maximum
-        # - Use dense for very small matrices where overhead matters
-
-        bandwidth_ratio = expected_diagonals / (2 * led_count - 1) if led_count > 1 else 1.0
-        diagonal_efficiency = expected_diagonals / (2 * led_count - 1) if led_count > 1 else 1.0
-
-        # Memory estimates (rough)
-        dia_memory_mb = (3 * expected_diagonals * led_count * 4) / (1024 * 1024)  # FP32
-        dense_memory_mb = (3 * led_count * led_count * 4) / (1024 * 1024)  # FP32
-
-        logger.info("ATA format selection analysis:")
-        logger.info(f"  LED count: {led_count}")
-        logger.info(f"  Expected diagonals: {expected_diagonals}")
-        logger.info(f"  Bandwidth ratio: {bandwidth_ratio:.3f}")
-        logger.info(f"  Estimated DIA memory: {dia_memory_mb:.1f}MB")
-        logger.info(f"  Estimated dense memory: {dense_memory_mb:.1f}MB")
-
-        # Decision logic
-        if bandwidth_ratio > 0.8:
-            format_choice = "dense"
-            reason = f"High bandwidth ratio ({bandwidth_ratio:.3f} > 0.8)"
-        elif expected_diagonals > led_count:
-            format_choice = "dense"
-            reason = f"Many diagonals ({expected_diagonals} > {led_count})"
-        elif led_count < 500:
-            format_choice = "dense"
-            reason = f"Small matrix ({led_count} LEDs)"
-        elif dense_memory_mb < dia_memory_mb * 1.2:  # Dense is only 20% more memory
-            format_choice = "dense"
-            reason = f"Dense memory overhead acceptable ({dense_memory_mb:.1f}MB vs {dia_memory_mb:.1f}MB)"
-        else:
-            format_choice = "dia"
-            reason = "Sparse matrix benefits from DIA format"
-
-        logger.info(f"  Selected format: {format_choice.upper()} ({reason})")
-        return format_choice
-
-    def save_sparse_matrix(
+    def save_patterns(
         self,
         diffusion_matrix: LEDDiffusionCSCMatrix,
         led_spatial_mapping: dict,
@@ -785,7 +606,8 @@ class SyntheticPatternGenerator:
         metadata: Optional[dict] = None,
     ) -> bool:
         """
-        Save LEDDiffusionCSCMatrix, spatial mapping and mixed tensor format for optimization.
+        Save mixed tensor format with LED positions and ordering for optimization.
+        Use tools/compute_matrices.py to generate ATA matrices afterward.
 
         Args:
             diffusion_matrix: LEDDiffusionCSCMatrix to save
@@ -808,7 +630,7 @@ class SyntheticPatternGenerator:
             # Prepare metadata
             save_metadata = {
                 "generator": "SyntheticPatternGenerator",
-                "format": "led_diffusion_csc_with_mixed_tensor",
+                "format": "mixed_sparse_tensor",
                 "led_count": diffusion_matrix.led_count,
                 "frame_width": diffusion_matrix.width,
                 "frame_height": diffusion_matrix.height,
@@ -825,33 +647,16 @@ class SyntheticPatternGenerator:
             if metadata:
                 save_metadata.update(metadata)
 
-            # Choose optimal ATA matrix format
-            sparse_csc = diffusion_matrix.to_csc_matrix()
-            ata_format = self._choose_ata_format(sparse_csc, self.led_positions)
-
-            if ata_format == "dense":
-                # Generate DenseATAMatrix
-                logger.info("Generating DenseATAMatrix (dense format)...")
-                ata_matrix = self._generate_dense_ata_matrix(sparse_csc)
-                save_dict_key = "dense_ata_matrix"
-            else:
-                # Generate DiagonalATAMatrix (DIA format)
-                logger.info("Generating DiagonalATAMatrix (DIA format)...")
-                ata_matrix = self._generate_dia_matrix(sparse_csc, self.led_positions)
-                save_dict_key = "dia_matrix"
-
-            # Save everything in a single NPZ file
+            # Save only essential data for matrix computation
             save_dict = {
                 # LED information
                 "led_positions": self.led_positions,
                 "led_spatial_mapping": led_spatial_mapping,
-                "led_ordering": self.led_ordering,  # New: spatial_index -> physical_led_id
+                "led_ordering": self.led_ordering,  # spatial_index -> physical_led_id
                 # Metadata
                 "metadata": save_metadata,
                 # Mixed tensor stored as nested element using to_dict()
                 "mixed_tensor": mixed_tensor.to_dict(),
-                # ATA matrix in chosen format
-                save_dict_key: ata_matrix.to_dict(),
             }
 
             np.savez_compressed(output_path, **save_dict)
@@ -859,7 +664,7 @@ class SyntheticPatternGenerator:
             # Log file info
             file_size = Path(output_path).stat().st_size / (1024 * 1024)  # MB
 
-            logger.info(f"Saved mixed tensor and {ata_format.upper()} ATA matrix to {output_path}")
+            logger.info(f"Saved mixed tensor format to {output_path}")
             logger.info(f"File size: {file_size:.1f} MB")
             logger.info("Mixed tensor format: SingleBlockMixedSparseTensor")
             logger.info(
@@ -867,20 +672,12 @@ class SyntheticPatternGenerator:
                 f"{mixed_tensor.height}x{mixed_tensor.width}, "
                 f"{mixed_tensor.block_size}x{mixed_tensor.block_size} blocks"
             )
-
-            if ata_format == "dense":
-                logger.info(f"Dense ATA matrix: {ata_matrix.led_count} LEDs, {ata_matrix.memory_mb:.1f}MB")
-            else:
-                logger.info(
-                    f"DIA matrix: {ata_matrix.led_count} LEDs, bandwidth={ata_matrix.bandwidth}, k={ata_matrix.k} diagonals"
-                )
-                storage_shape = ata_matrix.dia_data_cpu.shape if ata_matrix.dia_data_cpu is not None else "None"
-                logger.info(f"DIA matrix storage shape: {storage_shape}")
+            logger.info("Use tools/compute_matrices.py to generate ATA matrices for optimization")
 
             return True
 
         except Exception as e:
-            logger.error(f"Failed to save LEDDiffusionCSCMatrix: {e}")
+            logger.error(f"Failed to save mixed tensor format: {e}")
             return False
 
 
@@ -940,7 +737,7 @@ def main():
     parser.add_argument(
         "--fp16",
         action="store_true",
-        help="Use mixed precision: FP16 storage for ATA matrix with FP32 computation (saves ~50%% memory)",
+        help="Use FP16 precision for mixed tensor storage (deprecated, use tools/compute_matrices.py for ATA matrices)",
     )
     parser.add_argument(
         "--uint8",
@@ -997,12 +794,13 @@ def main():
             }
         )
 
-        # Save LEDDiffusionCSCMatrix
-        if not generator.save_sparse_matrix(diffusion_matrix, led_mapping, args.output, metadata):
-            logger.error("Failed to save LEDDiffusionCSCMatrix")
+        # Save patterns in mixed tensor format
+        if not generator.save_patterns(diffusion_matrix, led_mapping, args.output, metadata):
+            logger.error("Failed to save patterns")
             return 1
 
-        logger.info("LEDDiffusionCSCMatrix generation completed successfully")
+        logger.info("Pattern generation completed successfully")
+        logger.info("Use tools/compute_matrices.py to generate ATA matrices for optimization")
 
         return 0
 

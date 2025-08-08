@@ -9,8 +9,8 @@ This tool captures the diffusion patterns for each LED and color channel by:
 4. Analyzing optimal block positions with 4-pixel alignment
 5. Storing patterns in SingleBlockMixedSparseTensor format
 6. Applying RCM spatial ordering for optimal matrix bandwidth
-7. Generating DiagonalATAMatrix for optimization
-8. Saving in modern mixed tensor format compatible with the optimization engine
+7. Saving mixed tensor with LED positions and ordering
+8. Use tools/compute_matrices.py to generate ATA matrices afterward
 
 Features:
 - Configurable block size (default: 64x64, supports 32-256)
@@ -26,6 +26,7 @@ Usage:
     python capture_diffusion_patterns.py --wled-host 192.168.7.140 --output patterns.npz --block-size 64 --precision fp16 --uint8
     python capture_diffusion_patterns.py --wled-host 192.168.7.140 --camera-config camera.json --output patterns.npz --flip-image
     python capture_diffusion_patterns.py --wled-host 192.168.7.140 --output patterns.npz --gain 4.063512 --preview
+    python tools/compute_matrices.py patterns.npz  # Generate ATA matrices
 """
 
 import argparse
@@ -58,8 +59,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
 from src.consumer.wled_client import WLEDClient, WLEDConfig
-from src.utils.dense_ata_matrix import DenseATAMatrix
-from src.utils.diagonal_ata_matrix import DiagonalATAMatrix
 from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 from src.utils.spatial_ordering import compute_rcm_ordering
 
@@ -75,6 +74,7 @@ class CameraCapture:
         crop_region: Optional[Tuple[int, int, int, int]] = None,
         flip_image: bool = False,
         manual_gain: Optional[float] = None,
+        use_usb: bool = False,
     ):
         """
         Initialize camera capture.
@@ -84,11 +84,13 @@ class CameraCapture:
             crop_region: Optional crop region (x, y, width, height) for prismatron area
             flip_image: Whether to flip the image 180 degrees (for upside-down camera mounting)
             manual_gain: Optional manual gain value for consistent LED capture (e.g., from led_gain_calibrator.py)
+            use_usb: Use USB camera instead of CSI camera
         """
         self.device_id = device_id
         self.crop_region = crop_region
         self.flip_image = flip_image
         self.manual_gain = manual_gain
+        self.use_usb = use_usb
         self.cap: Optional[cv2.VideoCapture] = None
         self.camera_width = 0
         self.camera_height = 0
@@ -98,34 +100,71 @@ class CameraCapture:
     def initialize(self) -> bool:
         """Initialize camera using OpenCV with GStreamer support."""
         try:
-            logger.info(f"Using OpenCV with GStreamer support for camera {self.device_id}")
+            if self.use_usb:
+                # Use V4L2 for USB cameras
+                logger.info(f"Using USB camera at /dev/video{self.device_id}")
 
-            # Build GStreamer pipeline with optional gain control
-            pipeline_parts = [f"nvarguscamerasrc sensor-id={self.device_id}"]
+                # Try V4L2 backend first for USB cameras
+                self.cap = cv2.VideoCapture(self.device_id, cv2.CAP_V4L2)
 
-            # Add manual gain control if specified
-            if self.manual_gain is not None:
-                pipeline_parts.append(f'gainrange="{self.manual_gain} {self.manual_gain}"')
-                pipeline_parts.append("aelock=true")  # Lock auto-exposure for consistent capture
-                pipeline_parts.append("awblock=true")  # Lock auto-white-balance
-                logger.info(f"Setting manual gain: {self.manual_gain} with locked exposure and white balance")
+                if not self.cap.isOpened():
+                    logger.warning("V4L2 backend failed, trying default backend")
+                    self.cap = cv2.VideoCapture(self.device_id)
 
-            # Complete the pipeline
-            gstreamer_pipeline = (
-                " ".join(pipeline_parts) + " ! "
-                "nvvidconv ! video/x-raw,format=I420 ! "
-                "videoconvert ! video/x-raw,format=BGR ! "
-                "appsink drop=1"
-            )
+                if not self.cap.isOpened():
+                    # Try using GStreamer with v4l2src as fallback
+                    logger.warning("Default backend failed, trying GStreamer with v4l2src")
+                    gstreamer_pipeline = (
+                        f"v4l2src device=/dev/video{self.device_id} ! "
+                        "videoconvert ! video/x-raw, format=BGR ! appsink"
+                    )
+                    logger.info(f"Using GStreamer pipeline: {gstreamer_pipeline}")
+                    self.cap = cv2.VideoCapture(gstreamer_pipeline, cv2.CAP_GSTREAMER)
 
-            logger.info(f"Pipeline: {gstreamer_pipeline}")
-            self.cap = cv2.VideoCapture(gstreamer_pipeline, cv2.CAP_GSTREAMER)
+                if not self.cap.isOpened():
+                    logger.error(f"Failed to open USB camera at /dev/video{self.device_id}")
+                    return False
 
-            if not self.cap.isOpened():
-                logger.error("GStreamer pipeline failed to open")
-                return False
+                logger.info("USB camera opened successfully")
 
-            logger.info("GStreamer pipeline opened successfully")
+                # Set manual camera properties if needed for USB camera
+                if self.manual_gain is not None:
+                    # Note: USB cameras may use different property IDs
+                    # Try to set gain if supported
+                    try:
+                        self.cap.set(cv2.CAP_PROP_GAIN, self.manual_gain)
+                        logger.info(f"Set USB camera gain to {self.manual_gain}")
+                    except:
+                        logger.warning("Could not set gain on USB camera")
+            else:
+                logger.info(f"Using OpenCV with GStreamer support for CSI camera {self.device_id}")
+
+                # Build GStreamer pipeline with optional gain control for CSI camera
+                pipeline_parts = [f"nvarguscamerasrc sensor-id={self.device_id}"]
+
+                # Add manual gain control if specified
+                if self.manual_gain is not None:
+                    pipeline_parts.append(f'gainrange="{self.manual_gain} {self.manual_gain}"')
+                    pipeline_parts.append("aelock=true")  # Lock auto-exposure for consistent capture
+                    pipeline_parts.append("awblock=true")  # Lock auto-white-balance
+                    logger.info(f"Setting manual gain: {self.manual_gain} with locked exposure and white balance")
+
+                # Complete the pipeline
+                gstreamer_pipeline = (
+                    " ".join(pipeline_parts) + " ! "
+                    "nvvidconv ! video/x-raw,format=I420 ! "
+                    "videoconvert ! video/x-raw,format=BGR ! "
+                    "appsink drop=1"
+                )
+
+                logger.info(f"Pipeline: {gstreamer_pipeline}")
+                self.cap = cv2.VideoCapture(gstreamer_pipeline, cv2.CAP_GSTREAMER)
+
+                if not self.cap.isOpened():
+                    logger.error("GStreamer pipeline failed to open")
+                    return False
+
+                logger.info("GStreamer pipeline opened successfully")
 
             # Get camera resolution
             self.camera_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -220,6 +259,7 @@ class DiffusionPatternCapture:
         led_count: Optional[int] = None,
         debug_mode: bool = False,
         manual_gain: Optional[float] = None,
+        use_usb: bool = False,
     ):
         """
         Initialize diffusion pattern capture.
@@ -237,6 +277,7 @@ class DiffusionPatternCapture:
             led_count: Number of LEDs to capture (default: LED_COUNT from config)
             debug_mode: Debug mode - only capture LEDs with physical index multiples of 100
             manual_gain: Manual camera gain value for consistent LED capture (from led_gain_calibrator.py)
+            use_usb: Use USB camera instead of CSI camera
         """
         self.wled_host = wled_host
         self.wled_port = wled_port
@@ -262,7 +303,7 @@ class DiffusionPatternCapture:
         self.wled_client = WLEDClient(wled_config)
 
         # Initialize camera
-        self.camera = CameraCapture(camera_device, crop_region, flip_image, manual_gain)
+        self.camera = CameraCapture(camera_device, crop_region, flip_image, manual_gain, use_usb)
 
         # Determine output dtype based on precision and format
         if use_uint8:
@@ -340,6 +381,10 @@ class DiffusionPatternCapture:
                     capture_count += 1
 
                     logger.info(f"Capturing LED {led_idx}, Channel {channel_idx} ({capture_count}/{total_captures})")
+
+                    # Ensure all LEDs are off before lighting the next one (reduce persistence)
+                    self.wled_client.set_solid_color(0, 0, 0)
+                    time.sleep(0.1)  # Gap to allow LED persistence to fade
 
                     # Create LED data array (all off except current LED/channel)
                     led_data = np.zeros((self.led_count, 3), dtype=np.uint8)
@@ -771,214 +816,10 @@ class DiffusionPatternCapture:
         logger.info("RCM reordering completed")
         return reordered_tensor, led_spatial_mapping
 
-    def _generate_dia_matrix(self) -> DiagonalATAMatrix:
-        """
-        Generate DiagonalATAMatrix from captured mixed tensor.
-
-        Returns:
-            DiagonalATAMatrix object with 3D DIA format
-        """
-        logger.info("Building DiagonalATAMatrix from captured patterns...")
-
-        # Determine output dtype based on precision
-        if self.use_uint8:
-            output_dtype = cp.float32  # Computation in fp32, storage in uint8
-        elif self.precision == "fp16":
-            output_dtype = cp.float16
-        else:
-            output_dtype = cp.float32
-
-        # Create DiagonalATAMatrix instance
-        dia_matrix = DiagonalATAMatrix(self.led_count, crop_size=self.block_size, output_dtype=output_dtype)
-
-        # For captured data, we need to compute A^T @ A from actual diffusion patterns
-        # This requires converting the mixed tensor to a sparse matrix first
-        logger.info("Converting mixed tensor to sparse matrix for DIA matrix computation...")
-
-        # Convert mixed tensor to equivalent sparse CSC matrix
-        sparse_matrix = self._mixed_tensor_to_sparse_matrix()
-
-        # Build DIA matrix from sparse matrix - this now uses proper diagonal filtering
-        dia_matrix.build_from_diffusion_matrix(sparse_matrix)
-
-        logger.info(
-            f"DiagonalATAMatrix built: {self.led_count} LEDs, bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
-        )
-
-        return dia_matrix
-
-    def _generate_dense_ata_matrix(self) -> DenseATAMatrix:
-        """
-        Generate DenseATAMatrix from captured mixed tensor.
-
-        Returns:
-            DenseATAMatrix object
-        """
-        logger.info("Building DenseATAMatrix from captured patterns...")
-
-        # Determine dtypes based on precision
-        if self.precision == "fp16":
-            # Mixed precision: FP16 storage, FP32 computation
-            storage_dtype = cp.float16
-            output_dtype = cp.float32
-            logger.info("Using mixed precision: FP16 storage with FP32 computation")
-        else:
-            # Standard FP32 for both storage and computation
-            storage_dtype = cp.float32
-            output_dtype = cp.float32
-            logger.info("Using FP32 storage and computation")
-
-        # Create DenseATAMatrix instance
-        dense_matrix = DenseATAMatrix(
-            led_count=self.led_count, channels=3, storage_dtype=storage_dtype, output_dtype=output_dtype
-        )
-
-        # Convert mixed tensor to sparse matrix for computation
-        logger.info("Converting mixed tensor to sparse matrix for dense ATA computation...")
-        sparse_matrix = self._mixed_tensor_to_sparse_matrix()
-
-        # Build dense matrix from sparse matrix
-        dense_matrix.build_from_diffusion_matrix(sparse_matrix)
-
-        logger.info(f"DenseATAMatrix built: {self.led_count} LEDs, {dense_matrix.memory_mb:.1f}MB")
-        return dense_matrix
-
-    def _choose_ata_format(self) -> str:
-        """
-        Choose optimal ATA matrix format based on captured pattern characteristics.
-
-        Returns:
-            "dia" for diagonal format, "dense" for dense format
-        """
-        # For format selection, we need to estimate the bandwidth from LED positions
-        # Import the function to calculate block positions
-
-        # Calculate block positions for captured LEDs
-        block_positions = calculate_block_positions(self.led_positions, self.block_size, FRAME_WIDTH, FRAME_HEIGHT)
-
-        # Estimate bandwidth using RCM ordering
-        _, _, expected_diagonals = compute_rcm_ordering(block_positions, self.block_size)
-
-        # Heuristics for format selection (similar to synthetic generator):
-        # - Use dense if bandwidth > 80% of matrix size
-        # - Use dense if expected diagonals > LED count (very dense)
-        # - For captured patterns, be more conservative since they tend to be denser
-
-        bandwidth_ratio = expected_diagonals / (2 * self.led_count - 1) if self.led_count > 1 else 1.0
-
-        # Memory estimates (rough)
-        dia_memory_mb = (3 * expected_diagonals * self.led_count * 4) / (1024 * 1024)  # FP32
-        dense_memory_mb = (3 * self.led_count * self.led_count * 4) / (1024 * 1024)  # FP32
-
-        logger.info("ATA format selection analysis for captured patterns:")
-        logger.info(f"  LED count: {self.led_count}")
-        logger.info(f"  Expected diagonals: {expected_diagonals}")
-        logger.info(f"  Bandwidth ratio: {bandwidth_ratio:.3f}")
-        logger.info(f"  Estimated DIA memory: {dia_memory_mb:.1f}MB")
-        logger.info(f"  Estimated dense memory: {dense_memory_mb:.1f}MB")
-
-        # Decision logic - captured patterns tend to be denser, so use lower thresholds
-        if bandwidth_ratio > 0.6:  # Lower threshold for captured data
-            format_choice = "dense"
-            reason = f"High bandwidth ratio ({bandwidth_ratio:.3f} > 0.6)"
-        elif expected_diagonals > self.led_count * 0.8:  # More conservative threshold
-            format_choice = "dense"
-            reason = f"Many diagonals ({expected_diagonals} > {self.led_count * 0.8:.0f})"
-        elif self.led_count < 1000:  # Lower threshold for small matrices
-            format_choice = "dense"
-            reason = f"Small matrix ({self.led_count} LEDs)"
-        elif dense_memory_mb < dia_memory_mb * 1.5:  # Dense is only 50% more memory
-            format_choice = "dense"
-            reason = f"Dense memory overhead acceptable ({dense_memory_mb:.1f}MB vs {dia_memory_mb:.1f}MB)"
-        else:
-            format_choice = "dia"
-            reason = "Sparse matrix benefits from DIA format"
-
-        logger.info(f"  Selected format: {format_choice.upper()} ({reason})")
-        return format_choice
-
-    def _mixed_tensor_to_sparse_matrix(self) -> sp.csc_matrix:
-        """
-        Convert mixed tensor to equivalent sparse CSC matrix for DIA matrix computation.
-
-        Returns:
-            Sparse CSC matrix (pixels, leds*3) equivalent to the mixed tensor
-        """
-        logger.info("Converting mixed tensor to sparse CSC matrix...")
-
-        # Prepare sparse matrix data structures
-        rows = []
-        cols = []
-        values = []
-
-        pixels_per_channel = FRAME_HEIGHT * FRAME_WIDTH
-
-        for led_id in range(self.led_count):
-            for channel in range(3):
-                try:
-                    # Get block position
-                    top_row, left_col = self.block_positions[led_id]
-
-                    # Get block from mixed tensor using get_block_info
-                    block_info = self.mixed_tensor.get_block_info(led_id, channel)
-                    block = block_info["values"]
-
-                    # Convert to numpy if needed
-                    if hasattr(block, "get"):  # CuPy array
-                        block_np = cp.asnumpy(block)
-                    else:
-                        block_np = block
-
-                    # Find non-zero elements in the block
-                    block_rows, block_cols = np.nonzero(block_np)
-
-                    # Convert block coordinates to global pixel coordinates
-                    for br, bc in zip(block_rows, block_cols):
-                        global_row = top_row + br
-                        global_col = left_col + bc
-
-                        # Check bounds
-                        if global_row < FRAME_HEIGHT and global_col < FRAME_WIDTH:
-                            # Flatten pixel index
-                            pixel_idx = global_row * FRAME_WIDTH + global_col
-
-                            # Column index for this LED/channel
-                            matrix_col_idx = led_id * 3 + channel
-
-                            # Value - normalize uint8 to [0,1] range if needed
-                            raw_value = float(block_np[br, bc])
-                            if self.use_uint8:
-                                # Mixed tensor stores uint8 [0,255], normalize to [0,1] for diffusion matrix
-                                value = raw_value / 255.0
-                            else:
-                                # Mixed tensor stores float32 [0,1], use directly
-                                value = raw_value
-
-                            rows.append(pixel_idx)
-                            cols.append(matrix_col_idx)
-                            values.append(value)
-
-                except Exception as e:
-                    logger.warning(f"Failed to process LED {led_id}, channel {channel}: {e}")
-                    continue
-
-        # Create CSC matrix
-        sparse_matrix = sp.csc_matrix(
-            (values, (rows, cols)),
-            shape=(pixels_per_channel, self.led_count * 3),
-            dtype=np.float32,
-        )
-
-        # Clean up
-        sparse_matrix.eliminate_zeros()
-        sparse_matrix = sparse_matrix.tocsc()
-
-        logger.info(f"Created sparse matrix: shape {sparse_matrix.shape}, nnz {sparse_matrix.nnz}")
-        return sparse_matrix
-
     def save_patterns(self, output_path: str) -> bool:
         """
-        Save captured diffusion patterns to file in modern mixed tensor format.
+        Save captured diffusion patterns in mixed tensor format.
+        Use tools/compute_matrices.py to generate ATA matrices afterward.
 
         Args:
             output_path: Path to save diffusion patterns (.npz format)
@@ -991,32 +832,14 @@ class DiffusionPatternCapture:
             output_dir = Path(output_path).parent
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Choose optimal ATA matrix format based on captured pattern characteristics
-            ata_format = self._choose_ata_format()
-
-            if ata_format == "dense":
-                # Generate DenseATAMatrix
-                logger.info("Generating DenseATAMatrix (dense format)...")
-                ata_matrix = self._generate_dense_ata_matrix()
-                save_dict_key = "dense_ata_matrix"
-            else:
-                # Generate DiagonalATAMatrix (DIA format)
-                logger.info("Generating DiagonalATAMatrix (DIA format)...")
-                ata_matrix = self._generate_dia_matrix()
-                save_dict_key = "dia_matrix"
-
-            # Prepare metadata matching synthetic generation tool format
+            # Prepare metadata
             save_metadata = {
                 "generator": "DiffusionPatternCapture",
-                "format": "led_diffusion_csc_with_mixed_tensor",
+                "format": "mixed_sparse_tensor",
                 "led_count": self.led_count,
                 "frame_width": FRAME_WIDTH,
                 "frame_height": FRAME_HEIGHT,
                 "channels": 3,
-                "matrix_shape": [FRAME_HEIGHT * FRAME_WIDTH, self.led_count * 3],  # Equivalent sparse matrix shape
-                "nnz": 0,  # Will be calculated if needed
-                "sparsity_percent": 0.0,  # Will be calculated if needed
-                "sparsity_threshold": 0.0,  # Not applicable for captured data
                 "generation_timestamp": time.time(),
                 "capture_fps": self.capture_fps,
                 "wled_host": self.wled_host,
@@ -1037,18 +860,16 @@ class DiffusionPatternCapture:
             for physical_id, spatial_index in self.led_spatial_mapping.items():
                 led_ordering[spatial_index] = physical_id
 
-            # Save everything in a single NPZ file (matching synthetic tool format)
+            # Save only essential data for matrix computation
             save_dict = {
                 # LED information
                 "led_positions": self.led_positions,
                 "led_spatial_mapping": self.led_spatial_mapping,
-                "led_ordering": led_ordering,  # New: spatial_index -> physical_led_id
+                "led_ordering": led_ordering,  # spatial_index -> physical_led_id
                 # Metadata
                 "metadata": save_metadata,
                 # Mixed tensor stored as nested element using to_dict()
                 "mixed_tensor": self.mixed_tensor.to_dict(),
-                # ATA matrix in chosen format
-                save_dict_key: ata_matrix.to_dict(),
             }
 
             np.savez_compressed(output_path, **save_dict)
@@ -1056,27 +877,14 @@ class DiffusionPatternCapture:
             # Log file info
             file_size = Path(output_path).stat().st_size / (1024 * 1024)  # MB
 
-            logger.info(f"Saved mixed tensor and {ata_format.upper()} ATA matrix to {output_path}")
+            logger.info(f"Saved mixed tensor format to {output_path}")
             logger.info(f"File size: {file_size:.1f} MB")
-            logger.info("Mixed tensor format: SingleBlockMixedSparseTensor")
-
-            if ata_format == "dense":
-                logger.info(f"Dense ATA matrix: {ata_matrix.led_count} LEDs, {ata_matrix.memory_mb:.1f}MB")
-            else:
-                logger.info(
-                    f"DIA matrix: {ata_matrix.led_count} LEDs, bandwidth={ata_matrix.bandwidth}, k={ata_matrix.k} diagonals"
-                )
             logger.info(
                 f"Mixed tensor: {self.mixed_tensor.batch_size} LEDs, "
                 f"{self.mixed_tensor.height}x{self.mixed_tensor.width}, "
                 f"{self.mixed_tensor.block_size}x{self.mixed_tensor.block_size} blocks"
             )
-            logger.info(
-                f"DIA matrix: {dia_matrix.led_count} LEDs, bandwidth={dia_matrix.bandwidth}, k={dia_matrix.k} diagonals"
-            )
-            storage_shape = dia_matrix.dia_data_cpu.shape if dia_matrix.dia_data_cpu is not None else "None"
-            logger.info(f"DIA matrix storage shape: {storage_shape}")
-            logger.info("Use compute_ata_inverse.py tool to add ATA inverse matrices for optimization")
+            logger.info("Use tools/compute_matrices.py to generate ATA matrices for optimization")
 
             return True
 
@@ -1099,9 +907,10 @@ class DiffusionPatternCapture:
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Capture LED diffusion patterns")
-    parser.add_argument("--wled-host", required=True, help="WLED controller hostname/IP")
-    parser.add_argument("--wled-port", type=int, default=21324, help="WLED controller port")
+    parser.add_argument("--wled-host", required=False, default="wled.local", help="WLED controller hostname/IP")
+    parser.add_argument("--wled-port", type=int, default=4048, help="WLED controller port")
     parser.add_argument("--camera-device", type=int, default=0, help="Camera device ID")
+    parser.add_argument("--usb", action="store_true", help="Use USB camera instead of CSI camera")
     parser.add_argument("--output", required=True, help="Output file path (.npz)")
     parser.add_argument("--capture-fps", type=float, default=10.0, help="Capture rate (fps)")
     parser.add_argument("--preview", action="store_true", help="Show live preview")
@@ -1132,6 +941,7 @@ def main():
     parser.add_argument(
         "--flip-image",
         action="store_true",
+        default=True,
         help="Flip image 180 degrees (for upside-down camera mounting)",
     )
     parser.add_argument(
@@ -1190,6 +1000,7 @@ def main():
     crop_region = None
     flip_image = args.flip_image
     led_count = args.led_count  # Use command line override or None for default
+    use_usb = args.usb  # Default from command line
 
     if args.camera_config:
         try:
@@ -1205,6 +1016,11 @@ def main():
             if crop_config:
                 crop_region = (crop_config["x"], crop_config["y"], crop_config["width"], crop_config["height"])
                 logger.info(f"Using crop region from config: {crop_region}")
+
+            # Check if config specifies USB camera
+            if camera_config.get("use_usb", False):
+                use_usb = True
+                logger.info("Using USB camera mode from config")
 
             logger.info(f"Loaded camera configuration from {args.camera_config}")
 
@@ -1231,6 +1047,7 @@ def main():
         led_count=led_count,
         debug_mode=args.debug_mode,
         manual_gain=args.gain,
+        use_usb=use_usb,
     )
 
     try:
@@ -1257,7 +1074,7 @@ def main():
             return 1
 
         logger.info("Diffusion pattern capture completed successfully!")
-        logger.info("Use compute_ata_inverse.py tool to add ATA inverse matrices for optimization")
+        logger.info("Use tools/compute_matrices.py to generate ATA matrices for optimization")
         return 0
 
     except KeyboardInterrupt:
