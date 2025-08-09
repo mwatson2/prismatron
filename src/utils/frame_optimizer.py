@@ -122,16 +122,16 @@ def optimize_frame_led_values(
         raise ValueError(f"Target frame must be int8 or uint8, got {target_frame.dtype}")
 
     # Handle both planar (3, H, W) and standard (H, W, 3) formats on GPU
-    if target_frame.shape == (3, 480, 800):
-        # Already in planar format - ensure uint8 and C-contiguous
+    if len(target_frame.shape) == 3 and target_frame.shape[0] == 3:
+        # Already in planar format - ensure uint8 and C-contiguous (3, H, W)
         target_planar_uint8 = cp.ascontiguousarray(target_frame.astype(cp.uint8))
-    elif target_frame.shape == (480, 800, 3):
-        # Convert from HWC to CHW planar format on GPU
+    elif len(target_frame.shape) == 3 and target_frame.shape[2] == 3:
+        # Convert from HWC to CHW planar format on GPU (H, W, 3) -> (3, H, W)
         target_planar_uint8 = cp.ascontiguousarray(
             target_frame.astype(cp.uint8).transpose(2, 0, 1)
-        )  # (H, W, 3) -> (3, H, W)
+        )
     else:
-        raise ValueError(f"Unsupported frame shape {target_frame.shape}, expected (3, 480, 800) or (480, 800, 3)")
+        raise ValueError(f"Unsupported frame shape {target_frame.shape}, expected (3, H, W) or (H, W, 3) format")
 
     debug and logger.info(f"Target frame shape: {target_planar_uint8.shape}, dtype: {target_planar_uint8.dtype}")
     debug and logger.info(f"Mixed tensor dtype: {at_matrix.dtype}")

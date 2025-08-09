@@ -109,6 +109,13 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
             output_dtype: Data type for output tensors (cupy.float32 recommended)
             use_experimental_kernel: Use experimental 8-frame kernel for testing (8-frame batches only)
         """
+        # CRITICAL: LED count must be multiple of 16 for batch tensor core operations
+        if led_count % 16 != 0:
+            raise ValueError(
+                f"LED count must be multiple of 16 for batch tensor core operations. "
+                f"Got {led_count}. Consider padding or use regular SymmetricDiagonalATAMatrix."
+            )
+            
         self.led_count = led_count
         self.crop_size = crop_size
         self.channels = 3  # RGB
@@ -219,23 +226,24 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
             )
 
     @staticmethod
-    def from_symmetric_diagonal_matrix(symmetric_matrix) -> "BatchSymmetricDiagonalATAMatrix":
+    def from_symmetric_diagonal_matrix(symmetric_matrix, batch_size: int = 16) -> "BatchSymmetricDiagonalATAMatrix":
         """
         Create batch version from symmetric diagonal ATA matrix.
 
         Args:
             symmetric_matrix: Instance of SymmetricDiagonalATAMatrix
+            batch_size: Batch size for processing (8 or 16)
 
         Returns:
             BatchSymmetricDiagonalATAMatrix with 16x16 block storage
         """
-        print("Converting SymmetricDiagonalATAMatrix to batch block storage...")
+        print(f"Converting SymmetricDiagonalATAMatrix to batch block storage (batch_size={batch_size})...")
 
         # Create batch instance
         batch_matrix = BatchSymmetricDiagonalATAMatrix(
             led_count=symmetric_matrix.led_count,
             crop_size=symmetric_matrix.crop_size,
-            batch_size=16,  # Default optimal batch size
+            batch_size=batch_size,  # Use specified batch size
             output_dtype=symmetric_matrix.output_dtype,
         )
 
