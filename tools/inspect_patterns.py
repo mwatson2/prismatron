@@ -163,6 +163,17 @@ def inspect_format_summary(data: Dict[str, Any]) -> None:
         memory_mb = dense_dict.get("memory_mb", "unknown")
         available_formats.append(f"Dense ATA ({led_count} LEDs, {memory_mb}MB)")
 
+    if "symmetric_dia_matrix" in data:
+        sym_dict = (
+            data["symmetric_dia_matrix"].item()
+            if hasattr(data["symmetric_dia_matrix"], "item")
+            else data["symmetric_dia_matrix"]
+        )
+        led_count = sym_dict.get("led_count", "unknown")
+        k_upper = sym_dict.get("k_upper", "unknown")
+        bandwidth = sym_dict.get("bandwidth", "unknown")
+        available_formats.append(f"Symmetric DIA ({led_count} LEDs, {k_upper} upper diagonals, bandwidth {bandwidth})")
+
     if "mixed_tensor" in data:
         tensor_dict = data["mixed_tensor"].item() if hasattr(data["mixed_tensor"], "item") else data["mixed_tensor"]
         batch_size = tensor_dict.get("batch_size", "unknown")
@@ -194,19 +205,22 @@ def inspect_format_summary(data: Dict[str, Any]) -> None:
     # Optimization readiness
     can_optimize_dia = "dia_matrix" in data and "mixed_tensor" in data
     can_optimize_dense = "dense_ata_matrix" in data and "mixed_tensor" in data
+    can_optimize_symmetric = "symmetric_dia_matrix" in data and "mixed_tensor" in data
 
-    if can_optimize_dia or can_optimize_dense:
+    if can_optimize_dia or can_optimize_dense or can_optimize_symmetric:
         print("  ✅ Ready for optimization")
         if can_optimize_dia:
             print("    - Can use DIA format optimization")
         if can_optimize_dense:
             print("    - Can use Dense format optimization")
+        if can_optimize_symmetric:
+            print("    - Can use Symmetric DIA format optimization")
     else:
         print("  ❌ Missing components for optimization")
         if "mixed_tensor" not in data:
             print("    - Missing mixed_tensor (A^T matrix)")
-        if "dia_matrix" not in data and "dense_ata_matrix" not in data:
-            print("    - Missing ATA matrix (dia_matrix or dense_ata_matrix)")
+        if "dia_matrix" not in data and "dense_ata_matrix" not in data and "symmetric_dia_matrix" not in data:
+            print("    - Missing ATA matrix (dia_matrix, dense_ata_matrix, or symmetric_dia_matrix)")
 
 
 def inspect_matrices(data: Dict[str, Any], verbose: bool = False) -> None:
@@ -258,6 +272,38 @@ def inspect_matrices(data: Dict[str, Any], verbose: bool = False) -> None:
         if verbose:
             print(f"    fields: {list(dense_dict.keys())}")
 
+    # Symmetric DIA matrix
+    if "symmetric_dia_matrix" in data:
+        sym_dict = (
+            data["symmetric_dia_matrix"].item()
+            if hasattr(data["symmetric_dia_matrix"], "item")
+            else data["symmetric_dia_matrix"]
+        )
+        print(f"  symmetric_dia_matrix: {len(sym_dict)} fields")
+        if "led_count" in sym_dict:
+            print(f"    led_count: {sym_dict['led_count']}")
+        if "channels" in sym_dict:
+            print(f"    channels: {sym_dict['channels']}")
+        if "k_upper" in sym_dict and "bandwidth" in sym_dict:
+            print(f"    upper_diagonals: {sym_dict['k_upper']}, bandwidth: {sym_dict['bandwidth']}")
+        if "original_k" in sym_dict:
+            original_k = sym_dict["original_k"]
+            k_upper = sym_dict.get("k_upper", 0)
+            if original_k and k_upper:
+                reduction = (1.0 - k_upper / original_k) * 100
+                print(f"    memory_reduction: {reduction:.1f}% less than full DIA ({k_upper}/{original_k})")
+        if "sparsity" in sym_dict:
+            print(f"    sparsity: {sym_dict['sparsity']:.3f}%")
+        if "nnz" in sym_dict:
+            print(f"    non_zeros: {sym_dict['nnz']:,}")
+        if "dia_data_gpu" in sym_dict:
+            dia_data = sym_dict["dia_data_gpu"]
+            memory_mb = dia_data.nbytes / (1024 * 1024)
+            print(f"    memory: {memory_mb:.1f} MB")
+            print(f"    storage_shape: {dia_data.shape}")
+        if verbose:
+            print(f"    fields: {list(sym_dict.keys())}")
+
     # ATA inverse
     if "ata_inverse" in data:
         ata_inv = data["ata_inverse"]
@@ -278,6 +324,18 @@ def inspect_matrices(data: Dict[str, Any], verbose: bool = False) -> None:
                 print(f"    successful_inversions: {meta['successful_inversions']}/3")
             if "avg_condition_number" in meta:
                 print(f"    avg_condition_number: {meta['avg_condition_number']:.2e}")
+
+        # Check for ATA computation metadata
+        if "ata_computation_metadata" in data:
+            comp_meta = (
+                data["ata_computation_metadata"].item()
+                if hasattr(data["ata_computation_metadata"], "item")
+                else data["ata_computation_metadata"]
+            )
+            if "total_computation_time" in comp_meta:
+                print(f"    total_computation_time: {comp_meta['total_computation_time']:.2f}s")
+            if "significance_threshold" in comp_meta:
+                print(f"    significance_threshold: {comp_meta['significance_threshold']}")
 
     # ATA inverse DIA
     if "ata_inverse_dia" in data:

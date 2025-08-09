@@ -1,0 +1,15 @@
+DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+DESKTOP_SESSION=ubuntu
+DISPLAY=:1
+GDMSESSION=ubuntu
+GNOME_DESKTOP_SESSION_ID=this-is-deprecated
+GNOME_SHELL_SESSION_MODE=ubuntu
+SESSION_MANAGER=local/prismatron:@/tmp/.ICE-unix/2568,unix/prismatron:/tmp/.ICE-unix/2568
+XDG_CONFIG_DIRS=/etc/xdg/xdg-ubuntu:/etc/xdg
+XDG_CURRENT_DESKTOP=ubuntu:GNOME
+XDG_DATA_DIRS=/usr/share/ubuntu:/usr/share/gnome:/usr/local/share/:/usr/share/:/var/lib/snapd/desktop
+XDG_MENU_PREFIX=gnome-
+XDG_RUNTIME_DIR=/run/user/1000
+XDG_SESSION_CLASS=user
+XDG_SESSION_DESKTOP=ubuntu
+XDG_SESSION_TYPE=x11

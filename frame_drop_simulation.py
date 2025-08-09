@@ -80,6 +80,8 @@ class FrameDropSimulation:
         buffer_capacity: int = 12,
         target_buffer_level: int = 10,
         use_pid_controller: bool = False,
+        batch_optimization: bool = False,
+        batch_size: int = 8,
     ):
         """
         Initialize the simulation.
@@ -90,12 +92,16 @@ class FrameDropSimulation:
             buffer_capacity: LED buffer capacity (max frames)
             target_buffer_level: Target buffer level for PID controller
             use_pid_controller: Whether to use PID controller (True) or legacy (False)
+            batch_optimization: Whether to use batch optimization (True) or single-frame (False)
+            batch_size: Number of frames to batch for optimization
         """
         self.producer_fps = producer_fps
         self.renderer_fps = renderer_fps
         self.buffer_capacity = buffer_capacity
         self.target_buffer_level = target_buffer_level
         self.use_pid_controller = use_pid_controller
+        self.batch_optimization = batch_optimization
+        self.batch_size = batch_size
 
         # Event queue
         self.event_queue: List[SimulationEvent] = []
@@ -108,6 +114,10 @@ class FrameDropSimulation:
         self.shared_buffer_capacity = 3
         self.next_frame_id = 0
 
+        # Batch optimization buffer
+        self.optimization_buffer: List[Frame] = []  # Accumulates frames for batch processing
+        self.batch_processing = False  # Flag to indicate batch is being processed
+
         # Renderer state
         self.renderer_state = "WAITING"
         self.renderer_clock_started = False
@@ -115,13 +125,21 @@ class FrameDropSimulation:
         self.target_frame_interval = 1.0 / self.producer_fps  # Frame interval based on producer fps
 
         # Optimization timing
-        self.optimization_duration = 1.0 / self.renderer_fps
+        if batch_optimization:
+            # Batch optimization: time for batch_size frames
+            self.optimization_duration = self.batch_size / self.renderer_fps
+        else:
+            # Single-frame optimization
+            self.optimization_duration = 1.0 / self.renderer_fps
 
         # Initialize adaptive frame dropper with balanced EWMA
+        # For batch optimization, use slower EWMA to avoid overreacting to oscillations
+        ewma_alpha = 0.01 if batch_optimization else 0.03
+
         if use_pid_controller:
             self.frame_dropper = AdaptiveFrameDropper(
                 led_buffer_capacity=buffer_capacity,
-                led_buffer_ewma_alpha=0.03,  # Balanced EWMA - responsive but still smoothing
+                led_buffer_ewma_alpha=ewma_alpha,  # Slower for batch, balanced for single-frame
                 max_drop_rate=0.66,
                 use_pid_controller=True,
                 kp=1.0,  # Start with Kp-only
@@ -132,7 +150,7 @@ class FrameDropSimulation:
         else:
             self.frame_dropper = AdaptiveFrameDropper(
                 led_buffer_capacity=buffer_capacity,
-                led_buffer_ewma_alpha=0.03,  # Balanced EWMA - responsive but still smoothing
+                led_buffer_ewma_alpha=ewma_alpha,  # Slower for batch, balanced for single-frame
                 max_drop_rate=0.66,
                 use_pid_controller=False,
                 target_buffer_level=target_buffer_level,  # Pass target buffer level for consistency
@@ -167,10 +185,15 @@ class FrameDropSimulation:
         self.last_logged_time = 0.0
         self.last_consumer_loop_time = 0.0
 
+        # Batch optimization tracking
+        self.batch_completions = 0
+        self.optimization_buffer_history: List[Tuple[float, int]] = []  # Track optimization buffer size
+
         logger.info(
             f"Simulation initialized: Producer={producer_fps}fps, "
             f"Renderer={renderer_fps}fps, Buffer={buffer_capacity}, "
-            f"Controller={'PID' if use_pid_controller else 'Legacy'}"
+            f"Controller={'PID' if use_pid_controller else 'Legacy'}, "
+            f"Batch={'Enabled' if batch_optimization else 'Disabled'}"
         )
 
     def schedule_event(self, timestamp: float, event_type: EventType, frame: Frame = None):
@@ -321,36 +344,172 @@ class FrameDropSimulation:
             self.schedule_event(self.current_time, EventType.CONSUMER_LOOP)
 
         else:
-            # Start optimization task (blocks consumer until complete)
-            frame.optimization_started = self.current_time
-            optimization_complete_time = self.current_time + self.optimization_duration
-            self.log_consumer_state(
-                "START_OPTIMIZATION",
-                loop_start_time,
-                {
-                    "frame_id": frame.frame_id,
-                    "led_buffer": len(self.led_buffer),
-                    "optimization_duration": self.optimization_duration,
-                },
-            )
-
-            # Log optimization start in steady state
-            if self.use_pid_controller and self.current_time > 50.0:
-                print(
-                    f"t={self.current_time:.3f}s: PUSHING_TO_OPTIMIZATION - frame_id={frame.frame_id}, will_complete_at={optimization_complete_time:.3f}s, led_buffer={len(self.led_buffer)}"
+            if self.batch_optimization:
+                # Add frame to optimization buffer
+                self.optimization_buffer.append(frame)
+                logger.debug(
+                    f"Frame {frame.frame_id} added to optimization buffer ({len(self.optimization_buffer)}/{self.batch_size})"
                 )
 
-            self.schedule_event(optimization_complete_time, EventType.OPTIMIZATION_COMPLETE, frame)
-            self.optimization_queue.append(frame)
-            logger.debug(
-                f"Frame {frame.frame_id} started optimization (will complete at {optimization_complete_time:.3f}s)"
-            )
-            # Consumer is BLOCKED until optimization completes - don't schedule next loop iteration
+                # Check if we have a full batch
+                if len(self.optimization_buffer) >= self.batch_size and not self.batch_processing:
+                    # Start batch optimization
+                    self.batch_processing = True
+                    batch_frames = self.optimization_buffer[: self.batch_size]
+                    self.optimization_buffer = self.optimization_buffer[self.batch_size :]
+
+                    # Mark start time for all frames in batch
+                    for bf in batch_frames:
+                        bf.optimization_started = self.current_time
+
+                    optimization_complete_time = self.current_time + self.optimization_duration
+
+                    self.log_consumer_state(
+                        "START_BATCH_OPTIMIZATION",
+                        loop_start_time,
+                        {
+                            "batch_size": len(batch_frames),
+                            "first_frame_id": batch_frames[0].frame_id,
+                            "last_frame_id": batch_frames[-1].frame_id,
+                            "led_buffer": len(self.led_buffer),
+                            "optimization_duration": self.optimization_duration,
+                        },
+                    )
+
+                    # Log batch optimization start in steady state
+                    if self.use_pid_controller and self.current_time > 50.0:
+                        print(
+                            f"t={self.current_time:.3f}s: BATCH_OPTIMIZATION_START - frames {batch_frames[0].frame_id}-{batch_frames[-1].frame_id}, will_complete_at={optimization_complete_time:.3f}s, led_buffer={len(self.led_buffer)}"
+                        )
+
+                    # Schedule batch completion event
+                    self.schedule_event(optimization_complete_time, EventType.OPTIMIZATION_COMPLETE, None)
+                    # Store batch in optimization queue
+                    self.optimization_queue.extend(batch_frames)
+
+                    # Consumer is BLOCKED until batch completes
+                else:
+                    # Not enough frames for batch yet, continue collecting
+                    self.log_consumer_state(
+                        "BUFFERING_FOR_BATCH",
+                        loop_start_time,
+                        {
+                            "frame_id": frame.frame_id,
+                            "optimization_buffer_size": len(self.optimization_buffer),
+                            "batch_size": self.batch_size,
+                        },
+                    )
+                    # Continue consumer loop immediately to collect more frames
+                    self.schedule_event(self.current_time, EventType.CONSUMER_LOOP)
+            else:
+                # Single-frame optimization (original logic)
+                frame.optimization_started = self.current_time
+                optimization_complete_time = self.current_time + self.optimization_duration
+                self.log_consumer_state(
+                    "START_OPTIMIZATION",
+                    loop_start_time,
+                    {
+                        "frame_id": frame.frame_id,
+                        "led_buffer": len(self.led_buffer),
+                        "optimization_duration": self.optimization_duration,
+                    },
+                )
+
+                # Log optimization start in steady state
+                if self.use_pid_controller and self.current_time > 50.0:
+                    print(
+                        f"t={self.current_time:.3f}s: PUSHING_TO_OPTIMIZATION - frame_id={frame.frame_id}, will_complete_at={optimization_complete_time:.3f}s, led_buffer={len(self.led_buffer)}"
+                    )
+
+                self.schedule_event(optimization_complete_time, EventType.OPTIMIZATION_COMPLETE, frame)
+                self.optimization_queue.append(frame)
+                logger.debug(
+                    f"Frame {frame.frame_id} started optimization (will complete at {optimization_complete_time:.3f}s)"
+                )
+                # Consumer is BLOCKED until optimization completes - don't schedule next loop iteration
 
     def handle_optimization_complete(self, frame: Frame):
         """Handle optimization task completion and resume consumer loop."""
         optimization_complete_start = self.current_time
-        frame.optimization_completed = self.current_time
+
+        if self.batch_optimization:
+            if frame is None:
+                # Initial batch optimization complete - process all frames in batch
+                self.batch_processing = False
+                self.batch_completions += 1
+
+                # Get all frames from optimization queue (should be batch_size frames)
+                batch_frames = []
+                while self.optimization_queue and len(batch_frames) < self.batch_size:
+                    bf = self.optimization_queue.pop(0)
+                    bf.optimization_completed = self.current_time
+                    batch_frames.append(bf)
+            elif isinstance(frame, Frame) and frame in self.optimization_queue:
+                # Retry case - frames already marked as complete, just get them from queue
+                batch_frames = []
+                # Get frames up to the one we're retrying (they should be at front of queue)
+                while self.optimization_queue and self.optimization_queue[0].optimization_completed is not None:
+                    batch_frames.append(self.optimization_queue.pop(0))
+
+                if not batch_frames:
+                    # Something went wrong, just continue
+                    self.schedule_event(self.current_time, EventType.CONSUMER_LOOP)
+                    return
+            else:
+                # Unexpected case in batch mode
+                logger.error(f"Unexpected frame type in batch optimization complete: {type(frame)}")
+                self.schedule_event(self.current_time, EventType.CONSUMER_LOOP)
+                return
+
+            if self.use_pid_controller and self.current_time > 50.0:
+                print(
+                    f"t={self.current_time:.3f}s: BATCH_OPTIMIZATION_COMPLETE - {len(batch_frames)} frames, led_buffer={len(self.led_buffer)}"
+                )
+
+            # Try to add all batch frames to LED buffer
+            frames_added = 0
+            frames_to_retry = []
+
+            for i, bf in enumerate(batch_frames):
+                if len(self.led_buffer) < self.buffer_capacity:
+                    bf.buffer_enter_time = self.current_time
+                    self.led_buffer.append(bf)
+                    frames_added += 1
+
+                    if self.use_pid_controller and self.current_time > 50.0:
+                        print(
+                            f"t={self.current_time:.3f}s: BATCH_FRAME_TO_LED - frame_id={bf.frame_id}, buffer_size={len(self.led_buffer)}"
+                        )
+                else:
+                    # Buffer full, save remaining frames for retry
+                    frames_to_retry = batch_frames[i:]
+                    break
+
+            # If some frames couldn't be added, put them back and retry
+            if frames_to_retry:
+                # Put frames back at front of optimization queue
+                for rf in reversed(frames_to_retry):
+                    self.optimization_queue.insert(0, rf)
+
+                # Schedule retry for remaining frames
+                self.schedule_event(self.current_time + 0.001, EventType.OPTIMIZATION_COMPLETE, frames_to_retry[0])
+                return
+
+            # Check if buffer reached target level for the first time
+            if len(self.led_buffer) >= self.target_buffer_level and not self.renderer_clock_started:
+                self.start_renderer()
+
+            # Consumer can continue after batch completion
+            self.schedule_event(self.current_time, EventType.CONSUMER_LOOP)
+            return
+
+        else:
+            # Single-frame optimization (original logic)
+            if frame is None:
+                logger.error("Unexpected None frame in single-frame optimization complete")
+                return
+
+            frame.optimization_completed = self.current_time
 
         # Remove from optimization queue
         if frame in self.optimization_queue:
@@ -453,6 +612,11 @@ class FrameDropSimulation:
         self.renderer_clock_started = True
         self.renderer_clock_start_time = self.current_time
 
+        # Initialize frame dropper EWMA to current buffer level to prevent startup spike
+        if hasattr(self, "frame_dropper") and self.frame_dropper.led_buffer_level_ewma == 0.0:
+            self.frame_dropper.led_buffer_level_ewma = float(len(self.led_buffer))
+            logger.info(f"Initialized frame dropper EWMA to {len(self.led_buffer)} at renderer start")
+
         logger.info(
             f"Renderer STARTED at t={self.current_time:.3f}s (buffer reached target level {self.target_buffer_level})"
         )
@@ -516,6 +680,10 @@ class FrameDropSimulation:
         """Record current system state for analysis."""
         # Record instantaneous buffer size
         self.buffer_size_history.append((self.current_time, len(self.led_buffer)))
+
+        # Record optimization buffer size for batch mode
+        if self.batch_optimization:
+            self.optimization_buffer_history.append((self.current_time, len(self.optimization_buffer)))
 
         # Get frame dropper statistics
         stats = self.frame_dropper.get_stats()
@@ -1241,12 +1409,125 @@ Utilization Stats:
     axes[2].axis("off")
 
 
-def main():
-    """Run the fixed simulation comparison."""
-    # Test with 2 minutes simulation
-    legacy_sim, pid_sim = run_comparison(producer_fps=24.0, renderer_fps=15.0, duration=120.0)  # 2 minutes
+def run_batch_optimization_test(duration=120.0):
+    """Test single-frame optimization with higher input rate."""
+    print("🎯 Single-Frame Optimization Test")
+    print("Producer: 15fps, Consumer: 15fps, Single-frame processing")
+    print("Expected drop rate: ~0% (equal rates)")
+    print("=" * 70)
 
-    return legacy_sim, pid_sim
+    # Run single-frame optimization simulation
+    print("\nRunning Single-Frame Optimization with PID Controller...")
+    batch_sim = FrameDropSimulation(
+        producer_fps=15.0,  # Equal rate test
+        renderer_fps=15.0,  # Consumer optimization rate
+        buffer_capacity=12,  # Same buffer size for comparison
+        target_buffer_level=8,  # Target at middle of expected range
+        use_pid_controller=True,
+        batch_optimization=False,  # Single-frame mode
+        batch_size=8,  # Not used in single-frame mode
+    )
+
+    # Restore original working PID settings for single-frame mode
+    batch_sim.frame_dropper.kp = 1.0  # Original working Kp
+    batch_sim.frame_dropper.ki = 0.3  # Original working Ki
+    batch_sim.frame_dropper.kd = 2.0  # Original working Kd
+
+    # Note: EWMA can be faster for single-frame since no batch oscillations
+    print("Note: Using original working PID settings (Kp=1.0, Ki=0.3, Kd=2.0)")
+
+    batch_sim.run_simulation(duration)
+
+    # Analyze oscillation patterns
+    if batch_sim.buffer_size_history:
+        buffer_sizes = [size for _, size in batch_sim.buffer_size_history]
+        steady_state_start = int(0.5 * len(buffer_sizes))  # Last 50% for steady state
+        steady_state_sizes = buffer_sizes[steady_state_start:]
+
+        print(f"\n=== BATCH OPTIMIZATION ANALYSIS ===")
+        print(f"Batch completions: {batch_sim.batch_completions}")
+        print(f"Buffer oscillation range: {min(steady_state_sizes)}-{max(steady_state_sizes)} frames")
+        print(f"Average buffer level: {np.mean(steady_state_sizes):.1f} frames")
+        print(f"Buffer std deviation: {np.std(steady_state_sizes):.2f} frames")
+
+        # Check optimization buffer behavior
+        if batch_sim.optimization_buffer_history:
+            opt_buffer_sizes = [size for _, size in batch_sim.optimization_buffer_history]
+            print(f"Optimization buffer range: 0-{max(opt_buffer_sizes)} frames")
+
+    # Generate plots for batch optimization
+    plot_batch_optimization(batch_sim)
+
+    return batch_sim
+
+
+def plot_batch_optimization(sim):
+    """Generate plots for batch optimization analysis."""
+    fig, axes = plt.subplots(3, 1, figsize=(14, 10))
+
+    # LED Buffer levels with expected oscillation range
+    if sim.buffer_size_history and sim.ewma_buffer_history:
+        times_inst, sizes_inst = zip(*sim.buffer_size_history)
+        times_ewma, sizes_ewma = zip(*sim.ewma_buffer_history)
+
+        axes[0].plot(times_inst, sizes_inst, color="blue", linewidth=1, alpha=0.5, label="LED Buffer")
+        axes[0].plot(times_ewma, sizes_ewma, color="blue", linewidth=2, label="LED Buffer EWMA")
+        axes[0].axhline(y=8, color="green", linestyle="--", alpha=0.7, label="Target (8)")
+        axes[0].axhline(y=4, color="orange", linestyle=":", alpha=0.5, label="Expected Min (4)")
+        axes[0].axhline(y=12, color="gray", linestyle="--", alpha=0.7, label="Capacity (12)")
+        axes[0].set_title("LED Buffer Levels with Batch Optimization")
+        axes[0].set_ylabel("Buffer Size (frames)")
+        axes[0].set_xlabel("Time (s)")
+        axes[0].grid(True, alpha=0.3)
+        axes[0].legend()
+        axes[0].set_ylim(-0.5, 12.5)
+
+    # Optimization buffer accumulation pattern
+    if sim.optimization_buffer_history:
+        times_opt, sizes_opt = zip(*sim.optimization_buffer_history)
+        axes[1].plot(times_opt, sizes_opt, color="purple", linewidth=1, label="Optimization Buffer")
+        axes[1].axhline(y=8, color="red", linestyle="--", alpha=0.7, label="Batch Size (8)")
+        axes[1].set_title("Optimization Buffer Accumulation Pattern")
+        axes[1].set_ylabel("Buffer Size (frames)")
+        axes[1].set_xlabel("Time (s)")
+        axes[1].grid(True, alpha=0.3)
+        axes[1].legend()
+        axes[1].set_ylim(-0.5, 10)
+
+    # Drop rate over time
+    if sim.drop_rate_history:
+        times, rates = zip(*sim.drop_rate_history)
+        axes[2].plot(times, [r * 100 for r in rates], color="red", linewidth=2, label="Target Drop Rate")
+
+        # With 24fps->15fps, we expect 37.5% dropping
+        expected_drop = max(0, 1 - 15.0 / 24.0) * 100  # (24-15)/24 = 37.5%
+        axes[2].axhline(
+            y=expected_drop, color="green", linestyle="--", alpha=0.7, label=f"Expected ({expected_drop:.1f}%)"
+        )
+        axes[2].set_title("Adaptive Drop Rate")
+        axes[2].set_ylabel("Drop Rate (%)")
+        axes[2].set_xlabel("Time (s)")
+        axes[2].grid(True, alpha=0.3)
+        axes[2].legend()
+        axes[2].set_ylim(-5, 30)
+
+    plt.suptitle(
+        f"Single-Frame Optimization Analysis\n" f"Producer: 24fps, Consumer: 15fps, Single-frame processing",
+        fontsize=16,
+    )
+
+    plt.tight_layout()
+    plt.savefig("single_frame_analysis.png", dpi=150, bbox_inches="tight")
+    print("\nSingle-frame analysis plot saved to single_frame_analysis.png")
+    plt.show()
+
+
+def main():
+    """Run the batch optimization test."""
+    # Test batch optimization scenario
+    batch_sim = run_batch_optimization_test(duration=120.0)
+
+    return batch_sim
 
 
 if __name__ == "__main__":

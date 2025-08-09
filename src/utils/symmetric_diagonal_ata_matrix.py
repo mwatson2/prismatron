@@ -19,6 +19,36 @@ import numpy as np
 
 from .base_ata_matrix import BaseATAMatrix
 
+
+def _extract_diagonal(matrices: np.ndarray, offset: int) -> np.ndarray:
+    """
+    Extract a diagonal from 3D matrices using straightforward indexing.
+
+    For a matrix A, diagonal at offset k contains elements A[i, i+k] where i+k < matrix_size.
+    For symmetric matrices, we only need upper diagonals (offset >= 0).
+
+    Args:
+        matrices: 3D array of shape (channels, led_count, led_count)
+        offset: Diagonal offset (0 = main diagonal, 1 = first upper diagonal, etc.)
+
+    Returns:
+        Diagonal elements of shape (channels, diagonal_length)
+    """
+    channels, led_count, _ = matrices.shape
+    diagonal_length = led_count - offset
+
+    if diagonal_length <= 0:
+        return np.zeros((channels, 0), dtype=matrices.dtype)
+
+    # Extract diagonal elements for all channels using fancy indexing
+    row_indices = np.arange(diagonal_length)
+    col_indices = row_indices + offset
+
+    diagonal = matrices[:, row_indices, col_indices]  # Shape: (channels, diagonal_length)
+
+    return diagonal
+
+
 # Import symmetric custom DIA kernels
 try:
     from .kernels.symmetric_dia_kernel import SymmetricCustomDIA3DMatVec
@@ -124,6 +154,105 @@ class SymmetricDiagonalATAMatrix(BaseATAMatrix):
                     )
         else:
             raise TypeError(f"{tensor_name} must be cupy.ndarray, got {type(tensor)}")
+
+    @staticmethod
+    def from_dense(
+        dense_ata_matrices: np.ndarray, led_count: int, significance_threshold: float = 0.01, crop_size: int = 64
+    ) -> "SymmetricDiagonalATAMatrix":
+        """
+        Create SymmetricDiagonalATAMatrix directly from dense ATA matrices.
+
+        This method extracts diagonals directly from dense matrices using a simple
+        and straightforward approach, avoiding scipy sparse matrix conversion issues.
+
+        Args:
+            dense_ata_matrices: Dense ATA matrices of shape (channels, led_count, led_count)
+            led_count: Number of LEDs
+            significance_threshold: Threshold for filtering small values (relative to max value)
+            crop_size: Crop size for metadata
+
+        Returns:
+            SymmetricDiagonalATAMatrix instance
+        """
+        print(f"Creating SymmetricDiagonalATAMatrix from dense matrices ({led_count} LEDs)...")
+
+        if dense_ata_matrices.shape != (3, led_count, led_count):
+            raise ValueError(
+                f"Expected dense_ata_matrices shape (3, {led_count}, {led_count}), got {dense_ata_matrices.shape}"
+            )
+
+        # Apply significance threshold to all channels
+        thresholded_matrices = np.zeros_like(dense_ata_matrices)
+        for c in range(3):
+            max_val = np.abs(dense_ata_matrices[c]).max()
+            threshold = max_val * significance_threshold
+            thresholded_matrices[c] = np.where(np.abs(dense_ata_matrices[c]) >= threshold, dense_ata_matrices[c], 0.0)
+            print(f"  Channel {c}: max={max_val:.6f}, threshold={threshold:.6f}")
+
+        # Find the maximum diagonal offset by checking from the top-right corner
+        # Start from the maximum possible offset (led_count-1) and work down
+        max_offset = -1
+
+        for offset in range(led_count - 1, -1, -1):  # From top-right to main diagonal
+            diagonal = _extract_diagonal(thresholded_matrices, offset)  # Shape: (3, diagonal_length)
+
+            # Check if any element in any channel is non-zero
+            if np.any(diagonal != 0):
+                max_offset = offset
+                break
+
+        if max_offset == -1:
+            # No non-zero diagonals found - create minimal matrix with just main diagonal
+            max_offset = 0
+            print("  Warning: No significant diagonals found, using only main diagonal")
+
+        print(f"  Maximum significant diagonal offset: {max_offset}")
+
+        # Create list of diagonal offsets from 0 to max_offset
+        dia_offsets_upper = np.arange(0, max_offset + 1, dtype=np.int32)
+        k_upper = len(dia_offsets_upper)
+
+        print(f"  Storing {k_upper} upper diagonals (offsets 0 to {max_offset})")
+
+        # Extract all diagonal data
+        dia_data_cpu = np.zeros((3, k_upper, led_count), dtype=np.float32)
+
+        total_nnz = 0
+        for i, offset in enumerate(dia_offsets_upper):
+            diagonal = _extract_diagonal(thresholded_matrices, offset)  # Shape: (3, diagonal_length)
+
+            # Store in DIA format: dia_data[c, i, j] represents matrix element (j-offset, j)
+            # For offset > 0, we need to shift the diagonal data to align with the column indices
+            for c in range(3):
+                diagonal_length = led_count - offset
+                if diagonal_length > 0:
+                    # In DIA format, diagonal data starts at column index = offset
+                    dia_data_cpu[c, i, offset : offset + diagonal_length] = diagonal[c]
+                    total_nnz += np.sum(diagonal[c] != 0)
+
+        # Create symmetric instance
+        symmetric = SymmetricDiagonalATAMatrix(led_count=led_count, crop_size=crop_size, output_dtype=cupy.float32)
+
+        # Set all the data
+        symmetric.k_upper = k_upper
+        symmetric.dia_offsets_upper = dia_offsets_upper
+        symmetric.bandwidth = max_offset
+        symmetric.nnz = total_nnz
+        symmetric.sparsity = (total_nnz / (3 * led_count * led_count)) * 100
+        symmetric.original_k = k_upper * 2 - 1  # Estimate full matrix diagonal count
+
+        # Convert to GPU
+        symmetric.dia_data_gpu = cupy.asarray(dia_data_cpu, dtype=cupy.float32)
+        symmetric.dia_offsets_upper_gpu = cupy.asarray(dia_offsets_upper, dtype=cupy.int32)
+
+        print("  Created symmetric DIA matrix:")
+        print(f"    Upper diagonals: {k_upper}")
+        print(f"    Bandwidth: {symmetric.bandwidth}")
+        print(f"    Total non-zeros: {total_nnz:,}")
+        print(f"    Sparsity: {symmetric.sparsity:.2f}%")
+        print(f"    GPU memory: {symmetric.dia_data_gpu.nbytes / (1024*1024):.1f} MB")
+
+        return symmetric
 
     @staticmethod
     def from_diagonal_ata_matrix(regular_matrix) -> "SymmetricDiagonalATAMatrix":

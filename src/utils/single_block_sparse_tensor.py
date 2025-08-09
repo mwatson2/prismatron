@@ -416,6 +416,108 @@ class SingleBlockMixedSparseTensor:
                 "The previous transpose_dot_product fallback has been removed."
             ) from e
 
+    def transpose_dot_product_3d_batch(
+        self, target_batch: cp.ndarray, output_dtype: Optional[cp.dtype] = None, planar_output: bool = False
+    ) -> cp.ndarray:
+        """
+        Compute batched A^T @ B operation where B contains multiple frames.
+
+        This method processes multiple input frames simultaneously using shared memory
+        optimization. Each CUDA block loads one LED pattern into shared memory
+        and reuses it for dot products against all frames.
+
+        Args:
+            target_batch: Target frames, shape (batch_frames, channels, height, width)
+            output_dtype: Desired output data type (cp.float32).
+                         If None, uses the instance's output_dtype setting.
+            planar_output: If True, return (batch_frames, channels, batch_size).
+                          If False, return (batch_frames, batch_size, channels).
+
+        Returns:
+            Result of batched A^T @ B, shape (batch_frames, batch_size, channels) if planar_output=False,
+            (batch_frames, channels, batch_size) if planar_output=True, with specified output dtype
+        """
+        batch_frames, channels_input, height_input, width_input = target_batch.shape
+
+        if channels_input != self.channels:
+            raise ValueError(f"target_batch channels {channels_input} != expected {self.channels}")
+
+        if height_input != self.height:
+            raise ValueError(f"target_batch height {height_input} != expected {self.height}")
+
+        if width_input != self.width:
+            raise ValueError(f"target_batch width {width_input} != expected {self.width}")
+
+        # MEMORY LAYOUT VALIDATION: Critical for kernel correctness and performance
+        self._validate_tensor_memory_layout(target_batch, "target_batch")
+        self._validate_tensor_memory_layout(self.sparse_values, "sparse_values")
+        self._validate_tensor_memory_layout(self.block_positions, "block_positions")
+
+        # Determine output dtype
+        if output_dtype is None:
+            output_dtype = self.output_dtype
+        else:
+            output_dtype = self._validate_output_dtype(output_dtype)
+
+        try:
+            # Route to appropriate kernel based on input dtype and desired output dtype
+            if self.dtype == cp.float32:
+                # Validate target dtype matches tensor dtype
+                if target_batch.dtype != cp.float32:
+                    raise ValueError(f"target_batch dtype {target_batch.dtype} must match tensor dtype {self.dtype}")
+
+                if output_dtype == cp.float32:
+                    from .kernels.compute_optimized_3d_batch import (
+                        cuda_transpose_dot_product_3d_batch_compute_optimized,
+                    )
+
+                    # Use fp32 -> fp32 batch compute-optimized CUDA kernel
+                    result = cuda_transpose_dot_product_3d_batch_compute_optimized(
+                        self.sparse_values,  # (channels, batch, H, W) - fp32
+                        self.block_positions,  # (channels, batch, 2) - int32
+                        target_batch,  # (batch_frames, channels, height, width) - fp32
+                        self.batch_size,
+                        self.channels,
+                        batch_frames,
+                        self.block_size,
+                        interleaved=not planar_output,  # Kernel parameter is inverse of planar_output
+                    )
+                else:
+                    raise ValueError(f"Unsupported output dtype {output_dtype} for FP32 input")
+
+            elif self.dtype == cp.uint8:
+                # Validate target dtype matches tensor dtype
+                if target_batch.dtype != cp.uint8:
+                    raise ValueError(f"target_batch dtype {target_batch.dtype} must match tensor dtype {self.dtype}")
+
+                if output_dtype == cp.float32:
+                    from .kernels.compute_optimized_3d_batch_int8 import (
+                        cuda_transpose_dot_product_3d_batch_compute_optimized_int8,
+                    )
+
+                    # Use uint8 -> fp32 batch compute-optimized CUDA kernel
+                    result = cuda_transpose_dot_product_3d_batch_compute_optimized_int8(
+                        self.sparse_values,  # (channels, batch, H, W) - uint8
+                        self.block_positions,  # (channels, batch, 2) - int32
+                        target_batch,  # (batch_frames, channels, height, width) - uint8
+                        self.batch_size,
+                        self.channels,
+                        batch_frames,
+                        self.block_size,
+                        interleaved=not planar_output,  # Kernel parameter is inverse of planar_output
+                    )
+                else:
+                    raise ValueError(f"Unsupported output dtype {output_dtype} for INT8 input")
+
+            else:
+                raise ValueError(f"Unsupported input dtype {self.dtype} for CUDA kernel")
+
+            return result
+
+        except ImportError as e:
+            logger.warning(f"3D batch CUDA kernel not available: {e}. No fallback available.")
+            raise ImportError("CUDA batch kernels are required for transpose_dot_product_3d_batch operation.") from e
+
     def forward_pass_3d(self, led_values: cp.ndarray) -> cp.ndarray:
         """
         Compute A @ x operation (forward pass) with LED values input.
@@ -889,7 +991,14 @@ class SingleBlockMixedSparseTensor:
                         overlap_j = values_j[local_r2_start:local_r2_end, local_c2_start:local_c2_end]
 
                         # Compute dot product: sum of element-wise multiplication
-                        dot_product = np.sum(overlap_i * overlap_j)
+                        # Handle uint8 -> fp32 conversion with proper scaling
+                        if self.dtype == cp.uint8:
+                            # Convert uint8 [0,255] to float [0,1] range
+                            overlap_i_float = overlap_i.astype(np.float32) / 255.0
+                            overlap_j_float = overlap_j.astype(np.float32) / 255.0
+                            dot_product = np.sum(overlap_i_float * overlap_j_float)
+                        else:
+                            dot_product = np.sum(overlap_i * overlap_j)
 
                         # Store in A^T A matrix
                         ata_matrix[led_i, led_j, channel] = dot_product

@@ -1,0 +1,22 @@
+{
+  "camera_device": 0,
+  "use_usb": true,
+  "camera_resolution": {
+    "width": 640,
+    "height": 480
+  },
+  "crop_region": {
+    "x": 0,
+    "y": 48,
+    "width": 640,
+    "height": 384
+  },
+  "target_resolution": {
+    "width": 800,
+    "height": 480
+  },
+  "aspect_ratio": {
+    "target": 1.6666666666666667,
+    "actual": 1.6666666666666667
+  }
+}

@@ -70,7 +70,7 @@ class AdaptiveFrameDropper:
         self.ewma_update_interval = 0.05  # Update every 50ms for true average tracking
         self.last_ewma_update_time = 0.0
         self.current_buffer_size = 0  # Track current buffer size for timer updates
-        
+
         # Adaptive EWMA state (starts "empty" and builds up weight)
         self.ewma_weighted_sum = 0.0  # Numerator: sum of α*(1-α)^i * x_i for i>=0
         self.ewma_total_weight = 0.0  # Denominator: sum of α*(1-α)^i for i>=0
@@ -183,17 +183,15 @@ class AdaptiveFrameDropper:
 
             # Adaptive EWMA: Build up weighted sum and total weight incrementally
             # This avoids assuming infinite past data and responds faster at startup
-            
+
             # Add current observation with weight α
             self.ewma_weighted_sum = (
-                (1 - self.led_buffer_ewma_alpha) * self.ewma_weighted_sum + 
-                self.led_buffer_ewma_alpha * self.current_buffer_size
-            )
+                1 - self.led_buffer_ewma_alpha
+            ) * self.ewma_weighted_sum + self.led_buffer_ewma_alpha * self.current_buffer_size
             self.ewma_total_weight = (
-                (1 - self.led_buffer_ewma_alpha) * self.ewma_total_weight + 
-                self.led_buffer_ewma_alpha
-            )
-            
+                1 - self.led_buffer_ewma_alpha
+            ) * self.ewma_total_weight + self.led_buffer_ewma_alpha
+
             # Calculate adaptive EWMA = weighted_sum / total_weight
             if self.ewma_total_weight > 0:
                 self.led_buffer_level_ewma = self.ewma_weighted_sum / self.ewma_total_weight
@@ -445,7 +443,7 @@ class AdaptiveFrameDropper:
         # Reset timer-based EWMA state
         self.last_ewma_update_time = 0.0
         self.current_buffer_size = 0
-        
+
         # Reset adaptive EWMA state
         self.ewma_weighted_sum = 0.0
         self.ewma_total_weight = 0.0

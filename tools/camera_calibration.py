@@ -34,14 +34,18 @@ logger = logging.getLogger(__name__)
 class CameraCalibration:
     """Interactive camera calibration tool."""
 
-    def __init__(self, camera_device: int = 0):
+    def __init__(self, camera_device: int = 0, use_usb: bool = False, resolution: Tuple[int, int] = (640, 480)):
         """
         Initialize camera calibration.
 
         Args:
             camera_device: Camera device ID
+            use_usb: Use USB camera instead of CSI camera
+            resolution: Camera resolution as (width, height) tuple
         """
         self.camera_device = camera_device
+        self.use_usb = use_usb
+        self.resolution = resolution
         self.cap: Optional[cv2.VideoCapture] = None
 
         # Camera properties
@@ -65,20 +69,61 @@ class CameraCalibration:
     def initialize(self) -> bool:
         """Initialize camera connection."""
         try:
-            # Use working GStreamer pipeline for NVIDIA Jetson cameras
-            gstreamer_pipeline = (
-                f"nvarguscamerasrc sensor-id={self.camera_device} ! " "nvvidconv ! video/x-raw, format=BGR ! appsink"
-            )
+            if self.use_usb:
+                width, height = self.resolution
+                logger.info(f"Using USB camera at /dev/video{self.camera_device}")
+                logger.info(f"Target resolution: {width}x{height}")
 
-            logger.info(f"Using GStreamer pipeline: {gstreamer_pipeline}")
-            self.cap = cv2.VideoCapture(gstreamer_pipeline, cv2.CAP_GSTREAMER)
+                # Use GStreamer with v4l2src for better control over resolution and format
+                gstreamer_pipeline = (
+                    f"v4l2src device=/dev/video{self.camera_device} ! "
+                    f"image/jpeg, width={width}, height={height}, framerate=30/1 ! "
+                    "jpegdec ! videoconvert ! video/x-raw, format=BGR ! appsink"
+                )
+                logger.info(f"Using GStreamer pipeline: {gstreamer_pipeline}")
+                self.cap = cv2.VideoCapture(gstreamer_pipeline, cv2.CAP_GSTREAMER)
 
-            if not self.cap.isOpened():
-                logger.error("GStreamer pipeline failed to open")
-                logger.error("Make sure nvarguscamerasrc is available and camera is not in use")
-                return False
+                if not self.cap.isOpened():
+                    logger.warning("GStreamer MJPEG pipeline failed, trying V4L2 backend")
+                    # Fallback to V4L2 with resolution setting
+                    self.cap = cv2.VideoCapture(self.camera_device, cv2.CAP_V4L2)
+                    if self.cap.isOpened():
+                        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+                        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+                        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 
-            logger.info("GStreamer pipeline opened successfully")
+                if not self.cap.isOpened():
+                    logger.warning("V4L2 backend failed, trying default backend")
+                    self.cap = cv2.VideoCapture(self.camera_device)
+                    if self.cap.isOpened():
+                        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+                        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+
+                if not self.cap.isOpened():
+                    logger.error(f"Failed to open USB camera at /dev/video{self.camera_device}")
+                    logger.error("Make sure the camera is connected and not in use")
+                    return False
+
+                # Verify actual resolution
+                actual_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                actual_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                logger.info(f"USB camera opened: {actual_width}x{actual_height}")
+            else:
+                # Use working GStreamer pipeline for NVIDIA Jetson CSI cameras
+                gstreamer_pipeline = (
+                    f"nvarguscamerasrc sensor-id={self.camera_device} ! "
+                    "nvvidconv ! video/x-raw, format=BGR ! appsink"
+                )
+
+                logger.info(f"Using GStreamer pipeline: {gstreamer_pipeline}")
+                self.cap = cv2.VideoCapture(gstreamer_pipeline, cv2.CAP_GSTREAMER)
+
+                if not self.cap.isOpened():
+                    logger.error("GStreamer pipeline failed to open")
+                    logger.error("Make sure nvarguscamerasrc is available and camera is not in use")
+                    return False
+
+                logger.info("GStreamer pipeline opened successfully")
 
             # Get camera resolution
             self.camera_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -86,9 +131,14 @@ class CameraCalibration:
 
             logger.info(f"Camera initialized: {self.camera_width}x{self.camera_height}")
 
-            # Set up mouse callback
-            cv2.namedWindow("Camera Calibration", cv2.WINDOW_NORMAL)
-            cv2.setMouseCallback("Camera Calibration", self._mouse_callback)
+            # Set up mouse callback only if not in headless mode
+            try:
+                cv2.namedWindow("Camera Calibration", cv2.WINDOW_NORMAL)
+                cv2.setMouseCallback("Camera Calibration", self._mouse_callback)
+                self.headless = False
+            except Exception as e:
+                logger.warning(f"Could not create window (headless mode): {e}")
+                self.headless = True
 
             return True
 
@@ -436,6 +486,7 @@ class CameraCalibration:
 
         config = {
             "camera_device": self.camera_device,
+            "use_usb": self.use_usb,
             "camera_resolution": {
                 "width": self.camera_width,
                 "height": self.camera_height,
@@ -460,7 +511,11 @@ def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Camera calibration for diffusion pattern capture")
     parser.add_argument("--camera-device", type=int, default=0, help="Camera device ID")
-    parser.add_argument("--output-config", help="Output configuration file path (.json)")
+    parser.add_argument("--usb", action="store_true", help="Use USB camera instead of CSI camera")
+    parser.add_argument("--resolution", default="1920x1080", help="Camera resolution (WxH), e.g. 1920x1080, 1280x720")
+    parser.add_argument("--list-resolutions", action="store_true", help="List supported camera resolutions and exit")
+    parser.add_argument("--output-config", default="camera.json", help="Output configuration file path (.json)")
+    parser.add_argument("--test-capture", action="store_true", help="Just test camera capture and save a frame")
     parser.add_argument(
         "--log-level",
         default="INFO",
@@ -476,14 +531,55 @@ def main():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
+    # Parse resolution
+    try:
+        width, height = map(int, args.resolution.split("x"))
+        resolution = (width, height)
+    except ValueError:
+        logger.error(f"Invalid resolution format: {args.resolution}. Use WxH format (e.g., 1280x720)")
+        return 1
+
+    # List resolutions if requested
+    if args.list_resolutions:
+        if args.usb:
+            print("Supported USB camera resolutions:")
+            print("MJPEG format (recommended for high resolution):")
+            print("  1920x1080 @ 30fps")
+            print("  1280x720 @ 30fps")
+            print("  1024x576 @ 30fps")
+            print("  800x600 @ 30fps")
+            print("  640x480 @ 30fps")
+            print("\nYUYV format (lower resolution but uncompressed):")
+            print("  1280x720 @ 10fps")
+            print("  800x600 @ 24fps")
+            print("  640x480 @ 30fps")
+        else:
+            print("CSI camera resolutions depend on your camera sensor.")
+            print("Common resolutions: 1920x1080, 1280x720, 640x480")
+        return 0
+
     # Create calibration tool
-    calibration = CameraCalibration(camera_device=args.camera_device)
+    calibration = CameraCalibration(camera_device=args.camera_device, use_usb=args.usb, resolution=resolution)
 
     try:
         # Initialize camera
         if not calibration.initialize():
             logger.error("Failed to initialize camera")
             return 1
+
+        # If test capture mode, just capture and save a frame
+        if args.test_capture:
+            logger.info("Test capture mode - capturing a frame")
+            ret, frame = calibration.cap.read()
+            if ret:
+                output_path = "test_capture.jpg"
+                cv2.imwrite(output_path, frame)
+                logger.info(f"Test frame saved to {output_path}")
+                logger.info(f"Frame shape: {frame.shape}")
+                return 0
+            else:
+                logger.error("Failed to capture test frame")
+                return 1
 
         # Run calibration
         config = calibration.run_calibration()
