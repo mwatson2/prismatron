@@ -546,23 +546,57 @@ class SingleBlockMixedSparseTensor:
                     raise ValueError(f"target_batch dtype {target_batch.dtype} must match tensor dtype {self.dtype}")
 
                 if output_dtype == cp.float32:
-                    # For now, use original batch kernel for uint8
-                    # TODO: Add warp-based uint8 kernel
-                    from .kernels.compute_optimized_3d_batch_int8 import (
-                        cuda_transpose_dot_product_3d_batch_compute_optimized_int8,
-                    )
+                    if use_warp_kernel:
+                        # Try to use optimized V3 uint8 kernel
+                        try:
+                            from .kernels.compute_optimized_3d_batch_v3_int8 import (
+                                cuda_transpose_dot_product_3d_batch_v3_int8,
+                            )
 
-                    # Use uint8 -> fp32 batch compute-optimized CUDA kernel
-                    result = cuda_transpose_dot_product_3d_batch_compute_optimized_int8(
-                        self.sparse_values,  # (channels, batch, H, W) - uint8
-                        self.block_positions,  # (channels, batch, 2) - int32
-                        target_batch,  # (batch_frames, channels, height, width) - uint8
-                        self.batch_size,
-                        self.channels,
-                        batch_frames,
-                        self.block_size,
-                        interleaved=not planar_output,  # Kernel parameter is inverse of planar_output
-                    )
+                            result = cuda_transpose_dot_product_3d_batch_v3_int8(
+                                self.sparse_values,  # (channels, batch, H, W) - uint8
+                                self.block_positions,  # (channels, batch, 2) - int32
+                                target_batch,  # (batch_frames, channels, height, width) - uint8
+                                self.batch_size,
+                                self.channels,
+                                batch_frames,
+                                self.block_size,
+                                interleaved=not planar_output,
+                                raw_output=False,  # fp32 output with 255² scaling
+                            )
+                        except (ImportError, ValueError) as e:
+                            # Fall back to original uint8 batch kernel
+                            logger.debug(f"V3 uint8 kernel not available or failed: {e}, using original batch kernel")
+                            from .kernels.compute_optimized_3d_batch_int8 import (
+                                cuda_transpose_dot_product_3d_batch_compute_optimized_int8,
+                            )
+
+                            result = cuda_transpose_dot_product_3d_batch_compute_optimized_int8(
+                                self.sparse_values,
+                                self.block_positions,
+                                target_batch,
+                                self.batch_size,
+                                self.channels,
+                                batch_frames,
+                                self.block_size,
+                                interleaved=not planar_output,
+                            )
+                    else:
+                        # Use original uint8 batch kernel
+                        from .kernels.compute_optimized_3d_batch_int8 import (
+                            cuda_transpose_dot_product_3d_batch_compute_optimized_int8,
+                        )
+
+                        result = cuda_transpose_dot_product_3d_batch_compute_optimized_int8(
+                            self.sparse_values,  # (channels, batch, H, W) - uint8
+                            self.block_positions,  # (channels, batch, 2) - int32
+                            target_batch,  # (batch_frames, channels, height, width) - uint8
+                            self.batch_size,
+                            self.channels,
+                            batch_frames,
+                            self.block_size,
+                            interleaved=not planar_output,  # Kernel parameter is inverse of planar_output
+                        )
                 else:
                     raise ValueError(f"Unsupported output dtype {output_dtype} for INT8 input")
 
