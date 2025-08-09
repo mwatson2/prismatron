@@ -509,34 +509,34 @@ class SymmetricDiagonalATAMatrix(BaseATAMatrix):
     ) -> cupy.ndarray:
         """
         Perform batched symmetric 3D DIA matrix-vector multiplication: (A^T)A @ led_values for multiple frames.
-        
+
         Processes a batch of frames simultaneously, computing (A^T A) @ x for each frame.
-        
+
         Args:
             led_values_batch: Batch of LED values (batch_size, channels, leds)
             use_custom_kernel: Whether to use custom symmetric kernels
             optimized_kernel: Whether to use optimized kernel variant
             output_dtype: Desired output data type (must be cupy.float32)
             debug_logging: Enable detailed logging
-            
+
         Returns:
             Result array (batch_size, channels, leds)
         """
         batch_size = led_values_batch.shape[0]
-        
+
         if led_values_batch.shape[1:] != (self.channels, self.led_count):
             raise ValueError(
                 f"LED values batch should be shape (batch_size, {self.channels}, {self.led_count}), "
                 f"got {led_values_batch.shape}"
             )
-        
+
         # Process each frame through the matrix
         result_batch = cupy.zeros_like(led_values_batch)
-        
+
         for frame_idx in range(batch_size):
             # Get LED values for this frame: (channels, leds)
             led_frame = led_values_batch[frame_idx]
-            
+
             # Apply matrix multiplication using existing 3D method
             result_batch[frame_idx] = self.multiply_3d(
                 led_frame,
@@ -545,9 +545,9 @@ class SymmetricDiagonalATAMatrix(BaseATAMatrix):
                 output_dtype=output_dtype,
                 debug_logging=debug_logging,
             )
-        
+
         return result_batch
-    
+
     def g_ata_g_batch_3d(
         self,
         gradient_batch: cupy.ndarray,
@@ -557,31 +557,31 @@ class SymmetricDiagonalATAMatrix(BaseATAMatrix):
     ) -> cupy.ndarray:
         """
         Compute g^T (A^T A) g for a batch of gradients using symmetric storage.
-        
+
         Args:
             gradient_batch: Batch of gradient arrays (batch_size, channels, leds)
             use_custom_kernel: Whether to use custom symmetric kernels
             optimized_kernel: Whether to use optimized kernel variant
             output_dtype: Desired output data type (must be cupy.float32)
-            
+
         Returns:
             Result array (batch_size, channels) - one value per channel per frame
         """
         batch_size = gradient_batch.shape[0]
-        
+
         if gradient_batch.shape[1:] != (self.channels, self.led_count):
             raise ValueError(
                 f"Gradient batch should be shape (batch_size, {self.channels}, {self.led_count}), "
                 f"got {gradient_batch.shape}"
             )
-        
+
         # Process each frame
         result_batch = cupy.zeros((batch_size, self.channels), dtype=cupy.float32)
-        
+
         for frame_idx in range(batch_size):
             # Get gradient for this frame: (channels, leds)
             gradient_frame = gradient_batch[frame_idx]
-            
+
             # Compute g^T @ (A^T A) @ g using existing method
             result_batch[frame_idx] = self.g_ata_g_3d(
                 gradient_frame,
@@ -589,7 +589,7 @@ class SymmetricDiagonalATAMatrix(BaseATAMatrix):
                 optimized_kernel=optimized_kernel,
                 output_dtype=output_dtype,
             )
-        
+
         return result_batch
 
     def get_info(self):

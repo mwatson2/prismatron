@@ -127,9 +127,7 @@ def optimize_frame_led_values(
         target_planar_uint8 = cp.ascontiguousarray(target_frame.astype(cp.uint8))
     elif len(target_frame.shape) == 3 and target_frame.shape[2] == 3:
         # Convert from HWC to CHW planar format on GPU (H, W, 3) -> (3, H, W)
-        target_planar_uint8 = cp.ascontiguousarray(
-            target_frame.astype(cp.uint8).transpose(2, 0, 1)
-        )
+        target_planar_uint8 = cp.ascontiguousarray(target_frame.astype(cp.uint8).transpose(2, 0, 1))
     else:
         raise ValueError(f"Unsupported frame shape {target_frame.shape}, expected (3, H, W) or (H, W, 3) format")
 

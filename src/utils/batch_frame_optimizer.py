@@ -56,7 +56,7 @@ def optimize_batch_frames_led_values(
 
     Args:
         target_frames: Target images (batch_size, 3, H, W) or (batch_size, H, W, 3) - GPU cupy array, uint8
-        at_matrix: A^T matrix for computing A^T @ b (SingleBlockMixedSparseTensor)  
+        at_matrix: A^T matrix for computing A^T @ b (SingleBlockMixedSparseTensor)
         ata_matrix: A^T A matrix for batch gradient computation (BatchSymmetricDiagonalATAMatrix)
         ata_inverse: A^T A inverse matrices (3, led_count, led_count) [REQUIRED]
         initial_values: Override for initial LED values (batch_size, 3, led_count) GPU array
@@ -81,29 +81,27 @@ def optimize_batch_frames_led_values(
 
     if target_frames.dtype != cp.uint8:
         raise ValueError(f"Target frames must be uint8, got {target_frames.dtype}")
-    
+
     # CRITICAL ALIGNMENT CHECKS for tensor core operations
     led_count = at_matrix.batch_size
-    
+
     # 1. LED count must be multiple of 16 for BatchSymmetricDiagonalATAMatrix
     if led_count % 16 != 0:
         raise ValueError(
             f"LED count must be multiple of 16 for batch tensor core operations. "
             f"Got {led_count}. Use regular SymmetricDiagonalATAMatrix for non-aligned counts."
         )
-    
+
     # 2. Validate that ata_matrix is the correct batch type
     if not isinstance(ata_matrix, BatchSymmetricDiagonalATAMatrix):
         raise TypeError(
             f"ata_matrix must be BatchSymmetricDiagonalATAMatrix for batch operations, "
             f"got {type(ata_matrix)}. Use regular optimize_frame_led_values for single frames."
         )
-    
-    # 3. Validate batch size matches matrix batch size  
+
+    # 3. Validate batch size matches matrix batch size
     if ata_matrix.batch_size != batch_size:
-        raise ValueError(
-            f"ATA matrix batch size ({ata_matrix.batch_size}) must match frame batch size ({batch_size})"
-        )
+        raise ValueError(f"ATA matrix batch size ({ata_matrix.batch_size}) must match frame batch size ({batch_size})")
 
     # Handle both planar (batch, 3, H, W) and standard (batch, H, W, 3) formats
     if len(target_frames.shape) == 4 and target_frames.shape[1] == 3:
@@ -112,20 +110,16 @@ def optimize_batch_frames_led_values(
         height, width = target_frames.shape[2], target_frames.shape[3]
     elif len(target_frames.shape) == 4 and target_frames.shape[3] == 3:
         # Convert from HWC to CHW planar format (8, H, W, 3) -> (8, 3, H, W)
-        target_batch_planar = cp.ascontiguousarray(
-            target_frames.transpose(0, 3, 1, 2)
-        )
+        target_batch_planar = cp.ascontiguousarray(target_frames.transpose(0, 3, 1, 2))
         height, width = target_frames.shape[1], target_frames.shape[2]
     else:
-        raise ValueError(
-            f"Unsupported frame shape {target_frames.shape}, expected (8, 3, H, W) or (8, H, W, 3)"
-        )
+        raise ValueError(f"Unsupported frame shape {target_frames.shape}, expected (8, 3, H, W) or (8, H, W, 3)")
 
     debug and logger.info(f"Target batch shape: {target_batch_planar.shape}")
 
     # Step 1: Calculate A^T @ b for batch using batch operation
     debug and logger.info("Computing A^T @ b for batch using batch kernel...")
-    
+
     # Use batch operation for all 8 frames at once
     # Returns shape (8, led_count, 3) with interleaved=False
     ATb_batch = at_matrix.transpose_dot_product_3d_batch(
@@ -133,11 +127,11 @@ def optimize_batch_frames_led_values(
         planar_output=False,  # Get (batch, leds, channels)
         use_warp_kernel=True,  # Use optimized V4 kernel for uint8
     )
-    
+
     # Transpose to (batch, channels, leds) for consistency
     ATb_batch = ATb_batch.transpose(0, 2, 1)  # (8, leds, 3) -> (8, 3, leds)
     led_count = ATb_batch.shape[2]
-    
+
     debug and logger.info(f"A^T @ b batch shape: {ATb_batch.shape}")
 
     # Step 2: Initialize LED values using ATA inverse
@@ -159,26 +153,26 @@ def optimize_batch_frames_led_values(
     else:
         # Use ATA inverse for optimal initialization: x_init = (A^T A)^-1 * A^T b
         debug and logger.info("Using ATA inverse for optimal batch initialization")
-        
+
         # Transfer to GPU for efficient computation
         ata_inverse_gpu = cp.asarray(ata_inverse)  # Shape: (3, led_count, led_count)
-        
+
         # Compute optimal initial guess for all frames and channels using efficient einsum
         # ata_inverse_gpu: (3, led_count, led_count) = (channels, i, j)
-        # ATb_batch: (batch_size, 3, led_count) = (batch, channels, j)  
+        # ATb_batch: (batch_size, 3, led_count) = (batch, channels, j)
         # Result: (batch_size, 3, led_count) = (batch, channels, i)
         led_values_batch = cp.einsum("cij,bcj->bci", ata_inverse_gpu, ATb_batch)
-        
+
         # Clamp to valid range [0, 1]
         led_values_batch = cp.clip(led_values_batch, 0.0, 1.0)
-        
+
         debug and logger.info("Batch initialization completed using ATA inverse")
 
     debug and logger.info(f"Initial LED values batch shape: {led_values_batch.shape}")
 
     # Step 3: Track MSE if requested
     mse_values = [] if track_mse_per_iteration else None
-    
+
     if track_mse_per_iteration:
         # Compute initial MSE for all frames
         initial_mse = _compute_batch_mse(led_values_batch, target_batch_planar, at_matrix)
@@ -191,61 +185,57 @@ def optimize_batch_frames_led_values(
     for iteration in range(max_iterations):
         # Process all 8 frames together using batch operations
         # led_values_batch: (8, 3, led_count)
-        
+
         # Use batch-specific methods based on batch size
         if batch_size == 8:
             # Compute ATA @ x for all frames and channels at once using 8-frame batch method
             ATA_x_batch = ata_matrix.multiply_batch8_3d(led_values_batch)  # (8, 3, led_count)
-            
+
             # Compute gradient: ATA @ x - ATb
             gradient_batch = ATA_x_batch - ATb_batch  # (8, 3, led_count)
-            
+
             # Compute step sizes for each frame
             # g^T @ g for each frame
             g_dot_g_batch = cp.sum(gradient_batch * gradient_batch, axis=(1, 2))  # (8,)
-            
+
             # Compute g^T @ ATA @ g for all frames at once using batch method
             g_ata_g_channels_batch = ata_matrix.g_ata_g_batch_3d(gradient_batch)  # (8, 3)
             # Sum across channels for each frame
             g_dot_ata_g_batch = cp.sum(g_ata_g_channels_batch, axis=1)  # (8,)
-            
+
         elif batch_size == 16:
             # Compute ATA @ x for all frames and channels at once using 16-frame batch method
             ATA_x_batch = ata_matrix.multiply_batch_3d(led_values_batch)  # (16, 3, led_count)
-            
+
             # Compute gradient: ATA @ x - ATb
             gradient_batch = ATA_x_batch - ATb_batch  # (16, 3, led_count)
-            
+
             # Compute step sizes for each frame
             # g^T @ g for each frame
             g_dot_g_batch = cp.sum(gradient_batch * gradient_batch, axis=(1, 2))  # (16,)
-            
+
             # Compute g^T @ ATA @ g for all frames at once using 16-frame batch method
             g_ata_g_channels_batch = ata_matrix.g_ata_g_batch_3d(gradient_batch)  # (16, 3)
             # Sum across channels for each frame
             g_dot_ata_g_batch = cp.sum(g_ata_g_channels_batch, axis=1)  # (16,)
-            
+
         else:
             raise ValueError(f"Unsupported batch size {batch_size}. Must be 8 or 16.")
-        
+
         # Compute step sizes with safety check
         step_sizes_batch = cp.where(
-            g_dot_ata_g_batch > 0,
-            step_size_scaling * g_dot_g_batch / g_dot_ata_g_batch,
-            0.01  # Fallback
+            g_dot_ata_g_batch > 0, step_size_scaling * g_dot_g_batch / g_dot_ata_g_batch, 0.01  # Fallback
         )
-        
+
         # Record average step size for debugging
         if debug and step_sizes is not None:
             step_sizes.append(float(cp.mean(step_sizes_batch)))
-        
+
         # Batch gradient descent step with projection to [0, 1]
         # Reshape step_sizes for broadcasting: (batch_size, 1, 1)
         step_sizes_reshaped = step_sizes_batch[:, cp.newaxis, cp.newaxis]
-        led_values_batch = cp.clip(
-            led_values_batch - step_sizes_reshaped * gradient_batch, 0, 1
-        )
-        
+        led_values_batch = cp.clip(led_values_batch - step_sizes_reshaped * gradient_batch, 0, 1)
+
         # Track MSE after this iteration if requested
         if track_mse_per_iteration:
             current_mse = _compute_batch_mse(led_values_batch, target_batch_planar, at_matrix)
@@ -289,36 +279,36 @@ def _compute_batch_mse(
 ) -> cp.ndarray:
     """
     Compute MSE for batch of frames.
-    
+
     Args:
         led_values_batch: LED values (batch_size, 3, led_count) in [0,1] range
         target_batch_planar: Target frames (batch_size, 3, 480, 800) uint8
         at_matrix: Mixed tensor for forward computation
-        
+
     Returns:
         MSE values for each frame (batch_size,)
     """
     batch_size = led_values_batch.shape[0]
     mse_values = cp.zeros(batch_size, dtype=cp.float32)
-    
+
     for frame_idx in range(batch_size):
         try:
             # Get LED values for this frame and transpose
             led_frame = led_values_batch[frame_idx].T  # (3, led_count) -> (led_count, 3)
-            
+
             # Forward pass
             rendered_gpu = at_matrix.forward_pass_3d(led_frame)  # (3, H, W)
-            
+
             # Convert target to [0,1] for comparison
             target_gpu = target_batch_planar[frame_idx].astype(cp.float32) / 255.0
-            
+
             # Compute MSE
             diff = rendered_gpu - target_gpu
             mse_values[frame_idx] = cp.mean(diff**2)
-            
+
         except Exception:
             mse_values[frame_idx] = float("inf")
-    
+
     return mse_values
 
 
@@ -330,13 +320,13 @@ def _compute_frame_error_metrics(
 ) -> Dict[str, float]:
     """
     Compute error metrics for a single frame.
-    
+
     Args:
         led_values: LED values (3, led_count) in [0,1] range - GPU array
         target_planar: Target frame (3, 480, 800) uint8 - GPU array
         at_matrix: Mixed tensor for forward computation
         debug: Enable debug output
-        
+
     Returns:
         Dictionary of error metrics
     """
@@ -344,21 +334,21 @@ def _compute_frame_error_metrics(
         # Forward pass: A @ led_values -> rendered_frame
         led_values_transposed = led_values.T  # (3, led_count) -> (led_count, 3)
         rendered_gpu = at_matrix.forward_pass_3d(led_values_transposed)  # (3, H, W)
-        
+
         # Convert target to [0,1] for comparison
         target_float32 = target_planar.astype(cp.float32) / 255.0
-        
+
         # Compute error metrics
         diff = rendered_gpu - target_float32
         mse = float(cp.mean(diff**2))
         mae = float(cp.mean(cp.abs(diff)))
-        
+
         # Peak signal-to-noise ratio
         if mse > 0:
             psnr = float(20 * np.log10(1.0 / np.sqrt(mse)))
         else:
             psnr = float("inf")
-        
+
         return {
             "mse": mse,
             "mae": mae,
@@ -366,7 +356,7 @@ def _compute_frame_error_metrics(
             "rendered_mean": float(cp.mean(rendered_gpu)),
             "target_mean": float(cp.mean(target_float32)),
         }
-        
+
     except Exception as e:
         debug and logger.error(f"Error computing metrics: {e}")
         return {"mse": float("inf"), "mae": float("inf"), "psnr": 0.0}

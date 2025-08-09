@@ -271,14 +271,14 @@ class SingleBlockMixedSparseTensor:
             raise ValueError(f"top_left_row {top_left_row} out of range [0, {self.height - self.block_size}]")
         if not (0 <= top_left_col <= self.width - self.block_size):
             raise ValueError(f"top_left_col {top_left_col} out of range [0, {self.width - self.block_size}]")
-        
+
         # CRITICAL: X coordinate (column) must be multiple of 4 for tensor core alignment
         if top_left_col % 4 != 0:
             raise ValueError(
                 f"Block X coordinate (top_left_col) must be multiple of 4 for tensor core alignment. "
                 f"Got {top_left_col} which is not divisible by 4."
             )
-        
+
         if values.shape != (self.block_size, self.block_size):
             raise ValueError(f"values shape {values.shape} != expected ({self.block_size}, {self.block_size})")
         if values.dtype != self.dtype:
@@ -320,7 +320,7 @@ class SingleBlockMixedSparseTensor:
             raise ValueError("Some row positions are out of bounds")
         if cp.any(cols < 0) or cp.any(cols > self.width - self.block_size):
             raise ValueError("Some column positions are out of bounds")
-        
+
         # CRITICAL: X coordinates (columns) must be multiples of 4 for tensor core alignment
         if cp.any(cols % 4 != 0):
             bad_cols = cp.unique(cols[cols % 4 != 0])

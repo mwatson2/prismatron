@@ -115,7 +115,7 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
                 f"LED count must be multiple of 16 for batch tensor core operations. "
                 f"Got {led_count}. Consider padding or use regular SymmetricDiagonalATAMatrix."
             )
-            
+
         self.led_count = led_count
         self.crop_size = crop_size
         self.channels = 3  # RGB
@@ -357,10 +357,16 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
 
             # Fill from element diagonals
             for diag_idx, offset in enumerate(dia_offsets_upper):
-                diag_data = cupy.asnumpy(dia_data_gpu[channel, diag_idx, : self.led_count])
+                # FIXED: SymmetricDiagonalATAMatrix stores diagonal data starting at column index = offset
+                # So we need to read from the correct slice of the data array
+                diagonal_length = self.led_count - offset
+                if diagonal_length > 0:
+                    diag_data = cupy.asnumpy(dia_data_gpu[channel, diag_idx, offset : offset + diagonal_length])
+                else:
+                    diag_data = np.array([])
 
                 # Fill upper diagonal
-                for i in range(self.led_count):
+                for i in range(diagonal_length):
                     j = i + offset
                     if j < self.led_count:
                         dense_matrix[i, j] = diag_data[i]
