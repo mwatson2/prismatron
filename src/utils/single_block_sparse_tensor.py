@@ -547,40 +547,79 @@ class SingleBlockMixedSparseTensor:
 
                 if output_dtype == cp.float32:
                     if use_warp_kernel:
-                        # Try to use optimized V3 uint8 kernel
-                        try:
-                            from .kernels.compute_optimized_3d_batch_v3_int8 import (
-                                cuda_transpose_dot_product_3d_batch_v3_int8,
-                            )
+                        # Use V4 kernel for production scale (3008 LEDs) - 3.35x speedup
+                        if self.batch_size >= 2000:
+                            try:
+                                from .kernels.compute_optimized_3d_batch_v4_int8 import (
+                                    cuda_transpose_dot_product_3d_batch_v4_int8,
+                                )
 
-                            result = cuda_transpose_dot_product_3d_batch_v3_int8(
-                                self.sparse_values,  # (channels, batch, H, W) - uint8
-                                self.block_positions,  # (channels, batch, 2) - int32
-                                target_batch,  # (batch_frames, channels, height, width) - uint8
-                                self.batch_size,
-                                self.channels,
-                                batch_frames,
-                                self.block_size,
-                                interleaved=not planar_output,
-                                raw_output=False,  # fp32 output with 255² scaling
-                            )
-                        except (ImportError, ValueError) as e:
-                            # Fall back to original uint8 batch kernel
-                            logger.debug(f"V3 uint8 kernel not available or failed: {e}, using original batch kernel")
-                            from .kernels.compute_optimized_3d_batch_int8 import (
-                                cuda_transpose_dot_product_3d_batch_compute_optimized_int8,
-                            )
+                                result = cuda_transpose_dot_product_3d_batch_v4_int8(
+                                    self.sparse_values,  # (channels, batch, H, W) - uint8
+                                    self.block_positions,  # (channels, batch, 2) - int32
+                                    target_batch,  # (batch_frames, channels, height, width) - uint8
+                                    self.batch_size,
+                                    self.channels,
+                                    batch_frames,
+                                    self.block_size,
+                                    interleaved=not planar_output,
+                                    raw_output=False,  # fp32 output with 255² scaling
+                                )
+                            except (ImportError, ValueError) as e:
+                                logger.debug(f"V4 uint8 kernel not available: {e}, falling back to V3")
+                                # Fall back to V3 kernel
+                                from .kernels.compute_optimized_3d_batch_v3_int8 import (
+                                    cuda_transpose_dot_product_3d_batch_v3_int8,
+                                )
 
-                            result = cuda_transpose_dot_product_3d_batch_compute_optimized_int8(
-                                self.sparse_values,
-                                self.block_positions,
-                                target_batch,
-                                self.batch_size,
-                                self.channels,
-                                batch_frames,
-                                self.block_size,
-                                interleaved=not planar_output,
-                            )
+                                result = cuda_transpose_dot_product_3d_batch_v3_int8(
+                                    self.sparse_values,  # (channels, batch, H, W) - uint8
+                                    self.block_positions,  # (channels, batch, 2) - int32
+                                    target_batch,  # (batch_frames, channels, height, width) - uint8
+                                    self.batch_size,
+                                    self.channels,
+                                    batch_frames,
+                                    self.block_size,
+                                    interleaved=not planar_output,
+                                    raw_output=False,  # fp32 output with 255² scaling
+                                )
+                        else:
+                            # Try to use optimized V3 uint8 kernel for smaller systems
+                            try:
+                                from .kernels.compute_optimized_3d_batch_v3_int8 import (
+                                    cuda_transpose_dot_product_3d_batch_v3_int8,
+                                )
+
+                                result = cuda_transpose_dot_product_3d_batch_v3_int8(
+                                    self.sparse_values,  # (channels, batch, H, W) - uint8
+                                    self.block_positions,  # (channels, batch, 2) - int32
+                                    target_batch,  # (batch_frames, channels, height, width) - uint8
+                                    self.batch_size,
+                                    self.channels,
+                                    batch_frames,
+                                    self.block_size,
+                                    interleaved=not planar_output,
+                                    raw_output=False,  # fp32 output with 255² scaling
+                                )
+                            except (ImportError, ValueError) as e:
+                                # Fall back to original uint8 batch kernel
+                                logger.debug(
+                                    f"V3 uint8 kernel not available or failed: {e}, using original batch kernel"
+                                )
+                                from .kernels.compute_optimized_3d_batch_int8 import (
+                                    cuda_transpose_dot_product_3d_batch_compute_optimized_int8,
+                                )
+
+                                result = cuda_transpose_dot_product_3d_batch_compute_optimized_int8(
+                                    self.sparse_values,
+                                    self.block_positions,
+                                    target_batch,
+                                    self.batch_size,
+                                    self.channels,
+                                    batch_frames,
+                                    self.block_size,
+                                    interleaved=not planar_output,
+                                )
                     else:
                         # Use original uint8 batch kernel
                         from .kernels.compute_optimized_3d_batch_int8 import (
