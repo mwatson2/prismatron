@@ -417,7 +417,11 @@ class SingleBlockMixedSparseTensor:
             ) from e
 
     def transpose_dot_product_3d_batch(
-        self, target_batch: cp.ndarray, output_dtype: Optional[cp.dtype] = None, planar_output: bool = False
+        self,
+        target_batch: cp.ndarray,
+        output_dtype: Optional[cp.dtype] = None,
+        planar_output: bool = False,
+        use_warp_kernel: bool = True,
     ) -> cp.ndarray:
         """
         Compute batched A^T @ B operation where B contains multiple frames.
@@ -432,6 +436,8 @@ class SingleBlockMixedSparseTensor:
                          If None, uses the instance's output_dtype setting.
             planar_output: If True, return (batch_frames, channels, batch_size).
                           If False, return (batch_frames, batch_size, channels).
+            use_warp_kernel: If True, use optimized warp-based kernel for better performance.
+                            If False, use original batch kernel.
 
         Returns:
             Result of batched A^T @ B, shape (batch_frames, batch_size, channels) if planar_output=False,
@@ -467,21 +473,70 @@ class SingleBlockMixedSparseTensor:
                     raise ValueError(f"target_batch dtype {target_batch.dtype} must match tensor dtype {self.dtype}")
 
                 if output_dtype == cp.float32:
-                    from .kernels.compute_optimized_3d_batch import (
-                        cuda_transpose_dot_product_3d_batch_compute_optimized,
-                    )
+                    if use_warp_kernel:
+                        # Try to use optimized kernels
+                        try:
+                            from .kernels.compute_optimized_3d_batch_v2 import (
+                                cuda_transpose_dot_product_3d_batch_v2,
+                                cuda_transpose_dot_product_3d_batch_warp,
+                            )
 
-                    # Use fp32 -> fp32 batch compute-optimized CUDA kernel
-                    result = cuda_transpose_dot_product_3d_batch_compute_optimized(
-                        self.sparse_values,  # (channels, batch, H, W) - fp32
-                        self.block_positions,  # (channels, batch, 2) - int32
-                        target_batch,  # (batch_frames, channels, height, width) - fp32
-                        self.batch_size,
-                        self.channels,
-                        batch_frames,
-                        self.block_size,
-                        interleaved=not planar_output,  # Kernel parameter is inverse of planar_output
-                    )
+                            # Use V2 kernel for small batches, warp kernel for larger ones
+                            if batch_frames < 8:
+                                result = cuda_transpose_dot_product_3d_batch_v2(
+                                    self.sparse_values,
+                                    self.block_positions,
+                                    target_batch,
+                                    self.batch_size,
+                                    self.channels,
+                                    batch_frames,
+                                    self.block_size,
+                                    interleaved=not planar_output,
+                                )
+                            else:
+                                result = cuda_transpose_dot_product_3d_batch_warp(
+                                    self.sparse_values,
+                                    self.block_positions,
+                                    target_batch,
+                                    self.batch_size,
+                                    self.channels,
+                                    batch_frames,
+                                    self.block_size,
+                                    interleaved=not planar_output,
+                                )
+                        except ImportError:
+                            # Fall back to original batch kernel if v2 not available
+                            logger.debug("Warp-based kernel not available, using original batch kernel")
+                            from .kernels.compute_optimized_3d_batch import (
+                                cuda_transpose_dot_product_3d_batch_compute_optimized,
+                            )
+
+                            result = cuda_transpose_dot_product_3d_batch_compute_optimized(
+                                self.sparse_values,
+                                self.block_positions,
+                                target_batch,
+                                self.batch_size,
+                                self.channels,
+                                batch_frames,
+                                self.block_size,
+                                interleaved=not planar_output,
+                            )
+                    else:
+                        from .kernels.compute_optimized_3d_batch import (
+                            cuda_transpose_dot_product_3d_batch_compute_optimized,
+                        )
+
+                        # Use fp32 -> fp32 batch compute-optimized CUDA kernel
+                        result = cuda_transpose_dot_product_3d_batch_compute_optimized(
+                            self.sparse_values,  # (channels, batch, H, W) - fp32
+                            self.block_positions,  # (channels, batch, 2) - int32
+                            target_batch,  # (batch_frames, channels, height, width) - fp32
+                            self.batch_size,
+                            self.channels,
+                            batch_frames,
+                            self.block_size,
+                            interleaved=not planar_output,  # Kernel parameter is inverse of planar_output
+                        )
                 else:
                     raise ValueError(f"Unsupported output dtype {output_dtype} for FP32 input")
 
@@ -491,6 +546,8 @@ class SingleBlockMixedSparseTensor:
                     raise ValueError(f"target_batch dtype {target_batch.dtype} must match tensor dtype {self.dtype}")
 
                 if output_dtype == cp.float32:
+                    # For now, use original batch kernel for uint8
+                    # TODO: Add warp-based uint8 kernel
                     from .kernels.compute_optimized_3d_batch_int8 import (
                         cuda_transpose_dot_product_3d_batch_compute_optimized_int8,
                     )
