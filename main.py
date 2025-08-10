@@ -136,16 +136,27 @@ class ProcessManager:
                 """Playlist sync service worker."""
                 try:
                     # Setup logging for subprocess
+                    import os
+
                     from src.utils.logging_utils import create_app_time_formatter
 
-                    formatter = create_app_time_formatter()
-                    handler = logging.StreamHandler()
-                    handler.setFormatter(formatter)
+                    # Clear any existing handlers
+                    root_logger = logging.getLogger()
+                    root_logger.handlers = []
 
-                    logging.basicConfig(
-                        level=logging.INFO,
-                        handlers=[handler],
-                    )
+                    formatter = create_app_time_formatter()
+
+                    # Create both console and file handlers
+                    console_handler = logging.StreamHandler()
+                    console_handler.setFormatter(formatter)
+
+                    log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prismatron.log")
+                    file_handler = logging.FileHandler(log_file_path, mode="a")
+                    file_handler.setFormatter(formatter)
+
+                    root_logger.setLevel(logging.INFO if not self.config.get("debug") else logging.DEBUG)
+                    root_logger.addHandler(console_handler)
+                    root_logger.addHandler(file_handler)
 
                     # Create and start playlist sync service
                     service = PlaylistSyncService()
@@ -182,16 +193,27 @@ class ProcessManager:
                 """Web server process worker."""
                 try:
                     # Setup logging for subprocess
+                    import os
+
                     from src.utils.logging_utils import create_app_time_formatter
 
-                    formatter = create_app_time_formatter()
-                    handler = logging.StreamHandler()
-                    handler.setFormatter(formatter)
+                    # Clear any existing handlers
+                    root_logger = logging.getLogger()
+                    root_logger.handlers = []
 
-                    logging.basicConfig(
-                        level=logging.INFO,
-                        handlers=[handler],
-                    )
+                    formatter = create_app_time_formatter()
+
+                    # Create both console and file handlers
+                    console_handler = logging.StreamHandler()
+                    console_handler.setFormatter(formatter)
+
+                    log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prismatron.log")
+                    file_handler = logging.FileHandler(log_file_path, mode="a")
+                    file_handler.setFormatter(formatter)
+
+                    root_logger.setLevel(logging.INFO if not self.config.get("debug") else logging.DEBUG)
+                    root_logger.addHandler(console_handler)
+                    root_logger.addHandler(file_handler)
 
                     # Signal ready
                     self.web_server_ready.set()
@@ -226,10 +248,27 @@ class ProcessManager:
                 """Consumer process worker."""
                 try:
                     # Setup logging for subprocess
-                    logging.basicConfig(
-                        level=logging.INFO,
-                        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                    )
+                    import os
+
+                    from src.utils.logging_utils import create_app_time_formatter
+
+                    # Clear any existing handlers
+                    root_logger = logging.getLogger()
+                    root_logger.handlers = []
+
+                    formatter = create_app_time_formatter()
+
+                    # Create both console and file handlers
+                    console_handler = logging.StreamHandler()
+                    console_handler.setFormatter(formatter)
+
+                    log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prismatron.log")
+                    file_handler = logging.FileHandler(log_file_path, mode="a")
+                    file_handler.setFormatter(formatter)
+
+                    root_logger.setLevel(logging.INFO if not self.config.get("debug") else logging.DEBUG)
+                    root_logger.addHandler(console_handler)
+                    root_logger.addHandler(file_handler)
 
                     # Create consumer with configuration
                     consumer = ConsumerProcess(
@@ -285,16 +324,27 @@ class ProcessManager:
                 """Producer process worker."""
                 try:
                     # Setup logging for subprocess
+                    import os
+
                     from src.utils.logging_utils import create_app_time_formatter
 
-                    formatter = create_app_time_formatter()
-                    handler = logging.StreamHandler()
-                    handler.setFormatter(formatter)
+                    # Clear any existing handlers
+                    root_logger = logging.getLogger()
+                    root_logger.handlers = []
 
-                    logging.basicConfig(
-                        level=logging.INFO,
-                        handlers=[handler],
-                    )
+                    formatter = create_app_time_formatter()
+
+                    # Create both console and file handlers
+                    console_handler = logging.StreamHandler()
+                    console_handler.setFormatter(formatter)
+
+                    log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prismatron.log")
+                    file_handler = logging.FileHandler(log_file_path, mode="a")
+                    file_handler.setFormatter(formatter)
+
+                    root_logger.setLevel(logging.INFO if not self.config.get("debug") else logging.DEBUG)
+                    root_logger.addHandler(console_handler)
+                    root_logger.addHandler(file_handler)
 
                     # Create producer
                     producer = ProducerProcess()
@@ -508,6 +558,10 @@ def setup_logging(debug: bool = False) -> None:
     # Create custom formatter with app time
     formatter = create_app_time_formatter()
 
+    # Get the root logger and clear any existing handlers
+    root_logger = logging.getLogger()
+    root_logger.handlers = []
+
     # Create handlers
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
@@ -515,10 +569,10 @@ def setup_logging(debug: bool = False) -> None:
     file_handler = logging.FileHandler(log_file)
     file_handler.setFormatter(formatter)
 
-    logging.basicConfig(
-        level=level,
-        handlers=[console_handler, file_handler],
-    )
+    # Set up the root logger
+    root_logger.setLevel(level)
+    root_logger.addHandler(console_handler)
+    root_logger.addHandler(file_handler)
 
     # Start log rotation service (checks every 5 minutes)
     if start_log_rotation(log_file, check_interval=300):
