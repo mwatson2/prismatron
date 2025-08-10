@@ -22,8 +22,6 @@ import requests
 from ..const import (
     DDP_HEADER_SIZE,
     DDP_MAX_DATA_PER_PACKET,
-    LED_COUNT,
-    LED_DATA_SIZE,
     WLED_DEFAULT_HOST,
     WLED_DEFAULT_PORT,
     WLED_MIN_FRAME_INTERVAL,
@@ -76,9 +74,9 @@ class TransmissionResult:
 class WLEDConfig:
     """Configuration for WLED controller communication."""
 
+    led_count: int  # Must be provided from pattern file
     host: str = WLED_DEFAULT_HOST
     port: int = WLED_DEFAULT_PORT
-    led_count: int = LED_COUNT
     timeout: float = WLED_TIMEOUT_SECONDS
     retry_count: int = WLED_RETRY_COUNT
     max_fps: float = 60.0  # Maximum frame rate

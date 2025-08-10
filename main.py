@@ -224,6 +224,7 @@ class ProcessManager:
                         port=self.config.get("web_port", 8000),
                         debug=self.config.get("debug", False),
                         patterns_path=self.config.get("diffusion_patterns_path"),
+                        led_count=self.config.get("led_count"),
                     )
 
                 except Exception as e:
@@ -280,6 +281,7 @@ class ProcessManager:
                         enable_position_shifting=self.config.get("enable_position_shifting", False),
                         max_shift_distance=self.config.get("max_shift_distance", 3),
                         shift_direction=self.config.get("shift_direction", "alternating"),
+                        enable_adaptive_frame_dropping=self.config.get("enable_adaptive_frame_dropping", True),
                     )
 
                     # Initialize consumer (WLED connection not required for startup)
@@ -623,6 +625,33 @@ def emergency_cleanup() -> None:
         pass  # Silently handle any errors
 
 
+def load_led_count_from_patterns(patterns_path: str) -> int:
+    """Load LED count from diffusion patterns file."""
+    import numpy as np
+
+    if not patterns_path or not os.path.exists(patterns_path):
+        raise ValueError(f"Pattern file not found: {patterns_path}")
+
+    try:
+        data = np.load(patterns_path, allow_pickle=True)
+        metadata = data.get("metadata")
+
+        if metadata is None:
+            raise ValueError("Pattern file is missing metadata")
+
+        metadata_item = metadata.item() if hasattr(metadata, "item") else metadata
+
+        if "led_count" not in metadata_item:
+            raise ValueError("Pattern file is missing required 'led_count' metadata")
+
+        led_count = int(metadata_item["led_count"])
+        logger.info(f"Loaded LED count from patterns: {led_count}")
+        return led_count
+
+    except Exception as e:
+        raise ValueError(f"Failed to load LED count from patterns file: {e}")
+
+
 def main():
     """Main entry point."""
 
@@ -650,6 +679,11 @@ def main():
         choices=["left", "right", "alternating"],
         help="Position shift direction (default: alternating)",
     )
+    parser.add_argument(
+        "--no-adaptive-dropping",
+        action="store_true",
+        help="Disable adaptive frame dropping for LED buffer management",
+    )
 
     args = parser.parse_args()
 
@@ -658,6 +692,15 @@ def main():
 
     # Register emergency cleanup for all exit scenarios
     atexit.register(emergency_cleanup)
+
+    # Load LED count from patterns file if provided
+    led_count = None
+    if args.diffusion_patterns:
+        try:
+            led_count = load_led_count_from_patterns(args.diffusion_patterns)
+        except ValueError as e:
+            logger.error(f"Failed to load LED count: {e}")
+            sys.exit(1)
 
     # Create configuration
     config = {
@@ -668,11 +711,13 @@ def main():
         "wled_port": args.wled_port,
         "default_content_dir": args.content_dir,
         "diffusion_patterns_path": args.diffusion_patterns,
+        "led_count": led_count,  # Add LED count to config
         "timing_log_path": args.timing_log,
         "enable_batch_mode": args.batch_mode,
         "enable_position_shifting": args.position_shifting,
         "max_shift_distance": args.max_shift_distance,
         "shift_direction": args.shift_direction,
+        "enable_adaptive_frame_dropping": not args.no_adaptive_dropping,  # Invert the flag
     }
 
     logger.info("Starting Prismatron LED Display System")

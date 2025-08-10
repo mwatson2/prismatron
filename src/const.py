@@ -41,8 +41,8 @@ METADATA_DTYPE: np.dtype = np.dtype(
 )
 
 # LED Hardware Configuration
-LED_COUNT = 3008  # Total number of RGB LEDs in the display (updated to match diffusion patterns)
-LED_DATA_SIZE = LED_COUNT * 3  # RGB data size in bytes
+# LED count is now read dynamically from pattern files
+# Different pattern files may have different LED counts (e.g., 2624, 3008)
 
 # WLED Communication Configuration
 WLED_DEFAULT_HOST = "wled.local"  # Default WLED controller hostname

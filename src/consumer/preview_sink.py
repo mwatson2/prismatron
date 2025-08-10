@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from ..const import LED_COUNT, LED_DATA_SIZE
+# LED count will be provided during initialization
 
 logger = logging.getLogger(__name__)
 
@@ -154,14 +154,17 @@ class PreviewSink:
     and stores them in shared memory for the web server to read.
     """
 
-    def __init__(self, config: Optional[PreviewSinkConfig] = None):
+    def __init__(self, led_count: int, config: Optional[PreviewSinkConfig] = None):
         """
         Initialize preview sink.
 
         Args:
+            led_count: Number of LEDs (required - must be provided from pattern file)
             config: Preview sink configuration
         """
         self.config = config or PreviewSinkConfig()
+        self.led_count = led_count
+        self.led_data_size = led_count * 3
 
         # Statistics tracking
         self.stats = PreviewSinkStatistics(alpha=self.config.update_ewma_alpha)
@@ -194,10 +197,10 @@ class PreviewSink:
         """Calculate required shared memory size."""
         # Memory layout:
         # - Header (64 bytes): timestamp, frame_counter, led_count, padding
-        # - LED data (LED_COUNT * 3 bytes): RGB values in physical order
+        # - LED data (led_count * 3 bytes): RGB values in physical order
         # - Statistics (1024 bytes): JSON-encoded statistics
         header_size = 64
-        led_data_size = LED_DATA_SIZE  # LED_COUNT * 3
+        led_data_size = self.led_data_size
         stats_size = 1024
 
         total_size = header_size + led_data_size + stats_size
@@ -271,11 +274,13 @@ class PreviewSink:
             self.shared_memory_map = mmap.mmap(self.shared_memory_fd, self.shared_memory_size)
 
             # Initialize header
-            self._write_header(timestamp=time.time(), frame_counter=0, led_count=LED_COUNT, rendering_index=-1)
+            self._write_header(timestamp=time.time(), frame_counter=0, led_count=self.led_count, rendering_index=-1)
 
             # Zero out LED data section
             led_data_offset = 64
-            self.shared_memory_map[led_data_offset : led_data_offset + LED_DATA_SIZE] = b"\x00" * LED_DATA_SIZE
+            self.shared_memory_map[led_data_offset : led_data_offset + self.led_data_size] = (
+                b"\x00" * self.led_data_size
+            )
 
             # Initialize statistics
             self._write_statistics()
@@ -404,7 +409,7 @@ class PreviewSink:
                 # Update header
                 frame_counter = getattr(self, "_frame_counter", 0) + 1
                 self._frame_counter = frame_counter
-                self._write_header(start_time, frame_counter, LED_COUNT, rendering_index)
+                self._write_header(start_time, frame_counter, self.led_count, rendering_index)
 
                 # Write LED data (convert to uint8 and flatten)
                 led_data_uint8 = np.clip(led_values, 0, 255).astype(np.uint8)
@@ -452,7 +457,7 @@ class PreviewSink:
             {
                 "is_running": self.is_running,
                 "shared_memory_size": self.shared_memory_size,
-                "led_count": LED_COUNT,
+                "led_count": self.led_count,
                 "config": {
                     "shared_memory_name": self.config.shared_memory_name,
                     "update_ewma_alpha": self.config.update_ewma_alpha,
@@ -478,11 +483,11 @@ class PreviewSink:
             "shared_memory_name": self.config.shared_memory_name,
             "shared_memory_size": self.shared_memory_size,
             "led_data_offset": 64,
-            "led_data_size": LED_DATA_SIZE,
+            "led_data_size": self.led_data_size,
             "stats_offset": self.shared_memory_size - 128,
             "stats_size": 128,
             "header_format": "<ddii40x",  # timestamp, frame_counter, led_count, rendering_index, padding
-            "led_count": LED_COUNT,
+            "led_count": self.led_count,
         }
 
     def __enter__(self):
@@ -575,9 +580,9 @@ if __name__ == "__main__":
 
         while time.time() - start_time < args.test_duration:
             # Generate test LED data (rainbow pattern)
-            led_data = np.zeros((LED_COUNT, 3), dtype=np.float32)
-            for i in range(LED_COUNT):
-                hue = (i / LED_COUNT + (time.time() - start_time) * 0.1) % 1.0
+            led_data = np.zeros((self.led_count, 3), dtype=np.float32)
+            for i in range(self.led_count):
+                hue = (i / self.led_count + (time.time() - start_time) * 0.1) % 1.0
                 # Simple HSV to RGB conversion
                 led_data[i] = [
                     (

@@ -21,7 +21,7 @@ import cupy as cp
 import numpy as np
 import scipy.sparse as sp
 
-from ..const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
+from ..const import FRAME_HEIGHT, FRAME_WIDTH
 from ..utils.batch_frame_optimizer import BatchFrameOptimizationResult, optimize_batch_frames_led_values
 from ..utils.batch_symmetric_diagonal_ata_matrix import BatchSymmetricDiagonalATAMatrix
 from ..utils.dense_ata_matrix import DenseATAMatrix
@@ -138,7 +138,7 @@ class LEDOptimizer:
         self._led_spatial_mapping: Optional[Dict[int, int]] = None
         self._led_positions: Optional[np.ndarray] = None
         self._matrix_loaded = False
-        self._actual_led_count = LED_COUNT
+        self._actual_led_count = 0  # Will be set from pattern file
 
         # Statistics
         self._optimization_count = 0
@@ -515,7 +515,10 @@ class LEDOptimizer:
             metadata = data.get("metadata", {})
             if hasattr(metadata, "item"):
                 metadata = metadata.item()
-            self._actual_led_count = metadata.get("led_count", LED_COUNT)
+            if "led_count" not in metadata:
+                logger.error("Pattern file is missing required 'led_count' metadata")
+                return False
+            self._actual_led_count = metadata["led_count"]
             logger.info(f"Using LED count from metadata: {self._actual_led_count}")
 
         # Load precomputed A^T*A matrices (DIA format)

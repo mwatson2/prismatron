@@ -89,3 +89,5 @@ When overall system performance evaluation is needed, it will be explicitly requ
 
 ### File Organization Guidelines
 - Keep pattern files in the diffusion_patterns directory
+
+- this is a one-off project that will not run in a variety of environments or multiple inputs. we do NOT need fallbacks for unexpexted data types and formats and missing dependencies. fallback obscure unexpected states or data when debugging. DO NOT PROVIDE fallbacks - implement the happy path and fail otherwise. we will asd any failure handling that we do need later

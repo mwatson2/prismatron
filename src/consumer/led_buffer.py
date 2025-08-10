@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 
-from ..const import LED_COUNT
+# LED count is now passed as parameter - no import needed
 
 logger = logging.getLogger(__name__)
 
@@ -25,21 +25,23 @@ class LEDBuffer:
     Stores small LED arrays (3 * 2624 bytes) instead of full frames,
     allowing deep buffering to absorb jitter in optimization process.
 
-    Memory usage: buffer_size * LED_COUNT * 3 bytes for LED values
+    Memory usage: buffer_size * led_count * 3 bytes for LED values
     plus buffer_size * 8 bytes for timestamps.
     """
 
-    def __init__(self, buffer_size: int = 100):
+    def __init__(self, led_count: int, buffer_size: int = 100):
         """
         Initialize LED buffer.
 
         Args:
+            led_count: Number of LEDs (must be provided from pattern file)
             buffer_size: Number of LED value frames to buffer
         """
         self.buffer_size = buffer_size
+        self.led_count = led_count
 
         # LED value storage (led_count, 3) format for each frame
-        self.led_arrays = np.zeros((buffer_size, LED_COUNT, 3), dtype=np.uint8)
+        self.led_arrays = np.zeros((buffer_size, led_count, 3), dtype=np.uint8)
         self.timestamps = np.zeros(buffer_size, dtype=np.float64)
         self.metadata = [None] * buffer_size
 
@@ -111,12 +113,13 @@ class LEDBuffer:
                     return False
 
             # Validate and convert LED values format
-            if led_values.shape == (3, LED_COUNT):
+            if led_values.shape == (3, self.led_count):
                 # Convert (3, led_count) to (led_count, 3)
                 led_values = led_values.T
-            elif led_values.shape != (LED_COUNT, 3):
+            elif led_values.shape != (self.led_count, 3):
                 logger.error(
-                    f"Invalid LED values shape: {led_values.shape}, " f"expected ({LED_COUNT}, 3) or (3, {LED_COUNT})"
+                    f"Invalid LED values shape: {led_values.shape}, "
+                    f"expected ({self.led_count}, 3) or (3, {self.led_count})"
                 )
                 return False
 
@@ -258,7 +261,7 @@ class LEDBuffer:
         with self.lock:
             try:
                 # Allocate new arrays
-                new_led_arrays = np.zeros((new_size, LED_COUNT, 3), dtype=np.uint8)
+                new_led_arrays = np.zeros((new_size, self.led_count, 3), dtype=np.uint8)
                 new_timestamps = np.zeros(new_size, dtype=np.float64)
                 new_metadata = [None] * new_size
 

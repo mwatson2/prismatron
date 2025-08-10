@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 import cupy as cp
 import numpy as np
 
-from ..const import FRAME_CHANNELS, FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
+from ..const import FRAME_CHANNELS, FRAME_HEIGHT, FRAME_WIDTH
 from ..core import ControlState, FrameConsumer
 from ..core.control_state import ProducerState, RendererState
 from ..utils.frame_drop_rate_ewma import FrameDropRateEwma
@@ -168,16 +168,11 @@ class ConsumerProcess:
                 self._enable_audio_reactive = False
 
         # Note: Playlist sync handled by producer, consumer just tracks rendered items
-        # Configure WLED client
-        wled_config = WLEDSinkConfig(
-            host=wled_host,
-            port=wled_port,
-            led_count=LED_COUNT,
-        )
-        self._wled_client = WLEDSink(wled_config)
-
-        # New timestamp-based rendering components
-        self._led_buffer = LEDBuffer(buffer_size=10)
+        # WLED and LED buffer will be created after LED optimizer loads pattern file
+        self.wled_host = wled_host
+        self.wled_port = wled_port
+        self._wled_client = None  # Will be created after LED count is known
+        self._led_buffer = None  # Will be created after LED count is known
 
         # Adaptive frame dropping for LED buffer management
         self.enable_adaptive_frame_dropping = enable_adaptive_frame_dropping
@@ -369,6 +364,21 @@ class ConsumerProcess:
             if not self._led_optimizer.initialize():
                 logger.error("Failed to initialize LED optimizer")
                 return False
+
+            # Now that LED optimizer is loaded, get the actual LED count
+            actual_led_count = self._led_optimizer._actual_led_count
+            logger.info(f"Using LED count from pattern: {actual_led_count}")
+
+            # Create LED buffer with actual LED count
+            self._led_buffer = LEDBuffer(led_count=actual_led_count, buffer_size=10)
+
+            # Configure WLED client with actual LED count
+            wled_config = WLEDSinkConfig(
+                led_count=actual_led_count,
+                host=self.wled_host,
+                port=self.wled_port,
+            )
+            self._wled_client = WLEDSink(wled_config)
 
             # Try to connect to WLED controller (not required for startup)
             if self._wled_client.connect():
@@ -1439,7 +1449,8 @@ class ConsumerProcess:
                 return False
 
             # Create preview sink (spatial mapping handled by frame renderer now)
-            self._preview_sink = PreviewSink(self._preview_sink_config)
+            actual_led_count = self._led_optimizer._actual_led_count
+            self._preview_sink = PreviewSink(led_count=actual_led_count, config=self._preview_sink_config)
 
             # Start preview sink
             if self._preview_sink.start():
@@ -1481,7 +1492,7 @@ class ConsumerProcess:
             "optimization_iterations": self.optimization_iterations,
             "brightness_scale": self.brightness_scale,
             "target_fps": self.target_fps,
-            "led_count": LED_COUNT,
+            "led_count": self._led_optimizer._actual_led_count,
             "frame_dimensions": (FRAME_WIDTH, FRAME_HEIGHT),
             "wled_stats": self._wled_client.get_statistics(),
             "optimizer_stats": self._led_optimizer.get_optimizer_stats(),

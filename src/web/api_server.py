@@ -38,7 +38,7 @@ from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT, LED_DATA_SIZE
+from src.const import FRAME_HEIGHT, FRAME_WIDTH
 from src.core.control_state import ControlState, ProducerState, RendererState
 from src.core.playlist_sync import PlaylistItem as SyncPlaylistItem
 from src.core.playlist_sync import PlaylistState as SyncPlaylistState
@@ -131,11 +131,19 @@ class SystemSettings(BaseModel):
 
     brightness: float = Field(1.0, ge=0.0, le=1.0, description="Global brightness (0-1)")
     frame_rate: float = Field(30.0, ge=1.0, le=60.0, description="Target frame rate")
-    led_count: int = Field(LED_COUNT, description="Number of LEDs")
+    led_count: int = Field(description="Number of LEDs (read from pattern file)")
     display_resolution: Dict[str, int] = Field(default_factory=lambda: {"width": FRAME_WIDTH, "height": FRAME_HEIGHT})
     auto_start_playlist: bool = Field(True, description="Auto-start playlist on boot")
     preview_enabled: bool = Field(True, description="Enable live preview")
     audio_reactive_enabled: bool = Field(False, description="Enable audio reactive effects")
+
+
+def get_system_settings() -> SystemSettings:
+    """Get system settings."""
+    global system_settings
+    if system_settings is None:
+        raise RuntimeError("SystemSettings not initialized - LED count not available from startup")
+    return system_settings
 
 
 class EffectPreset(BaseModel):
@@ -179,7 +187,7 @@ class SystemStatus(BaseModel):
 
 # Global state
 playlist_state = PlaylistState()
-system_settings = SystemSettings()
+system_settings: Optional[SystemSettings] = None  # Will be initialized after consumer provides LED count
 control_state: Optional[ControlState] = None
 consumer_process: Optional[object] = None  # Will be set by main process
 producer_process: Optional[object] = None  # Will be set by main process
@@ -493,21 +501,22 @@ def sync_playlist_update_handler(sync_state: SyncPlaylistState) -> None:
         import asyncio
 
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If there's already a running loop, schedule as a task
-                loop.create_task(on_playlist_sync_update(sync_state))
-            else:
-                # If no running loop, run the async function
-                loop.run_until_complete(on_playlist_sync_update(sync_state))
+            # Try to get the running event loop
+            loop = asyncio.get_running_loop()
+            # If we get here, there's a running loop - schedule as task
+            loop.create_task(on_playlist_sync_update(sync_state))
         except RuntimeError:
-            # No event loop in current thread, create a new one
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # No running loop - we can run one
             try:
-                loop.run_until_complete(on_playlist_sync_update(sync_state))
-            finally:
-                loop.close()
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # This shouldn't happen if get_running_loop() failed, but just in case
+                    loop.create_task(on_playlist_sync_update(sync_state))
+                else:
+                    loop.run_until_complete(on_playlist_sync_update(sync_state))
+            except RuntimeError:
+                # No event loop exists, create one
+                asyncio.run(on_playlist_sync_update(sync_state))
     except Exception as e:
         logger.error(f"Error in playlist sync update handler: {e}")
 
@@ -706,7 +715,7 @@ async def preview_broadcast_task():
                     "playlist_position": playlist_state.current_index,
                     "rendering_index": rendering_index_for_status,  # Add rendering_index to status broadcast
                     "renderer_state": renderer_state_value,  # Add renderer state to status broadcast
-                    "brightness": system_settings.brightness,
+                    "brightness": (get_system_settings().brightness if consumer_process else 1.0),
                     "frame_rate": 30.0,  # Will be updated from shared memory below
                     "uptime": uptime,
                     "memory_usage": mem_percent,
@@ -855,7 +864,7 @@ async def preview_broadcast_task():
                     preview_colors = []
                     brightness_factor = 0.5  # Reduce saturation due to overlapping LEDs
                     # Use the actual LED count for test pattern
-                    test_led_count = LED_COUNT  # 2624
+                    test_led_count = get_actual_led_count()
                     for i in range(test_led_count):
                         # Simple rainbow pattern
                         hue = (i / test_led_count) * 360  # Full rainbow across all LEDs
@@ -1030,7 +1039,7 @@ async def get_system_status():
         playlist_position=playlist_state.current_index,
         rendering_index=rendering_index,
         renderer_state=renderer_state_value,
-        brightness=system_settings.brightness,
+        brightness=(get_system_settings().brightness if consumer_process else 1.0),
         frame_rate=frame_rate,
         uptime=uptime,
         memory_usage=mem_percent,
@@ -1737,7 +1746,7 @@ async def get_settings():
             logger.warning(f"Failed to get audio reactive status: {e}")
 
     # Update system settings with current control state values
-    current_settings = system_settings.copy()
+    current_settings = get_system_settings().copy()
     current_settings.audio_reactive_enabled = audio_reactive_enabled
 
     return current_settings
@@ -1976,11 +1985,13 @@ async def websocket_endpoint(websocket: WebSocket):
 
     try:
         # Send initial state
+        settings_dict = get_system_settings().dict()
+
         await websocket.send_json(
             {
                 "type": "initial_state",
                 "playlist": playlist_state.dict_serializable(),
-                "settings": system_settings.dict(),
+                "settings": settings_dict,
                 "timestamp": time.time(),
             }
         )
@@ -2128,7 +2139,7 @@ async def get_led_preview():
             preview_colors = []
             brightness_factor = 0.5  # Reduce saturation due to overlapping LEDs
             # Use the actual LED count for test pattern
-            test_led_count = LED_COUNT  # 2624
+            test_led_count = get_actual_led_count()
             for i in range(test_led_count):
                 # Simple rainbow pattern
                 hue = (i / test_led_count) * 360  # Full rainbow across all LEDs
@@ -2383,10 +2394,25 @@ async def catch_all(path: str):
         raise HTTPException(status_code=404, detail="Frontend not found")
 
 
-def run_server(host: str = "0.0.0.0", port: int = 8000, debug: bool = False, patterns_path: Optional[str] = None):
+def run_server(
+    host: str = "0.0.0.0",
+    port: int = 8000,
+    debug: bool = False,
+    patterns_path: Optional[str] = None,
+    led_count: Optional[int] = None,
+):
     """Run the API server."""
-    global diffusion_patterns_path
+    global diffusion_patterns_path, system_settings
     diffusion_patterns_path = patterns_path
+
+    # Initialize SystemSettings with LED count from startup
+    if led_count is not None:
+        system_settings = SystemSettings(led_count=led_count)
+        logger.info(f"Initialized SystemSettings with LED count: {led_count}")
+    else:
+        logger.warning(
+            "No LED count provided to API server - SystemSettings will not be available until consumer starts"
+        )
 
     # Create and connect to control state (shared memory created by main process)
     api_control_state = ControlState()
