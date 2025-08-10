@@ -1750,6 +1750,50 @@ class AudioReactiveRequest(BaseModel):
     enabled: bool = Field(..., description="Whether audio reactive effects are enabled")
 
 
+@app.get("/api/settings/audio-reactive")
+async def get_audio_reactive_settings():
+    """Get current audio reactive settings."""
+    try:
+        # Get current settings from control state
+        audio_reactive_enabled = False
+        position_shifting_enabled = False
+        max_shift_distance = 3
+        shift_direction = "alternating"
+
+        # Beat brightness boost settings
+        beat_brightness_enabled = True
+        beat_brightness_intensity = 0.25
+        beat_brightness_duration = 0.25
+
+        if control_state:
+            try:
+                status = control_state.get_status()
+                if status:
+                    audio_reactive_enabled = status.audio_reactive_enabled
+                    position_shifting_enabled = status.position_shifting_enabled
+                    max_shift_distance = status.max_shift_distance
+                    shift_direction = status.shift_direction
+                    beat_brightness_enabled = getattr(status, "beat_brightness_enabled", True)
+                    beat_brightness_intensity = getattr(status, "beat_brightness_intensity", 0.25)
+                    beat_brightness_duration = getattr(status, "beat_brightness_duration", 0.25)
+            except Exception as e:
+                logger.warning(f"Failed to get audio reactive status: {e}")
+
+        return {
+            "enabled": audio_reactive_enabled,
+            "position_shifting_enabled": position_shifting_enabled,
+            "max_shift_distance": max_shift_distance,
+            "shift_direction": shift_direction,
+            "beat_brightness_enabled": beat_brightness_enabled,
+            "beat_brightness_intensity": beat_brightness_intensity,
+            "beat_brightness_duration": beat_brightness_duration,
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get audio reactive settings: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 @app.post("/api/settings/audio-reactive")
 async def set_audio_reactive_enabled(request: AudioReactiveRequest):
     """Set audio reactive effects enabled/disabled."""
@@ -1767,6 +1811,105 @@ async def set_audio_reactive_enabled(request: AudioReactiveRequest):
 
     except Exception as e:
         logger.error(f"Failed to set audio reactive enabled: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+class PositionShiftingRequest(BaseModel):
+    """Request model for position shifting settings."""
+
+    enabled: bool = Field(..., description="Whether position shifting is enabled")
+    max_shift_distance: int = Field(3, ge=1, le=10, description="Maximum shift distance (1-10)")
+    shift_direction: str = Field("alternating", description="Shift direction: left, right, alternating")
+
+
+class BeatBrightnessRequest(BaseModel):
+    """Request model for beat brightness boost settings."""
+
+    enabled: bool = Field(..., description="Whether beat brightness boost is enabled")
+    intensity: float = Field(0.25, ge=0.0, le=1.0, description="Brightness boost intensity (0.0-1.0)")
+    duration: float = Field(0.25, ge=0.1, le=1.0, description="Boost duration as fraction of beat (0.1-1.0)")
+
+
+@app.post("/api/settings/position-shifting")
+async def set_position_shifting_settings(request: PositionShiftingRequest):
+    """Set position shifting settings."""
+    try:
+        # Validate shift direction
+        valid_directions = ["left", "right", "alternating"]
+        if request.shift_direction not in valid_directions:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid shift direction. Must be one of: {', '.join(valid_directions)}"
+            )
+
+        # Update in control state if available
+        if control_state:
+            control_state.update_status(
+                position_shifting_enabled=request.enabled,
+                max_shift_distance=request.max_shift_distance,
+                shift_direction=request.shift_direction,
+            )
+            logger.info(
+                f"Updated position shifting: enabled={request.enabled}, distance={request.max_shift_distance}, direction={request.shift_direction}"
+            )
+        else:
+            logger.warning("Control state not available - position shifting settings not updated")
+
+        await manager.broadcast(
+            {
+                "type": "position_shifting_changed",
+                "enabled": request.enabled,
+                "max_shift_distance": request.max_shift_distance,
+                "shift_direction": request.shift_direction,
+            }
+        )
+
+        return {
+            "enabled": request.enabled,
+            "max_shift_distance": request.max_shift_distance,
+            "shift_direction": request.shift_direction,
+            "status": "updated",
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to set position shifting settings: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/settings/beat-brightness")
+async def set_beat_brightness_settings(request: BeatBrightnessRequest):
+    """Set beat brightness boost settings."""
+    try:
+        # Update in control state if available
+        if control_state:
+            control_state.update_status(
+                beat_brightness_enabled=request.enabled,
+                beat_brightness_intensity=request.intensity,
+                beat_brightness_duration=request.duration,
+            )
+            logger.info(
+                f"Updated beat brightness: enabled={request.enabled}, intensity={request.intensity}, duration={request.duration}"
+            )
+        else:
+            logger.warning("Control state not available - beat brightness settings not updated")
+
+        await manager.broadcast(
+            {
+                "type": "beat_brightness_changed",
+                "enabled": request.enabled,
+                "intensity": request.intensity,
+                "duration": request.duration,
+            }
+        )
+
+        return {
+            "enabled": request.enabled,
+            "intensity": request.intensity,
+            "duration": request.duration,
+            "status": "updated",
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to set beat brightness settings: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

@@ -141,17 +141,18 @@ class FrameRenderer:
         """
         Calculate brightness boost based on beat timing for audio-reactive effects.
 
-        Implements a sine wave brightness boost during the first quarter of each beat interval.
-        Formula: 1.0 + 0.25 * sin(t * pi / (0.25 * d)) where:
+        Implements a configurable sine wave brightness boost during a portion of each beat interval.
+        Formula: 1.0 + intensity * sin(t * pi / (duration * d)) where:
         - t = time since beat start
         - d = inter-beat duration (60.0 / BPM)
-        - Boost range: 1.0 (no boost) to 1.25 (25% boost)
+        - intensity = configurable boost intensity (0.0 to 1.0)
+        - duration = configurable fraction of beat duration (0.1 to 1.0)
 
         Args:
             current_time: Current system time in seconds
 
         Returns:
-            Brightness multiplier (1.0 = no boost, 1.25 = max boost)
+            Brightness multiplier (1.0 = no boost, up to 2.0 = 100% boost)
         """
         # Check if audio reactive effects are enabled
         if not self._control_state or not self._audio_beat_analyzer:
@@ -162,6 +163,18 @@ class FrameRenderer:
             status = self._control_state.get_status()
             if not status or not status.audio_reactive_enabled or not status.audio_enabled:
                 return 1.0
+
+            # Check if beat brightness boost is specifically enabled
+            if not status.beat_brightness_enabled:
+                return 1.0
+
+            # Get configurable parameters with fallbacks
+            boost_intensity = getattr(status, "beat_brightness_intensity", 0.25)
+            boost_duration_fraction = getattr(status, "beat_brightness_duration", 0.25)
+
+            # Clamp parameters to safe ranges
+            boost_intensity = max(0.0, min(1.0, boost_intensity))
+            boost_duration_fraction = max(0.1, min(1.0, boost_duration_fraction))
 
             # Get audio beat state
             beat_state = self._audio_beat_analyzer.get_current_state()
@@ -187,11 +200,11 @@ class FrameRenderer:
             # Calculate time since beat start
             t = audio_time - reference_beat_time
 
-            # Apply sine wave boost for first quarter of beat interval
-            boost_duration = 0.25 * beat_duration
+            # Apply sine wave boost for configured duration of beat interval
+            boost_duration = boost_duration_fraction * beat_duration
             if 0 <= t <= boost_duration:
-                # Sine wave boost (0% to 25% maximum)
-                boost = 0.25 * math.sin(t * math.pi / boost_duration)
+                # Configurable sine wave boost
+                boost = boost_intensity * math.sin(t * math.pi / boost_duration)
                 return 1.0 + boost
             else:
                 return 1.0  # No boost outside beat window
