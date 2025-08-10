@@ -713,6 +713,7 @@ class SymmetricDiagonalATAMatrix(BaseATAMatrix):
         # Set data
         symmetric.dia_data_gpu = cupy.asarray(data_dict["dia_data_gpu"], dtype=cupy.float32)
         symmetric.dia_offsets_upper = data_dict["dia_offsets_upper"]
+        symmetric.dia_offsets_upper_gpu = cupy.asarray(data_dict["dia_offsets_upper"], dtype=cupy.int32)
         symmetric.k_upper = data_dict["k_upper"]
         symmetric.bandwidth = data_dict["bandwidth"]
         symmetric.channels = data_dict.get("channels", 3)
