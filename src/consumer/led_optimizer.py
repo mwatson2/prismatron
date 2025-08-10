@@ -296,6 +296,24 @@ class LEDOptimizer:
                     logger.warning(f"Failed to create symmetric ATA matrix: {e}. Will use regular DIA matrix.")
                     self._symmetric_ata_matrix = None
 
+            # Check for symmetric_dia_matrix format (direct symmetric format)
+            elif "symmetric_dia_matrix" in data:
+                logger.debug("Loading A^T@A matrices from symmetric_dia_matrix key")
+                symmetric_dia_dict = data["symmetric_dia_matrix"].item()
+                self._symmetric_ata_matrix = SymmetricDiagonalATAMatrix.from_dict(symmetric_dia_dict)
+                logger.info(f"Loaded symmetric DIA A^T@A matrix: {self._symmetric_ata_matrix.led_count} LEDs")
+                logger.info(
+                    f"Symmetric DIA format - upper diagonals: {self._symmetric_ata_matrix.k_upper}, bandwidth: {self._symmetric_ata_matrix.bandwidth}"
+                )
+
+                # Calculate memory usage
+                if self._symmetric_ata_matrix.dia_data_gpu is not None:
+                    symmetric_memory_mb = self._symmetric_ata_matrix.dia_data_gpu.nbytes / (1024 * 1024)
+                    logger.info(f"Symmetric DIA A^T@A memory: {symmetric_memory_mb:.1f}MB")
+
+                # Create batch version for batch processing
+                self._create_batch_symmetric_ata_matrix()
+
             # Check for dense ATA format (fallback for compatibility)
             elif "dense_ata" in data:
                 logger.warning("Loading A^T@A matrices from legacy dense format - consider regenerating patterns")
@@ -410,7 +428,9 @@ class LEDOptimizer:
             data = np.load(patterns_path, allow_pickle=True)
 
             # Check for new nested format first
-            if "mixed_tensor" in data and ("diffusion_matrix" in data or "dia_matrix" in data):
+            if "mixed_tensor" in data and (
+                "diffusion_matrix" in data or "dia_matrix" in data or "symmetric_dia_matrix" in data
+            ):
                 return self._load_matricies_from_file(data)
             else:
                 logger.error(f"{patterns_path} is in unsupported legacy format")
@@ -450,7 +470,7 @@ class LEDOptimizer:
         """Load matrices from new nested format using utility classes."""
         logger.info("Detected new nested format with utility classes")
 
-        # Load LEDDiffusionCSCMatrix - try diffusion_matrix first, then dia_matrix
+        # Load LEDDiffusionCSCMatrix - try diffusion_matrix first, then dia_matrix, then symmetric_dia_matrix
         if "diffusion_matrix" in data:
             logger.info("Loading LEDDiffusionCSCMatrix from diffusion_matrix...")
             diffusion_dict = data["diffusion_matrix"].item()
@@ -461,6 +481,12 @@ class LEDOptimizer:
             # We'll set _diffusion_matrix to None and skip CSC setup
             self._diffusion_matrix = None
             logger.info("DIA matrix format detected - will use frame optimizer directly")
+        elif "symmetric_dia_matrix" in data:
+            logger.info("Loading from symmetric DIA matrix format - using direct frame optimizer approach...")
+            # Since we're using the standardized frame optimizer, we don't need the CSC wrapper
+            # We'll set _diffusion_matrix to None and skip CSC setup
+            self._diffusion_matrix = None
+            logger.info("Symmetric DIA matrix format detected - will use frame optimizer directly")
         else:
             logger.error("No diffusion matrix found in data")
             return False

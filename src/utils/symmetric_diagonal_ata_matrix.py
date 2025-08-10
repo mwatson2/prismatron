@@ -691,3 +691,59 @@ class SymmetricDiagonalATAMatrix(BaseATAMatrix):
             results["symmetric_optimized"] = np.mean(times)
 
         return results
+
+    @staticmethod
+    def from_dict(data_dict: dict) -> "SymmetricDiagonalATAMatrix":
+        """
+        Create SymmetricDiagonalATAMatrix from dictionary format.
+
+        Args:
+            data_dict: Dictionary containing symmetric DIA matrix data
+
+        Returns:
+            SymmetricDiagonalATAMatrix instance
+        """
+        # Create instance
+        symmetric = SymmetricDiagonalATAMatrix(
+            led_count=data_dict["led_count"],
+            crop_size=data_dict.get("crop_size", 64),
+            output_dtype=cupy.float32,  # Always FP32 for symmetric version
+        )
+
+        # Set data
+        symmetric.dia_data_gpu = cupy.asarray(data_dict["dia_data_gpu"], dtype=cupy.float32)
+        symmetric.dia_offsets_upper = data_dict["dia_offsets_upper"]
+        symmetric.k_upper = data_dict["k_upper"]
+        symmetric.bandwidth = data_dict["bandwidth"]
+        symmetric.channels = data_dict.get("channels", 3)
+
+        # Optional metadata
+        if "original_k" in data_dict:
+            symmetric.original_k = data_dict["original_k"]
+        if "sparsity" in data_dict:
+            symmetric.sparsity = data_dict["sparsity"]
+        if "nnz" in data_dict:
+            symmetric.nnz = data_dict["nnz"]
+
+        return symmetric
+
+    def to_dict(self) -> dict:
+        """
+        Convert SymmetricDiagonalATAMatrix to dictionary format for serialization.
+
+        Returns:
+            Dictionary containing all matrix data
+        """
+        return {
+            "dia_data_gpu": cupy.asnumpy(self.dia_data_gpu),
+            "dia_offsets_upper": self.dia_offsets_upper,
+            "k_upper": self.k_upper,
+            "bandwidth": self.bandwidth,
+            "led_count": self.led_count,
+            "channels": self.channels,
+            "crop_size": self.crop_size,
+            "output_dtype": str(self.output_dtype),
+            "original_k": getattr(self, "original_k", None),
+            "sparsity": getattr(self, "sparsity", None),
+            "nnz": getattr(self, "nnz", None),
+        }
