@@ -237,6 +237,7 @@ class ProcessManager:
                         wled_port=self.config.get("wled_port", 4048),
                         diffusion_patterns_path=self.config.get("diffusion_patterns_path"),
                         timing_log_path=self.config.get("timing_log_path"),
+                        enable_batch_mode=self.config.get("enable_batch_mode", False),
                     )
 
                     # Initialize consumer (WLED connection not required for startup)
@@ -576,6 +577,9 @@ def main():
     parser.add_argument("--content-dir", help="Default content directory to load")
     parser.add_argument("--diffusion-patterns", help="Path to diffusion patterns file")
     parser.add_argument("--timing-log", help="Path to CSV file for frame timing data logging")
+    parser.add_argument(
+        "--batch-mode", action="store_true", help="Enable batch processing (8 frames at once) for improved performance"
+    )
 
     args = parser.parse_args()
 
@@ -595,6 +599,7 @@ def main():
         "default_content_dir": args.content_dir,
         "diffusion_patterns_path": args.diffusion_patterns,
         "timing_log_path": args.timing_log,
+        "enable_batch_mode": args.batch_mode,
     }
 
     logger.info("Starting Prismatron LED Display System")

@@ -120,6 +120,7 @@ class ConsumerProcess:
         enable_adaptive_frame_dropping: bool = True,
         enable_audio_reactive: bool = False,
         audio_device: str = "auto",
+        enable_batch_mode: bool = False,
     ):
         """
         Initialize consumer process.
@@ -136,6 +137,7 @@ class ConsumerProcess:
             enable_adaptive_frame_dropping: Enable adaptive frame dropping for LED buffer management
             enable_audio_reactive: Enable audio-reactive effects with beat detection
             audio_device: Audio device selection ('auto', 'cuda', 'cpu')
+            enable_batch_mode: Enable batch processing (8 frames at once) for improved performance
         """
         self.buffer_name = buffer_name
         self.control_name = control_name
@@ -272,6 +274,21 @@ class ConsumerProcess:
         # Transition processor for playlist item transitions
         self._transition_processor = TransitionProcessor()
 
+        # LED transition processor for LED-based transitions
+        self._led_transition_processor = LEDTransitionProcessor()
+
+        # Batch processing configuration
+        self.enable_batch_mode = enable_batch_mode
+        self._frame_batch = []  # Accumulate frames for batch processing
+        self._batch_metadata = []  # Metadata for each frame in batch
+        self._batch_size = 8  # Target batch size
+        self._batch_timeout = 0.1  # Max time to wait for batch completion (seconds)
+        self._last_batch_start_time = 0.0  # When current batch started accumulating
+
+        # Setup signal handlers
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+
     def _on_beat_detected(self, beat_event: BeatEvent):
         """Handle detected beat events and update control state"""
         try:
@@ -297,13 +314,6 @@ class ConsumerProcess:
 
         except Exception as e:
             logger.error(f"Error handling beat event: {e}")
-
-        # LED transition processor for LED-based transitions
-        self._led_transition_processor = LEDTransitionProcessor()
-
-        # Setup signal handlers
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
 
     def initialize(self) -> bool:
         """
@@ -923,6 +933,82 @@ class ConsumerProcess:
             rgb_frame = self._transition_processor.process_frame(rgb_frame, metadata_dict)
             transition_time = time.time() - transition_start
 
+            # Handle batch vs single frame processing
+            if self.enable_batch_mode and self._led_optimizer.supports_batch_optimization():
+                return self._process_frame_for_batch(rgb_frame, buffer_info, metadata_dict, transition_time, start_time)
+            else:
+                # Single frame processing (existing logic)
+                return self._process_single_frame(rgb_frame, buffer_info, metadata_dict, transition_time, start_time)
+
+        except Exception as e:
+            logger.error(f"Error in optimization: {e}", exc_info=True)
+            self._stats.optimization_errors += 1
+            return True  # Processing error counts as dropped
+
+    def _process_frame_for_batch(
+        self, rgb_frame: cp.ndarray, buffer_info, metadata_dict: Dict, transition_time: float, start_time: float
+    ) -> bool:
+        """
+        Process frame for batch optimization by accumulating it.
+
+        Returns:
+            True if frame was dropped, False if frame was processed successfully
+        """
+        try:
+            # Convert frame to CPU for batch accumulation (RGB only)
+            rgb_frame_cpu = cp.asnumpy(rgb_frame)  # (H, W, 3)
+
+            # Initialize batch timing if this is the first frame
+            if len(self._frame_batch) == 0:
+                self._last_batch_start_time = time.time()
+
+            # Extract metadata for this frame
+            timestamp = buffer_info.metadata.presentation_timestamp if buffer_info.metadata else start_time
+            playlist_item_index = buffer_info.metadata.playlist_item_index if buffer_info.metadata else -1
+            is_first_frame_of_item = buffer_info.metadata.is_first_frame_of_item if buffer_info.metadata else False
+            timing_data = buffer_info.metadata.timing_data if buffer_info.metadata else None
+
+            frame_metadata = {
+                "timestamp": timestamp,
+                "playlist_item_index": playlist_item_index,
+                "is_first_frame_of_item": is_first_frame_of_item,
+                "timing_data": timing_data,
+                "transition_time": transition_time,
+                "optimization_time": 0.0,  # Will be filled in batch processing
+            }
+
+            # Add frame to batch
+            self._frame_batch.append(rgb_frame_cpu)
+            self._batch_metadata.append(frame_metadata)
+
+            # Check if batch should be processed
+            if self._should_process_batch():
+                batch_success = self._process_frame_batch()
+                if not batch_success:
+                    logger.warning("Batch processing failed")
+
+                # Process successful - reset batch accumulation
+                # Statistics are updated in _process_frame_batch
+                return False  # Frame was processed (not dropped)
+
+            # Frame accumulated for batch - not processed yet
+            logger.debug(f"Frame accumulated for batch processing ({len(self._frame_batch)}/{self._batch_size})")
+            return False  # Frame not dropped, just batched
+
+        except Exception as e:
+            logger.error(f"Error in batch frame processing: {e}", exc_info=True)
+            return True  # Error counts as dropped
+
+    def _process_single_frame(
+        self, rgb_frame: cp.ndarray, buffer_info, metadata_dict: Dict, transition_time: float, start_time: float
+    ) -> bool:
+        """
+        Process single frame using traditional single-frame optimizer.
+
+        Returns:
+            True if frame was dropped, False if frame was processed successfully
+        """
+        try:
             # Optimize LED values (no timing constraints)
             optimization_start = time.time()
 
@@ -940,8 +1026,20 @@ class ConsumerProcess:
             except Exception as e:
                 pass  # Failed to read optimization iterations from ControlState
 
-            result = self._led_optimizer.optimize_frame(rgb_frame, max_iterations=iterations)
+            # Move to CPU for single frame optimizer if needed
+            if isinstance(rgb_frame, cp.ndarray):
+                rgb_frame_cpu = cp.asnumpy(rgb_frame)
+            else:
+                rgb_frame_cpu = rgb_frame
+
+            result = self._led_optimizer.optimize_frame(rgb_frame_cpu, max_iterations=iterations)
             optimization_time = time.time() - optimization_start
+
+            # Extract metadata for this frame
+            timestamp = buffer_info.metadata.presentation_timestamp if buffer_info.metadata else start_time
+            playlist_item_index = buffer_info.metadata.playlist_item_index if buffer_info.metadata else -1
+            is_first_frame_of_item = buffer_info.metadata.is_first_frame_of_item if buffer_info.metadata else False
+            timing_data = buffer_info.metadata.timing_data if buffer_info.metadata else None
 
             # Check optimization result
             if not result.converged:
@@ -1054,21 +1152,8 @@ class ConsumerProcess:
             # Frame was processed successfully
             return False
 
-            # Log performance periodically (every 100 frames)
-            if self._stats.frames_processed % 100 == 0:
-                avg_fps = self._stats.get_average_fps()
-                avg_opt_time = self._stats.get_average_optimization_time()
-                buffer_stats = self._led_buffer.get_buffer_stats()
-
-                logger.debug(
-                    f"Optimization: {avg_fps:.1f} fps avg, "
-                    f"opt: {avg_opt_time * 1000:.1f}ms, "
-                    f"buffer: {buffer_stats['utilization']:.1%}, "
-                    f"errors: {self._stats.optimization_errors}"
-                )
-
         except Exception as e:
-            logger.error(f"Error in optimization: {e}", exc_info=True)
+            logger.error(f"Error in single frame processing: {e}", exc_info=True)
             self._stats.optimization_errors += 1
             return True  # Processing error counts as dropped
 
@@ -1118,6 +1203,181 @@ class ConsumerProcess:
         except Exception as e:
             logger.warning(f"Error extracting metadata for transitions: {e}")
             return {}
+
+    def _should_process_batch(self) -> bool:
+        """
+        Check if we should process the current batch.
+
+        Returns:
+            True if batch is ready for processing
+        """
+        if not self.enable_batch_mode:
+            return False
+
+        # Batch is full
+        if len(self._frame_batch) >= self._batch_size:
+            return True
+
+        # Batch has frames and timeout reached
+        if len(self._frame_batch) > 0:
+            current_time = time.time()
+            if current_time - self._last_batch_start_time >= self._batch_timeout:
+                return True
+
+        return False
+
+    def _clear_batch(self) -> None:
+        """Clear the current frame batch."""
+        self._frame_batch.clear()
+        self._batch_metadata.clear()
+        self._last_batch_start_time = 0.0
+
+    def _process_frame_batch(self) -> bool:
+        """
+        Process accumulated frame batch using batch optimizer.
+
+        Returns:
+            True if batch was processed successfully
+        """
+        if len(self._frame_batch) == 0:
+            return True
+
+        try:
+            # Check if LED optimizer supports batch mode
+            if not self._led_optimizer.supports_batch_optimization():
+                logger.warning(
+                    "LED optimizer does not support batch optimization - falling back to single frame processing"
+                )
+                return self._process_batch_frames_individually()
+
+            # Pad batch to target size if needed
+            while len(self._frame_batch) < self._batch_size:
+                # Duplicate last frame to fill batch
+                if self._frame_batch:
+                    self._frame_batch.append(self._frame_batch[-1].copy())
+                    self._batch_metadata.append(self._batch_metadata[-1])
+                else:
+                    break
+
+            logger.debug(f"Processing batch of {len(self._frame_batch)} frames")
+
+            # Convert frames to batch format (batch_size, 3, H, W) on GPU
+            batch_frames = cp.stack(self._frame_batch[: self._batch_size], axis=0)  # (8, H, W, 3)
+            batch_frames_gpu = batch_frames.transpose(0, 3, 1, 2)  # (8, 3, H, W)
+
+            # Get current optimization iterations
+            iterations = self.optimization_iterations
+            try:
+                control_status = self._control_state.get_status()
+                if control_status and hasattr(control_status, "optimization_iterations"):
+                    iterations = control_status.optimization_iterations
+            except Exception:
+                pass
+
+            # Process batch
+            batch_result = self._led_optimizer.optimize_batch_frames(
+                batch_frames_gpu, max_iterations=iterations, debug=False
+            )
+
+            # Write each result to LED buffer
+            success_count = 0
+            for frame_idx in range(len(self._frame_batch)):
+                if frame_idx >= batch_result.led_values.shape[0]:
+                    break
+
+                # Extract LED values for this frame
+                frame_led_values = batch_result.led_values[frame_idx]  # (3, led_count)
+                frame_led_values_cpu = cp.asnumpy(frame_led_values.T).astype(np.uint8)  # (led_count, 3)
+
+                metadata = self._batch_metadata[frame_idx]
+                timestamp = metadata.get("timestamp", time.time())
+
+                # Write to LED buffer
+                success = self._led_buffer.write_led_values(
+                    frame_led_values_cpu,
+                    timestamp,
+                    {
+                        "batch_optimization": True,
+                        "batch_index": frame_idx,
+                        "batch_size": len(self._frame_batch),
+                        "optimization_time": metadata.get("optimization_time", 0.0),
+                        "converged": batch_result.converged,
+                        "iterations": batch_result.iterations,
+                        "error_metrics": (
+                            batch_result.error_metrics[frame_idx] if frame_idx < len(batch_result.error_metrics) else {}
+                        ),
+                        **metadata,  # Include original metadata
+                    },
+                    block=True,
+                    timeout=0.1,
+                )
+
+                if success:
+                    success_count += 1
+
+            # Update statistics
+            self._stats.frames_processed += success_count
+
+            logger.debug(f"Batch processing completed: {success_count}/{len(self._frame_batch)} frames successful")
+            return success_count > 0
+
+        except Exception as e:
+            logger.error(f"Batch processing failed: {e}")
+            # Fallback to individual processing
+            return self._process_batch_frames_individually()
+        finally:
+            self._clear_batch()
+
+    def _process_batch_frames_individually(self) -> bool:
+        """
+        Fallback: Process batch frames individually using single frame optimizer.
+
+        Returns:
+            True if at least one frame was processed successfully
+        """
+        success_count = 0
+
+        for frame_idx, (frame, metadata) in enumerate(zip(self._frame_batch, self._batch_metadata)):
+            try:
+                # Process single frame using existing logic
+                result = self._led_optimizer.optimize_frame(frame, max_iterations=self.optimization_iterations)
+
+                # Convert to uint8 if needed
+                if isinstance(result.led_values, cp.ndarray):
+                    led_values_cpu = cp.asnumpy(result.led_values).astype(np.uint8)
+                else:
+                    led_values_cpu = result.led_values.astype(np.uint8)
+
+                timestamp = metadata.get("timestamp", time.time())
+
+                # Write to LED buffer
+                success = self._led_buffer.write_led_values(
+                    led_values_cpu,
+                    timestamp,
+                    {
+                        "batch_fallback": True,
+                        "optimization_time": metadata.get("optimization_time", 0.0),
+                        "converged": result.converged,
+                        "iterations": result.iterations,
+                        "error_metrics": result.error_metrics,
+                        **metadata,
+                    },
+                    block=True,
+                    timeout=0.1,
+                )
+
+                if success:
+                    success_count += 1
+
+            except Exception as e:
+                logger.error(f"Error processing individual frame {frame_idx} from batch: {e}")
+
+        # Update statistics
+        self._stats.frames_processed += success_count
+
+        logger.debug(f"Batch fallback processing: {success_count}/{len(self._frame_batch)} frames successful")
+        self._clear_batch()
+        return success_count > 0
 
     def _initialize_test_renderer(self) -> bool:
         """

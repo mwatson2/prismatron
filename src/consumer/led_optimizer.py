@@ -22,6 +22,8 @@ import numpy as np
 import scipy.sparse as sp
 
 from ..const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
+from ..utils.batch_frame_optimizer import BatchFrameOptimizationResult, optimize_batch_frames_led_values
+from ..utils.batch_symmetric_diagonal_ata_matrix import BatchSymmetricDiagonalATAMatrix
 from ..utils.dense_ata_matrix import DenseATAMatrix
 from ..utils.diagonal_ata_matrix import DiagonalATAMatrix
 from ..utils.frame_optimizer import (
@@ -106,6 +108,7 @@ class LEDOptimizer:
         self._symmetric_ata_matrix = (
             None  # SymmetricDiagonalATAMatrix instance for efficient ATA operations (preferred over regular DIA)
         )
+        self._batch_symmetric_ata_matrix = None  # BatchSymmetricDiagonalATAMatrix for batch operations
         self._diagonal_ata_matrix = None  # DiagonalATAMatrix instance for sparse ATA operations (fallback)
         self._ATA_inverse_gpu = None  # Shape: (3, led_count, led_count) - inverse on GPU
         self._ATA_inverse_cpu = None  # Shape: (3, led_count, led_count) - inverse on CPU
@@ -256,6 +259,9 @@ class LEDOptimizer:
                         self._diagonal_ata_matrix
                     )
                     logger.info("Successfully created symmetric ATA matrix")
+
+                    # Create batch version for batch processing
+                    self._create_batch_symmetric_ata_matrix()
                 except Exception as e:
                     logger.warning(f"Failed to create symmetric ATA matrix: {e}. Will use regular DIA matrix.")
                     self._symmetric_ata_matrix = None
@@ -283,6 +289,9 @@ class LEDOptimizer:
                         self._diagonal_ata_matrix
                     )
                     logger.info("Successfully created symmetric ATA matrix")
+
+                    # Create batch version for batch processing
+                    self._create_batch_symmetric_ata_matrix()
                 except Exception as e:
                     logger.warning(f"Failed to create symmetric ATA matrix: {e}. Will use regular DIA matrix.")
                     self._symmetric_ata_matrix = None
@@ -413,6 +422,29 @@ class LEDOptimizer:
 
             logger.error(traceback.format_exc())
             return False
+
+    def _create_batch_symmetric_ata_matrix(self) -> None:
+        """Create batch symmetric ATA matrix from regular symmetric ATA matrix for batch operations."""
+        if self._symmetric_ata_matrix is None:
+            logger.warning("Cannot create batch symmetric ATA matrix: regular symmetric ATA matrix not available")
+            return
+
+        try:
+            # Check LED count alignment for tensor core operations
+            led_count = self._actual_led_count
+            if led_count % 16 != 0:
+                logger.info(f"LED count {led_count} not aligned to 16 - batch optimization not available")
+                return
+
+            logger.info("Creating BatchSymmetricDiagonalATAMatrix for 8-frame batch operations...")
+            self._batch_symmetric_ata_matrix = BatchSymmetricDiagonalATAMatrix.from_symmetric_diagonal_matrix(
+                self._symmetric_ata_matrix, batch_size=8
+            )
+            logger.info("Successfully created batch symmetric ATA matrix for 8-frame operations")
+
+        except Exception as e:
+            logger.warning(f"Failed to create batch symmetric ATA matrix: {e}")
+            self._batch_symmetric_ata_matrix = None
 
     def _load_matricies_from_file(self, data: np.lib.npyio.NpzFile) -> bool:
         """Load matrices from new nested format using utility classes."""
@@ -718,6 +750,85 @@ class LEDOptimizer:
                 iterations=0,
                 converged=False,
             )
+
+    def optimize_batch_frames(
+        self,
+        target_frames: cp.ndarray,
+        max_iterations: Optional[int] = None,
+        debug: bool = False,
+    ) -> BatchFrameOptimizationResult:
+        """
+        Optimize LED values for a batch of 8 target frames using batch tensor core operations.
+
+        Args:
+            target_frames: Target images (8, 3, H, W) or (8, H, W, 3) - GPU cupy array, uint8
+            max_iterations: Override default max iterations
+            debug: If True, compute error metrics and detailed timing (slower)
+
+        Returns:
+            BatchFrameOptimizationResult with LED values (8, 3, led_count) on GPU
+        """
+        try:
+            if not self._matrix_loaded:
+                raise RuntimeError("Matrices not loaded")
+
+            if self._batch_symmetric_ata_matrix is None:
+                raise RuntimeError("Batch symmetric ATA matrix not available - LED count must be multiple of 16")
+
+            # Load ATA inverse if not already available
+            if not self._has_ata_inverse:
+                logger.warning("ATA inverse not loaded - attempting to load from pattern file")
+                ata_inverse = load_ata_inverse_from_pattern(
+                    self.diffusion_patterns_path
+                    if self.diffusion_patterns_path.endswith(".npz")
+                    else f"{self.diffusion_patterns_path}.npz"
+                )
+                if ata_inverse is not None:
+                    self._ATA_inverse_cpu = ata_inverse
+                    self._ATA_inverse_gpu = cp.asarray(ata_inverse)
+                    self._has_ata_inverse = True
+                    logger.info("Successfully loaded ATA inverse from pattern file")
+                else:
+                    raise RuntimeError("ATA inverse matrices required but not available")
+
+            # Use batch frame optimizer
+            result = optimize_batch_frames_led_values(
+                target_frames=target_frames,
+                at_matrix=self._mixed_tensor,
+                ata_matrix=self._batch_symmetric_ata_matrix,
+                ata_inverse=self._ATA_inverse_cpu,
+                max_iterations=max_iterations if max_iterations is not None else self.max_iterations,
+                convergence_threshold=self.convergence_threshold,
+                step_size_scaling=self.step_size_scaling,
+                compute_error_metrics=debug,
+                debug=debug,
+                track_mse_per_iteration=debug,
+            )
+
+            logger.debug(f"Batch optimization completed for {target_frames.shape[0]} frames")
+            return result
+
+        except Exception as e:
+            logger.error(f"Batch frame optimization failed: {e}")
+
+            # Return error result with proper shape
+            batch_size = target_frames.shape[0] if len(target_frames.shape) >= 1 else 8
+            error_result = BatchFrameOptimizationResult(
+                led_values=cp.zeros((batch_size, 3, self._actual_led_count), dtype=cp.uint8),
+                error_metrics=[{"mse": float("inf"), "mae": float("inf")}] * batch_size if debug else [],
+                iterations=0,
+                converged=False,
+            )
+            return error_result
+
+    def supports_batch_optimization(self) -> bool:
+        """
+        Check if batch optimization is supported.
+
+        Returns:
+            True if batch optimization is available, False otherwise
+        """
+        return self._matrix_loaded and self._batch_symmetric_ata_matrix is not None and self._actual_led_count % 16 == 0
 
     def _calculate_atb(self, target_frame: np.ndarray) -> cp.ndarray:
         """
