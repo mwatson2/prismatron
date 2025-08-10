@@ -571,6 +571,10 @@ def emergency_cleanup() -> None:
 
 def main():
     """Main entry point."""
+    # Set multiprocessing start method to 'spawn' for CUDA compatibility
+    # CUDA doesn't work with the default 'fork' method on Linux
+    multiprocessing.set_start_method("spawn", force=True)
+
     parser = argparse.ArgumentParser(description="Prismatron LED Display System")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--web-host", default="0.0.0.0", help="Web server host")

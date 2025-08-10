@@ -196,6 +196,11 @@ class ConsumerProcess:
             self._adaptive_frame_dropper = None
             logger.info("Adaptive frame dropping disabled")
 
+        # Position shifting configuration - set before frame renderer creation
+        self.enable_position_shifting = enable_position_shifting
+        self.max_shift_distance = max_shift_distance
+        self.shift_direction = shift_direction
+
         # Create frame renderer with LED ordering from pattern file if available
         from ..utils.pattern_loader import create_frame_renderer_with_pattern
 
@@ -293,11 +298,6 @@ class ConsumerProcess:
         self._batch_size = 8  # Target batch size
         self._batch_timeout = 0.1  # Max time to wait for batch completion (seconds)
         self._last_batch_start_time = 0.0  # When current batch started accumulating
-
-        # Position shifting configuration
-        self.enable_position_shifting = enable_position_shifting
-        self.max_shift_distance = max_shift_distance
-        self.shift_direction = shift_direction
 
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
