@@ -692,8 +692,11 @@ class LEDOptimizer:
             else:
                 raise RuntimeError("No ATA matrix available (dense, symmetric, or DIA format)")
 
+            # Convert target frame to GPU (cupy) for frame optimizer
+            target_frame_gpu = cp.asarray(target_frame)
+
             result_frame_opt = optimize_frame_led_values(
-                target_frame=target_frame,
+                target_frame=target_frame_gpu,
                 at_matrix=self._mixed_tensor,  # Updated parameter name
                 ata_matrix=ata_matrix,  # Use dense matrix if available, otherwise DIA
                 ata_inverse=self._ATA_inverse_cpu,  # Required parameter - use CPU version
