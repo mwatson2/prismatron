@@ -238,6 +238,9 @@ class ProcessManager:
                         diffusion_patterns_path=self.config.get("diffusion_patterns_path"),
                         timing_log_path=self.config.get("timing_log_path"),
                         enable_batch_mode=self.config.get("enable_batch_mode", False),
+                        enable_position_shifting=self.config.get("enable_position_shifting", False),
+                        max_shift_distance=self.config.get("max_shift_distance", 3),
+                        shift_direction=self.config.get("shift_direction", "alternating"),
                     )
 
                     # Initialize consumer (WLED connection not required for startup)
@@ -580,6 +583,18 @@ def main():
     parser.add_argument(
         "--batch-mode", action="store_true", help="Enable batch processing (8 frames at once) for improved performance"
     )
+    parser.add_argument(
+        "--position-shifting", action="store_true", help="Enable audio-reactive LED position shifting effects"
+    )
+    parser.add_argument(
+        "--max-shift-distance", type=int, default=3, help="Maximum LED positions to shift on beats (default: 3)"
+    )
+    parser.add_argument(
+        "--shift-direction",
+        default="alternating",
+        choices=["left", "right", "alternating"],
+        help="Position shift direction (default: alternating)",
+    )
 
     args = parser.parse_args()
 
@@ -600,6 +615,9 @@ def main():
         "diffusion_patterns_path": args.diffusion_patterns,
         "timing_log_path": args.timing_log,
         "enable_batch_mode": args.batch_mode,
+        "enable_position_shifting": args.position_shifting,
+        "max_shift_distance": args.max_shift_distance,
+        "shift_direction": args.shift_direction,
     }
 
     logger.info("Starting Prismatron LED Display System")

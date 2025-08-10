@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
+from .audio_reactive_position_shifter import AudioReactivePositionShifter
 from .test_sink import TestSink
 from .wled_sink import WLEDSink
 
@@ -40,6 +41,9 @@ class FrameRenderer:
         late_frame_log_threshold_ms: float = 50.0,
         control_state=None,
         audio_beat_analyzer=None,
+        enable_position_shifting: bool = False,
+        max_shift_distance: int = 3,
+        shift_direction: str = "alternating",
     ):
         """
         Initialize frame renderer.
@@ -51,6 +55,9 @@ class FrameRenderer:
             led_ordering: Array mapping spatial indices to physical LED IDs
             control_state: ControlState instance for audio reactive settings
             audio_beat_analyzer: AudioBeatAnalyzer instance for beat state access
+            enable_position_shifting: Enable audio-reactive position shifting effects
+            max_shift_distance: Maximum LED positions to shift (3-4 typical)
+            shift_direction: Shift direction ("left", "right", "alternating")
         """
         self.first_frame_delay = first_frame_delay_ms / 1000.0
         self.timing_tolerance = timing_tolerance_ms / 1000.0
@@ -62,6 +69,15 @@ class FrameRenderer:
         # Audio reactive components
         self._control_state = control_state
         self._audio_beat_analyzer = audio_beat_analyzer
+
+        # Position shifter for audio-reactive effects
+        self._position_shifter = AudioReactivePositionShifter(
+            max_shift_distance=max_shift_distance,
+            shift_direction=shift_direction,
+            control_state=control_state,
+            audio_beat_analyzer=audio_beat_analyzer,
+            enabled=enable_position_shifting,
+        )
 
         # Timing state
         self.wallclock_delta = None  # Established from first frame
@@ -386,6 +402,9 @@ class FrameRenderer:
             # Ensure values stay within valid range [0, 255]
             physical_led_values = np.clip(physical_led_values, 0, 255)
 
+        # Calculate position offset for audio-reactive position shifting
+        position_offset = self._position_shifter.calculate_position_offset(time.time(), physical_led_values.shape[0])
+
         # Add rendering_index to metadata for PreviewSink
         enhanced_metadata = metadata.copy() if metadata else {}
         if metadata and "playlist_item_index" in metadata:
@@ -434,7 +453,7 @@ class FrameRenderer:
                 # Try different sink interfaces
                 if hasattr(sink, "send_led_data"):
                     # WLED-style sink
-                    result = sink.send_led_data(physical_led_values)
+                    result = sink.send_led_data(physical_led_values, position_offset)
                     if hasattr(result, "success") and not result.success:
                         if not sink_info["failing"]:
                             logger.warning(f"{name} transmission failed: {result.errors}")
@@ -445,7 +464,12 @@ class FrameRenderer:
                     # Renderer-style sink
                     if hasattr(sink, "is_running") and not sink.is_running:
                         continue  # Skip if sink is not running
-                    sink.render_led_values(physical_led_values.astype(np.uint8), enhanced_metadata)
+                    # Try to call with position_offset, fall back to old signature if it fails
+                    try:
+                        sink.render_led_values(physical_led_values.astype(np.uint8), position_offset)
+                    except TypeError:
+                        # Fall back to old signature without position_offset (for compatibility)
+                        sink.render_led_values(physical_led_values.astype(np.uint8))
                 else:
                     logger.warning(f"Sink {name} has no compatible interface")
 

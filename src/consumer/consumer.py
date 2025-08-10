@@ -121,6 +121,9 @@ class ConsumerProcess:
         enable_audio_reactive: bool = False,
         audio_device: str = "auto",
         enable_batch_mode: bool = False,
+        enable_position_shifting: bool = False,
+        max_shift_distance: int = 3,
+        shift_direction: str = "alternating",
     ):
         """
         Initialize consumer process.
@@ -138,6 +141,9 @@ class ConsumerProcess:
             enable_audio_reactive: Enable audio-reactive effects with beat detection
             audio_device: Audio device selection ('auto', 'cuda', 'cpu')
             enable_batch_mode: Enable batch processing (8 frames at once) for improved performance
+            enable_position_shifting: Enable audio-reactive LED position shifting effects
+            max_shift_distance: Maximum LED positions to shift on beats (3-4 typical)
+            shift_direction: Position shift direction ("left", "right", "alternating")
         """
         self.buffer_name = buffer_name
         self.control_name = control_name
@@ -199,6 +205,9 @@ class ConsumerProcess:
             timing_tolerance_ms=5.0,
             control_state=self._control_state,
             audio_beat_analyzer=self._audio_beat_analyzer,
+            enable_position_shifting=self.enable_position_shifting,
+            max_shift_distance=self.max_shift_distance,
+            shift_direction=self.shift_direction,
         )
         logger.info(f"Frame renderer created with LED ordering from {diffusion_patterns_path}")
 
@@ -284,6 +293,11 @@ class ConsumerProcess:
         self._batch_size = 8  # Target batch size
         self._batch_timeout = 0.1  # Max time to wait for batch completion (seconds)
         self._last_batch_start_time = 0.0  # When current batch started accumulating
+
+        # Position shifting configuration
+        self.enable_position_shifting = enable_position_shifting
+        self.max_shift_distance = max_shift_distance
+        self.shift_direction = shift_direction
 
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)

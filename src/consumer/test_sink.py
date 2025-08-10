@@ -132,12 +132,14 @@ class TestSink:
         except Exception as e:
             logger.error(f"Error stopping test sink: {e}")
 
-    def render_led_values(self, led_values: np.ndarray) -> bool:
+    def render_led_values(self, led_values: np.ndarray, position_offset: int = 0) -> bool:
         """
-        Render LED values to the display using the mixed sparse tensor.
+        Render LED values to the display using the mixed sparse tensor with optional position offset.
 
         Args:
             led_values: LED values array (led_count, 3) in physical order, range [0, 255]
+            position_offset: LED position offset for audio-reactive effects
+                           (positive = right shift, negative = left shift, with wraparound)
 
         Returns:
             True if rendered successfully, False otherwise
@@ -149,6 +151,10 @@ class TestSink:
             if led_values.ndim != 2 or led_values.shape[1] != 3:
                 logger.error(f"Invalid LED values shape: {led_values.shape}, expected (led_count, 3)")
                 return False
+
+            # Apply position offset if specified
+            if position_offset != 0:
+                led_values = self._apply_position_offset(led_values, position_offset)
 
             # Convert to float32 [0, 1] range for tensor operations
             led_values_normalized = led_values.astype(np.float32) / 255.0
@@ -379,6 +385,35 @@ class TestSink:
                 logger.info(f"Updated config: {key} = {value}")
             else:
                 logger.warning(f"Unknown config parameter: {key}")
+
+    def _apply_position_offset(self, led_values: np.ndarray, offset: int) -> np.ndarray:
+        """
+        Apply position offset to LED values with wraparound.
+
+        Args:
+            led_values: LED data array (led_count, 3)
+            offset: Position offset (positive = right shift, negative = left shift)
+
+        Returns:
+            LED data with position offset applied
+        """
+        if offset == 0:
+            return led_values
+
+        led_count = led_values.shape[0]
+
+        # Normalize offset to be within bounds
+        offset = offset % led_count
+
+        if offset == 0:
+            return led_values
+
+        # Apply wraparound shift
+        # For right shift (positive offset): take last 'offset' elements and move to front
+        # For left shift (negative offset): take first 'abs(offset)' elements and move to back
+        shifted_data = np.roll(led_values, offset, axis=0)
+
+        return shifted_data
 
     def __enter__(self):
         """Context manager entry."""
