@@ -197,77 +197,104 @@ PLAYLISTS_DIR = Path("playlists")
 for dir_path in [UPLOAD_DIR, THUMBNAILS_DIR, PLAYLISTS_DIR]:
     dir_path.mkdir(exist_ok=True)
 
-# Built-in effect presets
-EFFECT_PRESETS = [
-    EffectPreset(
-        id="rainbow_cycle",
-        name="Rainbow Cycle",
-        description="Smooth rainbow color cycling across all LEDs",
-        config={"speed": 1.0, "brightness": 1.0, "hue_shift": 0.0},
-        category="color",
-        icon="🌈",
-    ),
-    EffectPreset(
-        id="color_wave",
-        name="Color Wave",
-        description="Animated wave of color flowing across the display",
-        config={"color": "#ff0066", "speed": 2.0, "wavelength": 100},
-        category="animation",
-        icon="🌊",
-    ),
-    EffectPreset(
-        id="sparkle",
-        name="Sparkle",
-        description="Random twinkling sparkles across the display",
-        config={"density": 0.1, "color": "#ffffff", "fade_speed": 0.95},
-        category="particle",
-        icon="✨",
-    ),
-    EffectPreset(
-        id="plasma",
-        name="Plasma Field",
-        description="Smooth plasma-like color gradients",
-        config={"speed": 1.5, "scale": 50, "complexity": 3},
-        category="generated",
-        icon="🔮",
-    ),
-    EffectPreset(
-        id="fire",
-        name="Fire Effect",
-        description="Realistic fire simulation",
-        config={"intensity": 0.8, "height": 0.6, "cooling": 55},
-        category="simulation",
-        icon="🔥",
-    ),
-    EffectPreset(
-        id="matrix_rain",
-        name="Matrix Rain",
-        description="Digital rain effect like in The Matrix",
-        config={"speed": 3.0, "density": 0.3, "color": "#00ff41"},
-        category="retro",
-        icon="💚",
-    ),
-    EffectPreset(
-        id="text_display",
-        name="Text Display",
-        description="Display custom text with configurable fonts and colors",
-        config={
-            "text": "Hello World",
-            "font_family": "DejaVu Sans",
-            "font_style": "normal",
-            "font_size": "auto",
-            "fg_color": "#FFFFFF",
-            "bg_color": "#000000",
-            "animation": "static",
-            "alignment": "center",
-            "vertical_alignment": "center",
-            "duration": 10.0,
-            "fps": 30.0,  # Note: This will be overridden by DEFAULT_CONTENT_FPS in text_source.py
-        },
-        category="text",
-        icon="📝",
-    ),
-]
+# Import the visual effects system
+try:
+    from src.producer.effects import EffectRegistry
+
+    EFFECTS_AVAILABLE = True
+    logger.info("Visual effects system loaded successfully")
+except ImportError as e:
+    logger.warning(f"Visual effects system not available: {e}")
+    EFFECTS_AVAILABLE = False
+
+
+def get_effect_presets():
+    """Get effect presets from the registry or fallback to hardcoded presets."""
+    if EFFECTS_AVAILABLE:
+        # Load effects from registry
+        registry_effects = EffectRegistry.list_effects()
+        presets = []
+
+        for effect in registry_effects:
+            preset = EffectPreset(
+                id=effect["id"],
+                name=effect["name"],
+                description=effect["description"],
+                config=effect["config"],
+                category=effect["category"],
+                icon=effect["icon"],
+            )
+            presets.append(preset)
+
+        # Add text display effect (handled specially by existing system)
+        presets.append(
+            EffectPreset(
+                id="text_display",
+                name="Text Display",
+                description="Display custom text with configurable fonts and colors",
+                config={
+                    "text": "Hello World",
+                    "font_family": "DejaVu Sans",
+                    "font_style": "normal",
+                    "font_size": "auto",
+                    "fg_color": "#FFFFFF",
+                    "bg_color": "#000000",
+                    "animation": "static",
+                    "alignment": "center",
+                    "vertical_alignment": "center",
+                    "duration": 10.0,
+                    "fps": 30.0,  # Note: This will be overridden by DEFAULT_CONTENT_FPS in text_source.py
+                },
+                category="text",
+                icon="📝",
+            )
+        )
+
+        return presets
+    else:
+        # Fallback to hardcoded presets
+        return [
+            EffectPreset(
+                id="rainbow_cycle",
+                name="Rainbow Cycle",
+                description="Smooth rainbow color cycling across all LEDs",
+                config={"speed": 1.0, "brightness": 1.0, "hue_shift": 0.0},
+                category="color",
+                icon="🌈",
+            ),
+            EffectPreset(
+                id="color_wave",
+                name="Color Wave",
+                description="Animated wave of color flowing across the display",
+                config={"color": "#ff0066", "speed": 2.0, "wavelength": 100},
+                category="animation",
+                icon="🌊",
+            ),
+            EffectPreset(
+                id="text_display",
+                name="Text Display",
+                description="Display custom text with configurable fonts and colors",
+                config={
+                    "text": "Hello World",
+                    "font_family": "DejaVu Sans",
+                    "font_style": "normal",
+                    "font_size": "auto",
+                    "fg_color": "#FFFFFF",
+                    "bg_color": "#000000",
+                    "animation": "static",
+                    "alignment": "center",
+                    "vertical_alignment": "center",
+                    "duration": 10.0,
+                    "fps": 30.0,
+                },
+                category="text",
+                icon="📝",
+            ),
+        ]
+
+
+# Get effect presets (loaded dynamically or fallback)
+EFFECT_PRESETS = get_effect_presets()
 
 # Initialize FastAPI app
 app = FastAPI(
