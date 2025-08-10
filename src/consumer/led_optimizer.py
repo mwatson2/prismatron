@@ -81,6 +81,7 @@ class LEDOptimizer:
         diffusion_patterns_path: Optional[str] = None,
         use_mixed_tensor: bool = False,
         enable_performance_timing: bool = True,
+        enable_batch_mode: bool = False,
     ):
         """
         Initialize LED optimizer using standardized frame optimizer.
@@ -89,10 +90,12 @@ class LEDOptimizer:
             diffusion_patterns_path: Path to diffusion pattern files with mixed tensor and DIA matrix
             use_mixed_tensor: Deprecated parameter - always uses mixed tensor format
             enable_performance_timing: If True, enable detailed performance timing
+            enable_batch_mode: Whether to enable batch processing mode
         """
         if diffusion_patterns_path is None:
             raise ValueError("diffusion_patterns_path must be provided - no default fallback")
         self.diffusion_patterns_path = diffusion_patterns_path
+        self.enable_batch_mode = enable_batch_mode
         self.use_mixed_tensor = use_mixed_tensor
 
         # Performance timing
@@ -260,8 +263,9 @@ class LEDOptimizer:
                     )
                     logger.info("Successfully created symmetric ATA matrix")
 
-                    # Create batch version for batch processing
-                    self._create_batch_symmetric_ata_matrix()
+                    # Create batch version for batch processing (only if batch mode enabled)
+                    if self.enable_batch_mode:
+                        self._create_batch_symmetric_ata_matrix()
                 except Exception as e:
                     logger.warning(f"Failed to create symmetric ATA matrix: {e}. Will use regular DIA matrix.")
                     self._symmetric_ata_matrix = None
@@ -290,8 +294,9 @@ class LEDOptimizer:
                     )
                     logger.info("Successfully created symmetric ATA matrix")
 
-                    # Create batch version for batch processing
-                    self._create_batch_symmetric_ata_matrix()
+                    # Create batch version for batch processing (only if batch mode enabled)
+                    if self.enable_batch_mode:
+                        self._create_batch_symmetric_ata_matrix()
                 except Exception as e:
                     logger.warning(f"Failed to create symmetric ATA matrix: {e}. Will use regular DIA matrix.")
                     self._symmetric_ata_matrix = None
@@ -311,8 +316,9 @@ class LEDOptimizer:
                     symmetric_memory_mb = self._symmetric_ata_matrix.dia_data_gpu.nbytes / (1024 * 1024)
                     logger.info(f"Symmetric DIA A^T@A memory: {symmetric_memory_mb:.1f}MB")
 
-                # Create batch version for batch processing
-                self._create_batch_symmetric_ata_matrix()
+                # Create batch version for batch processing (only if batch mode enabled)
+                if self.enable_batch_mode:
+                    self._create_batch_symmetric_ata_matrix()
 
             # Check for dense ATA format (fallback for compatibility)
             elif "dense_ata" in data:

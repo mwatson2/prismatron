@@ -153,6 +153,7 @@ class ConsumerProcess:
         self._control_state = ControlState(control_name)
         self._led_optimizer = LEDOptimizer(
             diffusion_patterns_path=diffusion_patterns_path,
+            enable_batch_mode=enable_batch_mode,
         )
 
         # Audio beat analyzer (optional)
