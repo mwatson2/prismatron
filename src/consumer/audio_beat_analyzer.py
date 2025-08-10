@@ -64,13 +64,24 @@ except Exception as e:
     BEATNET_AVAILABLE = False
     logging.warning(f"BeatNet compatibility issue: {e}")
 
-# CUDA/PyTorch imports
+# CUDA/PyTorch imports (defer CUDA check to avoid initialization issues in subprocesses)
 try:
     import torch
 
-    CUDA_AVAILABLE = torch.cuda.is_available()
+    TORCH_AVAILABLE = True
 except ImportError:
-    CUDA_AVAILABLE = False
+    TORCH_AVAILABLE = False
+
+
+def _check_cuda_available() -> bool:
+    """Check if CUDA is available, only when needed to avoid initialization in fork."""
+    if not TORCH_AVAILABLE:
+        return False
+    try:
+        return torch.cuda.is_available()
+    except Exception:
+        return False
+
 
 logger = logging.getLogger(__name__)
 
@@ -262,7 +273,7 @@ class AudioBeatAnalyzer:
 
         # Device selection
         if device == "auto":
-            device = "cuda" if CUDA_AVAILABLE else "cpu"
+            device = "cuda" if _check_cuda_available() else "cpu"
         self.device = device
 
         # Initialize BeatNet
