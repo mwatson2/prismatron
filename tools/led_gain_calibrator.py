@@ -44,7 +44,6 @@ import numpy as np
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.const import LED_COUNT
 from src.consumer.wled_client import WLEDClient, WLEDConfig
 
 logger = logging.getLogger(__name__)
@@ -451,7 +450,7 @@ def validate_led_image(analysis: Dict, strict: bool = True) -> Tuple[bool, str]:
 class LEDGainCalibrator:
     """LED gain calibration system with two-phase algorithm."""
 
-    def __init__(self, wled_config: WLEDConfig, camera: GainControlledCamera, total_leds: int = LED_COUNT):
+    def __init__(self, wled_config: WLEDConfig, camera: GainControlledCamera, total_leds: int):
         """
         Initialize LED gain calibrator.
 
@@ -974,7 +973,7 @@ def main():
     # WLED configuration
     parser.add_argument("--wled-host", default="wled.local", help="WLED host address")
     parser.add_argument("--wled-port", type=int, default=4048, help="WLED DDP port")
-    parser.add_argument("--total-leds", type=int, default=LED_COUNT, help="Total number of LEDs")
+    parser.add_argument("--leds", type=int, help="Total number of LEDs")
 
     # Camera configuration
     parser.add_argument("--camera-device", type=int, default=0, help="Camera device ID")
@@ -1034,14 +1033,14 @@ def main():
         # Also print to ensure we see output
         print("LED Gain Calibration Tool Starting", flush=True)
         logger.info("LED Gain Calibration Tool Starting")
-        print(f"Target: {args.wled_host}:{args.wled_port} ({args.total_leds} LEDs)", flush=True)
-        logger.info(f"Target: {args.wled_host}:{args.wled_port} ({args.total_leds} LEDs)")
+        print(f"Target: {args.wled_host}:{args.wled_port} ({args.leds} LEDs)", flush=True)
+        logger.info(f"Target: {args.wled_host}:{args.wled_port} ({args.leds} LEDs)")
         print(f"Camera: Device {args.camera_device}, USB={args.usb}", flush=True)
         logger.info(f"Camera: Device {args.camera_device}")
 
         # Initialize WLED configuration
         wled_config = WLEDConfig(
-            host=args.wled_host, port=args.wled_port, led_count=args.total_leds, timeout=5.0, persistent_retry=False
+            host=args.wled_host, port=args.wled_port, led_count=args.leds, timeout=5.0, persistent_retry=False
         )
 
         # Initialize camera with config if available
@@ -1054,7 +1053,7 @@ def main():
 
         try:
             # Initialize calibrator
-            calibrator = LEDGainCalibrator(wled_config, camera, args.total_leds)
+            calibrator = LEDGainCalibrator(wled_config, camera, args.leds)
 
             # Run calibration
             result = calibrator.run_calibration()
@@ -1083,7 +1082,7 @@ def main():
                     "calibration_date": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "wled_host": args.wled_host,
                     "wled_port": args.wled_port,
-                    "total_leds": args.total_leds,
+                    "total_leds": args.leds,
                     "camera_device": args.camera_device,
                 }
 
