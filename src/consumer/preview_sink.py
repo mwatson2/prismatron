@@ -580,9 +580,9 @@ if __name__ == "__main__":
 
         while time.time() - start_time < args.test_duration:
             # Generate test LED data (rainbow pattern)
-            led_data = np.zeros((self.led_count, 3), dtype=np.float32)
-            for i in range(self.led_count):
-                hue = (i / self.led_count + (time.time() - start_time) * 0.1) % 1.0
+            led_data = np.zeros((1000, 3), dtype=np.float32)  # Use fixed count for test
+            for i in range(1000):
+                hue = (i / 1000 + (time.time() - start_time) * 0.1) % 1.0
                 # Simple HSV to RGB conversion
                 led_data[i] = [
                     (

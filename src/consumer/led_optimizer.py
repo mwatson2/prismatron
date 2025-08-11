@@ -263,9 +263,9 @@ class LEDOptimizer:
                     )
                     logger.info("Successfully created symmetric ATA matrix")
 
-                    # Create batch version for batch processing (only if batch mode enabled)
+                    # Load or create batch version for batch processing (only if batch mode enabled)
                     if self.enable_batch_mode:
-                        self._create_batch_symmetric_ata_matrix()
+                        self._load_or_create_batch_symmetric_ata_matrix(data)
                 except Exception as e:
                     logger.warning(f"Failed to create symmetric ATA matrix: {e}. Will use regular DIA matrix.")
                     self._symmetric_ata_matrix = None
@@ -294,9 +294,9 @@ class LEDOptimizer:
                     )
                     logger.info("Successfully created symmetric ATA matrix")
 
-                    # Create batch version for batch processing (only if batch mode enabled)
+                    # Load or create batch version for batch processing (only if batch mode enabled)
                     if self.enable_batch_mode:
-                        self._create_batch_symmetric_ata_matrix()
+                        self._load_or_create_batch_symmetric_ata_matrix(data)
                 except Exception as e:
                     logger.warning(f"Failed to create symmetric ATA matrix: {e}. Will use regular DIA matrix.")
                     self._symmetric_ata_matrix = None
@@ -316,9 +316,9 @@ class LEDOptimizer:
                     symmetric_memory_mb = self._symmetric_ata_matrix.dia_data_gpu.nbytes / (1024 * 1024)
                     logger.info(f"Symmetric DIA A^T@A memory: {symmetric_memory_mb:.1f}MB")
 
-                # Create batch version for batch processing (only if batch mode enabled)
+                # Load or create batch version for batch processing (only if batch mode enabled)
                 if self.enable_batch_mode:
-                    self._create_batch_symmetric_ata_matrix()
+                    self._load_or_create_batch_symmetric_ata_matrix(data)
 
             # Check for dense ATA format (fallback for compatibility)
             elif "dense_ata" in data:
@@ -449,8 +449,8 @@ class LEDOptimizer:
             logger.error(traceback.format_exc())
             return False
 
-    def _create_batch_symmetric_ata_matrix(self) -> None:
-        """Create batch symmetric ATA matrix from regular symmetric ATA matrix for batch operations."""
+    def _load_or_create_batch_symmetric_ata_matrix(self, data: np.lib.npyio.NpzFile) -> None:
+        """Load batch symmetric ATA matrix from file or create from regular symmetric ATA matrix for batch operations."""
         if self._symmetric_ata_matrix is None:
             logger.warning("Cannot create batch symmetric ATA matrix: regular symmetric ATA matrix not available")
             return
@@ -459,18 +459,163 @@ class LEDOptimizer:
             # Check LED count alignment for tensor core operations
             led_count = self._actual_led_count
             if led_count % 16 != 0:
-                logger.info(f"LED count {led_count} not aligned to 16 - batch optimization not available")
+                msg = f"LED count {led_count} not aligned to 16 - batch optimization not available"
+                if self.enable_batch_mode:
+                    logger.error(f"BATCH MODE INCOMPATIBLE: {msg}")
+                else:
+                    logger.info(msg)
                 return
 
-            logger.info("Creating BatchSymmetricDiagonalATAMatrix for 8-frame batch operations...")
-            self._batch_symmetric_ata_matrix = BatchSymmetricDiagonalATAMatrix.from_symmetric_diagonal_matrix(
-                self._symmetric_ata_matrix, batch_size=8
-            )
-            logger.info("Successfully created batch symmetric ATA matrix for 8-frame operations")
+            # Try to load from file first
+            if "batch_symmetric_dia_matrix" in data:
+                logger.info("Loading BatchSymmetricDiagonalATAMatrix from file...")
+                batch_dict = data["batch_symmetric_dia_matrix"].item()
+
+                # Parse dtypes from saved strings (supports both old and new format)
+                def parse_dtype(dtype_str):
+                    """Parse dtype from string representation (old: "<class 'numpy.float32'>", new: "float32")"""
+                    if "float32" in dtype_str:
+                        return cp.float32
+                    elif "float16" in dtype_str:
+                        return cp.float16
+                    elif "float64" in dtype_str:
+                        return cp.float64
+                    else:
+                        logger.warning(f"Unknown dtype string: {dtype_str}, defaulting to float32")
+                        return cp.float32
+
+                # Create batch matrix instance and populate from saved data
+                self._batch_symmetric_ata_matrix = BatchSymmetricDiagonalATAMatrix(
+                    led_count=batch_dict["led_count"],
+                    crop_size=batch_dict["crop_size"],
+                    batch_size=batch_dict["batch_size"],
+                    block_size=batch_dict["block_size"],
+                    output_dtype=parse_dtype(batch_dict["output_dtype"]),
+                )
+
+                # Load the block data from saved format
+                self._batch_symmetric_ata_matrix.block_data_gpu = cp.asarray(
+                    batch_dict["block_data_gpu"], dtype=parse_dtype(batch_dict["compute_dtype"])
+                )
+                self._batch_symmetric_ata_matrix.max_block_diag = batch_dict["max_block_diag"]
+                self._batch_symmetric_ata_matrix.block_diag_count = batch_dict["block_diag_count"]
+                self._batch_symmetric_ata_matrix.led_blocks = batch_dict["led_blocks"]
+                self._batch_symmetric_ata_matrix.padded_led_count = batch_dict["padded_led_count"]
+                self._batch_symmetric_ata_matrix.bandwidth = batch_dict["bandwidth"]
+                self._batch_symmetric_ata_matrix.sparsity = batch_dict["sparsity"]
+                self._batch_symmetric_ata_matrix.nnz = batch_dict["nnz"]
+                self._batch_symmetric_ata_matrix.original_k = batch_dict["original_k"]
+
+                logger.info("✅ Successfully loaded batch symmetric ATA matrix from file")
+                logger.info(f"  Batch size: {batch_dict['batch_size']} frames")
+                logger.info(f"  Block storage shape: {self._batch_symmetric_ata_matrix.block_data_gpu.shape}")
+                logger.info(f"  Block diagonal count: {self._batch_symmetric_ata_matrix.block_diag_count}")
+                logger.info(
+                    f"  GPU memory usage: {self._batch_symmetric_ata_matrix.block_data_gpu.nbytes / (1024*1024):.1f}MB"
+                )
+
+            else:
+                # Fallback: create from symmetric matrix
+                msg = (
+                    "Batch matrix not found in file, creating BatchSymmetricDiagonalATAMatrix from symmetric matrix..."
+                )
+                if self.enable_batch_mode:
+                    logger.warning(f"BATCH MODE FALLBACK: {msg}")
+                    logger.warning(
+                        "Consider running tools/compute_matrices.py to pre-compute the batch matrix for faster startup"
+                    )
+                else:
+                    logger.info(msg)
+                self._batch_symmetric_ata_matrix = BatchSymmetricDiagonalATAMatrix.from_symmetric_diagonal_matrix(
+                    self._symmetric_ata_matrix, batch_size=8
+                )
+                logger.info("Successfully created batch symmetric ATA matrix for 8-frame operations")
 
         except Exception as e:
-            logger.warning(f"Failed to create batch symmetric ATA matrix: {e}")
+            logger.error(f"Failed to load/create batch symmetric ATA matrix: {e}")
+            if self.enable_batch_mode:
+                logger.error("CRITICAL: Batch mode was requested but batch matrix setup failed!")
             self._batch_symmetric_ata_matrix = None
+
+    def _cleanup_unused_matrices(self) -> None:
+        """Clean up unused matrices to free GPU/CPU memory based on current mode."""
+        try:
+            memory_freed = 0
+
+            # Always clean up dense ATA matrix as we use sparse formats
+            if self._dense_ata_matrix is not None:
+                if (
+                    hasattr(self._dense_ata_matrix, "dense_matrices_cpu")
+                    and self._dense_ata_matrix.dense_matrices_cpu is not None
+                ):
+                    memory_freed += self._dense_ata_matrix.dense_matrices_cpu.nbytes / (1024 * 1024)
+                    self._dense_ata_matrix.dense_matrices_cpu = None
+                if (
+                    hasattr(self._dense_ata_matrix, "dense_matrices_gpu")
+                    and self._dense_ata_matrix.dense_matrices_gpu is not None
+                ):
+                    memory_freed += self._dense_ata_matrix.dense_matrices_gpu.nbytes / (1024 * 1024)
+                    self._dense_ata_matrix.dense_matrices_gpu = None
+                self._dense_ata_matrix = None
+                logger.debug("Cleaned up dense ATA matrix")
+
+            # In batch mode, clean up the regular symmetric matrix (keep batch version)
+            if self.enable_batch_mode and self._batch_symmetric_ata_matrix is not None:
+                if self._symmetric_ata_matrix is not None:
+                    if (
+                        hasattr(self._symmetric_ata_matrix, "dia_data_gpu")
+                        and self._symmetric_ata_matrix.dia_data_gpu is not None
+                    ):
+                        memory_freed += self._symmetric_ata_matrix.dia_data_gpu.nbytes / (1024 * 1024)
+                        self._symmetric_ata_matrix.dia_data_gpu = None
+                    if (
+                        hasattr(self._symmetric_ata_matrix, "dia_data_cpu")
+                        and self._symmetric_ata_matrix.dia_data_cpu is not None
+                    ):
+                        memory_freed += self._symmetric_ata_matrix.dia_data_cpu.nbytes / (1024 * 1024)
+                        self._symmetric_ata_matrix.dia_data_cpu = None
+                    self._symmetric_ata_matrix = None
+                    logger.debug("Cleaned up regular symmetric ATA matrix (using batch version)")
+
+            # In non-batch mode, clean up the batch matrix (keep regular symmetric version)
+            elif (
+                not self.enable_batch_mode
+                and self._symmetric_ata_matrix is not None
+                and self._batch_symmetric_ata_matrix is not None
+            ):
+                if (
+                    hasattr(self._batch_symmetric_ata_matrix, "block_data_gpu")
+                    and self._batch_symmetric_ata_matrix.block_data_gpu is not None
+                ):
+                    memory_freed += self._batch_symmetric_ata_matrix.block_data_gpu.nbytes / (1024 * 1024)
+                    self._batch_symmetric_ata_matrix.block_data_gpu = None
+                self._batch_symmetric_ata_matrix = None
+                logger.debug("Cleaned up batch symmetric ATA matrix (using regular version)")
+
+            # Clean up diagonal ATA matrix if we have symmetric versions
+            if (
+                self._symmetric_ata_matrix is not None or self._batch_symmetric_ata_matrix is not None
+            ) and self._diagonal_ata_matrix is not None:
+                if (
+                    hasattr(self._diagonal_ata_matrix, "dia_data_cpu")
+                    and self._diagonal_ata_matrix.dia_data_cpu is not None
+                ):
+                    memory_freed += self._diagonal_ata_matrix.dia_data_cpu.nbytes / (1024 * 1024)
+                    self._diagonal_ata_matrix.dia_data_cpu = None
+                if (
+                    hasattr(self._diagonal_ata_matrix, "dia_data_gpu")
+                    and self._diagonal_ata_matrix.dia_data_gpu is not None
+                ):
+                    memory_freed += self._diagonal_ata_matrix.dia_data_gpu.nbytes / (1024 * 1024)
+                    self._diagonal_ata_matrix.dia_data_gpu = None
+                self._diagonal_ata_matrix = None
+                logger.debug("Cleaned up regular diagonal ATA matrix (using symmetric version)")
+
+            if memory_freed > 0:
+                logger.info(f"Freed {memory_freed:.1f}MB by cleaning up unused matrices")
+
+        except Exception as e:
+            logger.warning(f"Error during matrix cleanup: {e}")
 
     def _load_matricies_from_file(self, data: np.lib.npyio.NpzFile) -> bool:
         """Load matrices from new nested format using utility classes."""
@@ -539,6 +684,23 @@ class LEDOptimizer:
         self._mixed_tensor = SingleBlockMixedSparseTensor.from_dict(mixed_dict)
         logger.info("Loaded mixed tensor format for A^T@b calculation")
 
+        # Validate batch mode requirements
+        if self.enable_batch_mode:
+            if self._batch_symmetric_ata_matrix is None:
+                error_msg = (
+                    "BATCH MODE REQUESTED BUT NOT AVAILABLE: "
+                    "--batch-mode was specified but no batch symmetric ATA matrix was loaded. "
+                    f"Either the pattern file ({self.diffusion_patterns_path}) is missing the batch matrix, "
+                    "or the LED count is not compatible with batch operations (must be divisible by 16). "
+                    "Run tools/compute_matrices.py to add the batch matrix to your pattern file."
+                )
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+            else:
+                logger.info(
+                    f"✅ BATCH MODE ACTIVE: Using {self._batch_symmetric_ata_matrix.batch_size}-frame batch optimization with {self._batch_symmetric_ata_matrix.block_diag_count} block diagonals"
+                )
+
         # Load CSC format for A^T@b calculation (only if using legacy diffusion matrix)
         if self._diffusion_matrix is not None:
             logger.info("Setting up CSC matrices for A^T@b calculation...")
@@ -550,6 +712,9 @@ class LEDOptimizer:
         if self._diagonal_ata_matrix and self._diagonal_ata_matrix.dia_data_cpu is not None:
             dia_memory_mb = self._diagonal_ata_matrix.dia_data_cpu.nbytes / (1024 * 1024)
             logger.info(f"Total A^T@A memory (DIA format): {dia_memory_mb:.1f}MB")
+
+        # Clean up unused matrices to free memory
+        self._cleanup_unused_matrices()
 
         self._matrix_loaded = True
         logger.info("Matrix loading completed successfully")

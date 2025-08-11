@@ -90,13 +90,17 @@ class LEDBuffer:
         Returns:
             True if written successfully, False if buffer overflow or timeout
         """
+        # Track wait time for logging
+        wait_start_time = time.time() if block else None
+
         if block:
             # Blocking mode: wait for space using condition variable
             with self.space_available:
                 while self.count >= self.buffer_size:
                     if not self.space_available.wait(timeout=timeout):
-                        logger.warning(f"LED buffer write timeout after {timeout:.1f}s")
-                        return False
+                        # Timeout reached, continue waiting (backpressure is expected)
+                        # Don't log warnings on timeout - just continue waiting
+                        continue
 
         with self.lock:
             # Handle buffer overflow (non-blocking mode only)
@@ -135,6 +139,12 @@ class LEDBuffer:
 
             # Signal that data is now available
             self.data_available.notify()
+
+            # Log warning if we had to wait more than 100ms to write (indicating significant backpressure)
+            if wait_start_time is not None:
+                total_wait_time = time.time() - wait_start_time
+                if total_wait_time > 0.1:
+                    logger.warning(f"LED buffer write took {total_wait_time*1000:.1f}ms (backpressure from renderer)")
 
             return True
 

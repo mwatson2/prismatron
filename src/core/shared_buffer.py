@@ -749,61 +749,59 @@ class FrameConsumer(FrameRingBuffer):
                             self._local_read_index = next_frame
                             self._local_read_buffer = (self._local_read_buffer + 1) % self.buffer_count
 
-                        # Read metadata for this buffer
-                        metadata = None
-                        if self._metadata_array is not None:
-                            metadata_record = self._metadata_array[read_idx]
+                            # Read metadata for this buffer
+                            metadata = None
+                            if self._metadata_array is not None:
+                                metadata_record = self._metadata_array[read_idx]
 
-                            # Reconstruct timing data from shared memory fields
-                            timing_data = None
-                            if metadata_record["frame_index"] > 0:  # Valid timing data present
-                                # Mark read time in shared memory
-                                current_read_time = time.time()
-                                metadata_record["read_from_buffer_time"] = current_read_time
+                                # Reconstruct timing data from shared memory fields
+                                timing_data = None
+                                if metadata_record["frame_index"] > 0:  # Valid timing data present
+                                    # Mark read time in shared memory
+                                    current_read_time = time.time()
+                                    metadata_record["read_from_buffer_time"] = current_read_time
 
-                                timing_data = FrameTimingData(
-                                    frame_index=int(metadata_record["frame_index"]),
-                                    plugin_timestamp=float(metadata_record["plugin_timestamp"]),
-                                    producer_timestamp=float(metadata_record["producer_timestamp"]),
+                                    timing_data = FrameTimingData(
+                                        frame_index=int(metadata_record["frame_index"]),
+                                        plugin_timestamp=float(metadata_record["plugin_timestamp"]),
+                                        producer_timestamp=float(metadata_record["producer_timestamp"]),
+                                        item_duration=float(metadata_record["item_duration"]),
+                                        write_to_buffer_time=(
+                                            float(metadata_record["write_to_buffer_time"])
+                                            if metadata_record["write_to_buffer_time"] > 0
+                                            else None
+                                        ),
+                                        read_from_buffer_time=current_read_time,
+                                    )
+
+                                metadata = FrameMetadata(
+                                    presentation_timestamp=float(metadata_record["presentation_timestamp"]),
+                                    source_width=int(metadata_record["source_width"]),
+                                    source_height=int(metadata_record["source_height"]),
+                                    capture_timestamp=float(metadata_record["capture_timestamp"]),
+                                    playlist_item_index=int(metadata_record["playlist_item_index"]),
+                                    is_first_frame_of_item=bool(metadata_record["is_first_frame_of_item"]),
+                                    timing_data=timing_data,
+                                    # Include transition fields from shared memory
+                                    transition_in_type=str(metadata_record["transition_in_type"]),
+                                    transition_in_duration=float(metadata_record["transition_in_duration"]),
+                                    transition_out_type=str(metadata_record["transition_out_type"]),
+                                    transition_out_duration=float(metadata_record["transition_out_duration"]),
+                                    item_timestamp=float(metadata_record["item_timestamp"]),
                                     item_duration=float(metadata_record["item_duration"]),
-                                    write_to_buffer_time=(
-                                        float(metadata_record["write_to_buffer_time"])
-                                        if metadata_record["write_to_buffer_time"] > 0
-                                        else None
-                                    ),
-                                    read_from_buffer_time=current_read_time,
                                 )
 
-                            metadata = FrameMetadata(
-                                presentation_timestamp=float(metadata_record["presentation_timestamp"]),
-                                source_width=int(metadata_record["source_width"]),
-                                source_height=int(metadata_record["source_height"]),
-                                capture_timestamp=float(metadata_record["capture_timestamp"]),
-                                playlist_item_index=int(metadata_record["playlist_item_index"]),
-                                is_first_frame_of_item=bool(metadata_record["is_first_frame_of_item"]),
-                                timing_data=timing_data,
-                                # Include transition fields from shared memory
-                                transition_in_type=str(metadata_record["transition_in_type"]),
-                                transition_in_duration=float(metadata_record["transition_in_duration"]),
-                                transition_out_type=str(metadata_record["transition_out_type"]),
-                                transition_out_duration=float(metadata_record["transition_out_duration"]),
-                                item_timestamp=float(metadata_record["item_timestamp"]),
-                                item_duration=float(metadata_record["item_duration"]),
-                            )
+                                buffer_info = BufferInfo(
+                                    buffer=memoryview(self._shared_memory[read_idx].buf),
+                                    timestamp=timestamp,
+                                    frame_id=next_frame,
+                                    buffer_index=read_idx,  # Actual buffer index being read
+                                    metadata=metadata,
+                                )
 
-                            buffer_info = BufferInfo(
-                                buffer=memoryview(self._shared_memory[read_idx].buf),
-                                timestamp=timestamp,
-                                frame_id=next_frame,
-                                buffer_index=read_idx,  # Actual buffer index being read
-                                metadata=metadata,
-                            )
-
-                            # Removed debug logs for cleaner output
-                            return buffer_info
-
+                                # Removed debug logs for cleaner output
+                                return buffer_info
                         else:
-                            # Frame was overwritten before we could read it
                             # Frame was overwritten before we could read it
                             # Skip to the oldest available frame
                             oldest_available = max(1, current_frame - self.buffer_count + 1)

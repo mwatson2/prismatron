@@ -146,6 +146,15 @@ def get_system_settings() -> SystemSettings:
     return system_settings
 
 
+def get_actual_led_count() -> int:
+    """Get the actual LED count from system settings."""
+    try:
+        return get_system_settings().led_count
+    except RuntimeError:
+        # Fallback to a reasonable default if settings not available
+        return 2624
+
+
 class EffectPreset(BaseModel):
     """Effect preset model."""
 
@@ -636,15 +645,15 @@ async def preview_broadcast_task():
                         dropped_frames_percentage = system_status.get("dropped_frames_percentage", 0.0)
                         late_frame_percentage = system_status.get("late_frame_percentage", 0.0)
 
-                        # Debug log every 30 seconds to verify values
-                        if hasattr(get_system_status, "_last_debug_log"):
-                            if current_time - get_system_status._last_debug_log > 30.0:
-                                logger.debug(
-                                    f"System stats: input_fps={consumer_input_fps:.1f}, output_fps={renderer_output_fps:.1f}, dropped={dropped_frames_percentage:.1f}%"
+                        # Debug log every 5 seconds to verify values more frequently
+                        if hasattr(preview_broadcast_task, "_last_fps_debug_log"):
+                            if current_time - preview_broadcast_task._last_fps_debug_log > 5.0:
+                                logger.info(
+                                    f"WEBSOCKET FPS DEBUG: Read from ControlState - input_fps={consumer_input_fps:.2f}, output_fps={renderer_output_fps:.2f}, dropped={dropped_frames_percentage:.1f}%"
                                 )
-                                get_system_status._last_debug_log = current_time
+                                preview_broadcast_task._last_fps_debug_log = current_time
                         else:
-                            get_system_status._last_debug_log = current_time
+                            preview_broadcast_task._last_fps_debug_log = current_time
                     else:
                         logger.debug("No control state available")
 

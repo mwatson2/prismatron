@@ -78,14 +78,23 @@ class ConsumerStats:
 
     def update_consumer_input_fps(self, frame_timestamp: float) -> None:
         """Update consumer input FPS based on frame timestamps."""
+        old_fps = self.consumer_input_fps
         if self._last_frame_timestamp > 0:
             time_diff = frame_timestamp - self._last_frame_timestamp
             if time_diff > 0:
                 self.consumer_input_fps = 1.0 / time_diff
         self._last_frame_timestamp = frame_timestamp
 
+        # Debug logging every 30 updates
+        if not hasattr(self, "_input_fps_debug_counter"):
+            self._input_fps_debug_counter = 0
+        self._input_fps_debug_counter += 1
+        if self._input_fps_debug_counter % 30 == 0:
+            logger.debug(f"CONSUMER INPUT FPS DEBUG: Updated from {old_fps:.2f} to {self.consumer_input_fps:.2f}")
+
     def update_renderer_output_fps(self, alpha: float = 0.1) -> None:
         """Update renderer output FPS using EWMA."""
+        old_fps = self.renderer_output_fps_ewma
         current_time = time.time()
         if self._last_render_time > 0:
             time_diff = current_time - self._last_render_time
@@ -96,6 +105,15 @@ class ConsumerStats:
                 else:
                     self.renderer_output_fps_ewma = (1 - alpha) * self.renderer_output_fps_ewma + alpha * current_fps
         self._last_render_time = current_time
+
+        # Debug logging every 30 updates
+        if not hasattr(self, "_output_fps_debug_counter"):
+            self._output_fps_debug_counter = 0
+        self._output_fps_debug_counter += 1
+        if self._output_fps_debug_counter % 30 == 0:
+            logger.debug(
+                f"RENDERER OUTPUT FPS DEBUG: Updated from {old_fps:.2f} to {self.renderer_output_fps_ewma:.2f}"
+            )
         self._render_count += 1
 
 
@@ -370,7 +388,7 @@ class ConsumerProcess:
             logger.info(f"Using LED count from pattern: {actual_led_count}")
 
             # Create LED buffer with actual LED count
-            self._led_buffer = LEDBuffer(led_count=actual_led_count, buffer_size=10)
+            self._led_buffer = LEDBuffer(led_count=actual_led_count, buffer_size=12)
 
             # Configure WLED client with actual LED count
             wled_config = WLEDSinkConfig(
@@ -534,12 +552,16 @@ class ConsumerProcess:
                 )
 
         # Check for real-time gaps (processing timing) - always track
+        # In batch mode, expect larger gaps between batch starts
         if self._last_frame_receive_time > 0:
             realtime_gap = receive_time - self._last_frame_receive_time
-            if realtime_gap > self._realtime_gap_threshold:
+            # In batch mode, gaps are expected to be larger (up to batch_size * frame_interval)
+            expected_batch_gap = self._realtime_gap_threshold * (self._batch_size if self.enable_batch_mode else 1)
+            if realtime_gap > expected_batch_gap:
                 logger.warning(
                     f"Large real-time gap between frames: {realtime_gap*1000:.1f}ms "
                     f"(previous: {self._last_frame_receive_time:.3f}, current: {receive_time:.3f})"
+                    f"{' [batch mode: expected up to ' + str(int(expected_batch_gap*1000)) + 'ms]' if self.enable_batch_mode else ''}"
                 )
 
         # Update tracking variables
@@ -924,6 +946,15 @@ class ConsumerProcess:
                     self._timing_logger.log_frame(timing_data)
                     # Log early-dropped frame to timing data
 
+                # Add context about batch mode in debug logging
+                if self.enable_batch_mode:
+                    logger.debug(
+                        f"Late frame dropped before batch accumulation "
+                        f"(timestamp={timestamp:.3f}, current_batch_size={len(self._frame_batch) if hasattr(self, '_frame_batch') else 0})"
+                    )
+                else:
+                    logger.debug(f"Late frame dropped (timestamp={timestamp:.3f})")
+
                 return True
 
             # Validate frame shape
@@ -980,8 +1011,8 @@ class ConsumerProcess:
             True if frame was dropped, False if frame was processed successfully
         """
         try:
-            # Convert frame to CPU for batch accumulation (RGB only)
-            rgb_frame_cpu = cp.asnumpy(rgb_frame)  # (H, W, 3)
+            # Keep frame on GPU for batch accumulation
+            # No conversion needed - rgb_frame is already a cupy array
 
             # Initialize batch timing if this is the first frame
             if len(self._frame_batch) == 0:
@@ -1002,8 +1033,8 @@ class ConsumerProcess:
                 "optimization_time": 0.0,  # Will be filled in batch processing
             }
 
-            # Add frame to batch
-            self._frame_batch.append(rgb_frame_cpu)
+            # Add frame to batch - keep on GPU
+            self._frame_batch.append(rgb_frame)  # Keep as cupy array
             self._batch_metadata.append(frame_metadata)
 
             # Check if batch should be processed
@@ -1277,9 +1308,9 @@ class ConsumerProcess:
 
             # Pad batch to target size if needed
             while len(self._frame_batch) < self._batch_size:
-                # Duplicate last frame to fill batch
+                # Duplicate last frame to fill batch (copy on GPU)
                 if self._frame_batch:
-                    self._frame_batch.append(self._frame_batch[-1].copy())
+                    self._frame_batch.append(self._frame_batch[-1].copy())  # cupy array copy
                     self._batch_metadata.append(self._batch_metadata[-1])
                 else:
                     break
@@ -1287,6 +1318,7 @@ class ConsumerProcess:
             logger.debug(f"Processing batch of {len(self._frame_batch)} frames")
 
             # Convert frames to batch format (batch_size, 3, H, W) on GPU
+            # Frames are already cupy arrays - just stack them
             batch_frames = cp.stack(self._frame_batch[: self._batch_size], axis=0)  # (8, H, W, 3)
             batch_frames_gpu = batch_frames.transpose(0, 3, 1, 2)  # (8, 3, H, W)
 
@@ -1343,6 +1375,34 @@ class ConsumerProcess:
             # Update statistics
             self._stats.frames_processed += success_count
 
+            # Note: Renderer output FPS is updated in the renderer thread when frames are actually rendered,
+            # not here in the optimization thread. Batch mode doesn't change this.
+
+            # Periodic logging for pipeline debugging (every 2 seconds) - same as single frame mode
+            current_time = time.time()
+            if current_time - self._last_consumer_log_time >= self._consumer_log_interval:
+                content_ratio = (self._frames_with_content / max(1, self._stats.frames_processed)) * 100
+                avg_fps = self._stats.get_average_fps()
+                avg_opt_time = self._stats.get_average_optimization_time()
+
+                # Get LED buffer stats
+                buffer_stats = self._led_buffer.get_buffer_stats()
+                buffer_depth = buffer_stats["current_count"]
+
+                logger.info(
+                    f"CONSUMER PIPELINE (BATCH): {self._stats.frames_processed} frames optimized, "
+                    f"{self._stats.frames_dropped_early} dropped early, "
+                    f"{self._frames_with_content} with LED content ({content_ratio:.1f}%), "
+                    f"input FPS: {self._stats.consumer_input_fps:.1f}, "
+                    f"output FPS: {self._stats.renderer_output_fps_ewma:.1f}, "
+                    f"pre-opt drop rate: {self.pre_optimization_drop_rate_ewma.get_rate_percentage():.1f}%, "
+                    f"LED buffer depth: {buffer_depth}, batch_size: {len(self._frame_batch)}"
+                )
+                self._last_consumer_log_time = current_time
+
+                # Update consumer statistics in ControlState for IPC with web server
+                self._update_consumer_statistics_in_control_state()
+
             logger.debug(f"Batch processing completed: {success_count}/{len(self._frame_batch)} frames successful")
             return success_count > 0
 
@@ -1364,8 +1424,14 @@ class ConsumerProcess:
 
         for frame_idx, (frame, metadata) in enumerate(zip(self._frame_batch, self._batch_metadata)):
             try:
+                # Convert GPU frame to CPU for single frame optimizer
+                if isinstance(frame, cp.ndarray):
+                    frame_cpu = cp.asnumpy(frame)
+                else:
+                    frame_cpu = frame
+
                 # Process single frame using existing logic
-                result = self._led_optimizer.optimize_frame(frame, max_iterations=self.optimization_iterations)
+                result = self._led_optimizer.optimize_frame(frame_cpu, max_iterations=self.optimization_iterations)
 
                 # Convert to uint8 if needed
                 if isinstance(result.led_values, cp.ndarray):
@@ -1728,8 +1794,19 @@ class ConsumerProcess:
                 "late_frame_percentage": late_frame_percentage,
             }
 
+            # Log FPS values being written to control state
+            logger.debug(
+                f"CONSUMER FPS DEBUG: Writing to ControlState - input_fps={self._stats.consumer_input_fps:.2f}, output_fps={self._stats.renderer_output_fps_ewma:.2f}"
+            )
+
             # Update ControlState with new statistics
             self._control_state.update_status(**status_updates)
+
+            # Verify the values were written correctly
+            verification = self._control_state.get_status_dict()
+            logger.debug(
+                f"CONSUMER FPS DEBUG: Verification read from ControlState - input_fps={verification.get('consumer_input_fps', 'MISSING'):.2f}, output_fps={verification.get('renderer_output_fps', 'MISSING'):.2f}"
+            )
 
         except Exception as e:
             logger.warning(f"Failed to update consumer statistics in ControlState: {e}")

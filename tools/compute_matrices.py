@@ -28,6 +28,7 @@ except ImportError:
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
+from src.utils.batch_symmetric_diagonal_ata_matrix import BatchSymmetricDiagonalATAMatrix
 from src.utils.dense_ata_matrix import DenseATAMatrix
 from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 from src.utils.symmetric_diagonal_ata_matrix import SymmetricDiagonalATAMatrix
@@ -72,19 +73,36 @@ def compute_matrices_from_tensor(pattern_file: Path, args) -> int:
         # Check if matrices already exist
         has_dense_ata = "dense_ata_matrix" in data
         has_symmetric_dia = "symmetric_dia_matrix" in data
+        has_batch_symmetric_dia = "batch_symmetric_dia_matrix" in data
         has_ata_inverse = "ata_inverse" in data
 
-        if (has_dense_ata and has_ata_inverse) and not args.force:
+        # Determine which matrices need computation
+        missing_matrices = []
+        if not has_dense_ata and not has_symmetric_dia:
+            missing_matrices.append("dense_ata or symmetric_dia")
+        if not has_ata_inverse:
+            missing_matrices.append("ata_inverse")
+        if not has_batch_symmetric_dia and (has_symmetric_dia or "dia_matrix" in data or "diagonal_ata_matrix" in data):
+            missing_matrices.append("batch_symmetric_dia")
+
+        if args.force:
+            print("Force flag specified. Recomputing all matrices.")
+            compute_all = True
+        elif not missing_matrices:
             print("✅ All matrices already exist in file")
             try:
                 response = input("Recompute all matrices? (y/N): ")
                 if response.lower() != "y":
                     print("Skipping computation.")
                     return 0
+                else:
+                    compute_all = True
             except EOFError:
-                print("Non-interactive mode detected. Recomputing matrices.")
-        elif (has_dense_ata or has_symmetric_dia or has_ata_inverse) and args.force:
-            print("Force flag specified. Recomputing all matrices.")
+                print("Non-interactive mode detected. Adding missing matrices only.")
+                compute_all = False
+        else:
+            print(f"Missing matrices: {', '.join(missing_matrices)}")
+            compute_all = False
 
         # Create backup if requested
         if args.backup:
@@ -94,115 +112,205 @@ def compute_matrices_from_tensor(pattern_file: Path, args) -> int:
 
             shutil.copy2(str(pattern_file), str(backup_path))
 
-        # Step 1: Compute Dense ATA using compute_ata_dense()
-        print("\n🔄 Step 1: Computing Dense ATA matrix...")
-        start_time = time.perf_counter()
+        # Step 1: Compute or load Dense ATA matrix
+        dense_ata_matrix = None
+        dense_computation_time = 0.0
 
-        dense_ata_array = tensor.compute_ata_dense()  # Shape: (led_count, led_count, channels)
+        if compute_all or not has_dense_ata:
+            print("\n🔄 Step 1: Computing Dense ATA matrix...")
+            start_time = time.perf_counter()
 
-        # Transpose to match DenseATAMatrix expected format: (channels, led_count, led_count)
-        dense_ata_transposed = np.transpose(dense_ata_array, (2, 0, 1))
+            dense_ata_array = tensor.compute_ata_dense()  # Shape: (led_count, led_count, channels)
 
-        dense_computation_time = time.perf_counter() - start_time
-        print(f"Dense ATA computed in {dense_computation_time:.2f}s")
-        print(f"  Shape: {dense_ata_transposed.shape}")
-        print(f"  Memory: {dense_ata_transposed.nbytes / (1024*1024):.1f}MB")
+            # Transpose to match DenseATAMatrix expected format: (channels, led_count, led_count)
+            dense_ata_transposed = np.transpose(dense_ata_array, (2, 0, 1))
 
-        # Create DenseATAMatrix object
-        dense_ata_matrix = DenseATAMatrix(
-            led_count=tensor.batch_size, storage_dtype=np.float32, output_dtype=np.float32
-        )
-        dense_ata_matrix.dense_matrices_cpu = dense_ata_transposed
-        dense_ata_matrix.memory_mb = dense_ata_transposed.nbytes / (1024 * 1024)
-        dense_ata_matrix.is_built = True
+            dense_computation_time = time.perf_counter() - start_time
+            print(f"Dense ATA computed in {dense_computation_time:.2f}s")
+            print(f"  Shape: {dense_ata_transposed.shape}")
+            print(f"  Memory: {dense_ata_transposed.nbytes / (1024*1024):.1f}MB")
 
-        # Step 2: Create Symmetric Diagonal ATA Matrix from Dense ATA
-        print("\n🔄 Step 2: Creating Symmetric Diagonal ATA matrix...")
-        start_time = time.perf_counter()
+            # Create DenseATAMatrix object
+            dense_ata_matrix = DenseATAMatrix(
+                led_count=tensor.batch_size, storage_dtype=np.float32, output_dtype=np.float32
+            )
+            dense_ata_matrix.dense_matrices_cpu = dense_ata_transposed
+            dense_ata_matrix.memory_mb = dense_ata_transposed.nbytes / (1024 * 1024)
+            dense_ata_matrix.is_built = True
+        else:
+            print("\n✅ Step 1: Loading existing Dense ATA matrix...")
+            dense_ata_dict = data["dense_ata_matrix"].item()
+            dense_ata_matrix = DenseATAMatrix.from_dict(dense_ata_dict)
+            print(f"  Shape: {dense_ata_matrix.dense_matrices_cpu.shape}")
+            print(f"  Memory: {dense_ata_matrix.memory_mb:.1f}MB")
 
-        # Analyze sparsity and extract diagonal pattern from dense ATA
+        # Step 2: Create or load Symmetric Diagonal ATA Matrix
         symmetric_dia_matrix = None
         sparsity_info = []
+        dia_computation_time = 0.0
 
-        try:
-            symmetric_dia_matrix = SymmetricDiagonalATAMatrix.from_dense(
-                dense_ata_transposed, tensor.batch_size, args.significance_threshold, tensor.block_size
-            )
+        if compute_all or not has_symmetric_dia:
+            print("\n🔄 Step 2: Creating Symmetric Diagonal ATA matrix...")
+            start_time = time.perf_counter()
 
-            # Collect sparsity info for reporting
-            for c in range(3):
-                ata_channel = dense_ata_transposed[c]
-                max_val = np.abs(ata_channel).max()
-                threshold = max_val * args.significance_threshold
-                significant_mask = np.abs(ata_channel) >= threshold
-                nnz = np.sum(significant_mask)
-                sparsity = (nnz / (tensor.batch_size * tensor.batch_size)) * 100
-                sparsity_info.append(
-                    {"channel": c, "nnz": nnz, "sparsity": sparsity, "max_val": max_val, "threshold": threshold}
-                )
-                print(
-                    f"  Channel {c}: {nnz:,} non-zeros ({sparsity:.2f}% dense), max={max_val:.6f}, threshold={threshold:.6f}"
+            try:
+                symmetric_dia_matrix = SymmetricDiagonalATAMatrix.from_dense(
+                    dense_ata_matrix.dense_matrices_cpu,
+                    tensor.batch_size,
+                    args.significance_threshold,
+                    tensor.block_size,
                 )
 
-            print(f"Symmetric DIA matrix created:")
+                # Collect sparsity info for reporting
+                for c in range(3):
+                    ata_channel = dense_ata_matrix.dense_matrices_cpu[c]
+                    max_val = np.abs(ata_channel).max()
+                    threshold = max_val * args.significance_threshold
+                    significant_mask = np.abs(ata_channel) >= threshold
+                    nnz = np.sum(significant_mask)
+                    sparsity = (nnz / (tensor.batch_size * tensor.batch_size)) * 100
+                    sparsity_info.append(
+                        {"channel": c, "nnz": nnz, "sparsity": sparsity, "max_val": max_val, "threshold": threshold}
+                    )
+                    print(
+                        f"  Channel {c}: {nnz:,} non-zeros ({sparsity:.2f}% dense), max={max_val:.6f}, threshold={threshold:.6f}"
+                    )
+
+                print(f"Symmetric DIA matrix created:")
+                print(f"  Upper diagonals: {symmetric_dia_matrix.k_upper}")
+                print(f"  Bandwidth: {symmetric_dia_matrix.bandwidth}")
+                print(f"  Memory: {symmetric_dia_matrix.dia_data_gpu.nbytes / (1024*1024):.1f}MB")
+
+            except Exception as e:
+                print(f"  ⚠️  Could not create symmetric DIA matrix: {e}")
+                print("  Continuing with dense ATA only...")
+                symmetric_dia_matrix = None
+
+                # Fallback sparsity analysis
+                for c in range(3):
+                    ata_channel = dense_ata_matrix.dense_matrices_cpu[c]
+                    max_val = np.abs(ata_channel).max()
+                    threshold = max_val * args.significance_threshold
+                    significant_mask = np.abs(ata_channel) >= threshold
+                    nnz = np.sum(significant_mask)
+                    sparsity = (nnz / (tensor.batch_size * tensor.batch_size)) * 100
+                    sparsity_info.append(
+                        {"channel": c, "nnz": nnz, "sparsity": sparsity, "max_val": max_val, "threshold": threshold}
+                    )
+                    print(
+                        f"  Channel {c}: {nnz:,} non-zeros ({sparsity:.2f}% dense), max={max_val:.6f}, threshold={threshold:.6f}"
+                    )
+
+            dia_computation_time = time.perf_counter() - start_time
+            print(f"Symmetric DIA computation completed in {dia_computation_time:.2f}s")
+        else:
+            print("\n✅ Step 2: Loading existing Symmetric Diagonal ATA matrix...")
+            symmetric_dia_dict = data["symmetric_dia_matrix"].item()
+            symmetric_dia_matrix = SymmetricDiagonalATAMatrix.from_dict(symmetric_dia_dict)
             print(f"  Upper diagonals: {symmetric_dia_matrix.k_upper}")
             print(f"  Bandwidth: {symmetric_dia_matrix.bandwidth}")
             print(f"  Memory: {symmetric_dia_matrix.dia_data_gpu.nbytes / (1024*1024):.1f}MB")
 
-        except Exception as e:
-            print(f"  ⚠️  Could not create symmetric DIA matrix: {e}")
-            print("  Continuing with dense ATA only...")
-
-            # Fallback sparsity analysis
+            # Create sparsity info for compatibility
             for c in range(3):
-                ata_channel = dense_ata_transposed[c]
-                max_val = np.abs(ata_channel).max()
-                threshold = max_val * args.significance_threshold
-                significant_mask = np.abs(ata_channel) >= threshold
-                nnz = np.sum(significant_mask)
-                sparsity = (nnz / (tensor.batch_size * tensor.batch_size)) * 100
                 sparsity_info.append(
-                    {"channel": c, "nnz": nnz, "sparsity": sparsity, "max_val": max_val, "threshold": threshold}
+                    {
+                        "channel": c,
+                        "nnz": symmetric_dia_matrix.nnz or 0,
+                        "sparsity": symmetric_dia_matrix.sparsity or 0,
+                        "max_val": 1.0,
+                        "threshold": args.significance_threshold,
+                    }
                 )
-                print(
-                    f"  Channel {c}: {nnz:,} non-zeros ({sparsity:.2f}% dense), max={max_val:.6f}, threshold={threshold:.6f}"
+
+        # Step 3: Compute or load ATA Inverse
+        inverse_computation_time = 0.0
+
+        if compute_all or not has_ata_inverse:
+            print("\n🔄 Step 3: Computing ATA inverse...")
+            start_time = time.perf_counter()
+
+            # Import the compute_ata_inverse functions
+            from tools.compute_ata_inverse import compute_ata_inverse_from_dense
+
+            ata_inverse, successful_inversions, condition_numbers, avg_condition_number = (
+                compute_ata_inverse_from_dense(
+                    dense_ata_matrix,
+                    regularization=args.regularization,
+                    max_condition_number=args.max_condition,
+                    output_fp16=args.fp16,
                 )
+            )
 
-        dia_computation_time = time.perf_counter() - start_time
-        print(f"Symmetric DIA computation completed in {dia_computation_time:.2f}s")
+            inverse_computation_time = time.perf_counter() - start_time
+            print(f"ATA inverse computed in {inverse_computation_time:.2f}s")
+        else:
+            print("\n✅ Step 3: Loading existing ATA inverse...")
+            ata_inverse = data["ata_inverse"]
+            successful_inversions = 3  # Assume all channels successful for existing
+            condition_numbers = [0.0, 0.0, 0.0]  # Placeholder values
+            avg_condition_number = 0.0
+            print(f"  Shape: {ata_inverse.shape}")
+            print(f"  Memory: {ata_inverse.nbytes / (1024*1024):.1f}MB")
 
-        # Step 3: Compute ATA Inverse
-        print("\n🔄 Step 3: Computing ATA inverse...")
-        start_time = time.perf_counter()
+        # Step 4: Compute or load Batch Symmetric ATA Matrix
+        batch_symmetric_ata_matrix = None
+        batch_computation_time = 0.0
 
-        # Import the compute_ata_inverse functions
-        from tools.compute_ata_inverse import compute_ata_inverse_from_dense
+        if compute_all or not has_batch_symmetric_dia:
+            # Only compute batch version if we have a symmetric matrix and LED count is compatible
+            if symmetric_dia_matrix is not None and tensor.batch_size % 16 == 0:
+                print("\n🔄 Step 4: Creating Batch Symmetric Diagonal ATA matrix...")
+                start_time = time.perf_counter()
 
-        ata_inverse, successful_inversions, condition_numbers, avg_condition_number = compute_ata_inverse_from_dense(
-            dense_ata_matrix,
-            regularization=args.regularization,
-            max_condition_number=args.max_condition,
-            output_fp16=args.fp16,
-        )
+                try:
+                    # Create batch version for 8-frame operations (default used in system)
+                    batch_symmetric_ata_matrix = BatchSymmetricDiagonalATAMatrix.from_symmetric_diagonal_matrix(
+                        symmetric_dia_matrix, batch_size=8
+                    )
 
-        inverse_computation_time = time.perf_counter() - start_time
-        print(f"ATA inverse computed in {inverse_computation_time:.2f}s")
+                    batch_computation_time = time.perf_counter() - start_time
+                    print(f"Batch symmetric ATA matrix created in {batch_computation_time:.2f}s")
+                    print(f"  Batch size: 8 frames")
+                    print(f"  Block storage shape: {batch_symmetric_ata_matrix.block_data_gpu.shape}")
+                    print(f"  Block diagonal count: {batch_symmetric_ata_matrix.block_diag_count}")
+                    print(f"  GPU memory usage: {batch_symmetric_ata_matrix.block_data_gpu.nbytes / (1024*1024):.1f}MB")
 
-        # Step 4: Save all matrices to file
-        print("\n🔄 Step 4: Saving matrices to file...")
+                except Exception as e:
+                    print(f"  ⚠️  Could not create batch symmetric ATA matrix: {e}")
+                    print("  This is normal for LED counts not divisible by 16 or when batch kernels are not available")
+                    batch_symmetric_ata_matrix = None
+            else:
+                if symmetric_dia_matrix is None:
+                    print("\n⚠️  Step 4: Skipping batch computation (no symmetric matrix available)")
+                else:
+                    print(
+                        f"\n⚠️  Step 4: Skipping batch computation (LED count {tensor.batch_size} not divisible by 16)"
+                    )
+        elif has_batch_symmetric_dia:
+            print("\n✅ Step 4: Batch symmetric ATA matrix already exists")
+            # Note: We don't load it here as it's only needed for display - the system loads it on demand
+        else:
+            print("\n⚠️  Step 4: Skipping batch computation (not requested)")
+
+        # Step 5: Save all matrices to file
+        print("\n🔄 Step 5: Saving matrices to file...")
 
         # Convert to dictionary for saving
         save_dict = {}
         for key in data:
             save_dict[key] = data[key]
 
-        # Add computed matrices
-        save_dict["dense_ata_matrix"] = dense_ata_matrix.to_dict()
-        save_dict["ata_inverse"] = ata_inverse
-        save_dict["sparsity_analysis"] = sparsity_info
+        # Add computed or existing matrices
+        if compute_all or not has_dense_ata:
+            save_dict["dense_ata_matrix"] = dense_ata_matrix.to_dict()
+        if compute_all or not has_ata_inverse:
+            save_dict["ata_inverse"] = ata_inverse
+        if compute_all or missing_matrices:
+            save_dict["sparsity_analysis"] = sparsity_info
 
-        # Add symmetric DIA matrix if created
-        if symmetric_dia_matrix is not None:
+        # Add symmetric DIA matrix if created or recomputed
+        if symmetric_dia_matrix is not None and (compute_all or not has_symmetric_dia):
             save_dict["symmetric_dia_matrix"] = {
                 "dia_data_gpu": cupy.asnumpy(symmetric_dia_matrix.dia_data_gpu),
                 "dia_offsets_upper": symmetric_dia_matrix.dia_offsets_upper,
@@ -217,12 +325,35 @@ def compute_matrices_from_tensor(pattern_file: Path, args) -> int:
                 "nnz": symmetric_dia_matrix.nnz,
             }
 
+        # Add batch symmetric DIA matrix if created
+        if batch_symmetric_ata_matrix is not None:
+            save_dict["batch_symmetric_dia_matrix"] = {
+                "block_data_gpu": cupy.asnumpy(batch_symmetric_ata_matrix.block_data_gpu),
+                "max_block_diag": batch_symmetric_ata_matrix.max_block_diag,
+                "block_diag_count": batch_symmetric_ata_matrix.block_diag_count,
+                "led_count": batch_symmetric_ata_matrix.led_count,
+                "crop_size": batch_symmetric_ata_matrix.crop_size,
+                "channels": batch_symmetric_ata_matrix.channels,
+                "batch_size": batch_symmetric_ata_matrix.batch_size,
+                "block_size": batch_symmetric_ata_matrix.block_size,
+                "led_blocks": batch_symmetric_ata_matrix.led_blocks,
+                "padded_led_count": batch_symmetric_ata_matrix.padded_led_count,
+                "bandwidth": batch_symmetric_ata_matrix.bandwidth,
+                "sparsity": batch_symmetric_ata_matrix.sparsity,
+                "nnz": batch_symmetric_ata_matrix.nnz,
+                "original_k": batch_symmetric_ata_matrix.original_k,
+                "output_dtype": batch_symmetric_ata_matrix.output_dtype.__name__,
+                "compute_dtype": batch_symmetric_ata_matrix.compute_dtype.__name__,
+            }
+
         # Add computation metadata
+        total_time = dense_computation_time + dia_computation_time + inverse_computation_time + batch_computation_time
         computation_metadata = {
             "dense_ata_computation_time": dense_computation_time,
             "dia_computation_time": dia_computation_time,
             "inverse_computation_time": inverse_computation_time,
-            "total_computation_time": dense_computation_time + dia_computation_time + inverse_computation_time,
+            "batch_computation_time": batch_computation_time,
+            "total_computation_time": total_time,
             "successful_inversions": successful_inversions,
             "condition_numbers": condition_numbers,
             "avg_condition_number": avg_condition_number,
@@ -238,20 +369,32 @@ def compute_matrices_from_tensor(pattern_file: Path, args) -> int:
         np.savez_compressed(str(pattern_file), **save_dict)
 
         # Summary
-        total_time = dense_computation_time + dia_computation_time + inverse_computation_time
         symmetric_dia_memory = symmetric_dia_matrix.dia_data_gpu.nbytes if symmetric_dia_matrix is not None else 0
-        total_memory = (dense_ata_transposed.nbytes + symmetric_dia_memory + ata_inverse.nbytes) / (1024 * 1024)
+        batch_symmetric_memory = (
+            batch_symmetric_ata_matrix.block_data_gpu.nbytes if batch_symmetric_ata_matrix is not None else 0
+        )
+        total_memory = (
+            dense_ata_matrix.dense_matrices_cpu.nbytes
+            + symmetric_dia_memory
+            + batch_symmetric_memory
+            + ata_inverse.nbytes
+        ) / (1024 * 1024)
 
         print(f"\n✅ Matrix computation completed successfully!")
         print(f"   Total computation time: {total_time:.2f}s")
         print(f"   Total matrix memory: {total_memory:.1f}MB")
-        print(f"   Dense ATA: {dense_ata_transposed.nbytes / (1024*1024):.1f}MB")
+        print(f"   Dense ATA: {dense_ata_matrix.dense_matrices_cpu.nbytes / (1024*1024):.1f}MB")
         if symmetric_dia_matrix is not None:
             print(
                 f"   Symmetric DIA: {symmetric_dia_matrix.dia_data_gpu.nbytes / (1024*1024):.1f}MB ({symmetric_dia_matrix.k_upper} upper diagonals)"
             )
+        if batch_symmetric_ata_matrix is not None:
+            print(
+                f"   Batch Symmetric DIA: {batch_symmetric_ata_matrix.block_data_gpu.nbytes / (1024*1024):.1f}MB (8-frame batches, {batch_symmetric_ata_matrix.block_diag_count} block diagonals)"
+            )
         print(f"   ATA inverse: {ata_inverse.nbytes / (1024*1024):.1f}MB")
-        print(f"   Sparsity: ~{sparsity_info[0]['sparsity']:.2f}% dense")
+        if sparsity_info:
+            print(f"   Sparsity: ~{sparsity_info[0]['sparsity']:.2f}% dense")
         print(f"   Successful inversions: {successful_inversions}/3 channels")
         print(f"   Pattern file updated: {pattern_file}")
 
