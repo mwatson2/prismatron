@@ -52,14 +52,29 @@ class LEDTransitionProcessor:
             transition_context = self._extract_transition_context(metadata)
             if not transition_context:
                 # No transition metadata available
+                if self._frame_count % 100 == 1:  # Log occasionally to avoid spam
+                    logger.debug(f"Frame {self._frame_count}: No LED transition metadata available")
                 return led_values
 
             # Check if we need to apply any LED transitions
             led_values_with_transitions = led_values.copy()
             transitions_applied = []
 
+            # Log LED transition context for debugging (reduced frequency to avoid spam)
+            if self._frame_count % 30 == 1:  # Log every 30th frame (roughly once per second at 30fps)
+                logger.info(
+                    f"Frame {self._frame_count}: LED transition context - "
+                    f"timestamp={transition_context['timestamp']:.3f}s, "
+                    f"item_duration={transition_context['item_duration']:.3f}s, "
+                    f"in_type={transition_context['transition_in']['type']}, "
+                    f"out_type={transition_context['transition_out']['type']}"
+                )
+
             # Apply LED transition_in if frame is in the transition region
             if self._should_apply_led_transition_in(transition_context):
+                logger.info(
+                    f"Frame {self._frame_count}: Applying LED transition IN ({transition_context['transition_in']['type']})"
+                )
                 led_values_with_transitions = self._apply_led_transition(
                     led_values_with_transitions, transition_context, "in"
                 )
@@ -67,13 +82,23 @@ class LEDTransitionProcessor:
 
             # Apply LED transition_out if frame is in the transition region
             if self._should_apply_led_transition_out(transition_context):
+                logger.info(
+                    f"Frame {self._frame_count}: Applying LED transition OUT ({transition_context['transition_out']['type']})"
+                )
                 led_values_with_transitions = self._apply_led_transition(
                     led_values_with_transitions, transition_context, "out"
                 )
                 transitions_applied.append("led_out")
 
             if transitions_applied:
-                logger.debug(f"Applied LED transitions to frame {self._frame_count}: {', '.join(transitions_applied)}")
+                logger.info(f"Applied LED transitions to frame {self._frame_count}: {', '.join(transitions_applied)}")
+            else:
+                # Log when no transitions are applied (but context exists)
+                logger.debug(
+                    f"Frame {self._frame_count}: No LED transitions applied - "
+                    f"in_type={transition_context['transition_in']['type']}, "
+                    f"out_type={transition_context['transition_out']['type']}"
+                )
 
             return led_values_with_transitions
 
@@ -105,19 +130,31 @@ class LEDTransitionProcessor:
 
             missing_fields = [field for field in required_fields if field not in metadata]
             if missing_fields:
+                logger.debug(f"Missing LED transition metadata fields: {missing_fields}")
                 return None
 
             # Extract transition configuration (same format as regular transition processor)
+            # Reconstruct parameters from individual fields since shared memory stores them separately
+            # Note: Only duration is stored in shared memory, other parameters use defaults from LED transition classes
+            transition_in_params = {"duration": metadata.get("transition_in_duration", 0.0)}
+            transition_out_params = {"duration": metadata.get("transition_out_duration", 0.0)}
+
+            logger.debug(
+                f"Reconstructed LED transition params - "
+                f"in_duration={transition_in_params['duration']:.3f}s, "
+                f"out_duration={transition_out_params['duration']:.3f}s"
+            )
+
             return {
                 "timestamp": metadata["item_timestamp"],
                 "item_duration": metadata["item_duration"],
                 "transition_in": {
                     "type": metadata["transition_in_type"],
-                    "parameters": metadata.get("transition_in_parameters", {}),
+                    "parameters": transition_in_params,
                 },
                 "transition_out": {
                     "type": metadata["transition_out_type"],
-                    "parameters": metadata.get("transition_out_parameters", {}),
+                    "parameters": transition_out_params,
                 },
             }
 
@@ -139,16 +176,29 @@ class LEDTransitionProcessor:
             transition_config = context["transition_in"]
 
             # Check if this is an LED transition
-            if not transition_config.get("type", "").startswith("led"):
+            transition_type = transition_config.get("type", "")
+            if not transition_type.startswith("led"):
+                logger.debug(f"Transition IN type '{transition_type}' is not an LED transition")
                 return False
 
-            transition = self._factory.create_led_transition(transition_config["type"])
+            transition = self._factory.create_led_transition(transition_type)
             if transition is None:
+                logger.warning(f"Failed to create LED transition for type '{transition_type}'")
                 return False
 
-            return transition.is_in_transition_region(
+            is_in_region = transition.is_in_transition_region(
                 context["timestamp"], context["item_duration"], transition_config, "in"
             )
+
+            if is_in_region:
+                logger.debug(f"Frame is in LED transition IN region for {transition_type}")
+            else:
+                logger.debug(
+                    f"Frame not in LED transition IN region for {transition_type} - "
+                    f"timestamp={context['timestamp']:.3f}s, duration={context['item_duration']:.3f}s"
+                )
+
+            return is_in_region
 
         except Exception as e:
             logger.warning(f"Error checking LED transition_in: {e}")
@@ -168,16 +218,29 @@ class LEDTransitionProcessor:
             transition_config = context["transition_out"]
 
             # Check if this is an LED transition
-            if not transition_config.get("type", "").startswith("led"):
+            transition_type = transition_config.get("type", "")
+            if not transition_type.startswith("led"):
+                logger.debug(f"Transition OUT type '{transition_type}' is not an LED transition")
                 return False
 
-            transition = self._factory.create_led_transition(transition_config["type"])
+            transition = self._factory.create_led_transition(transition_type)
             if transition is None:
+                logger.warning(f"Failed to create LED transition for type '{transition_type}'")
                 return False
 
-            return transition.is_in_transition_region(
+            is_in_region = transition.is_in_transition_region(
                 context["timestamp"], context["item_duration"], transition_config, "out"
             )
+
+            if is_in_region:
+                logger.debug(f"Frame is in LED transition OUT region for {transition_type}")
+            else:
+                logger.debug(
+                    f"Frame not in LED transition OUT region for {transition_type} - "
+                    f"timestamp={context['timestamp']:.3f}s, duration={context['item_duration']:.3f}s"
+                )
+
+            return is_in_region
 
         except Exception as e:
             logger.warning(f"Error checking LED transition_out: {e}")

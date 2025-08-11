@@ -1024,6 +1024,7 @@ class ConsumerProcess:
             is_first_frame_of_item = buffer_info.metadata.is_first_frame_of_item if buffer_info.metadata else False
             timing_data = buffer_info.metadata.timing_data if buffer_info.metadata else None
 
+            # Include all metadata including transition fields
             frame_metadata = {
                 "timestamp": timestamp,
                 "playlist_item_index": playlist_item_index,
@@ -1031,11 +1032,23 @@ class ConsumerProcess:
                 "timing_data": timing_data,
                 "transition_time": transition_time,
                 "optimization_time": 0.0,  # Will be filled in batch processing
+                **metadata_dict,  # Include all transition metadata fields
             }
 
             # Add frame to batch - keep on GPU
             self._frame_batch.append(rgb_frame)  # Keep as cupy array
             self._batch_metadata.append(frame_metadata)
+
+            # Debug log to confirm transition metadata is in batch
+            if (
+                frame_metadata.get("transition_in_type") != "none"
+                or frame_metadata.get("transition_out_type") != "none"
+            ):
+                logger.debug(
+                    f"Batch frame {len(self._frame_batch)}: transition metadata included - "
+                    f"in_type={frame_metadata.get('transition_in_type')}, "
+                    f"out_type={frame_metadata.get('transition_out_type')}"
+                )
 
             # Check if batch should be processed
             if self._should_process_batch():
@@ -1254,6 +1267,21 @@ class ConsumerProcess:
             if missing_fields and logger.isEnabledFor(logging.DEBUG):
                 logger.debug(f"Using default values for missing transition fields: {', '.join(missing_fields)}")
 
+            # Log transition metadata received from producer
+            if any(
+                metadata_dict.get(f) != "none" and metadata_dict.get(f) != 0.0
+                for f in ["transition_in_type", "transition_out_type"]
+            ):
+                logger.info(
+                    f"CONSUMER: Received transition metadata - "
+                    f"item_timestamp={metadata_dict.get('item_timestamp', 0.0):.3f}s, "
+                    f"item_duration={metadata_dict.get('item_duration', 0.0):.3f}s, "
+                    f"in_type='{metadata_dict.get('transition_in_type', 'none')}' "
+                    f"(duration={metadata_dict.get('transition_in_duration', 0.0):.3f}s), "
+                    f"out_type='{metadata_dict.get('transition_out_type', 'none')}' "
+                    f"(duration={metadata_dict.get('transition_out_duration', 0.0):.3f}s)"
+                )
+
             return metadata_dict
 
         except Exception as e:
@@ -1336,6 +1364,9 @@ class ConsumerProcess:
                 batch_frames_gpu, max_iterations=iterations, debug=False
             )
 
+            # Track LED transition time for batch
+            batch_led_transition_time = 0.0
+
             # Write each result to LED buffer
             success_count = 0
             for frame_idx in range(len(self._frame_batch)):
@@ -1344,9 +1375,22 @@ class ConsumerProcess:
 
                 # Extract LED values for this frame
                 frame_led_values = batch_result.led_values[frame_idx]  # (3, led_count)
-                frame_led_values_cpu = cp.asnumpy(frame_led_values.T).astype(np.uint8)  # (led_count, 3)
 
+                # Apply LED transitions to this frame's LED values (GPU processing)
                 metadata = self._batch_metadata[frame_idx]
+                frame_led_values_transposed = (
+                    frame_led_values.T
+                )  # Convert to (led_count, 3) for LED transition processor
+
+                led_transition_start = time.time()
+                frame_led_values_with_transitions = self._led_transition_processor.process_led_values(
+                    frame_led_values_transposed, metadata
+                )
+                batch_led_transition_time += time.time() - led_transition_start
+
+                # Convert to CPU for LED buffer
+                frame_led_values_cpu = cp.asnumpy(frame_led_values_with_transitions).astype(np.uint8)  # (led_count, 3)
+
                 timestamp = metadata.get("timestamp", time.time())
 
                 # Write to LED buffer
@@ -1403,7 +1447,12 @@ class ConsumerProcess:
                 # Update consumer statistics in ControlState for IPC with web server
                 self._update_consumer_statistics_in_control_state()
 
-            logger.debug(f"Batch processing completed: {success_count}/{len(self._frame_batch)} frames successful")
+            # Update LED transition statistics
+            self._stats.total_led_transition_time += batch_led_transition_time
+
+            logger.debug(
+                f"Batch processing completed: {success_count}/{len(self._frame_batch)} frames successful, LED transitions took {batch_led_transition_time:.3f}s"
+            )
             return success_count > 0
 
         except Exception as e:

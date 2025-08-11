@@ -1694,6 +1694,13 @@ async def update_item_transitions(item_id: str, transition_in: TransitionConfig,
         if validation_errors:
             raise HTTPException(status_code=400, detail={"errors": validation_errors})
 
+        # Log transition configuration update for debugging
+        logger.info(
+            f"API: Updating transitions for item {item_id}: "
+            f"in={transition_in.type}({transition_in.parameters}), "
+            f"out={transition_out.type}({transition_out.parameters})"
+        )
+
         # Send update to playlist sync service
         if playlist_sync_client and playlist_sync_client.connected:
             # Convert API transition configs to sync transition configs
@@ -1704,6 +1711,8 @@ async def update_item_transitions(item_id: str, transition_in: TransitionConfig,
             success = playlist_sync_client.update_item_transitions(item_id, sync_transition_in, sync_transition_out)
 
             if success:
+                # Log successful transmission to consumer
+                logger.info(f"API: Successfully sent transition update for item {item_id} to consumer via sync service")
                 # Note: WebSocket broadcast will happen via sync service callback when the update comes back
                 return {
                     "status": "updated",

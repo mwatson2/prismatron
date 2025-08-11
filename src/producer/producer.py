@@ -912,20 +912,30 @@ class ProducerProcess:
                     metadata_record = self._frame_buffer._metadata_array[buffer_idx]
 
                     # Set transition_in configuration
-                    metadata_record["transition_in_type"] = current_item.transition_in.type
-                    metadata_record["transition_in_duration"] = current_item.transition_in.parameters.get(
-                        "duration", 0.0
-                    )
+                    in_type = current_item.transition_in.type
+                    in_duration = current_item.transition_in.parameters.get("duration", 0.0)
+                    metadata_record["transition_in_type"] = in_type
+                    metadata_record["transition_in_duration"] = in_duration
 
                     # Set transition_out configuration
-                    metadata_record["transition_out_type"] = current_item.transition_out.type
-                    metadata_record["transition_out_duration"] = current_item.transition_out.parameters.get(
-                        "duration", 0.0
-                    )
+                    out_type = current_item.transition_out.type
+                    out_duration = current_item.transition_out.parameters.get("duration", 0.0)
+                    metadata_record["transition_out_type"] = out_type
+                    metadata_record["transition_out_duration"] = out_duration
 
                     # Set item timestamp and duration for transition calculations
+                    item_duration = current_item.get_effective_duration()
                     metadata_record["item_timestamp"] = item_timestamp
-                    metadata_record["item_duration"] = current_item.get_effective_duration()
+                    metadata_record["item_duration"] = item_duration
+
+                    # Log transition metadata being written to frame
+                    logger.info(
+                        f"PRODUCER: Frame {frame_index} transition metadata - "
+                        f"item_timestamp={item_timestamp:.3f}s, "
+                        f"item_duration={item_duration:.3f}s, "
+                        f"in_type='{in_type}' (duration={in_duration:.3f}s), "
+                        f"out_type='{out_type}' (duration={out_duration:.3f}s)"
+                    )
                 else:
                     logger.debug(f"No current item available for frame {frame_index} - transition metadata not set")
             else:
