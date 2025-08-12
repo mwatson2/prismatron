@@ -362,7 +362,7 @@ class DiffusionPatternCapture:
         crop_region: Optional[Tuple[int, int, int, int]] = None,
         block_size: int = 64,
         precision: str = "fp32",
-        use_uint8: bool = False,
+        use_uint8: bool = True,
         flip_image: bool = False,
         total_led_count: int = 2600,  # Total LEDs in system (for data packets)
         capture_led_count: Optional[int] = None,  # LEDs to capture (for testing subset)
