@@ -103,11 +103,61 @@ def inspect_led_data(data: Dict[str, Any], verbose: bool = False) -> None:
     if "led_positions" in data:
         positions = data["led_positions"]
         print(f"  led_positions: shape={positions.shape}, dtype={positions.dtype}")
+
+        # Analyze LED position coverage
+        if len(positions.shape) == 2 and positions.shape[1] >= 2:
+            x_coords = positions[:, 0]
+            y_coords = positions[:, 1]
+
+            # Get image dimensions from metadata
+            frame_width = 800
+            frame_height = 480
+            if "metadata" in data:
+                metadata = data["metadata"].item() if hasattr(data["metadata"], "item") else data["metadata"]
+                frame_width = metadata.get("frame_width", 800)
+                frame_height = metadata.get("frame_height", 480)
+
+            print(
+                f"    coordinate_ranges: X=[{x_coords.min():.1f}, {x_coords.max():.1f}], Y=[{y_coords.min():.1f}, {y_coords.max():.1f}]"
+            )
+
+            # Coverage analysis
+            x_span = x_coords.max() - x_coords.min()
+            y_span = y_coords.max() - y_coords.min()
+            x_coverage = x_span / frame_width * 100
+            y_coverage = y_span / frame_height * 100
+
+            print(f"    coverage: {x_coverage:.1f}% width ({x_span:.1f}px), {y_coverage:.1f}% height ({y_span:.1f}px)")
+
+            # Border analysis
+            left_border = x_coords.min()
+            right_border = frame_width - x_coords.max()
+            top_border = y_coords.min()
+            bottom_border = frame_height - y_coords.max()
+
+            print(
+                f"    borders: L={left_border:.0f}px, R={right_border:.0f}px, T={top_border:.0f}px, B={bottom_border:.0f}px"
+            )
+
+            # Full span check
+            spans_full_width = x_coords.min() < 50 and x_coords.max() > frame_width - 50
+            spans_full_height = y_coords.min() < 50 and y_coords.max() > frame_height - 50
+            spans_full = spans_full_width and spans_full_height
+
+            span_status = "✅ FULL" if spans_full else "⚠️ PARTIAL"
+            print(f"    window_span: {span_status} ({frame_width}x{frame_height})")
+
+            # LED density
+            led_density = len(positions) / (x_span * y_span) if x_span > 0 and y_span > 0 else 0
+            print(f"    led_density: {led_density:.6f} LEDs/pixel²")
+
         if verbose and len(positions) <= 10:
             print(f"    positions: {positions.tolist()}")
         elif verbose:
             print(f"    first 5: {positions[:5].tolist()}")
             print(f"    last 5: {positions[-5:].tolist()}")
+    else:
+        print("  led_positions: ❌ Not found")
 
     # LED ordering
     if "led_ordering" in data:
@@ -140,6 +190,62 @@ def inspect_led_data(data: Dict[str, Any], verbose: bool = False) -> None:
         if verbose:
             sample_items = list(mapping.items())[:5]
             print(f"    sample: {sample_items}")
+
+    # Failed LEDs analysis
+    if "failed_leds" in data:
+        failed_leds = data["failed_leds"]
+        total_leds = len(data["led_positions"]) if "led_positions" in data else "unknown"
+        failure_rate = len(failed_leds) / total_leds * 100 if isinstance(total_leds, int) else 0
+        print(f"  failed_leds: {len(failed_leds)} out of {total_leds} ({failure_rate:.1f}% failure rate)")
+
+        if len(failed_leds) > 0 and verbose:
+            print(f"    failed_indices: {failed_leds[:10].tolist() if len(failed_leds) > 10 else failed_leds.tolist()}")
+            if len(failed_leds) > 10:
+                print(f"    ... and {len(failed_leds) - 10} more")
+
+    # Block coverage analysis for mixed tensor
+    if "mixed_tensor" in data:
+        try:
+            # Add project root to path for imports
+            sys.path.append(str(Path(__file__).parent.parent))
+            from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
+
+            tensor_dict = data["mixed_tensor"].item() if hasattr(data["mixed_tensor"], "item") else data["mixed_tensor"]
+            tensor = SingleBlockMixedSparseTensor.from_dict(tensor_dict)
+
+            # Get image dimensions
+            frame_width = tensor.width
+            frame_height = tensor.height
+
+            # Analyze block positions
+            try:
+                import cupy as cp
+
+                block_positions = cp.asnumpy(tensor.block_positions)
+            except ImportError:
+                block_positions = tensor.block_positions
+
+            all_block_pos = block_positions.reshape(-1, 2)  # Flatten to (total_blocks, 2)
+            block_rows = all_block_pos[:, 0]
+            block_cols = all_block_pos[:, 1]
+
+            # Calculate block coverage (including block size)
+            block_max_row = block_rows.max() + tensor.block_size
+            block_max_col = block_cols.max() + tensor.block_size
+
+            block_coverage = (
+                "✅ FULL" if (block_max_row >= frame_height and block_max_col >= frame_width) else "⚠️ PARTIAL"
+            )
+            print(
+                f"  block_coverage ({tensor.block_size}x{tensor.block_size}): {block_coverage} extends to ({block_max_row-1}, {block_max_col-1})"
+            )
+
+        except ImportError as e:
+            if verbose:
+                print(f"    block_analysis: ❌ Cannot analyze (import error: {e})")
+        except Exception as e:
+            if verbose:
+                print(f"    block_analysis: ❌ Analysis failed ({e})")
 
 
 def inspect_format_summary(data: Dict[str, Any]) -> None:

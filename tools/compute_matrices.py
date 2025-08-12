@@ -110,6 +110,15 @@ def compute_matrices_from_tensor(pattern_file: Path, args) -> int:
                 response = input("Recompute all matrices? (y/N): ")
                 if response.lower() != "y":
                     print("Skipping computation.")
+                    # If tensor was converted to uint8, save it even if not recomputing matrices
+                    if tensor_converted:
+                        print("💾 Saving converted uint8 tensor...")
+                        save_dict = {}
+                        for key in data:
+                            save_dict[key] = data[key]
+                        save_dict["mixed_tensor"] = tensor.to_dict()
+                        np.savez_compressed(str(pattern_file), **save_dict)
+                        print(f"✅ Pattern file updated with uint8 tensor: {pattern_file}")
                     return 0
                 else:
                     compute_all = True
