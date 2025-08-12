@@ -114,7 +114,6 @@ class FrameRenderer:
         self.ewma_fps = 0.0
         self.ewma_late_fraction = 0.0
         self.ewma_dropped_fraction = 0.0
-        self.last_ewma_update = 0.0
         self.last_frame_timestamp = 0.0  # Last frame timestamp for interval calculation
         self.large_timestamp_gap_threshold = 2.0  # Log gaps larger than 2 seconds
 
@@ -520,12 +519,12 @@ class FrameRenderer:
                     f"(previous: {self.last_frame_timestamp:.3f}, current: {frame_timestamp:.3f})"
                 )
 
-        # Calculate instantaneous values based on wall-clock render timing
-        if self.last_ewma_update > 0:
-            wall_clock_interval = current_time - self.last_ewma_update
-            instant_fps = 1.0 / wall_clock_interval if wall_clock_interval > 0 else 0.0
+        # Calculate instantaneous values based on frame timestamp intervals
+        if self.last_frame_timestamp > 0:
+            frame_interval = frame_timestamp - self.last_frame_timestamp
+            instant_fps = 1.0 / frame_interval if frame_interval > 0 else 0.0
 
-            # Update EWMA FPS based on actual render timing
+            # Update EWMA FPS based on frame timestamp intervals
             if self.ewma_fps == 0.0:
                 self.ewma_fps = instant_fps
             else:
@@ -546,7 +545,7 @@ class FrameRenderer:
                 1 - self.ewma_alpha
             ) * self.ewma_dropped_fraction + self.ewma_alpha * dropped_fraction
 
-        self.last_ewma_update = current_time
+        # Update frame timestamp for next calculation
         self.last_frame_timestamp = frame_timestamp
 
     def _convert_spatial_to_physical(self, led_values: np.ndarray) -> np.ndarray:
@@ -659,7 +658,6 @@ class FrameRenderer:
         self.ewma_fps = 0.0
         self.ewma_late_fraction = 0.0
         self.ewma_dropped_fraction = 0.0
-        self.last_ewma_update = 0.0
         self.last_frame_timestamp = 0.0
 
         # Reset pause tracking
