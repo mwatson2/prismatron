@@ -603,6 +603,17 @@ class ConsumerProcess:
             control_status: Current system status from control state
         """
         try:
+            # Don't trust control_status if it might be from a corrupted read
+            # Check if the status looks like a default/error status (all zeros/defaults)
+            if (
+                control_status.consumer_input_fps == 0.0
+                and control_status.renderer_output_fps == 0.0
+                and control_status.uptime == 0.0
+            ):
+                # This looks like a default status from a failed read - don't use it for state transitions
+                logger.debug("Skipping state transition check - control status appears to be default/error status")
+                return
+
             current_renderer_state = control_status.renderer_state
             buffer_stats = self._led_buffer.get_buffer_stats()
             buffer_frames = buffer_stats.get("current_count", 0)
@@ -713,7 +724,15 @@ class ConsumerProcess:
                     continue
 
                 else:
-                    # Stopped - just wait
+                    # Stopped or invalid state - just wait
+                    # Log if we're unexpectedly in STOPPED state with data in buffer
+                    if control_status and control_status.renderer_state == RendererState.STOPPED:
+                        buffer_stats = self._led_buffer.get_buffer_stats()
+                        if buffer_stats.get("current_count", 0) > 0:
+                            logger.warning(
+                                f"Renderer in STOPPED state but LED buffer has {buffer_stats.get('current_count')} frames - "
+                                "possible control state corruption"
+                            )
                     time.sleep(0.1)
                     continue
 

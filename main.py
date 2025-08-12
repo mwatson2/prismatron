@@ -47,6 +47,13 @@ class ProcessManager:
         """
         self.config = config
         self.processes: Dict[str, multiprocessing.Process] = {}
+
+        # Create a shared lock for inter-process synchronization of ControlState
+        self.shared_control_lock = multiprocessing.Lock()
+
+        # Set the shared lock in ControlState before creating instances
+        ControlState.set_shared_lock(self.shared_control_lock)
+
         self.control_state = ControlState()
         self.shutdown_requested = False
 
@@ -135,6 +142,10 @@ class ProcessManager:
             def playlist_sync_worker():
                 """Playlist sync service worker."""
                 try:
+                    # Ensure the shared lock is set in the child process
+                    # (it should already be inherited, but this makes it explicit)
+                    ControlState.set_shared_lock(self.shared_control_lock)
+
                     # Setup logging for subprocess
                     import os
 
@@ -192,6 +203,10 @@ class ProcessManager:
             def web_server_worker():
                 """Web server process worker."""
                 try:
+                    # Ensure the shared lock is set in the child process
+                    # (it should already be inherited, but this makes it explicit)
+                    ControlState.set_shared_lock(self.shared_control_lock)
+
                     # Setup logging for subprocess
                     import os
 
@@ -248,6 +263,10 @@ class ProcessManager:
             def consumer_worker():
                 """Consumer process worker."""
                 try:
+                    # Ensure the shared lock is set in the child process
+                    # (it should already be inherited, but this makes it explicit)
+                    ControlState.set_shared_lock(self.shared_control_lock)
+
                     # Setup logging for subprocess
                     import os
 
@@ -325,6 +344,10 @@ class ProcessManager:
             def producer_worker():
                 """Producer process worker."""
                 try:
+                    # Ensure the shared lock is set in the child process
+                    # (it should already be inherited, but this makes it explicit)
+                    ControlState.set_shared_lock(self.shared_control_lock)
+
                     # Setup logging for subprocess
                     import os
 

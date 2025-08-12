@@ -1307,6 +1307,16 @@ class ProducerProcess:
         """Update producer statistics."""
         try:
             current_time = time.time()
+
+            # Rate limit statistics updates to reduce control state contention
+            # Only update every 0.5 seconds (2 Hz) instead of every frame
+            if not hasattr(self, "_last_stats_update_time"):
+                self._last_stats_update_time = 0.0
+
+            if current_time - self._last_stats_update_time < 0.5:
+                return  # Skip this update
+
+            self._last_stats_update_time = current_time
             elapsed = current_time - self._start_time
 
             if elapsed > 0:

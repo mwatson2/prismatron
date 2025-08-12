@@ -136,6 +136,21 @@ class ControlState:
     and status monitoring across multiple processes.
     """
 
+    # Class-level shared lock that will be set by the main process
+    _shared_lock: Optional[mp.Lock] = None
+
+    @classmethod
+    def set_shared_lock(cls, lock: mp.Lock) -> None:
+        """
+        Set the shared lock to be used by all ControlState instances.
+        This must be called by the main process before creating subprocesses.
+
+        Args:
+            lock: A multiprocessing.Lock created by the main process
+        """
+        cls._shared_lock = lock
+        logger.info("Shared lock set for inter-process synchronization")
+
     def __init__(self, name: str = "prismatron_control"):
         """
         Initialize the control state manager.
@@ -146,7 +161,14 @@ class ControlState:
         self.name = name
         self._shared_memory: Optional[Any] = None
         self._control_dict = None
-        self._lock = mp.Lock()
+        # Use the shared lock if available, otherwise create a local one
+        # The shared lock should be set by the main process before creating subprocesses
+        if ControlState._shared_lock is not None:
+            self._lock = ControlState._shared_lock
+        else:
+            # Fallback to local lock (will only work within same process)
+            self._lock = mp.Lock()
+            logger.warning("Using process-local lock - inter-process synchronization may not work correctly")
         self._initialized = False
         self._start_time = time.time()
         self._is_creator = False  # Track if this instance created the shared memory
@@ -160,6 +182,9 @@ class ControlState:
 
         # Default status
         self._default_status = SystemStatus()
+
+        # Cache the last successfully read status to use when JSON is corrupted
+        self._last_good_status: Optional[SystemStatus] = None
 
         # Calculate buffer size based on typical status object size
         self._buffer_size = self._calculate_buffer_size()
@@ -356,13 +381,24 @@ class ControlState:
                 if "renderer_state" in status_dict:
                     status_dict["renderer_state"] = RendererState(status_dict["renderer_state"])
 
-                return SystemStatus(**status_dict)
+                # Successfully parsed - cache this as last good status
+                new_status = SystemStatus(**status_dict)
+                self._last_good_status = new_status
+                return new_status
 
         except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as e:
             logger.warning(f"Failed to decode status JSON: {e}")
+            # Return last known good status if available, otherwise default
+            if self._last_good_status is not None:
+                logger.debug("Using cached last good status due to JSON decode error")
+                return self._last_good_status
             return self._default_status
         except Exception as e:
             logger.error(f"Failed to read status: {e}")
+            # Return last known good status if available, otherwise default
+            if self._last_good_status is not None:
+                logger.debug("Using cached last good status due to read error")
+                return self._last_good_status
             return self._default_status
 
     def set_play_state(self, state: PlayState) -> bool:
