@@ -70,6 +70,22 @@ def compute_matrices_from_tensor(pattern_file: Path, args) -> int:
         print(f"  Data type: {tensor.dtype}")
         print(f"  Memory: {tensor.memory_info()['total_mb']:.1f}MB")
 
+        # Convert float32 tensor to uint8 if needed
+        tensor_converted = False
+        if tensor.dtype == cupy.float32 and not args.no_convert:
+            print("\n🔄 Converting float32 tensor to uint8 for memory efficiency...")
+            tensor_uint8 = tensor.to_uint8()
+
+            # Replace the tensor with the uint8 version
+            original_memory = tensor.memory_info()["total_mb"]
+            tensor = tensor_uint8
+            tensor_converted = True
+
+            print(f"✅ Conversion complete:")
+            print(f"  New data type: {tensor.dtype}")
+            print(f"  Memory reduction: {original_memory:.1f}MB -> {tensor.memory_info()['total_mb']:.1f}MB")
+            print(f"  Reduction factor: {original_memory / tensor.memory_info()['total_mb']:.1f}x")
+
         # Check if matrices already exist
         has_dense_ata = "dense_ata_matrix" in data
         has_symmetric_dia = "symmetric_dia_matrix" in data
@@ -301,6 +317,11 @@ def compute_matrices_from_tensor(pattern_file: Path, args) -> int:
         for key in data:
             save_dict[key] = data[key]
 
+        # Update the mixed tensor if it was converted to uint8
+        if tensor_converted:
+            save_dict["mixed_tensor"] = tensor.to_dict()
+            print(f"  Saving converted uint8 tensor to file...")
+
         # Add computed or existing matrices
         if compute_all or not has_dense_ata:
             save_dict["dense_ata_matrix"] = dense_ata_matrix.to_dict()
@@ -433,6 +454,7 @@ def main():
     parser.add_argument("--backup", action="store_true", help="Create backup of original file")
     parser.add_argument("--force", action="store_true", help="Force recomputation even if matrices exist")
     parser.add_argument("--fp16", action="store_true", help="Use FP16 output format for matrices")
+    parser.add_argument("--no-convert", action="store_true", help="Don't convert float32 tensors to uint8")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
 
     args = parser.parse_args()

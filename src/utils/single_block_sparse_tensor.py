@@ -1067,6 +1067,63 @@ class SingleBlockMixedSparseTensor:
         logger.debug(f"Extracted pattern for LED {led_idx}, channel {channel_idx}: shape {dense_pattern.shape}")
         return dense_pattern
 
+    def to_uint8(self) -> "SingleBlockMixedSparseTensor":
+        """
+        Convert tensor from float32 to uint8 format.
+
+        Converts float32 values in range [0, 1] to uint8 values in range [0, 254].
+        Values are clamped to [0, 1] before conversion and scaled by 254 (not 255)
+        to ensure headroom for computation without overflow.
+
+        Returns:
+            New SingleBlockMixedSparseTensor with uint8 dtype
+
+        Raises:
+            ValueError: If tensor is already uint8 or not float32
+        """
+        if self.dtype == cp.uint8:
+            raise ValueError("Tensor is already in uint8 format")
+        if self.dtype != cp.float32:
+            raise ValueError(f"Can only convert float32 tensors to uint8, got {self.dtype}")
+
+        logger.info("Converting tensor from float32 to uint8...")
+
+        # Create new tensor with uint8 dtype
+        new_tensor = SingleBlockMixedSparseTensor(
+            batch_size=self.batch_size,
+            channels=self.channels,
+            height=self.height,
+            width=self.width,
+            block_size=self.block_size,
+            device=self.device,
+            dtype=cp.uint8,
+            output_dtype=cp.float32,  # Keep float32 output for compatibility
+        )
+
+        # Convert sparse values from float32 [0,1] to uint8 [0,254]
+        # Clamp to [0, 1] range first
+        clamped_values = cp.clip(self.sparse_values, 0.0, 1.0)
+
+        # Scale to [0, 254] and convert to uint8
+        # Using 254 instead of 255 to provide headroom for computation
+        scaled_values = (clamped_values * 254.0).astype(cp.uint8)
+
+        # Copy converted values and positions
+        new_tensor.sparse_values = scaled_values
+        new_tensor.block_positions = self.block_positions.copy()
+
+        # Log conversion statistics
+        max_val = float(cp.max(scaled_values))
+        min_val = float(cp.min(scaled_values))
+        mean_val = float(cp.mean(scaled_values))
+
+        logger.info(f"Conversion complete: uint8 range [{min_val}, {max_val}], mean={mean_val:.1f}")
+        logger.info(
+            f"Memory reduction: {self.memory_info()['total_mb']:.1f}MB -> {new_tensor.memory_info()['total_mb']:.1f}MB"
+        )
+
+        return new_tensor
+
     def compute_ata_dense(self) -> np.ndarray:
         """
         Compute A^T A matrix directly from block data avoiding CSC conversion issues.
