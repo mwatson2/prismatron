@@ -72,7 +72,7 @@ const HomePage = () => {
   // Create pre-rendered LED stamps for fast rendering with proper Gaussian shape
   const createLEDStamps = () => {
     // LED stamp dimensions
-    const ledRadius = 24
+    const ledRadius = 9
     const ledSize = ledRadius * 2.5 * 2 // Extended for Gaussian falloff
     const centerX = ledSize / 2
     const centerY = ledSize / 2
