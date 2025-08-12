@@ -34,7 +34,13 @@ logger = logging.getLogger(__name__)
 class CameraCalibration:
     """Interactive camera calibration tool."""
 
-    def __init__(self, camera_device: int = 0, use_usb: bool = False, resolution: Tuple[int, int] = (640, 480)):
+    def __init__(
+        self,
+        camera_device: int = 0,
+        use_usb: bool = False,
+        resolution: Tuple[int, int] = (640, 480),
+        flip_image: bool = False,
+    ):
         """
         Initialize camera calibration.
 
@@ -42,10 +48,12 @@ class CameraCalibration:
             camera_device: Camera device ID
             use_usb: Use USB camera instead of CSI camera
             resolution: Camera resolution as (width, height) tuple
+            flip_image: Whether to flip the image 180 degrees (for upside-down camera mounting)
         """
         self.camera_device = camera_device
         self.use_usb = use_usb
         self.resolution = resolution
+        self.flip_image = flip_image
         self.cap: Optional[cv2.VideoCapture] = None
 
         # Camera properties
@@ -432,6 +440,10 @@ class CameraCalibration:
                     logger.error("Failed to read from camera")
                     break
 
+                # Apply flip transformation if requested
+                if self.flip_image:
+                    frame = cv2.rotate(frame, cv2.ROTATE_180)
+
                 # Draw guides and overlays
                 display_frame = self._draw_guides(frame)
 
@@ -487,6 +499,7 @@ class CameraCalibration:
         config = {
             "camera_device": self.camera_device,
             "use_usb": self.use_usb,
+            "flip_image": self.flip_image,
             "camera_resolution": {
                 "width": self.camera_width,
                 "height": self.camera_height,
@@ -516,6 +529,9 @@ def main():
     parser.add_argument("--list-resolutions", action="store_true", help="List supported camera resolutions and exit")
     parser.add_argument("--output-config", default="camera.json", help="Output configuration file path (.json)")
     parser.add_argument("--test-capture", action="store_true", help="Just test camera capture and save a frame")
+    parser.add_argument(
+        "--flip-image", action="store_true", help="Flip image 180 degrees (for upside-down camera mounting)"
+    )
     parser.add_argument(
         "--log-level",
         default="INFO",
@@ -559,7 +575,9 @@ def main():
         return 0
 
     # Create calibration tool
-    calibration = CameraCalibration(camera_device=args.camera_device, use_usb=args.usb, resolution=resolution)
+    calibration = CameraCalibration(
+        camera_device=args.camera_device, use_usb=args.usb, resolution=resolution, flip_image=args.flip_image
+    )
 
     try:
         # Initialize camera

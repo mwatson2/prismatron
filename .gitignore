@@ -205,3 +205,4 @@ uploads/*.png
 # Timing data and performance logs
 timing.csv
 timing/
+experiments/

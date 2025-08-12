@@ -56,7 +56,6 @@ sys.path.insert(0, src_path)
 # Import constants directly to avoid relative import issues
 FRAME_HEIGHT = 480
 FRAME_WIDTH = 800
-LED_COUNT = 2600
 
 from utils.dense_ata_matrix import DenseATAMatrix
 from utils.diagonal_ata_matrix import DiagonalATAMatrix
@@ -1686,7 +1685,7 @@ class DiffusionPatternVisualizer:
         )
         return pairs
 
-    def run(self, host: str = "127.0.0.1", port: int = 8080, debug: bool = False):
+    def run(self, host: str = "0.0.0.0", port: int = 8080, debug: bool = False):
         """Run the web server."""
         if not self.load_patterns():
             logger.error("Failed to load patterns")
@@ -2931,7 +2930,7 @@ def main():
         type=str,
         help="Path to patterns file (.npz) in new nested format",
     )
-    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind to")
+    parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8080, help="Port to bind to")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
 
