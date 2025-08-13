@@ -4,6 +4,8 @@ Unit tests for matrix/digital visual effects.
 Tests specific behaviors and characteristics of digital/cyberpunk style effects.
 """
 
+# Add parent directory to path for tests
+import os
 import sys
 import time
 from pathlib import Path
@@ -11,10 +13,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-# Add src to path for tests
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from producer.effects.matrix_effects import BinaryStream, DigitalRain, GlitchArt
+from src.producer.effects.matrix_effects import BinaryStream, DigitalRain, GlitchArt
 
 
 class TestDigitalRain:

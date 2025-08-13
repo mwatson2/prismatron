@@ -4,6 +4,8 @@ Unit tests for geometric visual effects.
 Tests specific behaviors and characteristics of geometric pattern effects.
 """
 
+# Add parent directory to path for tests
+import os
 import sys
 import time
 from pathlib import Path
@@ -11,10 +13,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-# Add src to path for tests
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from producer.effects.geometric_effects import Kaleidoscope, Mandala, RotatingShapes, Spirals
+from src.producer.effects.geometric_effects import Kaleidoscope, Mandala, RotatingShapes, Spirals
 
 
 class TestRotatingShapes:

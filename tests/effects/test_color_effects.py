@@ -4,6 +4,8 @@ Unit tests for color-based visual effects.
 Tests specific behaviors and characteristics of color effects.
 """
 
+# Add parent directory to path for tests
+import os
 import sys
 import time
 from pathlib import Path
@@ -11,40 +13,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-# Add src to path for tests
-src_path = Path(__file__).parent.parent.parent / "src"
-sys.path.insert(0, str(src_path))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-# Import effects directly to avoid producer package import issues
-effects_path = src_path / "producer" / "effects"
-sys.path.insert(0, str(effects_path))
-
-# Import modules directly
-import importlib.util
-
-
-def load_effect_module(module_name, file_path):
-    """Load an effect module from file path."""
-    spec = importlib.util.spec_from_file_location(module_name, file_path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-# Load base effect first
-base_effect_path = effects_path / "base_effect.py"
-base_effect = load_effect_module("base_effect", base_effect_path)
-
-# Load color effects
-color_effects_path = effects_path / "color_effects.py"
-color_effects = load_effect_module("color_effects", color_effects_path)
-
-# Extract the classes we need
-ColorBreathe = color_effects.ColorBreathe
-ColorWipe = color_effects.ColorWipe
-GradientFlow = color_effects.GradientFlow
-RainbowSweep = color_effects.RainbowSweep
+# Import effects
+from src.producer.effects.color_effects import (
+    ColorBreathe,
+    ColorWipe,
+    GradientFlow,
+    RainbowSweep,
+)
 
 
 class TestRainbowSweep:

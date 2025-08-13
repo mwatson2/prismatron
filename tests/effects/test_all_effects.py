@@ -9,6 +9,8 @@ Tests validate that each effect:
 5. Properly initializes and handles configuration
 """
 
+# Add parent directory to path for tests
+import os
 import sys
 import time
 from pathlib import Path
@@ -16,17 +18,16 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-# Add src to path for tests
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from producer.effects.base_effect import BaseEffect, EffectRegistry
-from producer.effects.color_effects import ColorBreathe, ColorWipe, GradientFlow, RainbowSweep
-from producer.effects.environmental_effects import AuroraBorealis, FireSimulation, Lightning
-from producer.effects.geometric_effects import Kaleidoscope, Mandala, RotatingShapes, Spirals
-from producer.effects.matrix_effects import BinaryStream, DigitalRain, GlitchArt
-from producer.effects.noise_effects import FractalNoise, PerlinNoiseFlow, SimplexClouds, VoronoiCells
-from producer.effects.particle_effects import Fireworks, RainSnow, Starfield, SwarmBehavior
-from producer.effects.wave_effects import LissajousCurves, PlasmaEffect, SineWaveVisualizer, WaterRipples
+from src.producer.effects.base_effect import BaseEffect, EffectRegistry
+from src.producer.effects.color_effects import ColorBreathe, ColorWipe, GradientFlow, RainbowSweep
+from src.producer.effects.environmental_effects import AuroraBorealis, FireSimulation, Lightning
+from src.producer.effects.geometric_effects import Kaleidoscope, Mandala, RotatingShapes, Spirals
+from src.producer.effects.matrix_effects import BinaryStream, DigitalRain, GlitchArt
+from src.producer.effects.noise_effects import FractalNoise, PerlinNoiseFlow, SimplexClouds, VoronoiCells
+from src.producer.effects.particle_effects import Fireworks, RainSnow, Starfield, SwarmBehavior
+from src.producer.effects.wave_effects import LissajousCurves, PlasmaEffect, SineWaveVisualizer, WaterRipples
 
 # List of all effect classes to test
 ALL_EFFECT_CLASSES = [
