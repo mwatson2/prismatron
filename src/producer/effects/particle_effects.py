@@ -32,7 +32,7 @@ class Fireworks(BaseEffect):
         self.explosion_size = self.config.get("explosion_size", 0.3)
 
         self.particles = []
-        self.last_explosion_time = 0
+        self.last_explosion_time = -10  # Start with negative time to trigger immediate explosion
         self.trail_buffer = np.zeros((self.height, self.width, 3), dtype=np.float32)
 
     def create_explosion(self, x, y):

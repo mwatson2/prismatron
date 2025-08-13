@@ -93,7 +93,7 @@ class Lightning(BaseEffect):
         self.background_flash = self.config.get("background_flash", True)
 
         self.active_bolts = []
-        self.last_strike_time = 0
+        self.last_strike_time = -10  # Start with negative time to trigger immediate strike
         self.flash_frame = np.zeros((self.height, self.width, 3), dtype=np.float32)
 
     def _generate_lightning_bolt(self, start_x, start_y, end_x, end_y, generation=0):

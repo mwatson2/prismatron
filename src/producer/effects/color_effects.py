@@ -45,6 +45,7 @@ class ColorBreathe(BaseEffect):
         self.intensity_max = self.config.get("intensity_max", 1.0)
         self.color_shift = self.config.get("color_shift", False)  # Shift hue while breathing
         self.shift_amount = self.config.get("shift_amount", 0.1)
+        self.spatial_variation = self.config.get("spatial_variation", True)  # Add spatial gradient
 
         # Convert base color to HSV for easier manipulation
         r, g, b = [c / 255.0 for c in self.base_color]
@@ -75,20 +76,26 @@ class ColorBreathe(BaseEffect):
         breathe = np.sin(2 * np.pi * self.breathe_rate * t)
         intensity = self.intensity_min + (self.intensity_max - self.intensity_min) * (breathe + 1) / 2
 
-        # Create full frame with solid color
-        frame = np.ones((self.height, self.width, 3)) * intensity
+        # Add spatial variation if enabled
+        if self.spatial_variation:
+            # Create a gradient across the frame
+            intensity_map = np.ones((self.height, self.width))
+            gradient = (self.x_norm + 1) / 2 * 0.3 + 0.7  # 70% to 100% intensity variation
+            intensity_map *= intensity * gradient
+        else:
+            intensity_map = np.ones((self.height, self.width)) * intensity
 
         if self.color_shift:
             # Shift hue slightly with breathing
             hue = (self.base_hue + self.shift_amount * breathe) % 1.0
             hue_array = np.ones((self.height, self.width)) * hue
             saturation = np.ones((self.height, self.width))
-            value = np.ones((self.height, self.width)) * intensity
-            frame = self.hsv_to_rgb(hue_array, saturation, value)
+            frame = self.hsv_to_rgb(hue_array, saturation, intensity_map)
         else:
             # Just modulate intensity
+            frame = np.zeros((self.height, self.width, 3), dtype=np.float32)
             for i in range(3):
-                frame[:, :, i] = self.base_color[i] * intensity
+                frame[:, :, i] = self.base_color[i] * intensity_map
             frame = np.clip(frame, 0, 255).astype(np.uint8)
 
         self.frame_count += 1

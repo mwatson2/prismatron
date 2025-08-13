@@ -141,7 +141,7 @@ class WaterRipples(BaseEffect):
         self.color_mode = self.config.get("color_mode", "blue")  # blue, rainbow, monochrome
 
         self.ripples = []  # List of active ripples (x, y, start_time)
-        self.last_ripple_time = 0
+        self.last_ripple_time = -10  # Start with negative time to trigger immediate ripple
 
     def generate_frame(self) -> np.ndarray:
         t = self.get_time()

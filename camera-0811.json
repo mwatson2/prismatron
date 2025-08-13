@@ -1,0 +1,24 @@
+{
+  "camera_device": 0,
+  "use_usb": true,
+  "flip_image": false,
+  "camera_resolution": {
+    "width": 1920,
+    "height": 1080
+  },
+  "crop_region": {
+    "x": 592,
+    "y": 206,
+    "width": 953,
+    "height": 572
+  },
+  "target_resolution": {
+    "width": 800,
+    "height": 480
+  },
+  "aspect_ratio": {
+    "target": 1.6666666666666667,
+    "actual": 1.666083916083916
+  },
+  "calibration_timestamp": 1754976408.7961123
+}
