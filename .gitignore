@@ -200,7 +200,9 @@ patterns_*.npz
 
 # Test images
 test_images/
-uploads/*.png
+
+# Uploads directory - user uploaded files for testing
+uploads/
 
 # Timing data and performance logs
 timing.csv
