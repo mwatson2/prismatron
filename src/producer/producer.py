@@ -929,7 +929,7 @@ class ProducerProcess:
                     metadata_record["item_duration"] = item_duration
 
                     # Log transition metadata being written to frame
-                    logger.info(
+                    logger.debug(
                         f"PRODUCER: Frame {frame_index} transition metadata - "
                         f"item_timestamp={item_timestamp:.3f}s, "
                         f"item_duration={item_duration:.3f}s, "

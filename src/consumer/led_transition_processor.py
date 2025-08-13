@@ -91,7 +91,7 @@ class LEDTransitionProcessor:
                 transitions_applied.append("led_out")
 
             if transitions_applied:
-                logger.info(f"Applied LED transitions to frame {self._frame_count}: {', '.join(transitions_applied)}")
+                logger.debug(f"Applied LED transitions to frame {self._frame_count}: {', '.join(transitions_applied)}")
             else:
                 # Log when no transitions are applied (but context exists)
                 logger.debug(
