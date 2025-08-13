@@ -163,7 +163,7 @@ class GlitchArt(BaseEffect):
         self.color_shift = self.config.get("color_shift", True)
         self.glitch_frequency = self.config.get("glitch_frequency", 2.0)  # Glitches per second
 
-        self.last_glitch_time = 0
+        self.last_glitch_time = -10  # Start with negative time to trigger immediate glitch
         self.current_glitch = None
         self.base_frame = self._create_base_pattern()
 
@@ -258,13 +258,20 @@ class GlitchArt(BaseEffect):
                     elif offset_y < 0:
                         frame[:offset_y, tear_x : tear_x + tear_width] = section[-offset_y:]
 
+        # Add continuous subtle animation for frame variation
+        if self.frame_count % 3 == 0:  # Every 3rd frame, add slight noise
+            noise_mask = np.random.random((self.height, self.width)) < 0.01  # 1% noise
+            if np.any(noise_mask):
+                frame[noise_mask] = np.random.randint(0, 255, (np.sum(noise_mask), 3))
+
         # Color channel shift
-        if self.color_shift and np.random.random() < self.glitch_intensity * 0.3:
-            # Shift color channels
-            shift_amount = int(self.glitch_intensity * 5)
+        if self.color_shift and (self.current_glitch or np.random.random() < self.glitch_intensity * 0.3):
+            # Shift color channels (always shift if glitch is active, randomly otherwise)
+            shift_amount = int(self.glitch_intensity * 5) + 1  # Ensure at least 1 pixel shift
             temp = frame.copy()
-            frame[:, shift_amount:, 0] = temp[:, :-shift_amount, 0]  # Shift red channel
-            frame[:, :-shift_amount, 2] = temp[:, shift_amount:, 2]  # Shift blue channel
+            if shift_amount < self.width:
+                frame[:, shift_amount:, 0] = temp[:, :-shift_amount, 0]  # Shift red channel
+                frame[:, :-shift_amount, 2] = temp[:, shift_amount:, 2]  # Shift blue channel
 
         self.frame_count += 1
         return frame
