@@ -206,22 +206,37 @@ class VideoSource(ContentSource):
 
             if result.returncode == 0:
                 decoders = result.stdout.lower()
-                # Check for Jetson-specific NVMPI decoders
-                if "h264_nvmpi" in decoders or "hevc_nvmpi" in decoders:
-                    self._hardware_acceleration = "nvmpi"
-                    logger.info("NVIDIA Jetson NVMPI hardware acceleration detected")
+                # Check for Jetson-specific hardware decoders (NVMPI or NVV4L2DEC)
+                if (
+                    "h264_nvmpi" in decoders
+                    or "hevc_nvmpi" in decoders
+                    or "h264_nvv4l2dec" in decoders
+                    or "hevc_nvv4l2dec" in decoders
+                ):
+                    # Determine which decoder variant is available
+                    if "h264_nvv4l2dec" in decoders or "hevc_nvv4l2dec" in decoders:
+                        self._hardware_acceleration = "nvv4l2dec"
+                        logger.info("NVIDIA Jetson NVV4L2DEC hardware acceleration detected")
+                        decoder_prefix = "nvv4l2dec"
+                    else:
+                        self._hardware_acceleration = "nvmpi"
+                        logger.info("NVIDIA Jetson NVMPI hardware acceleration detected")
+                        decoder_prefix = "nvmpi"
+
                     # Determine which decoder to use based on video codec
                     codec_name = self.content_info.metadata.get("codec_name", "").lower()
                     if "h264" in codec_name or "avc" in codec_name:
-                        if "h264_nvmpi" in decoders:
-                            self._hw_decoder = "h264_nvmpi"
-                            logger.info(f"Selected h264_nvmpi decoder for {codec_name} codec")
+                        if f"h264_{decoder_prefix}" in decoders:
+                            self._hw_decoder = f"h264_{decoder_prefix}"
+                            logger.info(f"Selected {self._hw_decoder} decoder for {codec_name} codec")
                     elif "hevc" in codec_name or "h265" in codec_name:
-                        if "hevc_nvmpi" in decoders:
-                            self._hw_decoder = "hevc_nvmpi"
-                            logger.info(f"Selected hevc_nvmpi decoder for {codec_name} codec")
+                        if f"hevc_{decoder_prefix}" in decoders:
+                            self._hw_decoder = f"hevc_{decoder_prefix}"
+                            logger.info(f"Selected {self._hw_decoder} decoder for {codec_name} codec")
                     else:
-                        logger.warning(f"Codec {codec_name} not supported by NVMPI, will use software decoding")
+                        logger.warning(
+                            f"Codec {codec_name} not supported by {decoder_prefix}, will use software decoding"
+                        )
                         self._hardware_acceleration = None
                     return
 
@@ -261,20 +276,21 @@ class VideoSource(ContentSource):
             input_stream = ffmpeg.input(self.filepath)
 
             # Apply hardware acceleration if available
-            if self._hardware_acceleration == "nvmpi":
-                # Use Jetson NVMPI hardware decoder
+            if self._hardware_acceleration in ["nvmpi", "nvv4l2dec"]:
+                # Use Jetson hardware decoder
                 if hasattr(self, "_hw_decoder"):
                     input_stream = ffmpeg.input(self.filepath, vcodec=self._hw_decoder)
-                    logger.info(f"Using Jetson NVMPI decoder: {self._hw_decoder}")
+                    logger.info(f"Using Jetson hardware decoder: {self._hw_decoder}")
                 else:
                     # Fallback to auto-detect based on codec
                     codec_name = self.content_info.metadata.get("codec_name", "").lower()
+                    decoder_prefix = "nvv4l2dec" if self._hardware_acceleration == "nvv4l2dec" else "nvmpi"
                     if "h264" in codec_name or "avc" in codec_name:
-                        input_stream = ffmpeg.input(self.filepath, vcodec="h264_nvmpi")
-                        logger.info("Using h264_nvmpi decoder")
+                        input_stream = ffmpeg.input(self.filepath, vcodec=f"h264_{decoder_prefix}")
+                        logger.info(f"Using h264_{decoder_prefix} decoder")
                     elif "hevc" in codec_name or "h265" in codec_name:
-                        input_stream = ffmpeg.input(self.filepath, vcodec="hevc_nvmpi")
-                        logger.info("Using hevc_nvmpi decoder")
+                        input_stream = ffmpeg.input(self.filepath, vcodec=f"hevc_{decoder_prefix}")
+                        logger.info(f"Using hevc_{decoder_prefix} decoder")
                     else:
                         logger.warning(f"Unknown codec {codec_name}, falling back to software decoding")
             elif self._hardware_acceleration == "cuda":
@@ -490,18 +506,19 @@ class VideoSource(ContentSource):
             input_stream = ffmpeg.input(self.filepath, ss=start_time)
 
             # Apply hardware acceleration if available
-            if self._hardware_acceleration == "nvmpi":
-                # Use Jetson NVMPI hardware decoder
+            if self._hardware_acceleration in ["nvmpi", "nvv4l2dec"]:
+                # Use Jetson hardware decoder
                 if hasattr(self, "_hw_decoder"):
                     input_stream = ffmpeg.input(self.filepath, ss=start_time, vcodec=self._hw_decoder)
-                    logger.info(f"Using Jetson NVMPI decoder with seek: {self._hw_decoder}")
+                    logger.info(f"Using Jetson hardware decoder with seek: {self._hw_decoder}")
                 else:
                     # Fallback to auto-detect based on codec
                     codec_name = self.content_info.metadata.get("codec_name", "").lower()
+                    decoder_prefix = "nvv4l2dec" if self._hardware_acceleration == "nvv4l2dec" else "nvmpi"
                     if "h264" in codec_name or "avc" in codec_name:
-                        input_stream = ffmpeg.input(self.filepath, ss=start_time, vcodec="h264_nvmpi")
+                        input_stream = ffmpeg.input(self.filepath, ss=start_time, vcodec=f"h264_{decoder_prefix}")
                     elif "hevc" in codec_name or "h265" in codec_name:
-                        input_stream = ffmpeg.input(self.filepath, ss=start_time, vcodec="hevc_nvmpi")
+                        input_stream = ffmpeg.input(self.filepath, ss=start_time, vcodec=f"hevc_{decoder_prefix}")
                     else:
                         logger.warning(f"Unknown codec {codec_name} for seek, falling back to software decoding")
             elif self._hardware_acceleration == "cuda":
