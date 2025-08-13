@@ -21,10 +21,15 @@ class DigitalRain(BaseEffect):
         column_width = self.width / self.column_count
 
         for i in range(self.column_count):
+            # Ensure first column starts on-screen for immediate visibility
+            if i == 0:
+                y_pos = np.random.randint(0, self.height // 2)
+            else:
+                y_pos = np.random.randint(-self.height, 0)
             self.columns.append(
                 {
                     "x": int((i + 0.5) * column_width),
-                    "y": np.random.randint(-self.height, 0),
+                    "y": y_pos,
                     "speed": 0.5 + np.random.random() * 0.5,
                     "trail": [],
                 }

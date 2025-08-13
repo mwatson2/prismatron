@@ -30,6 +30,11 @@ class BaseEffect(ABC):
         self.frame_count = 0
         self.start_time = time.time()
 
+        # Seed random number generator for consistent test behavior
+        # Use a deterministic seed based on effect instance parameters
+        seed = hash((width, height, fps, str(sorted(self.config.items())))) % 2**32
+        np.random.seed(seed)
+
         # Create coordinate grids for efficient calculations
         self.y_grid, self.x_grid = np.mgrid[0:height, 0:width]
         self.center_x = width / 2
