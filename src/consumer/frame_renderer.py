@@ -118,6 +118,10 @@ class FrameRenderer:
         self.last_frame_timestamp = 0.0  # Last frame timestamp for interval calculation
         self.large_timestamp_gap_threshold = 2.0  # Log gaps larger than 2 seconds
 
+        # Output FPS tracking (frames sent to sinks per second)
+        self.output_fps_ewma = 0.0
+        self.last_output_time = 0.0
+
         # Timing distribution tracking
         self.timing_errors = []  # Track last 100 timing errors for analysis
         self.max_timing_history = 100
@@ -489,6 +493,9 @@ class FrameRenderer:
             except Exception as e:
                 logger.error(f"{name} sink error: {e}")
 
+        # Update output FPS tracking after sending to sinks
+        self._update_output_fps()
+
     def _track_timing_error(self, time_diff: float) -> None:
         """
         Track timing errors for statistical analysis.
@@ -548,6 +555,31 @@ class FrameRenderer:
 
         self.last_ewma_update = current_time
         self.last_frame_timestamp = frame_timestamp
+
+    def _update_output_fps(self, alpha: float = 0.1) -> None:
+        """
+        Update output FPS tracking based on wall-clock time when frames are sent to sinks.
+        This measures the actual rate at which frames are delivered to output sinks.
+        """
+        current_time = time.time()
+        if hasattr(self, "last_output_time") and self.last_output_time > 0:
+            time_diff = current_time - self.last_output_time
+            if time_diff > 0:
+                current_fps = 1.0 / time_diff
+                if not hasattr(self, "output_fps_ewma"):
+                    self.output_fps_ewma = current_fps
+                else:
+                    self.output_fps_ewma = (1 - alpha) * self.output_fps_ewma + alpha * current_fps
+
+        self.last_output_time = current_time
+
+        # Initialize output_fps_ewma if it doesn't exist
+        if not hasattr(self, "output_fps_ewma"):
+            self.output_fps_ewma = 0.0
+
+    def get_output_fps(self) -> float:
+        """Get the current output FPS (frames sent to sinks per second)."""
+        return getattr(self, "output_fps_ewma", 0.0)
 
     def _convert_spatial_to_physical(self, led_values: np.ndarray) -> np.ndarray:
         """
@@ -661,6 +693,10 @@ class FrameRenderer:
         self.ewma_dropped_fraction = 0.0
         self.last_ewma_update = 0.0
         self.last_frame_timestamp = 0.0
+
+        # Reset output FPS tracking
+        self.output_fps_ewma = 0.0
+        self.last_output_time = 0.0
 
         # Reset pause tracking
         self.is_paused = False

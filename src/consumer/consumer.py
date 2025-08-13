@@ -55,7 +55,6 @@ class ConsumerStats:
 
     # Internal tracking for FPS calculations
     _last_frame_timestamp: float = 0.0
-    _last_render_time: float = 0.0
     _render_count: int = 0
 
     def get_average_fps(self) -> float:
@@ -91,30 +90,6 @@ class ConsumerStats:
         self._input_fps_debug_counter += 1
         if self._input_fps_debug_counter % 30 == 0:
             logger.debug(f"CONSUMER INPUT FPS DEBUG: Updated from {old_fps:.2f} to {self.consumer_input_fps:.2f}")
-
-    def update_renderer_output_fps(self, alpha: float = 0.1) -> None:
-        """Update renderer output FPS using EWMA."""
-        old_fps = self.renderer_output_fps_ewma
-        current_time = time.time()
-        if self._last_render_time > 0:
-            time_diff = current_time - self._last_render_time
-            if time_diff > 0:
-                current_fps = 1.0 / time_diff
-                if self.renderer_output_fps_ewma == 0:
-                    self.renderer_output_fps_ewma = current_fps
-                else:
-                    self.renderer_output_fps_ewma = (1 - alpha) * self.renderer_output_fps_ewma + alpha * current_fps
-        self._last_render_time = current_time
-
-        # Debug logging every 30 updates
-        if not hasattr(self, "_output_fps_debug_counter"):
-            self._output_fps_debug_counter = 0
-        self._output_fps_debug_counter += 1
-        if self._output_fps_debug_counter % 30 == 0:
-            logger.debug(
-                f"RENDERER OUTPUT FPS DEBUG: Updated from {old_fps:.2f} to {self.renderer_output_fps_ewma:.2f}"
-            )
-        self._render_count += 1
 
 
 class ConsumerProcess:
@@ -811,7 +786,8 @@ class ConsumerProcess:
 
                 # Update renderer output FPS tracking and overall drop rate
                 if success:
-                    self._stats.update_renderer_output_fps()
+                    # Get output FPS from frame renderer (measured at sink output)
+                    self._stats.renderer_output_fps_ewma = self._frame_renderer.get_output_fps()
                     # Mark successful render in overall drop rate tracking
                     if current_frame_index is not None:
                         self.overall_drop_rate_ewma.update(dropped=False)
