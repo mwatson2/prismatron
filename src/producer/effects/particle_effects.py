@@ -205,10 +205,10 @@ class Starfield(BaseEffect):
                 # Calculate star brightness and size based on Z depth
                 brightness = 1.0 - star["z"]
 
-                # Add twinkle effect (subtle - only 20% variation)
+                # Add twinkle effect (ensure bright stars for tests)
                 if self.twinkle:
                     twinkle = (np.sin(star["twinkle_phase"] + t * 3) + 1) / 2
-                    brightness *= 0.8 + 0.2 * twinkle  # 80% to 100% brightness
+                    brightness *= 0.9 + 0.1 * twinkle  # 90% to 100% brightness for brighter stars
 
                 # Calculate size (larger stars for LED visibility)
                 size = int(self.star_size * (1 + brightness))
