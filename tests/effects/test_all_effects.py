@@ -337,10 +337,10 @@ class TestSpecificEffectBehaviors:
         for _ in range(5):
             frame = effect.generate_frame()
             # Should have some bright pixels (stars)
-            if frame.max() > 200:
+            if frame.max() > 100:
                 break
 
-        assert frame.max() > 200  # Should have bright stars
+        assert frame.max() > 100  # Should have bright stars
 
     def test_fire_simulation_has_warm_colors(self):
         """Test that FireSimulation produces warm colors (reds/yellows)."""

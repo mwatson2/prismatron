@@ -126,12 +126,22 @@ class Starfield(BaseEffect):
 
         # Initialize stars with 3D positions
         self.stars = []
-        for _ in range(self.star_count):
+        for i in range(self.star_count):
+            # Ensure some stars are very close (bright)
+            if i < 10:  # First 10 stars are close for guaranteed brightness
+                z = 0.01 + i * 0.02  # z from 0.01 to 0.19
+                # Place bright stars near center to avoid going off-screen
+                x = np.random.uniform(-0.5, 0.5)
+                y = np.random.uniform(-0.5, 0.5)
+            else:
+                z = np.random.uniform(0.2, 1)
+                x = np.random.uniform(-1, 1)
+                y = np.random.uniform(-1, 1)
             self.stars.append(
                 {
-                    "x": np.random.uniform(-1, 1),
-                    "y": np.random.uniform(-1, 1),
-                    "z": np.random.uniform(0.1, 1),
+                    "x": x,
+                    "y": y,
+                    "z": z,
                     "twinkle_phase": np.random.random() * 2 * np.pi,
                     "color": self._get_star_color(),
                 }
@@ -156,7 +166,7 @@ class Starfield(BaseEffect):
             # Update star position based on direction
             if self.direction == "forward":
                 star["z"] -= self.speed * 0.01
-                if star["z"] <= 0:
+                if star["z"] <= 0.01:  # Keep minimum distance
                     star["z"] = 1
                     star["x"] = np.random.uniform(-1, 1)
                     star["y"] = np.random.uniform(-1, 1)
@@ -195,16 +205,16 @@ class Starfield(BaseEffect):
                 # Calculate star brightness and size based on Z depth
                 brightness = 1.0 - star["z"]
 
-                # Add twinkle effect
+                # Add twinkle effect (subtle - only 20% variation)
                 if self.twinkle:
                     twinkle = (np.sin(star["twinkle_phase"] + t * 3) + 1) / 2
-                    brightness *= 0.5 + 0.5 * twinkle
+                    brightness *= 0.8 + 0.2 * twinkle  # 80% to 100% brightness
 
                 # Calculate size (larger stars for LED visibility)
                 size = int(self.star_size * (1 + brightness))
 
                 # Draw star
-                color = [c * brightness for c in star["color"]]
+                color = [int(c * brightness) for c in star["color"]]
                 cv2.circle(frame, (px, py), size, color, -1)
 
         self.frame_count += 1

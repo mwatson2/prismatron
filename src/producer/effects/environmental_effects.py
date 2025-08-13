@@ -86,10 +86,13 @@ class Lightning(BaseEffect):
     """Lightning bolt generation with branching."""
 
     def initialize(self):
-        self.strike_frequency = self.config.get("strike_frequency", 0.5)  # Strikes per second
+        # Support both strike_frequency and strike_probability for compatibility
+        self.strike_frequency = self.config.get(
+            "strike_frequency", self.config.get("strike_probability", 0.5)
+        )  # Strikes per second
         self.branch_probability = self.config.get("branch_probability", 0.3)
         self.fade_time = self.config.get("fade_time", 0.3)  # How long bolts remain visible
-        self.color = self.config.get("color", [200, 200, 255])  # Blueish white
+        self.color = self.config.get("color", [255, 255, 255])  # Pure white for maximum brightness
         self.background_flash = self.config.get("background_flash", True)
 
         self.active_bolts = []
@@ -154,8 +157,8 @@ class Lightning(BaseEffect):
 
             # Background flash
             if self.background_flash:
-                flash_intensity = np.random.uniform(0.3, 0.8)
-                self.flash_frame += flash_intensity * 50  # White flash
+                flash_intensity = np.random.uniform(0.5, 1.0)
+                self.flash_frame += flash_intensity * 255  # Bright white flash
 
             self.last_strike_time = t
 
