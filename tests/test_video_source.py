@@ -203,6 +203,19 @@ class TestVideoSource(unittest.TestCase):
         self.assertEqual(video_source._hw_decoder, "h264_nvmpi")
 
     @patch("subprocess.run")
+    def test_hardware_acceleration_detection_nvv4l2dec_h264(self, mock_subprocess):
+        """Test Jetson NVV4L2DEC hardware acceleration detection for H.264."""
+        mock_subprocess.return_value = Mock(returncode=0, stdout="Decoders:\n h264_nvv4l2dec\n hevc_nvv4l2dec\n")
+
+        video_source = VideoSource(self.test_video_path)
+        # Set up metadata to simulate H.264 video
+        video_source.content_info.metadata = {"codec_name": "h264"}
+        video_source._detect_hardware_acceleration()
+
+        self.assertEqual(video_source._hardware_acceleration, "nvv4l2dec")
+        self.assertEqual(video_source._hw_decoder, "h264_nvv4l2dec")
+
+    @patch("subprocess.run")
     def test_hardware_acceleration_detection_nvmpi_hevc(self, mock_subprocess):
         """Test Jetson NVMPI hardware acceleration detection for HEVC."""
         mock_subprocess.return_value = Mock(returncode=0, stdout="Decoders:\n h264_nvmpi\n hevc_nvmpi\n")
@@ -444,8 +457,8 @@ class TestVideoSource(unittest.TestCase):
             self.assertEqual(video_info["width"], 1920)
             self.assertEqual(video_info["height"], 1080)
             self.assertEqual(video_info["fps"], 30.0)
-            # Could be cuda or nvmpi depending on detection
-            self.assertIn(video_info["hardware_acceleration"], ["cuda", "nvmpi", "nvdec"])
+            # Could be cuda, nvmpi, nvv4l2dec, or nvdec depending on detection
+            self.assertIn(video_info["hardware_acceleration"], ["cuda", "nvmpi", "nvv4l2dec", "nvdec"])
 
     def test_context_manager(self):
         """Test video source as context manager."""

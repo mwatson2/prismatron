@@ -444,7 +444,7 @@ const HomePage = () => {
           <div className="grid grid-cols-2 gap-4 text-xs font-mono">
             <div>
               <span className="text-metal-silver">CPU:</span>
-              <span className="text-neon-cyan ml-2">{status.cpu_usage?.toFixed(1)}%</span>
+              <span className="text-neon-cyan ml-2">{status.cpu_usage?.toFixed(1)}% / GPU {status.gpu_usage?.toFixed(1)}%</span>
             </div>
             <div>
               <span className="text-metal-silver">Memory:</span>

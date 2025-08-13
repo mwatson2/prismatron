@@ -38,6 +38,14 @@ from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Try to import jtop for GPU usage monitoring on Jetson platforms
+try:
+    from jtop import jtop
+
+    JTOP_AVAILABLE = True
+except ImportError:
+    JTOP_AVAILABLE = False
+
 from src.const import FRAME_HEIGHT, FRAME_WIDTH
 from src.core.control_state import ControlState, ProducerState, RendererState
 from src.core.playlist_sync import PlaylistItem as SyncPlaylistItem
@@ -69,6 +77,22 @@ def get_gpu_temperature():
             return temp_microcelsius / 1000.0  # Convert microcelsius to celsius
     except Exception as e:
         logger.warning(f"Failed to read GPU temperature: {e}")
+        return 0.0
+
+
+def get_gpu_usage():
+    """Get GPU usage percentage using jtop."""
+    if not JTOP_AVAILABLE:
+        return 0.0
+
+    try:
+        with jtop() as jetson:
+            if jetson.ok():
+                # Access GPU usage via the correct path: gpu.status.load
+                return float(jetson.gpu["gpu"]["status"]["load"])
+        return 0.0
+    except Exception as e:
+        logger.warning(f"Failed to read GPU usage: {e}")
         return 0.0
 
 
@@ -180,6 +204,7 @@ class SystemStatus(BaseModel):
     memory_usage: float = Field(0.0, description="Memory usage percentage")
     memory_usage_gb: float = Field(0.0, description="Memory usage in GB")
     cpu_usage: float = Field(0.0, description="CPU usage percentage")
+    gpu_usage: float = Field(0.0, description="GPU usage percentage")
     led_panel_connected: bool = Field(False, description="LED panel connection status")
     led_panel_status: str = Field("disconnected", description="LED panel status (connected/connecting/disconnected)")
 
@@ -696,9 +721,10 @@ async def preview_broadcast_task():
                     mem_used_gb = 0.0
                     uptime = current_time
 
-                # Get temperature readings
+                # Get temperature and usage readings
                 cpu_temp = get_cpu_temperature()
                 gpu_temp = get_gpu_temperature()
+                gpu_usage = get_gpu_usage()
 
                 # Get rendering_index and renderer state from control state
                 rendering_index_for_status = -1
@@ -730,6 +756,7 @@ async def preview_broadcast_task():
                     "memory_usage": mem_percent,
                     "memory_usage_gb": mem_used_gb,
                     "cpu_usage": cpu_percent,
+                    "gpu_usage": gpu_usage,
                     "cpu_temperature": cpu_temp,
                     "gpu_temperature": gpu_temp,
                     "led_panel_connected": led_panel_connected,
@@ -995,9 +1022,10 @@ async def get_system_status():
         mem_used_gb = 0.0
         uptime = time.time()
 
-    # Get temperature readings
+    # Get temperature and usage readings
     cpu_temp = get_cpu_temperature()
     gpu_temp = get_gpu_temperature()
+    gpu_usage = get_gpu_usage()
 
     # Get actual frame rate from shared memory
     frame_rate = 30.0  # Default fallback
@@ -1054,6 +1082,7 @@ async def get_system_status():
         memory_usage=mem_percent,
         memory_usage_gb=mem_used_gb,
         cpu_usage=cpu_percent,
+        gpu_usage=gpu_usage,
         cpu_temperature=cpu_temp,
         gpu_temperature=gpu_temp,
         led_panel_connected=led_panel_connected,
