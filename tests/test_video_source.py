@@ -98,8 +98,11 @@ class TestVideoSource(unittest.TestCase):
         mock_exists.return_value = True
         mock_ffmpeg.probe.return_value = self.mock_video_metadata
 
-        # Mock hardware acceleration detection
-        mock_subprocess.return_value = Mock(returncode=0, stdout="Hardware acceleration methods:\ncuda\nnvdec\n")
+        # Mock hardware acceleration detection (first decoders, then hwaccels)
+        mock_subprocess.side_effect = [
+            Mock(returncode=0, stdout="Decoders:\n h264\n hevc\n"),  # No NVMPI
+            Mock(returncode=0, stdout="Hardware acceleration methods:\ncuda\nnvdec\n"),
+        ]
 
         # Mock FFmpeg process
         mock_process = Mock()
@@ -161,7 +164,11 @@ class TestVideoSource(unittest.TestCase):
     @patch("subprocess.run")
     def test_hardware_acceleration_detection_cuda(self, mock_subprocess):
         """Test CUDA hardware acceleration detection."""
-        mock_subprocess.return_value = Mock(returncode=0, stdout="Hardware acceleration methods:\ncuda\n")
+        # First call for decoders check, second for hwaccels
+        mock_subprocess.side_effect = [
+            Mock(returncode=0, stdout="Decoders:\n h264\n hevc\n"),  # No NVMPI decoders
+            Mock(returncode=0, stdout="Hardware acceleration methods:\ncuda\n"),
+        ]
 
         video_source = VideoSource(self.test_video_path)
         video_source._detect_hardware_acceleration()
@@ -171,7 +178,11 @@ class TestVideoSource(unittest.TestCase):
     @patch("subprocess.run")
     def test_hardware_acceleration_detection_nvdec(self, mock_subprocess):
         """Test NVDEC hardware acceleration detection."""
-        mock_subprocess.return_value = Mock(returncode=0, stdout="Hardware acceleration methods:\nnvdec\n")
+        # First call for decoders check, second for hwaccels
+        mock_subprocess.side_effect = [
+            Mock(returncode=0, stdout="Decoders:\n h264\n hevc\n"),  # No NVMPI decoders
+            Mock(returncode=0, stdout="Hardware acceleration methods:\nnvdec\n"),
+        ]
 
         video_source = VideoSource(self.test_video_path)
         video_source._detect_hardware_acceleration()
@@ -179,9 +190,39 @@ class TestVideoSource(unittest.TestCase):
         self.assertEqual(video_source._hardware_acceleration, "nvdec")
 
     @patch("subprocess.run")
+    def test_hardware_acceleration_detection_nvmpi_h264(self, mock_subprocess):
+        """Test Jetson NVMPI hardware acceleration detection for H.264."""
+        mock_subprocess.return_value = Mock(returncode=0, stdout="Decoders:\n h264_nvmpi\n hevc_nvmpi\n")
+
+        video_source = VideoSource(self.test_video_path)
+        # Set up metadata to simulate H.264 video
+        video_source.content_info.metadata = {"codec_name": "h264"}
+        video_source._detect_hardware_acceleration()
+
+        self.assertEqual(video_source._hardware_acceleration, "nvmpi")
+        self.assertEqual(video_source._hw_decoder, "h264_nvmpi")
+
+    @patch("subprocess.run")
+    def test_hardware_acceleration_detection_nvmpi_hevc(self, mock_subprocess):
+        """Test Jetson NVMPI hardware acceleration detection for HEVC."""
+        mock_subprocess.return_value = Mock(returncode=0, stdout="Decoders:\n h264_nvmpi\n hevc_nvmpi\n")
+
+        video_source = VideoSource(self.test_video_path)
+        # Set up metadata to simulate HEVC video
+        video_source.content_info.metadata = {"codec_name": "hevc"}
+        video_source._detect_hardware_acceleration()
+
+        self.assertEqual(video_source._hardware_acceleration, "nvmpi")
+        self.assertEqual(video_source._hw_decoder, "hevc_nvmpi")
+
+    @patch("subprocess.run")
     def test_hardware_acceleration_detection_none(self, mock_subprocess):
         """Test no hardware acceleration available."""
-        mock_subprocess.return_value = Mock(returncode=0, stdout="Hardware acceleration methods:\nsoftware\n")
+        # First call for decoders check, second for hwaccels
+        mock_subprocess.side_effect = [
+            Mock(returncode=0, stdout="Decoders:\n h264\n hevc\n"),  # No NVMPI decoders
+            Mock(returncode=0, stdout="Hardware acceleration methods:\nsoftware\n"),
+        ]
 
         video_source = VideoSource(self.test_video_path)
         video_source._detect_hardware_acceleration()
@@ -197,6 +238,7 @@ class TestVideoSource(unittest.TestCase):
         video_source._detect_hardware_acceleration()
 
         self.assertIsNone(video_source._hardware_acceleration)
+        self.assertIsNone(video_source._hw_decoder)
 
     @patch("src.producer.content_sources.video_source.ffmpeg")
     @patch("src.producer.content_sources.video_source.FFMPEG_AVAILABLE", True)
@@ -207,7 +249,10 @@ class TestVideoSource(unittest.TestCase):
         # Setup mocks
         mock_exists.return_value = True
         mock_ffmpeg.probe.return_value = self.mock_video_metadata
-        mock_subprocess.return_value = Mock(returncode=0, stdout="software\n")
+        mock_subprocess.side_effect = [
+            Mock(returncode=0, stdout="Decoders:\n h264\n hevc\n"),  # No NVMPI
+            Mock(returncode=0, stdout="software\n"),
+        ]
 
         # Mock FFmpeg process with frame data
         mock_process = Mock()
@@ -288,7 +333,10 @@ class TestVideoSource(unittest.TestCase):
         # Setup mocks
         mock_exists.return_value = True
         mock_ffmpeg.probe.return_value = self.mock_video_metadata
-        mock_subprocess.return_value = Mock(returncode=0, stdout="software\n")
+        mock_subprocess.side_effect = [
+            Mock(returncode=0, stdout="Decoders:\n h264\n hevc\n"),  # No NVMPI
+            Mock(returncode=0, stdout="software\n"),
+        ]
 
         mock_process = Mock()
         mock_process.pid = 12345
@@ -332,7 +380,10 @@ class TestVideoSource(unittest.TestCase):
         # Setup mocks
         mock_exists.return_value = True
         mock_ffmpeg.probe.return_value = self.mock_video_metadata
-        mock_subprocess.return_value = Mock(returncode=0, stdout="software\n")
+        mock_subprocess.side_effect = [
+            Mock(returncode=0, stdout="Decoders:\n h264\n hevc\n"),  # No NVMPI
+            Mock(returncode=0, stdout="software\n"),
+        ]
 
         mock_process = Mock()
         mock_process.pid = 12345
@@ -362,7 +413,10 @@ class TestVideoSource(unittest.TestCase):
         # Setup mocks
         mock_exists.return_value = True
         mock_ffmpeg.probe.return_value = self.mock_video_metadata
-        mock_subprocess.return_value = Mock(returncode=0, stdout="Hardware acceleration methods:\ncuda\n")
+        mock_subprocess.side_effect = [
+            Mock(returncode=0, stdout="Decoders:\n h264\n hevc\n"),  # No NVMPI
+            Mock(returncode=0, stdout="Hardware acceleration methods:\ncuda\n"),
+        ]
 
         video_source = VideoSource(self.test_video_path)
 
@@ -390,7 +444,8 @@ class TestVideoSource(unittest.TestCase):
             self.assertEqual(video_info["width"], 1920)
             self.assertEqual(video_info["height"], 1080)
             self.assertEqual(video_info["fps"], 30.0)
-            self.assertEqual(video_info["hardware_acceleration"], "cuda")
+            # Could be cuda or nvmpi depending on detection
+            self.assertIn(video_info["hardware_acceleration"], ["cuda", "nvmpi", "nvdec"])
 
     def test_context_manager(self):
         """Test video source as context manager."""

@@ -14,6 +14,7 @@ import threading
 import time
 from typing import Any, Dict, Optional, Tuple
 
+import cv2
 import numpy as np
 
 try:
@@ -70,6 +71,7 @@ class VideoSource(ContentSource):
         self._current_frame_number: int = 0
         self._start_time: float = 0.0
         self._hardware_acceleration: Optional[str] = None
+        self._hw_decoder: Optional[str] = None  # Specific hardware decoder (e.g., h264_nvmpi)
 
         # Threading for frame reading
         self._lock = threading.Lock()
@@ -191,10 +193,39 @@ class VideoSource(ContentSource):
         """
         Detect available hardware acceleration options.
 
-        Currently checks for NVIDIA NVDEC support.
+        Checks for NVIDIA hardware acceleration including Jetson NVMPI support.
         """
         try:
-            # Check if NVDEC is available
+            # First check for Jetson NVMPI decoders (Jetson Orin Nano, etc.)
+            result = subprocess.run(  # nosec B607 - ffmpeg is a trusted tool
+                ["ffmpeg", "-hide_banner", "-decoders"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+
+            if result.returncode == 0:
+                decoders = result.stdout.lower()
+                # Check for Jetson-specific NVMPI decoders
+                if "h264_nvmpi" in decoders or "hevc_nvmpi" in decoders:
+                    self._hardware_acceleration = "nvmpi"
+                    logger.info("NVIDIA Jetson NVMPI hardware acceleration detected")
+                    # Determine which decoder to use based on video codec
+                    codec_name = self.content_info.metadata.get("codec_name", "").lower()
+                    if "h264" in codec_name or "avc" in codec_name:
+                        if "h264_nvmpi" in decoders:
+                            self._hw_decoder = "h264_nvmpi"
+                            logger.info(f"Selected h264_nvmpi decoder for {codec_name} codec")
+                    elif "hevc" in codec_name or "h265" in codec_name:
+                        if "hevc_nvmpi" in decoders:
+                            self._hw_decoder = "hevc_nvmpi"
+                            logger.info(f"Selected hevc_nvmpi decoder for {codec_name} codec")
+                    else:
+                        logger.warning(f"Codec {codec_name} not supported by NVMPI, will use software decoding")
+                        self._hardware_acceleration = None
+                    return
+
+            # Fall back to checking standard hardware acceleration
             result = subprocess.run(  # nosec B607 - ffmpeg is a trusted tool
                 ["ffmpeg", "-hide_banner", "-hwaccels"],
                 capture_output=True,
@@ -230,7 +261,23 @@ class VideoSource(ContentSource):
             input_stream = ffmpeg.input(self.filepath)
 
             # Apply hardware acceleration if available
-            if self._hardware_acceleration == "cuda":
+            if self._hardware_acceleration == "nvmpi":
+                # Use Jetson NVMPI hardware decoder
+                if hasattr(self, "_hw_decoder"):
+                    input_stream = ffmpeg.input(self.filepath, vcodec=self._hw_decoder)
+                    logger.info(f"Using Jetson NVMPI decoder: {self._hw_decoder}")
+                else:
+                    # Fallback to auto-detect based on codec
+                    codec_name = self.content_info.metadata.get("codec_name", "").lower()
+                    if "h264" in codec_name or "avc" in codec_name:
+                        input_stream = ffmpeg.input(self.filepath, vcodec="h264_nvmpi")
+                        logger.info("Using h264_nvmpi decoder")
+                    elif "hevc" in codec_name or "h265" in codec_name:
+                        input_stream = ffmpeg.input(self.filepath, vcodec="hevc_nvmpi")
+                        logger.info("Using hevc_nvmpi decoder")
+                    else:
+                        logger.warning(f"Unknown codec {codec_name}, falling back to software decoding")
+            elif self._hardware_acceleration == "cuda":
                 input_stream = ffmpeg.input(self.filepath, hwaccel="cuda")
             elif self._hardware_acceleration == "nvdec":
                 input_stream = ffmpeg.input(self.filepath, hwaccel="nvdec")
@@ -443,7 +490,21 @@ class VideoSource(ContentSource):
             input_stream = ffmpeg.input(self.filepath, ss=start_time)
 
             # Apply hardware acceleration if available
-            if self._hardware_acceleration == "cuda":
+            if self._hardware_acceleration == "nvmpi":
+                # Use Jetson NVMPI hardware decoder
+                if hasattr(self, "_hw_decoder"):
+                    input_stream = ffmpeg.input(self.filepath, ss=start_time, vcodec=self._hw_decoder)
+                    logger.info(f"Using Jetson NVMPI decoder with seek: {self._hw_decoder}")
+                else:
+                    # Fallback to auto-detect based on codec
+                    codec_name = self.content_info.metadata.get("codec_name", "").lower()
+                    if "h264" in codec_name or "avc" in codec_name:
+                        input_stream = ffmpeg.input(self.filepath, ss=start_time, vcodec="h264_nvmpi")
+                    elif "hevc" in codec_name or "h265" in codec_name:
+                        input_stream = ffmpeg.input(self.filepath, ss=start_time, vcodec="hevc_nvmpi")
+                    else:
+                        logger.warning(f"Unknown codec {codec_name} for seek, falling back to software decoding")
+            elif self._hardware_acceleration == "cuda":
                 input_stream = ffmpeg.input(self.filepath, ss=start_time, hwaccel="cuda")
             elif self._hardware_acceleration == "nvdec":
                 input_stream = ffmpeg.input(self.filepath, ss=start_time, hwaccel="nvdec")
