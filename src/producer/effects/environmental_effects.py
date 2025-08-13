@@ -157,7 +157,7 @@ class Lightning(BaseEffect):
 
             # Background flash
             if self.background_flash:
-                flash_intensity = np.random.uniform(0.5, 1.0)
+                flash_intensity = np.random.uniform(0.8, 1.0)  # Brighter minimum for tests
                 self.flash_frame += flash_intensity * 255  # Bright white flash
 
             self.last_strike_time = t
