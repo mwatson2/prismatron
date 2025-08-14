@@ -32,6 +32,7 @@ from .base import (
     ContentType,
     FrameData,
 )
+from .hardware_acceleration_cache import get_hardware_acceleration_cache
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,8 @@ class VideoSource(ContentSource):
         Returns:
             True if setup successful, False otherwise
         """
+        setup_start_time = time.time()
+
         if not FFMPEG_AVAILABLE:
             self.set_error("FFmpeg not available")
             return False
@@ -93,28 +96,41 @@ class VideoSource(ContentSource):
 
         try:
             # Probe video file to get metadata
+            probe_start = time.time()
             if not self._probe_video_metadata():
                 return False
+            probe_duration = time.time() - probe_start
 
             # Detect hardware acceleration capabilities
+            hw_start = time.time()
             self._detect_hardware_acceleration()
+            hw_duration = time.time() - hw_start
 
             # Initialize frame queue
             self._frame_queue = queue.Queue(maxsize=10)  # Buffer up to 10 frames
 
             # Start FFmpeg process
+            ffmpeg_start = time.time()
             if not self._start_ffmpeg_process():
                 return False
+            ffmpeg_duration = time.time() - ffmpeg_start
 
             # Start frame reader thread
             self._start_frame_reader_thread()
 
             self.status = ContentStatus.READY
-            logger.info(f"Video source initialized: {self.filepath}")
-            logger.info(f"Resolution: {self._frame_width}x{self._frame_height}")
-            logger.info(f"Frame rate: {self._frame_rate} fps")
-            logger.info(f"Duration: {self.content_info.duration:.2f}s")
-            logger.info(f"Hardware acceleration: {self._hardware_acceleration or 'None'}")
+            total_setup_time = time.time() - setup_start_time
+
+            logger.info(
+                f"🎬 Video source initialized: {os.path.basename(self.filepath)} in {total_setup_time*1000:.1f}ms"
+            )
+            logger.info(
+                f"   ⏱️  Timing breakdown: probe={probe_duration*1000:.1f}ms, hw_detect={hw_duration*1000:.1f}ms, ffmpeg={ffmpeg_duration*1000:.1f}ms"
+            )
+            logger.info(
+                f"   📐 Resolution: {self._frame_width}x{self._frame_height}, {self._frame_rate} fps, {self.content_info.duration:.2f}s"
+            )
+            logger.info(f"   🚀 Hardware acceleration: {self._hardware_acceleration or 'None'}")
 
             return True
 
@@ -129,9 +145,13 @@ class VideoSource(ContentSource):
         Returns:
             True if successful, False otherwise
         """
+        start_time = time.time()
         try:
             # Use ffprobe to get video information
+            probe_start = time.time()
             probe = ffmpeg.probe(self.filepath)
+            probe_time = time.time() - probe_start
+            logger.debug(f"ffprobe took {probe_time*1000:.1f}ms for {self.filepath}")
 
             # Find video stream
             video_stream = None
@@ -191,78 +211,39 @@ class VideoSource(ContentSource):
 
     def _detect_hardware_acceleration(self) -> None:
         """
-        Detect available hardware acceleration options.
+        Get hardware acceleration options from global cache.
 
-        Checks for NVIDIA hardware acceleration including Jetson NVMPI support.
+        Uses cached results to avoid subprocess calls during video initialization.
         """
+        start_time = time.time()
+
         try:
-            # First check for Jetson NVMPI decoders (Jetson Orin Nano, etc.)
-            result = subprocess.run(  # nosec B607 - ffmpeg is a trusted tool
-                ["ffmpeg", "-hide_banner", "-decoders"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
+            # Get cached hardware acceleration info
+            cache = get_hardware_acceleration_cache()
+            self._hardware_acceleration = cache.get_hardware_acceleration()
 
-            if result.returncode == 0:
-                decoders = result.stdout.lower()
-                # Check for Jetson-specific hardware decoders (NVMPI or NVV4L2DEC)
-                if (
-                    "h264_nvmpi" in decoders
-                    or "hevc_nvmpi" in decoders
-                    or "h264_nvv4l2dec" in decoders
-                    or "hevc_nvv4l2dec" in decoders
-                ):
-                    # Determine which decoder variant is available
-                    if "h264_nvv4l2dec" in decoders or "hevc_nvv4l2dec" in decoders:
-                        self._hardware_acceleration = "nvv4l2dec"
-                        logger.info("NVIDIA Jetson NVV4L2DEC hardware acceleration detected")
-                        decoder_prefix = "nvv4l2dec"
-                    else:
-                        self._hardware_acceleration = "nvmpi"
-                        logger.info("NVIDIA Jetson NVMPI hardware acceleration detected")
-                        decoder_prefix = "nvmpi"
+            if self._hardware_acceleration:
+                # Get codec-specific decoder from cache
+                codec_name = self.content_info.metadata.get("codec_name", "")
+                self._hw_decoder = cache.get_decoder_for_codec(codec_name)
 
-                    # Determine which decoder to use based on video codec
-                    codec_name = self.content_info.metadata.get("codec_name", "").lower()
-                    if "h264" in codec_name or "avc" in codec_name:
-                        if f"h264_{decoder_prefix}" in decoders:
-                            self._hw_decoder = f"h264_{decoder_prefix}"
-                            logger.info(f"Selected {self._hw_decoder} decoder for {codec_name} codec")
-                    elif "hevc" in codec_name or "h265" in codec_name:
-                        if f"hevc_{decoder_prefix}" in decoders:
-                            self._hw_decoder = f"hevc_{decoder_prefix}"
-                            logger.info(f"Selected {self._hw_decoder} decoder for {codec_name} codec")
-                    else:
-                        logger.warning(
-                            f"Codec {codec_name} not supported by {decoder_prefix}, will use software decoding"
-                        )
-                        self._hardware_acceleration = None
-                    return
-
-            # Fall back to checking standard hardware acceleration
-            result = subprocess.run(  # nosec B607 - ffmpeg is a trusted tool
-                ["ffmpeg", "-hide_banner", "-hwaccels"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-
-            if result.returncode == 0:
-                hwaccels = result.stdout.lower()
-                if "cuda" in hwaccels:
-                    self._hardware_acceleration = "cuda"
-                    logger.info("NVIDIA CUDA hardware acceleration detected")
-                elif "nvdec" in hwaccels:
-                    self._hardware_acceleration = "nvdec"
-                    logger.info("NVIDIA NVDEC hardware acceleration detected")
+                if self._hw_decoder:
+                    logger.info(f"Using cached hardware decoder: {self._hw_decoder} for {codec_name}")
                 else:
-                    logger.info("No hardware acceleration available")
+                    logger.info(
+                        f"Hardware acceleration available ({self._hardware_acceleration}) but no decoder for codec: {codec_name}"
+                    )
+                    self._hardware_acceleration = None
             else:
-                logger.warning("Could not detect hardware acceleration")
+                logger.debug("No hardware acceleration available (cached result)")
+
+            detection_time = time.time() - start_time
+            logger.debug(f"Hardware acceleration detection from cache: {detection_time*1000:.1f}ms")
 
         except Exception as e:
-            logger.warning(f"Hardware acceleration detection failed: {e}")
+            logger.warning(f"Failed to get hardware acceleration from cache: {e}")
+            self._hardware_acceleration = None
+            self._hw_decoder = None
 
     def _start_ffmpeg_process(self) -> bool:
         """

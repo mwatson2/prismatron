@@ -362,8 +362,8 @@ class ConsumerProcess:
             actual_led_count = self._led_optimizer._actual_led_count
             logger.info(f"Using LED count from pattern: {actual_led_count}")
 
-            # Create LED buffer with actual LED count
-            self._led_buffer = LEDBuffer(led_count=actual_led_count, buffer_size=12)
+            # Create LED buffer with actual LED count - increased to 16 for video startup latency
+            self._led_buffer = LEDBuffer(led_count=actual_led_count, buffer_size=16)
 
             # Configure WLED client with actual LED count
             wled_config = WLEDSinkConfig(
@@ -594,15 +594,16 @@ class ConsumerProcess:
             buffer_frames = buffer_stats.get("current_count", 0)
             buffer_capacity = buffer_stats.get("buffer_size", 10)
 
-            # Debug logging (only log every 10th check to reduce spam)
-            if not hasattr(self, "_state_check_counter"):
-                self._state_check_counter = 0
-            self._state_check_counter += 1
+            # State change detection (only log when state actually changes)
+            if not hasattr(self, "_last_logged_state"):
+                self._last_logged_state = (current_renderer_state, control_status.producer_state, buffer_frames)
 
-            if self._state_check_counter % 10 == 1:  # Log every 10th check
+            current_state = (current_renderer_state, control_status.producer_state, buffer_frames)
+            if current_state[0] != self._last_logged_state[0] or current_state[1] != self._last_logged_state[1]:
                 logger.info(
-                    f"Renderer transition check: {current_renderer_state} -> producer={control_status.producer_state}, buffer={buffer_frames}/{buffer_capacity}"
+                    f"🔄 Renderer state change: {self._last_logged_state[0]} -> {current_renderer_state}, producer={control_status.producer_state}, buffer={buffer_frames}/{buffer_capacity}"
                 )
+                self._last_logged_state = current_state
 
             # Update buffer monitoring in control state
             self._control_state.update_buffer_status(buffer_frames, buffer_capacity)
@@ -924,8 +925,8 @@ class ConsumerProcess:
                         # Adaptive drop - has frame info and buffer times, but no optimization/render times
                         self._timing_logger.log_frame(timing_data)
 
-                    logger.debug(
-                        f"Frame {timing_data.frame_index if timing_data else 'unknown'} dropped by adaptive dropper (LED buffer size: {led_buffer_size})"
+                    logger.info(
+                        f"📦 FRAME DROPPED (adaptive): Frame {timing_data.frame_index if timing_data else 'unknown'} - LED buffer size: {led_buffer_size}, drop_rate: {self.pre_optimization_drop_rate_ewma.get_rate_percentage():.1f}%"
                     )
                     return True
 
@@ -941,14 +942,19 @@ class ConsumerProcess:
                     self._timing_logger.log_frame(timing_data)
                     # Log early-dropped frame to timing data
 
-                # Add context about batch mode in debug logging
-                if self.enable_batch_mode:
-                    logger.debug(
-                        f"Late frame dropped before batch accumulation "
-                        f"(timestamp={timestamp:.3f}, current_batch_size={len(self._frame_batch) if hasattr(self, '_frame_batch') else 0})"
+                # Enhanced logging for late frame drops
+                current_time = time.time()
+                if self._frame_renderer.is_initialized():
+                    target_wallclock = timestamp + self._frame_renderer.get_adjusted_wallclock_delta()
+                    lateness_ms = (current_time - target_wallclock) * 1000
+                    mode_info = f"batch_size={len(self._frame_batch)}" if self.enable_batch_mode else "single"
+                    logger.info(
+                        f"⏰ FRAME DROPPED (late): Frame {timing_data.frame_index if timing_data else 'unknown'} - {lateness_ms:.1f}ms late, {mode_info}, drop_rate: {self.pre_optimization_drop_rate_ewma.get_rate_percentage():.1f}%"
                     )
                 else:
-                    logger.debug(f"Late frame dropped (timestamp={timestamp:.3f})")
+                    logger.info(
+                        f"⏰ FRAME DROPPED (uninitialized): Frame {timing_data.frame_index if timing_data else 'unknown'} - renderer not ready, drop_rate: {self.pre_optimization_drop_rate_ewma.get_rate_percentage():.1f}%"
+                    )
 
                 return True
 
@@ -1825,9 +1831,15 @@ class ConsumerProcess:
     def _update_consumer_statistics_in_control_state(self) -> None:
         """Update consumer statistics in ControlState for multi-process IPC."""
         try:
-            # Get renderer statistics for late frame percentage
+            # Get renderer statistics for renderer-specific late frames
             renderer_stats = self._frame_renderer.get_renderer_stats()
-            late_frame_percentage = renderer_stats.get("late_frame_percentage", 0.0)
+            renderer_late_frame_percentage = renderer_stats.get("late_frame_percentage", 0.0)
+
+            # Calculate comprehensive late frame percentage including:
+            # 1. Pre-optimization drops (frames dropped before optimization due to lateness/buffer)
+            # 2. Renderer late frames (frames that reached renderer but were late)
+            pre_opt_drop_percentage = self.pre_optimization_drop_rate_ewma.get_rate_percentage()
+            comprehensive_late_frame_percentage = pre_opt_drop_percentage + renderer_late_frame_percentage
 
             # Update the control state with consumer statistics
             # Note: ControlState only has one dropped_frames_percentage field, so we use overall rate
@@ -1835,7 +1847,7 @@ class ConsumerProcess:
                 "consumer_input_fps": self._stats.consumer_input_fps,
                 "renderer_output_fps": self._stats.renderer_output_fps_ewma,
                 "dropped_frames_percentage": self.overall_drop_rate_ewma.get_rate_percentage(),
-                "late_frame_percentage": late_frame_percentage,
+                "late_frame_percentage": comprehensive_late_frame_percentage,
             }
 
             # Log FPS values being written to control state
