@@ -730,7 +730,11 @@ class ProducerProcess:
                     self._last_frame_duration = None  # Reset for next item
 
                 current_item_name = os.path.basename(self._current_item.filepath) if self._current_item else "unknown"
-                content_type = self._current_item._detected_type.value if self._current_item and self._current_item._detected_type else "unknown"
+                content_type = (
+                    self._current_item._detected_type.value
+                    if self._current_item and self._current_item._detected_type
+                    else "unknown"
+                )
                 logger.info(f"Content finished: {current_item_name} (type: {content_type})")
 
                 # Prevent duplicate next_item() calls for the same content

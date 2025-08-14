@@ -2407,31 +2407,33 @@ async def list_saved_playlists():
         if PLAYLISTS_DIR.exists():
             for file_path in PLAYLISTS_DIR.glob("*.json"):
                 try:
-                    with open(file_path, "r") as f:
+                    with open(file_path) as f:
                         data = json.load(f)
-                    
+
                     # Calculate total duration
                     total_duration = sum(item.get("duration", 0) for item in data.get("items", []))
-                    
-                    playlists.append({
-                        "filename": file_path.name,
-                        "name": data.get("name", file_path.stem),
-                        "description": data.get("description", ""),
-                        "item_count": len(data.get("items", [])),
-                        "total_duration": total_duration,
-                        "created_at": data.get("created_at"),
-                        "modified_at": data.get("modified_at"),
-                        "auto_repeat": data.get("auto_repeat", True),
-                        "shuffle": data.get("shuffle", False)
-                    })
+
+                    playlists.append(
+                        {
+                            "filename": file_path.name,
+                            "name": data.get("name", file_path.stem),
+                            "description": data.get("description", ""),
+                            "item_count": len(data.get("items", [])),
+                            "total_duration": total_duration,
+                            "created_at": data.get("created_at"),
+                            "modified_at": data.get("modified_at"),
+                            "auto_repeat": data.get("auto_repeat", True),
+                            "shuffle": data.get("shuffle", False),
+                        }
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to read playlist file {file_path}: {e}")
                     continue
-        
+
         # Sort by modification time (newest first)
         playlists.sort(key=lambda x: x.get("modified_at", ""), reverse=True)
         return {"playlists": playlists}
-    
+
     except Exception as e:
         logger.error(f"Failed to list playlists: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2444,19 +2446,19 @@ async def load_playlist(filename: str):
         # Validate filename
         if not filename.endswith(".json"):
             filename += ".json"
-        
+
         file_path = PLAYLISTS_DIR / filename
         if not file_path.exists():
             raise HTTPException(status_code=404, detail="Playlist not found")
-        
+
         # Load playlist data
-        with open(file_path, "r") as f:
+        with open(file_path) as f:
             data = json.load(f)
-        
+
         # Clear current playlist via sync service
         if playlist_sync_client and playlist_sync_client.connected:
             playlist_sync_client.clear_playlist()
-        
+
         # Add items to playlist
         items_added = 0
         for item_data in data.get("items", []):
@@ -2469,7 +2471,7 @@ async def load_playlist(filename: str):
                         if not item_data["file_path"].startswith("/"):
                             item_data["file_path"] = str(UPLOAD_DIR / item_data["file_path"])
                     # For text type, file_path contains JSON config string
-                
+
                 # Create PlaylistItem with transitions
                 item = PlaylistItem(
                     id=item_data.get("id", str(uuid.uuid4())),
@@ -2479,10 +2481,14 @@ async def load_playlist(filename: str):
                     effect_config=item_data.get("effect_config"),
                     duration=item_data.get("duration"),
                     order=item_data.get("order", items_added),
-                    transition_in=TransitionConfig(**item_data.get("transition_in", {"type": "none", "parameters": {}})),
-                    transition_out=TransitionConfig(**item_data.get("transition_out", {"type": "none", "parameters": {}}))
+                    transition_in=TransitionConfig(
+                        **item_data.get("transition_in", {"type": "none", "parameters": {}})
+                    ),
+                    transition_out=TransitionConfig(
+                        **item_data.get("transition_out", {"type": "none", "parameters": {}})
+                    ),
                 )
-                
+
                 # Send to playlist sync service
                 if playlist_sync_client and playlist_sync_client.connected:
                     sync_item = api_item_to_sync_item(item)
@@ -2494,25 +2500,25 @@ async def load_playlist(filename: str):
                     # Fallback to local playlist if sync service not available
                     playlist_state.items.append(item)
                     items_added += 1
-                    
+
             except Exception as e:
                 logger.warning(f"Failed to add playlist item: {e}")
                 continue
-        
+
         # Update playlist settings
         playlist_state.auto_repeat = data.get("auto_repeat", True)
         playlist_state.shuffle = data.get("shuffle", False)
-        
+
         logger.info(f"Loaded playlist {filename} with {items_added} items")
-        
+
         return {
             "status": "loaded",
             "filename": filename,
             "name": data.get("name", filename),
             "items_loaded": items_added,
-            "total_items": len(data.get("items", []))
+            "total_items": len(data.get("items", [])),
         }
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -2522,6 +2528,7 @@ async def load_playlist(filename: str):
 
 class SavePlaylistRequest(BaseModel):
     """Request model for saving a playlist."""
+
     name: str = Field(..., description="Playlist name")
     description: Optional[str] = Field(None, description="Playlist description")
     overwrite: bool = Field(False, description="Whether to overwrite existing file")
@@ -2533,16 +2540,17 @@ async def save_playlist(request: SavePlaylistRequest):
     try:
         # Sanitize filename from name
         import re
-        safe_name = re.sub(r'[^\w\s-]', '', request.name)
-        safe_name = re.sub(r'[-\s]+', '_', safe_name)
+
+        safe_name = re.sub(r"[^\w\s-]", "", request.name)
+        safe_name = re.sub(r"[-\s]+", "_", safe_name)
         filename = f"{safe_name}.json"
-        
+
         file_path = PLAYLISTS_DIR / filename
-        
+
         # Check if file exists and overwrite is not allowed
         if file_path.exists() and not request.overwrite:
             raise HTTPException(status_code=409, detail=f"Playlist '{filename}' already exists")
-        
+
         # Prepare playlist data
         now = datetime.now().isoformat()
         playlist_data = {
@@ -2553,20 +2561,20 @@ async def save_playlist(request: SavePlaylistRequest):
             "modified_at": now,
             "auto_repeat": playlist_state.auto_repeat,
             "shuffle": playlist_state.shuffle,
-            "items": []
+            "items": [],
         }
-        
+
         # If updating, preserve created_at
         if file_path.exists():
             try:
-                with open(file_path, "r") as f:
+                with open(file_path) as f:
                     existing_data = json.load(f)
                     playlist_data["created_at"] = existing_data.get("created_at", now)
             except:
                 playlist_data["created_at"] = now
         else:
             playlist_data["created_at"] = now
-        
+
         # Convert items to save format
         for item in playlist_state.items:
             item_data = {
@@ -2575,16 +2583,10 @@ async def save_playlist(request: SavePlaylistRequest):
                 "type": item.type,
                 "duration": item.duration,
                 "order": item.order,
-                "transition_in": {
-                    "type": item.transition_in.type,
-                    "parameters": item.transition_in.parameters
-                },
-                "transition_out": {
-                    "type": item.transition_out.type,
-                    "parameters": item.transition_out.parameters
-                }
+                "transition_in": {"type": item.transition_in.type, "parameters": item.transition_in.parameters},
+                "transition_out": {"type": item.transition_out.type, "parameters": item.transition_out.parameters},
             }
-            
+
             # Handle file paths - convert to relative for portability
             if item.file_path:
                 if item.type in ["image", "video"]:
@@ -2597,26 +2599,26 @@ async def save_playlist(request: SavePlaylistRequest):
                 else:
                     # For text type, file_path contains JSON config
                     item_data["file_path"] = item.file_path
-            
+
             # Add effect config if present
             if item.effect_config:
                 item_data["effect_config"] = item.effect_config
-            
+
             playlist_data["items"].append(item_data)
-        
+
         # Save to file
         with open(file_path, "w") as f:
             json.dump(playlist_data, f, indent=2)
-        
+
         logger.info(f"Saved playlist to {filename}")
-        
+
         return {
             "status": "saved",
             "filename": filename,
             "name": request.name,
-            "item_count": len(playlist_data["items"])
+            "item_count": len(playlist_data["items"]),
         }
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -2631,18 +2633,18 @@ async def delete_playlist(filename: str):
         # Validate filename
         if not filename.endswith(".json"):
             filename += ".json"
-        
+
         file_path = PLAYLISTS_DIR / filename
         if not file_path.exists():
             raise HTTPException(status_code=404, detail="Playlist not found")
-        
+
         # Delete the file
         file_path.unlink()
-        
+
         logger.info(f"Deleted playlist {filename}")
-        
+
         return {"status": "deleted", "filename": filename}
-    
+
     except HTTPException:
         raise
     except Exception as e:

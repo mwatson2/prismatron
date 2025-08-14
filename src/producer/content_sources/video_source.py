@@ -336,7 +336,9 @@ class VideoSource(ContentSource):
 
                 if len(frame_bytes) != self._frame_size_bytes:
                     # End of video or error
-                    logger.info(f"End of video stream reached for {os.path.basename(self.filepath)} (read {len(frame_bytes)} bytes, expected {self._frame_size_bytes})")
+                    logger.info(
+                        f"End of video stream reached for {os.path.basename(self.filepath)} (read {len(frame_bytes)} bytes, expected {self._frame_size_bytes})"
+                    )
                     break
 
                 # Convert to numpy array in interleaved format

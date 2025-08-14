@@ -565,7 +565,7 @@ const PlaylistPage = () => {
               <XMarkIcon className="w-5 h-5" />
             </button>
           </div>
-          
+
           <div className="space-y-2 max-h-64 overflow-y-auto">
             {savedPlaylists.map(savedPlaylist => (
               <div
@@ -623,7 +623,7 @@ const PlaylistPage = () => {
                 <XMarkIcon className="w-5 h-5" />
               </button>
             </div>
-            
+
             <input
               type="text"
               value={playlistName}
@@ -632,7 +632,7 @@ const PlaylistPage = () => {
               className="w-full px-3 py-2 bg-deep-space border border-neon-cyan border-opacity-50 rounded-retro text-neon-cyan font-mono text-sm focus:outline-none focus:border-opacity-100 mb-3"
               autoFocus
             />
-            
+
             <textarea
               value={playlistDescription}
               onChange={(e) => setPlaylistDescription(e.target.value)}
@@ -640,7 +640,7 @@ const PlaylistPage = () => {
               className="w-full px-3 py-2 bg-deep-space border border-neon-cyan border-opacity-50 rounded-retro text-neon-cyan font-mono text-sm focus:outline-none focus:border-opacity-100 mb-4 resize-none"
               rows={3}
             />
-            
+
             <div className="flex gap-3">
               <button
                 onClick={savePlaylist}
