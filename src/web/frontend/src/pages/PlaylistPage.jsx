@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd'
 import {
   PlayIcon,
@@ -11,7 +11,11 @@ import {
   PhotoIcon,
   FilmIcon,
   SparklesIcon,
-  Cog6ToothIcon
+  Cog6ToothIcon,
+  FolderOpenIcon,
+  FolderArrowDownIcon,
+  DocumentDuplicateIcon,
+  XMarkIcon
 } from '@heroicons/react/24/outline'
 import { useWebSocket } from '../hooks/useWebSocket'
 import TransitionConfig from '../components/TransitionConfig'
@@ -20,6 +24,121 @@ const PlaylistPage = () => {
   const { playlist } = useWebSocket()
   const [isDragging, setIsDragging] = useState(false)
   const [transitionConfigItem, setTransitionConfigItem] = useState(null)
+  const [savedPlaylists, setSavedPlaylists] = useState([])
+  const [showSaveDialog, setShowSaveDialog] = useState(false)
+  const [playlistName, setPlaylistName] = useState('')
+  const [playlistDescription, setPlaylistDescription] = useState('')
+  const [currentPlaylistFile, setCurrentPlaylistFile] = useState(null)
+  const [showSavedPlaylists, setShowSavedPlaylists] = useState(false)
+
+  // Load saved playlists on mount
+  useEffect(() => {
+    loadSavedPlaylists()
+  }, [])
+
+  const loadSavedPlaylists = async () => {
+    try {
+      const response = await fetch('/api/playlists')
+      if (response.ok) {
+        const data = await response.json()
+        setSavedPlaylists(data.playlists || [])
+      }
+    } catch (error) {
+      console.error('Failed to load saved playlists:', error)
+    }
+  }
+
+  const loadPlaylist = async (filename) => {
+    try {
+      const response = await fetch(`/api/playlists/${filename}`)
+      if (response.ok) {
+        const data = await response.json()
+        setCurrentPlaylistFile(filename)
+        setShowSavedPlaylists(false)
+        // Reload saved playlists to update metadata
+        loadSavedPlaylists()
+      } else {
+        console.error('Failed to load playlist')
+      }
+    } catch (error) {
+      console.error('Failed to load playlist:', error)
+    }
+  }
+
+  const savePlaylist = async () => {
+    if (!playlistName.trim()) return
+
+    try {
+      const response = await fetch('/api/playlists/save', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: playlistName,
+          description: playlistDescription,
+          overwrite: false
+        })
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setCurrentPlaylistFile(data.filename)
+        setShowSaveDialog(false)
+        setPlaylistName('')
+        setPlaylistDescription('')
+        // Reload saved playlists
+        loadSavedPlaylists()
+      } else if (response.status === 409) {
+        // File exists, ask to overwrite
+        if (window.confirm(`Playlist "${playlistName}" already exists. Overwrite?`)) {
+          const overwriteResponse = await fetch('/api/playlists/save', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              name: playlistName,
+              description: playlistDescription,
+              overwrite: true
+            })
+          })
+          if (overwriteResponse.ok) {
+            const data = await overwriteResponse.json()
+            setCurrentPlaylistFile(data.filename)
+            setShowSaveDialog(false)
+            setPlaylistName('')
+            setPlaylistDescription('')
+            loadSavedPlaylists()
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to save playlist:', error)
+    }
+  }
+
+  const deletePlaylist = async (filename) => {
+    if (!window.confirm(`Delete playlist "${filename}"? This cannot be undone.`)) return
+
+    try {
+      const response = await fetch(`/api/playlists/${filename}`, {
+        method: 'DELETE'
+      })
+
+      if (response.ok) {
+        if (currentPlaylistFile === filename) {
+          setCurrentPlaylistFile(null)
+        }
+        // Reload saved playlists
+        loadSavedPlaylists()
+      } else {
+        console.error('Failed to delete playlist')
+      }
+    } catch (error) {
+      console.error('Failed to delete playlist:', error)
+    }
+  }
 
   const formatDuration = (seconds) => {
     if (!seconds) return '--:--'
@@ -165,6 +284,11 @@ const PlaylistPage = () => {
         <p className="text-metal-silver text-sm mt-1 font-mono">
           ORGANIZE & CONTROL PLAYBACK QUEUE
         </p>
+        {currentPlaylistFile && (
+          <p className="text-neon-green text-xs mt-2 font-mono">
+            Loaded: {currentPlaylistFile}
+          </p>
+        )}
       </div>
 
       {/* Playlist Controls */}
@@ -177,6 +301,49 @@ const PlaylistPage = () => {
         </div>
 
         <div className="flex flex-wrap gap-3">
+          <button
+            onClick={() => setShowSavedPlaylists(!showSavedPlaylists)}
+            className="retro-button px-4 py-2 text-sm font-retro font-bold text-neon-cyan"
+          >
+            <FolderOpenIcon className="w-4 h-4 inline mr-2" />
+            LOAD
+          </button>
+
+          <button
+            onClick={() => {
+              if (currentPlaylistFile) {
+                // Quick save to current file
+                fetch('/api/playlists/save', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    name: currentPlaylistFile.replace('.json', ''),
+                    description: '',
+                    overwrite: true
+                  })
+                }).then(() => loadSavedPlaylists())
+              } else {
+                setShowSaveDialog(true)
+              }
+            }}
+            disabled={!playlist.items?.length}
+            className="retro-button px-4 py-2 text-sm font-retro font-bold text-neon-green disabled:text-metal-silver disabled:cursor-not-allowed"
+          >
+            <FolderArrowDownIcon className="w-4 h-4 inline mr-2" />
+            SAVE
+          </button>
+
+          <button
+            onClick={() => setShowSaveDialog(true)}
+            disabled={!playlist.items?.length}
+            className="retro-button px-4 py-2 text-sm font-retro font-bold text-neon-purple disabled:text-metal-silver disabled:cursor-not-allowed"
+          >
+            <DocumentDuplicateIcon className="w-4 h-4 inline mr-2" />
+            SAVE AS
+          </button>
+
+          <div className="flex-1" />
+
           <button
             onClick={toggleShuffle}
             className={`retro-button px-4 py-2 text-sm font-retro font-bold ${
@@ -381,6 +548,117 @@ const PlaylistPage = () => {
               <span className="text-neon-cyan ml-2">
                 {playlist.current_index + 1} / {playlist.items.length}
               </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Saved Playlists Section */}
+      {showSavedPlaylists && savedPlaylists.length > 0 && (
+        <div className="retro-container">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-retro text-neon-green">SAVED PLAYLISTS</h3>
+            <button
+              onClick={() => setShowSavedPlaylists(false)}
+              className="p-1 text-metal-silver hover:text-neon-orange"
+            >
+              <XMarkIcon className="w-5 h-5" />
+            </button>
+          </div>
+          
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {savedPlaylists.map(savedPlaylist => (
+              <div
+                key={savedPlaylist.filename}
+                className="playlist-item flex items-center justify-between"
+              >
+                <div className="flex-1 min-w-0">
+                  <h4 className="text-sm font-medium text-neon-cyan truncate">
+                    {savedPlaylist.name}
+                  </h4>
+                  <div className="flex items-center gap-3 text-xs text-metal-silver font-mono">
+                    <span>{savedPlaylist.item_count} items</span>
+                    <span>{formatDuration(savedPlaylist.total_duration)}</span>
+                    {savedPlaylist.description && (
+                      <span className="truncate italic">{savedPlaylist.description}</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => loadPlaylist(savedPlaylist.filename)}
+                    className="p-2 text-metal-silver hover:text-neon-cyan"
+                    aria-label="Load playlist"
+                  >
+                    <FolderOpenIcon className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => deletePlaylist(savedPlaylist.filename)}
+                    className="p-2 text-metal-silver hover:text-neon-orange"
+                    aria-label="Delete playlist"
+                  >
+                    <TrashIcon className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Save Dialog Modal */}
+      {showSaveDialog && (
+        <div className="fixed inset-0 bg-deep-space bg-opacity-90 flex items-center justify-center z-50">
+          <div className="retro-container max-w-md w-full mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-retro text-neon-cyan">SAVE PLAYLIST</h3>
+              <button
+                onClick={() => {
+                  setShowSaveDialog(false)
+                  setPlaylistName('')
+                  setPlaylistDescription('')
+                }}
+                className="p-1 text-metal-silver hover:text-neon-orange"
+              >
+                <XMarkIcon className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <input
+              type="text"
+              value={playlistName}
+              onChange={(e) => setPlaylistName(e.target.value)}
+              placeholder="Playlist Name"
+              className="w-full px-3 py-2 bg-deep-space border border-neon-cyan border-opacity-50 rounded-retro text-neon-cyan font-mono text-sm focus:outline-none focus:border-opacity-100 mb-3"
+              autoFocus
+            />
+            
+            <textarea
+              value={playlistDescription}
+              onChange={(e) => setPlaylistDescription(e.target.value)}
+              placeholder="Description (optional)"
+              className="w-full px-3 py-2 bg-deep-space border border-neon-cyan border-opacity-50 rounded-retro text-neon-cyan font-mono text-sm focus:outline-none focus:border-opacity-100 mb-4 resize-none"
+              rows={3}
+            />
+            
+            <div className="flex gap-3">
+              <button
+                onClick={savePlaylist}
+                disabled={!playlistName.trim()}
+                className="retro-button flex-1 px-4 py-2 text-sm font-retro font-bold text-neon-green disabled:text-metal-silver disabled:cursor-not-allowed"
+              >
+                SAVE
+              </button>
+              <button
+                onClick={() => {
+                  setShowSaveDialog(false)
+                  setPlaylistName('')
+                  setPlaylistDescription('')
+                }}
+                className="retro-button flex-1 px-4 py-2 text-sm font-retro font-bold text-metal-silver"
+              >
+                CANCEL
+              </button>
             </div>
           </div>
         </div>

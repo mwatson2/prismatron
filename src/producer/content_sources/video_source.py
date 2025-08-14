@@ -336,7 +336,7 @@ class VideoSource(ContentSource):
 
                 if len(frame_bytes) != self._frame_size_bytes:
                     # End of video or error
-                    logger.debug("End of video stream reached")
+                    logger.info(f"End of video stream reached for {os.path.basename(self.filepath)} (read {len(frame_bytes)} bytes, expected {self._frame_size_bytes})")
                     break
 
                 # Convert to numpy array in interleaved format
@@ -387,6 +387,9 @@ class VideoSource(ContentSource):
         if self.status == ContentStatus.ERROR:
             return None
 
+        if self.status == ContentStatus.ENDED:
+            return None
+
         if not self._frame_queue:
             self.set_error("Frame queue not initialized")
             return None
@@ -398,6 +401,7 @@ class VideoSource(ContentSource):
             if frame_data is None:
                 # End of stream signal
                 self.status = ContentStatus.ENDED
+                logger.debug(f"Video source {os.path.basename(self.filepath)} status set to ENDED")
                 return None
 
             # Update current state
