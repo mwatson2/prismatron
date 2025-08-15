@@ -17,8 +17,8 @@ class SineWaveVisualizer(BaseEffect):
         self.color_mode = self.config.get("color_mode", "height")  # height, phase, rainbow
         self.thickness = self.config.get("thickness", 0.1)  # Wave thickness
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time()
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time)
         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
 
         # Calculate wave position based on direction
@@ -98,8 +98,8 @@ class PlasmaEffect(BaseEffect):
             "neon": lambda h: self.hsv_to_rgb(h, np.ones_like(h), np.where(h > 0.5, 1.0, 0.0)),  # High contrast
         }
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time() * self.animation_speed
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time) * self.animation_speed
 
         # Classic plasma algorithm with multiple sine components
         plasma = np.zeros((self.height, self.width))
@@ -143,8 +143,8 @@ class WaterRipples(BaseEffect):
         self.ripples = []  # List of active ripples (x, y, start_time)
         self.last_ripple_time = -10  # Start with negative time to trigger immediate ripple
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time()
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time)
         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
 
         # Add new ripple if it's time
@@ -228,8 +228,8 @@ class LissajousCurves(BaseEffect):
         # Trail buffer for persistence effect
         self.trail_buffer = np.zeros((self.height, self.width, 3), dtype=np.float32)
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time()
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time)
 
         # Fade trail buffer
         self.trail_buffer *= 1 - self.trail_length * 0.05

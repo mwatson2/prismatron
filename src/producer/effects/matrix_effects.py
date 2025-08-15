@@ -35,7 +35,7 @@ class DigitalRain(BaseEffect):
                 }
             )
 
-    def generate_frame(self) -> np.ndarray:
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
 
         for column in self.columns:
@@ -90,7 +90,7 @@ class BinaryStream(BaseEffect):
         )
         self.offset = 0
 
-    def generate_frame(self) -> np.ndarray:
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
 
         # Update offset for scrolling
@@ -201,8 +201,8 @@ class GlitchArt(BaseEffect):
 
         return frame
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time()
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time)
         frame = self.base_frame.copy()
 
         # Trigger new glitch

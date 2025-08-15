@@ -66,8 +66,8 @@ class Fireworks(BaseEffect):
             particle = Particle(x, y, vx, vy, colors[i], life=2.0, size=3.0)
             self.particles.append(particle)
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time()
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time)
 
         # Fade trail buffer
         self.trail_buffer *= 1 - self.trail_length
@@ -158,8 +158,8 @@ class Starfield(BaseEffect):
             color_hsv = np.array([[[hue * 180, 128, 255]]], dtype=np.uint8)
             return cv2.cvtColor(color_hsv, cv2.COLOR_HSV2RGB)[0, 0].tolist()
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time()
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time)
         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
 
         for star in self.stars:
@@ -244,8 +244,8 @@ class RainSnow(BaseEffect):
                 }
             )
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time()
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time)
         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
 
         # Calculate wind
@@ -332,7 +332,7 @@ class SwarmBehavior(BaseEffect):
         else:  # uniform
             return [255, 200, 0]  # Yellow
 
-    def generate_frame(self) -> np.ndarray:
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
         # Fade trail
         if self.trail:
             self.trail_buffer *= 0.9

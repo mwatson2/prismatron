@@ -22,7 +22,7 @@ class FireSimulation(BaseEffect):
         # Add heat sources at bottom
         self.temperature[-3:, :] = self.fuel_rate
 
-    def generate_frame(self) -> np.ndarray:
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
         # Update temperature field
         new_temp = self.temperature.copy()
 
@@ -136,8 +136,8 @@ class Lightning(BaseEffect):
 
         return points
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time()
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time)
 
         # Fade existing flash
         self.flash_frame *= 0.9
@@ -209,8 +209,8 @@ class AuroraBorealis(BaseEffect):
 
         self.colors = self.palettes.get(self.color_palette, self.palettes["classic"])
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time() * self.wave_speed
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time) * self.wave_speed
         frame = np.zeros((self.height, self.width, 3), dtype=np.float32)
 
         # Create multiple aurora curtains

@@ -22,8 +22,8 @@ class RainbowSweep(BaseEffect):
             f"RainbowSweep initialized: speed={self.speed}, direction={self.direction}, brightness={self.brightness}"
         )
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time() * self.speed
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time) * self.speed
 
         if self.direction == "horizontal":
             position = self.x_norm * self.wave_width + t
@@ -80,8 +80,8 @@ class ColorBreathe(BaseEffect):
 
         return hue / 6
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time()
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time)
 
         # Breathing intensity using sine wave
         breathe = np.sin(2 * np.pi * self.breathe_rate * t)
@@ -133,8 +133,8 @@ class GradientFlow(BaseEffect):
         self.gradient_type = self.config.get("gradient_type", "linear")  # linear, radial
         self.blend_width = self.config.get("blend_width", 0.5)  # Smoothness of transitions
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time() * self.flow_speed
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time) * self.flow_speed
 
         # Get position based on direction
         if self.gradient_type == "radial":
@@ -211,8 +211,8 @@ class ColorWipe(BaseEffect):
         self.wipe_position = 0
         self.last_transition_time = 0
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time()
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time)
 
         # Calculate wipe cycle time
         cycle_time = 1.0 / self.wipe_speed + self.hold_time

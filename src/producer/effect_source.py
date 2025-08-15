@@ -127,8 +127,8 @@ class EffectSource(ContentSource):
             return None
 
         try:
-            # Generate frame from effect
-            frame_data = self.current_effect.generate_frame()
+            # Generate frame from effect using presentation time
+            frame_data = self.current_effect.generate_frame(time_sec)
             if frame_data is not None:
                 self.current_time = time_sec
                 self.current_frame = int(time_sec * self.fps)
@@ -230,28 +230,26 @@ class EffectSource(ContentSource):
                 return None
 
         try:
-            # Set start time on first frame
-            if self.start_time == 0.0:
-                self.start_time = time.time()
+            # Calculate presentation time based on frame count (not real time)
+            presentation_time = self.frame_count * self.frame_interval
 
-            # Calculate elapsed time and current frame (like text source)
-            elapsed_time = time.time() - self.start_time
-            frame_index = int(elapsed_time / self.frame_interval)
+            # Increment frame count for next call
+            self.frame_count += 1
 
-            # Check if current effect should end based on elapsed time
-            if elapsed_time >= self.duration:
+            # Check if current effect should end based on presentation time
+            if presentation_time >= self.duration:
                 if self.auto_rotate and self.rotation_effects:
                     self._rotate_to_next_effect()
                 else:
                     self.logger.info(
-                        f"Effect duration expired after {elapsed_time:.1f}s (target: {self.duration}s), stopping"
+                        f"Effect duration expired after {presentation_time:.1f}s (target: {self.duration}s), stopping"
                     )
                     self.current_effect = None
                     self.status = ContentStatus.ENDED
                     return None
 
-            # Generate frame from effect (returns numpy array in H, W, C format)
-            frame_data = self.current_effect.generate_frame()
+            # Generate frame from effect using presentation time (returns numpy array in H, W, C format)
+            frame_data = self.current_effect.generate_frame(presentation_time)
 
             if frame_data is None or frame_data.shape != (self.height, self.width, 3):
                 self.logger.error(f"Invalid frame shape: {frame_data.shape if frame_data is not None else None}")
@@ -260,18 +258,18 @@ class EffectSource(ContentSource):
             # Convert from interleaved (H, W, C) to planar (C, H, W) format
             planar_array = FrameData.convert_interleaved_to_planar(frame_data)
 
-            # Update timing (like text source)
-            self.current_time = elapsed_time
-            self.current_frame = frame_index
-            self.last_frame_time = time.time()
+            # Update timing using presentation time (not real time)
+            self.current_time = presentation_time
+            self.current_frame = self.frame_count - 1  # Already incremented above
+            self.last_frame_time = time.time()  # Keep for logging/debugging only
 
-            # Create FrameData with proper presentation_timestamp (local timestamp from elapsed time)
+            # Create FrameData with proper presentation_timestamp
             frame = FrameData(
                 array=planar_array,
                 width=self.width,
                 height=self.height,
                 channels=3,
-                presentation_timestamp=elapsed_time,  # Local timestamp based on elapsed time
+                presentation_timestamp=presentation_time,  # Frame-based timestamp
                 duration=self.frame_interval,
             )
 
@@ -354,7 +352,7 @@ class EffectSource(ContentSource):
             True if successful, False otherwise
         """
         if self.current_effect is not None:
-            self.start_time = time.time()
+            self.frame_count = 0
             self.current_time = 0.0
             self.current_frame = 0
             self.status = ContentStatus.READY

@@ -38,8 +38,8 @@ class PerlinNoiseFlow(BaseEffect):
         cd = c * (1 - frac_x) + d * frac_x
         return ab * (1 - frac_y) + cd * frac_y
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time() * self.animation_speed
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time) * self.animation_speed
 
         # Generate multi-octave noise
         noise = np.zeros((self.height, self.width))
@@ -93,8 +93,8 @@ class SimplexClouds(BaseEffect):
         self.color_mode = self.config.get("color_mode", "white")  # white, sunset, storm
         self.layers = self.config.get("layers", 2)  # Cloud layers
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time() * self.movement_speed
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time) * self.movement_speed
         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
 
         # Generate cloud layers
@@ -168,8 +168,8 @@ class VoronoiCells(BaseEffect):
             gray = 50 + (index / self.cell_count) * 200
             return [gray, gray, gray]
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time() * self.movement_speed
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time) * self.movement_speed
 
         # Update seed positions
         for seed in self.seeds:
@@ -241,8 +241,8 @@ class FractalNoise(BaseEffect):
         self.color_scheme = self.config.get("color_scheme", "terrain")  # terrain, lava, ice
         self.threshold_mode = self.config.get("threshold_mode", False)  # Binary threshold
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time() * self.animation_speed
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time) * self.animation_speed
 
         # Generate fractal noise (simplified FBM)
         noise = np.zeros((self.height, self.width))

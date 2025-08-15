@@ -1,6 +1,5 @@
 """Base class for visual effects"""
 
-import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Tuple
 
@@ -28,7 +27,6 @@ class BaseEffect(ABC):
         self.fps = fps
         self.config = config or {}
         self.frame_count = 0
-        self.start_time = time.time()
 
         # Seed random number generator for consistent test behavior
         # Use a deterministic seed based on effect instance parameters
@@ -55,8 +53,11 @@ class BaseEffect(ABC):
         """Initialize effect-specific parameters."""
 
     @abstractmethod
-    def generate_frame(self) -> np.ndarray:
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
         """Generate the next frame.
+
+        Args:
+            presentation_time: Time in seconds for this frame (for consistent animation timing)
 
         Returns:
             RGB frame as numpy array of shape (height, width, 3) with values 0-255
@@ -67,14 +68,20 @@ class BaseEffect(ABC):
         self.config.update(new_config)
         self.initialize()  # Reinitialize with new config
 
-    def get_time(self) -> float:
-        """Get elapsed time since effect started."""
-        return time.time() - self.start_time
+    def get_time(self, presentation_time: float) -> float:
+        """Get elapsed time for animation.
+
+        Args:
+            presentation_time: Presentation timestamp for frame-based animation timing
+
+        Returns:
+            Time in seconds for animation calculations
+        """
+        return presentation_time
 
     def reset(self):
         """Reset effect to initial state."""
         self.frame_count = 0
-        self.start_time = time.time()
         self.initialize()
 
     def hsv_to_rgb(self, h: np.ndarray, s: np.ndarray, v: np.ndarray) -> np.ndarray:

@@ -47,8 +47,8 @@ class RotatingShapes(BaseEffect):
 
         return np.array(points, dtype=np.int32)
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time()
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time)
         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
 
         angle = 2 * np.pi * self.rotation_speed * t
@@ -94,8 +94,8 @@ class Kaleidoscope(BaseEffect):
         self.color_speed = self.config.get("color_speed", 0.5)
         self.pattern_scale = self.config.get("pattern_scale", 0.3)
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time()
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time)
         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
 
         # Create base pattern in one segment
@@ -184,8 +184,8 @@ class Spirals(BaseEffect):
         self.color_mode = self.config.get("color_mode", "rainbow")  # rainbow, solid, gradient
         self.tightness = self.config.get("tightness", 0.5)  # How tight the spiral is
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time()
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time)
         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
 
         rotation = self.rotation_speed * t * 2 * np.pi
@@ -243,8 +243,8 @@ class Mandala(BaseEffect):
         self.color_palette = self.config.get("color_palette", "rainbow")  # rainbow, warm, cool
         self.pulse_speed = self.config.get("pulse_speed", 0.5)  # Pulsing animation
 
-    def generate_frame(self) -> np.ndarray:
-        t = self.get_time()
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time)
         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
 
         rotation = self.rotation_speed * t * 2 * np.pi
