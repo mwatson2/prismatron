@@ -68,12 +68,16 @@ class EffectSource(ContentSource):
             if self.effect_config:
                 effect_id = self.effect_config.get("effect_id")
                 parameters = self.effect_config.get("parameters", {})
-                duration = self.effect_config.get("duration", 30.0)
+                # Priority: top-level duration > parameters duration > default
+                duration = self.effect_config.get("duration", parameters.get("duration", 30.0))
 
-                self.logger.debug(f"Setting up effect '{effect_id}' with params: {parameters}, duration: {duration}")
+                # Remove duration from parameters before passing to effect
+                effect_params = {k: v for k, v in parameters.items() if k != "duration"}
+
+                self.logger.debug(f"Setting up effect '{effect_id}' with params: {effect_params}, duration: {duration}")
 
                 if effect_id:
-                    success = self.set_effect(effect_id, parameters, duration)
+                    success = self.set_effect(effect_id, effect_params, duration)
                     if success:
                         self.status = ContentStatus.READY
                         self.total_frames = int(duration * self.fps)

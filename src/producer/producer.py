@@ -813,8 +813,8 @@ class ProducerProcess:
                 try:
                     config = json.loads(current_item.filepath)
                     logger.info(f"Effect config: {config}")
-                except:
-                    logger.error("Failed to parse effect config")
+                except Exception as e:
+                    logger.error(f"Failed to parse effect config: {e}")
             else:
                 logger.info(f"Loading content: {os.path.basename(current_item.filepath)}")
 
@@ -1466,7 +1466,11 @@ class ProducerProcess:
                     # Handle effect content - convert effect_config to JSON string for playlist
                     import json
 
-                    effect_json = json.dumps(sync_item.effect_config)
+                    # Add item-level duration to effect config
+                    effect_config_with_duration = sync_item.effect_config.copy()
+                    effect_config_with_duration["duration"] = sync_item.duration
+
+                    effect_json = json.dumps(effect_config_with_duration)
                     self._playlist.add_item(
                         filepath=effect_json,
                         duration=sync_item.duration,
