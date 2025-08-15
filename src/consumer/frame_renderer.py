@@ -137,6 +137,10 @@ class FrameRenderer:
         self._error_message_start_time = time.time()
         self._silent_after_minutes = 1.0
 
+        # Track first frame timestamp for current playlist item (for playback position)
+        self.current_item_first_frame_timestamp = None
+        self.current_rendering_index = -1
+
         logger.info(
             f"FrameRenderer initialized: delay={first_frame_delay_ms}ms, " f"tolerance=±{timing_tolerance_ms}ms"
         )
@@ -371,6 +375,17 @@ class FrameRenderer:
             )
 
         try:
+            # Store current frame timestamp for use in _send_to_outputs
+            self._current_frame_timestamp = frame_timestamp
+
+            # Capture first frame timestamp for current item if needed
+            if metadata and "playlist_item_index" in metadata:
+                if self.current_item_first_frame_timestamp is None:
+                    self.current_item_first_frame_timestamp = frame_timestamp
+                    logger.debug(
+                        f"Captured first frame timestamp {frame_timestamp:.3f} for item {metadata['playlist_item_index']}"
+                    )
+
             if time_diff > self.timing_tolerance:
                 # Late frame - render immediately
                 self.late_frames += 1
@@ -427,6 +442,26 @@ class FrameRenderer:
         if metadata and "playlist_item_index" in metadata:
             enhanced_metadata["rendering_index"] = metadata["playlist_item_index"]
 
+            # Track first frame timestamp when rendering index changes (for playback position calculation)
+            new_rendering_index = metadata["playlist_item_index"]
+            if new_rendering_index != self.current_rendering_index:
+                self.current_rendering_index = new_rendering_index
+                # Reset first frame timestamp for the new item
+                self.current_item_first_frame_timestamp = None
+                logger.debug(f"Rendering index changed to {new_rendering_index}, resetting first frame timestamp")
+
+            # Add playback position if we have the first frame timestamp
+            if self.current_item_first_frame_timestamp is not None:
+                # Calculate playback position as difference from first frame timestamp for this item
+                # This gets the frame_timestamp that was passed to render_frame_at_timestamp
+                # We need to access it from the current frame being rendered
+                if hasattr(self, "_current_frame_timestamp"):
+                    playback_position = self._current_frame_timestamp - self.current_item_first_frame_timestamp
+                    enhanced_metadata["playback_position"] = max(0.0, playback_position)  # Ensure non-negative
+                    logger.info(
+                        f"PLAYBACK_POSITION_LOG: Calculated position {playback_position:.3f}s for item {new_rendering_index} (current_ts={self._current_frame_timestamp:.3f}, first_ts={self.current_item_first_frame_timestamp:.3f})"
+                    )
+
         # Debug: Write first 10 different LED value sets to temporary files for analysis
         if self._debug_led_count < self._debug_max_leds:
             try:
@@ -481,12 +516,22 @@ class FrameRenderer:
                     # Renderer-style sink
                     if hasattr(sink, "is_running") and not sink.is_running:
                         continue  # Skip if sink is not running
-                    # Try to call with position_offset, fall back to old signature if it fails
+                    # Try to call with metadata (for preview sink), fall back to older signatures if it fails
                     try:
-                        sink.render_led_values(physical_led_values.astype(np.uint8), position_offset)
-                    except TypeError:
-                        # Fall back to old signature without position_offset (for compatibility)
-                        sink.render_led_values(physical_led_values.astype(np.uint8))
+                        # First try with metadata (preview sink needs this for playback position)
+                        sink.render_led_values(physical_led_values.astype(np.uint8), enhanced_metadata)
+                        if name == "PreviewSink" and "playback_position" in enhanced_metadata:
+                            logger.debug(
+                                f"Called PreviewSink with metadata containing playback_position={enhanced_metadata['playback_position']:.3f}"
+                            )
+                    except TypeError as e:
+                        logger.debug(f"Sink {name} doesn't accept metadata parameter, trying older signatures: {e}")
+                        try:
+                            # Fall back to signature with position_offset
+                            sink.render_led_values(physical_led_values.astype(np.uint8), position_offset)
+                        except TypeError:
+                            # Fall back to old signature without position_offset (for compatibility)
+                            sink.render_led_values(physical_led_values.astype(np.uint8))
                 else:
                     logger.warning(f"Sink {name} has no compatible interface")
 

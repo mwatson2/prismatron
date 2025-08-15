@@ -1,8 +1,12 @@
 """Color-based visual effects optimized for LED display"""
 
+import logging
+
 import numpy as np
 
 from .base_effect import BaseEffect, EffectRegistry
+
+logger = logging.getLogger(__name__)
 
 
 class RainbowSweep(BaseEffect):
@@ -14,6 +18,9 @@ class RainbowSweep(BaseEffect):
         self.saturation = self.config.get("saturation", 1.0)
         self.brightness = self.config.get("brightness", 1.0)
         self.wave_width = self.config.get("wave_width", 1.0)  # How many rainbows fit on screen
+        logger.info(
+            f"RainbowSweep initialized: speed={self.speed}, direction={self.direction}, brightness={self.brightness}"
+        )
 
     def generate_frame(self) -> np.ndarray:
         t = self.get_time() * self.speed
@@ -32,6 +39,10 @@ class RainbowSweep(BaseEffect):
         value = np.ones_like(hue) * self.brightness
 
         self.frame_count += 1
+
+        if self.frame_count == 1 or self.frame_count % 30 == 0:
+            logger.debug(f"RainbowSweep generating frame {self.frame_count}, time={t:.2f}")
+
         return self.hsv_to_rgb(hue, saturation, value)
 
 

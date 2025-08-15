@@ -58,6 +58,7 @@ class ContentType(Enum):
     VIDEO = "video"
     ANIMATION = "animation"
     TEXT = "text"
+    EFFECT = "effect"
     LIVE = "live"
     UNKNOWN = "unknown"
 
@@ -410,7 +411,7 @@ class ContentSourceRegistry:
         Returns:
             Detected ContentType
         """
-        # Check if this is a JSON text configuration
+        # Check if this is a JSON configuration
         if filepath.startswith("{") and filepath.endswith("}"):
             try:
                 import json
@@ -418,6 +419,8 @@ class ContentSourceRegistry:
                 config = json.loads(filepath)
                 if "text" in config and isinstance(config["text"], str):
                     return ContentType.TEXT
+                elif "effect_id" in config:
+                    return ContentType.EFFECT
             except (json.JSONDecodeError, TypeError):
                 pass
 

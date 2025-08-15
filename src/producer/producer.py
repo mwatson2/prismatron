@@ -151,19 +151,25 @@ class ContentPlaylist:
                 # Detect content type to handle text content vs file content
                 content_type = ContentSourceRegistry.detect_content_type(filepath)
 
-                # For text content, filepath contains JSON config, not a file path
-                if content_type == ContentType.TEXT:
-                    # Validate JSON text configuration
+                # For JSON content (text or effects), filepath contains JSON config, not a file path
+                if content_type in (ContentType.TEXT, ContentType.EFFECT):
+                    # Validate JSON configuration
                     import json
 
                     try:
                         config = json.loads(filepath)
-                        if not ("text" in config and isinstance(config["text"], str)):
-                            logger.error(f"Invalid text configuration: {filepath}")
-                            return False
-                        logger.debug(f"Adding text content: {config.get('text', '')[:50]}...")
+                        if content_type == ContentType.TEXT:
+                            if not ("text" in config and isinstance(config["text"], str)):
+                                logger.error(f"Invalid text configuration: {filepath}")
+                                return False
+                            logger.debug(f"Adding text content: {config.get('text', '')[:50]}...")
+                        elif content_type == ContentType.EFFECT:
+                            if "effect_id" not in config:
+                                logger.error(f"Invalid effect configuration: {filepath}")
+                                return False
+                            logger.debug(f"Adding effect content: {config.get('effect_id')}")
                     except json.JSONDecodeError as e:
-                        logger.error(f"Invalid JSON text configuration: {e}")
+                        logger.error(f"Invalid JSON configuration: {e}")
                         return False
                 else:
                     # For file-based content, validate file exists
@@ -176,6 +182,8 @@ class ContentPlaylist:
 
                 if content_type == ContentType.TEXT:
                     logger.info("Added text content to playlist")
+                elif content_type == ContentType.EFFECT:
+                    logger.info(f"Added effect content to playlist: {json.loads(filepath).get('effect_id', 'unknown')}")
                 else:
                     logger.info(f"Added to playlist: {filepath}")
                 return True
@@ -796,7 +804,20 @@ class ProducerProcess:
                 self._current_source.cleanup()
 
             # Load new content
-            logger.info(f"Loading content: {os.path.basename(current_item.filepath)}")
+            # Check if this is an effect (JSON config)
+            content_type = ContentSourceRegistry.detect_content_type(current_item.filepath)
+            if content_type == ContentType.EFFECT:
+                logger.info("Loading effect content from JSON config")
+                import json
+
+                try:
+                    config = json.loads(current_item.filepath)
+                    logger.info(f"Effect config: {config}")
+                except:
+                    logger.error("Failed to parse effect config")
+            else:
+                logger.info(f"Loading content: {os.path.basename(current_item.filepath)}")
+
             self._current_source = current_item.get_content_source()
             self._current_item = current_item
             self._current_item_index = self._playlist.get_current_index()  # Store the index of the loaded content
@@ -812,13 +833,17 @@ class ProducerProcess:
             self._update_global_timestamp_offset()
 
             if not self._current_source:
-                logger.error(f"Failed to create content source: {current_item.filepath}")
+                logger.error(f"Failed to create content source for type {content_type}: {current_item.filepath[:100]}")
                 return False
+            else:
+                logger.info(f"Created content source: {type(self._current_source).__name__}")
 
             # Setup content source
+            logger.info(f"Setting up content source {type(self._current_source).__name__}...")
             if not self._current_source.setup():
-                logger.error(f"Failed to setup content: {current_item.filepath}")
+                logger.error(f"Failed to setup content: {current_item.filepath[:100]}")
                 return False
+            logger.info(f"Content source setup successful, status={self._current_source.status}")
 
             # Update control state with current file
             self._control_state.set_current_file(current_item.filepath)
@@ -830,7 +855,10 @@ class ProducerProcess:
                     self._target_fps = min(content_fps, 60.0)  # Cap at 60 FPS
                     self._frame_interval = 1.0 / self._target_fps
 
-            logger.info(f"Loaded content: {current_item.filepath} (fps: {self._target_fps})")
+            if content_type == ContentType.EFFECT:
+                logger.info(f"Loaded effect content (fps: {self._target_fps})")
+            else:
+                logger.info(f"Loaded content: {current_item.filepath} (fps: {self._target_fps})")
 
         return True
 
@@ -1435,8 +1463,17 @@ class ProducerProcess:
                         transition_out=sync_item.transition_out,
                     )
                 elif sync_item.type == "effect" and sync_item.effect_config:
-                    # Handle effect content (for future implementation)
-                    logger.info(f"Effect content not yet supported: {sync_item.effect_config}")
+                    # Handle effect content - convert effect_config to JSON string for playlist
+                    import json
+
+                    effect_json = json.dumps(sync_item.effect_config)
+                    self._playlist.add_item(
+                        filepath=effect_json,
+                        duration=sync_item.duration,
+                        repeat=1,
+                        transition_in=sync_item.transition_in,
+                        transition_out=sync_item.transition_out,
+                    )
 
             # Update current index and playback state
             self._playlist._current_index = sync_state.current_index

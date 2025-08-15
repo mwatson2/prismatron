@@ -11,6 +11,14 @@ import { useWebSocket } from '../hooks/useWebSocket'
 
 const HomePage = () => {
   const { playlist, isConnected, systemStatus, previewData: wsPreviewData } = useWebSocket()
+
+  // Format duration helper function
+  const formatDuration = (seconds) => {
+    if (!seconds || seconds < 0) return '--:--'
+    const mins = Math.floor(seconds / 60)
+    const secs = Math.floor(seconds % 60)
+    return `${mins}:${secs.toString().padStart(2, '0')}`
+  }
   const [ledPositions, setLedPositions] = useState(null)
   const [previewBrightness, setPreviewBrightness] = useState(0.8)
   const [optimizationIterations, setOptimizationIterations] = useState(5)
@@ -39,6 +47,13 @@ const HomePage = () => {
       console.warn('🚨 PLAYING BUT NO CURRENT ITEM in previewData');
     }
   }, [previewData?.current_item?.name])
+
+  // Track playback position changes for debugging
+  useEffect(() => {
+    if (previewData?.playback_position !== undefined) {
+      console.log(`🕒 PLAYBACK_POSITION_LOG: HomePage sees position ${previewData.playback_position.toFixed(3)}s`);
+    }
+  }, [previewData?.playback_position])
 
   // Track rendering index changes separately
   useEffect(() => {
@@ -352,9 +367,14 @@ const HomePage = () => {
             <div className="flex justify-between text-xs text-metal-silver font-mono">
               <span className="uppercase">{currentItem?.type || 'content'}</span>
               <div className="flex items-center gap-2">
-                {currentItem?.duration && (
+                {/* Show playback position if available, otherwise duration */}
+                {previewData && previewData.playback_position !== undefined ? (
+                  <span className="text-neon-cyan">
+                    {formatDuration(previewData.playback_position)}
+                  </span>
+                ) : currentItem?.duration ? (
                   <span>{Math.round(currentItem.duration)}s</span>
-                )}
+                ) : null}
                 <span className={`px-2 py-1 rounded text-xs ${
                   status?.renderer_state === 'playing'
                     ? 'bg-neon-green bg-opacity-20 text-neon-green'

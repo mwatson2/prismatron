@@ -16,6 +16,7 @@ from .content_sources import (
     ImageSource,
     VideoSource,
 )
+from .effect_source import EffectSource  # Import to trigger registration
 from .producer import ContentPlaylist, PlaylistItem, ProducerProcess, play, stop
 
 __all__ = [

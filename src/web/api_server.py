@@ -802,9 +802,9 @@ async def preview_broadcast_task():
                         if len(header_data) == 64:
                             import struct
 
-                            # Unpack header according to PreviewSink format: "<ddii40x"
-                            timestamp, frame_counter, led_count, shm_rendering_index = struct.unpack(
-                                "<ddii40x", header_data
+                            # Unpack header according to PreviewSink format: "<ddiid32x"
+                            timestamp, frame_counter, led_count, shm_rendering_index, shm_playback_position = (
+                                struct.unpack("<ddiid32x", header_data)
                             )
 
                             if led_count > 0:
@@ -831,6 +831,13 @@ async def preview_broadcast_task():
                                     # Handle potential invalid rendering_index values
                                     preview_data["shm_rendering_index"] = (
                                         shm_rendering_index if shm_rendering_index < 999999 else -1
+                                    )
+                                    # Add playback position (handle invalid values)
+                                    preview_data["playback_position"] = (
+                                        shm_playback_position if shm_playback_position >= 0 else 0.0
+                                    )
+                                    logger.info(
+                                        f"PLAYBACK_POSITION_LOG: WebSocket broadcast sending position {preview_data['playback_position']:.3f}s for item {shm_rendering_index} (raw={shm_playback_position:.3f})"
                                     )
 
                                     # Debug: Compare rendering_index from different sources (reduced frequency)
@@ -2133,8 +2140,10 @@ async def get_led_preview():
                 if len(header_data) == 64:
                     import struct
 
-                    # Unpack header according to PreviewSink format: "<ddii40x"
-                    timestamp, frame_counter, led_count, shm_rendering_index = struct.unpack("<ddii40x", header_data)
+                    # Unpack header according to PreviewSink format: "<ddiid32x"
+                    timestamp, frame_counter, led_count, shm_rendering_index, shm_playback_position = struct.unpack(
+                        "<ddiid32x", header_data
+                    )
 
                     if led_count > 0:
                         # Read LED data starting at offset 64: led_count * 3 bytes (RGB)
@@ -2160,6 +2169,13 @@ async def get_led_preview():
                             # Handle potential invalid rendering_index values
                             preview_data["shm_rendering_index"] = (
                                 shm_rendering_index if shm_rendering_index < 999999 else -1
+                            )
+                            # Add playback position (handle invalid values)
+                            preview_data["playback_position"] = (
+                                shm_playback_position if shm_playback_position >= 0 else 0.0
+                            )
+                            logger.info(
+                                f"PLAYBACK_POSITION_LOG: API endpoint sending position {preview_data['playback_position']:.3f}s for item {shm_rendering_index} (raw={shm_playback_position:.3f})"
                             )
                         else:
                             logger.debug(

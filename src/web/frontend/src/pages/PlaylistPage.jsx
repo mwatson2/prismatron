@@ -21,8 +21,17 @@ import { useWebSocket } from '../hooks/useWebSocket'
 import TransitionConfig from '../components/TransitionConfig'
 
 const PlaylistPage = () => {
-  const { playlist } = useWebSocket()
+  const { playlist, previewData, systemStatus } = useWebSocket()
   const [isDragging, setIsDragging] = useState(false)
+
+  // Debug log to track producer vs renderer sync
+  useEffect(() => {
+    const producerIndex = playlist.current_index
+    const renderingIndex = systemStatus?.rendering_index ?? -1
+    if (producerIndex !== renderingIndex) {
+      console.log(`🎬 PLAYLIST SYNC: Producer at item ${producerIndex}, Renderer at item ${renderingIndex}`)
+    }
+  }, [playlist.current_index, systemStatus?.rendering_index])
   const [transitionConfigItem, setTransitionConfigItem] = useState(null)
   const [savedPlaylists, setSavedPlaylists] = useState([])
   const [showSaveDialog, setShowSaveDialog] = useState(false)
@@ -404,7 +413,10 @@ const PlaylistPage = () => {
                   }`}
                 >
                   {playlist.items.map((item, index) => {
-                    const isCurrentItem = index === playlist.current_index
+                    // Use renderer's index (what's actually being displayed) instead of producer's index
+                    // This prevents timing issues where producer has moved on but renderer is still showing previous item
+                    const renderingIndex = systemStatus?.rendering_index ?? -1
+                    const isCurrentItem = index === renderingIndex
                     const ItemIcon = getItemIcon(item.type)
                     const itemColor = getItemColor(item.type, isCurrentItem)
 
@@ -436,12 +448,12 @@ const PlaylistPage = () => {
 
                               {/* Item Info */}
                               <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <h4 className="text-sm font-medium text-neon-cyan truncate">
+                                <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mb-1">
+                                  <h4 className="text-sm font-medium text-neon-cyan break-words sm:truncate">
                                     {item.name}
                                   </h4>
                                   {isCurrentItem && (
-                                    <div className="flex items-center gap-1">
+                                    <div className="flex items-center gap-1 flex-shrink-0">
                                       {playlist.is_playing ? (
                                         <PauseIcon className="w-4 h-4 text-neon-pink animate-pulse-neon" />
                                       ) : (
@@ -454,7 +466,12 @@ const PlaylistPage = () => {
 
                                 <div className="flex items-center justify-between text-xs text-metal-silver font-mono">
                                   <span className="uppercase">{item.type}</span>
-                                  <span>{formatDuration(item.duration)}</span>
+                                  <span>
+                                    {isCurrentItem && previewData && previewData.playback_position !== undefined
+                                      ? formatDuration(previewData.playback_position)
+                                      : formatDuration(item.duration)
+                                    }
+                                  </span>
                                 </div>
                               </div>
 

@@ -308,13 +308,20 @@ class PreviewSink:
         except Exception as e:
             logger.warning(f"Error cleaning up shared memory: {e}")
 
-    def _write_header(self, timestamp: float, frame_counter: int, led_count: int, rendering_index: int = -1) -> None:
+    def _write_header(
+        self,
+        timestamp: float,
+        frame_counter: int,
+        led_count: int,
+        rendering_index: int = -1,
+        playback_position: float = -1.0,
+    ) -> None:
         """Write header to shared memory."""
         if not self.shared_memory_map:
             return
 
-        # Header format: timestamp(8) + frame_counter(8) + led_count(4) + rendering_index(4) + padding(40)
-        header_data = struct.pack("<ddii40x", timestamp, frame_counter, led_count, rendering_index)
+        # Header format: timestamp(8) + frame_counter(8) + led_count(4) + rendering_index(4) + playback_position(8) + padding(32)
+        header_data = struct.pack("<ddiid32x", timestamp, frame_counter, led_count, rendering_index, playback_position)
         self.shared_memory_map[0:64] = header_data
 
     def _write_statistics(self) -> None:
@@ -397,19 +404,26 @@ class PreviewSink:
                 is_late = time_since_last > self.config.late_frame_threshold_ms
 
             # LED values are already in physical order from frame renderer
-            # Extract rendering_index from metadata
+            # Extract rendering_index and playback_position from metadata
             rendering_index = -1
+            playback_position = -1.0
             if metadata and "rendering_index" in metadata:
                 rendering_index = metadata["rendering_index"]
             else:
                 logger.debug(f"No rendering_index in metadata: {list(metadata.keys()) if metadata else 'No metadata'}")
+
+            if metadata and "playback_position" in metadata:
+                playback_position = metadata["playback_position"]
+                logger.info(
+                    f"PLAYBACK_POSITION_LOG: PreviewSink received position {playback_position:.3f}s for item {rendering_index}"
+                )
 
             # Update shared memory with new LED data
             with self._lock:
                 # Update header
                 frame_counter = getattr(self, "_frame_counter", 0) + 1
                 self._frame_counter = frame_counter
-                self._write_header(start_time, frame_counter, self.led_count, rendering_index)
+                self._write_header(start_time, frame_counter, self.led_count, rendering_index, playback_position)
 
                 # Write LED data (convert to uint8 and flatten)
                 led_data_uint8 = np.clip(led_values, 0, 255).astype(np.uint8)
@@ -486,7 +500,7 @@ class PreviewSink:
             "led_data_size": self.led_data_size,
             "stats_offset": self.shared_memory_size - 128,
             "stats_size": 128,
-            "header_format": "<ddii40x",  # timestamp, frame_counter, led_count, rendering_index, padding
+            "header_format": "<ddiid32x",  # timestamp, frame_counter, led_count, rendering_index, playback_position, padding
             "led_count": self.led_count,
         }
 
