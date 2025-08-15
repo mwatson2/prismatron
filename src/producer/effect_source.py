@@ -247,14 +247,13 @@ class EffectSource(ContentSource):
             self.current_time = self.current_frame / self.fps
             self.last_frame_time = time.time()
 
-            # Create FrameData with proper presentation_timestamp
-            timestamp = time.time()
+            # Create FrameData with proper presentation_timestamp (local timestamp from frame count and FPS)
             frame = FrameData(
                 array=planar_array,
                 width=self.width,
                 height=self.height,
                 channels=3,
-                presentation_timestamp=timestamp,
+                presentation_timestamp=self.current_time,  # Local timestamp based on frame count and FPS
                 duration=self.frame_interval,
             )
 
