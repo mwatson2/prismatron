@@ -883,12 +883,24 @@ class ProducerProcess:
         """
         Update the global timestamp offset for the current item.
 
-        Uses accumulated actual durations from completed items rather than
-        playlist metadata to handle duration variations.
+        Uses accumulated actual durations from completed items plus elapsed time
+        of the currently playing item to handle playlist updates during playback.
         """
         try:
-            # Simply use the accumulated duration from completed items
-            self._current_item_global_offset = self._accumulated_duration
+            # Start with accumulated duration from completed items
+            offset = self._accumulated_duration
+
+            # If we have a current source that's playing, add its elapsed time
+            # This handles the case where items are added to playlist during playback
+            if self._current_source and hasattr(self._current_source, "get_current_time"):
+                current_item_elapsed = self._current_source.get_current_time()
+                offset += current_item_elapsed
+                logger.debug(
+                    f"Current item elapsed: {current_item_elapsed:.3f}s, "
+                    f"adding to accumulated duration: {self._accumulated_duration:.3f}s"
+                )
+
+            self._current_item_global_offset = offset
 
             current_index = self._playlist.get_current_index()
             logger.debug(f"Global timestamp offset for item {current_index}: {self._current_item_global_offset:.3f}s")
@@ -1489,6 +1501,11 @@ class ProducerProcess:
                 )
                 # Mark that content needs to be reloaded to sync with new index
                 self._current_item = None  # Force content reload in _ensure_current_content
+            else:
+                # Even if staying on the same item, update the global timestamp offset
+                # to account for new items added after the current position
+                self._update_global_timestamp_offset()
+                logger.debug("Updated global timestamp offset after playlist sync (same item)")
 
             # Update producer state based on sync state
             if sync_state.is_playing:
