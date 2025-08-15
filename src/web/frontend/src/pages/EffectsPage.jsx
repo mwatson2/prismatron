@@ -176,11 +176,13 @@ const EffectsPage = () => {
 
   const handleAddWithConfig = (effect) => {
     const config = { ...effect.config, ...customConfig }
+    // Use custom duration from config, or default to 30
+    const duration = customConfig.duration || 30
     // For text effects, use the text content as the name
     const customName = effect.id === 'text_display' && config.text
       ? config.text
       : null
-    addEffectToPlaylist(effect.id, customName, 30, config)
+    addEffectToPlaylist(effect.id, customName, duration, config)
     setShowConfig(null)
     setCustomConfig({})
   }
@@ -721,6 +723,20 @@ const EffectsPage = () => {
                         )}
                       </div>
                     ))}
+
+                    {/* Duration Configuration */}
+                    <div className="space-y-1">
+                      <label className="text-xs text-metal-silver font-mono">DURATION (SECONDS)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="300"
+                        step="0.5"
+                        defaultValue={30}
+                        onChange={(e) => handleConfigChange('duration', parseFloat(e.target.value))}
+                        className="retro-input w-full text-sm"
+                      />
+                    </div>
 
                     <div className="flex gap-2 pt-2">
                       <button
