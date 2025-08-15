@@ -63,13 +63,13 @@ class EffectSource(ContentSource):
             True if setup successful
         """
         try:
-            self.logger.info(f"EffectSource.setup() called with config: {self.effect_config}")
+            self.logger.debug(f"EffectSource.setup() called with config: {self.effect_config}")
             if self.effect_config:
                 effect_id = self.effect_config.get("effect_id")
                 parameters = self.effect_config.get("parameters", {})
                 duration = self.effect_config.get("duration", 30.0)
 
-                self.logger.info(f"Setting up effect '{effect_id}' with params: {parameters}, duration: {duration}")
+                self.logger.debug(f"Setting up effect '{effect_id}' with params: {parameters}, duration: {duration}")
 
                 if effect_id:
                     success = self.set_effect(effect_id, parameters, duration)
@@ -77,7 +77,7 @@ class EffectSource(ContentSource):
                         self.status = ContentStatus.READY
                         self.total_frames = int(duration * self.fps)
                         self.duration = duration
-                        self.logger.info(
+                        self.logger.debug(
                             f"Effect setup successful: status={self.status}, total_frames={self.total_frames}"
                         )
                         return True
@@ -200,16 +200,16 @@ class EffectSource(ContentSource):
             f"Auto-rotation {'enabled' if enabled else 'disabled'} " f"with {len(self.rotation_effects)} effects"
         )
 
-    def get_next_frame(self) -> Optional[np.ndarray]:
+    def get_next_frame(self) -> Optional[FrameData]:
         """Get the next frame from the current effect.
 
         Returns:
-            Frame data as numpy array or None
+            FrameData with the generated frame, or None if no effect active
         """
         # Start playing if ready
         if self.status == ContentStatus.READY:
             self.status = ContentStatus.PLAYING
-            self.logger.info("EffectSource started playing")
+            self.logger.debug("EffectSource started playing")
 
         if self.status != ContentStatus.PLAYING:
             return None
@@ -232,41 +232,37 @@ class EffectSource(ContentSource):
                     self.status = ContentStatus.FINISHED
                     return None
 
-            # Generate frame
+            # Generate frame from effect (returns numpy array in H, W, C format)
             frame_data = self.current_effect.generate_frame()
 
             if frame_data is None or frame_data.shape != (self.height, self.width, 3):
                 self.logger.error(f"Invalid frame shape: {frame_data.shape if frame_data is not None else None}")
                 return None
 
+            # Convert from interleaved (H, W, C) to planar (C, H, W) format
+            planar_array = FrameData.convert_interleaved_to_planar(frame_data)
+
             # Update timing
             self.current_frame += 1
             self.current_time = self.current_frame / self.fps
             self.last_frame_time = time.time()
 
-            return frame_data
+            # Create FrameData with proper presentation_timestamp
+            timestamp = time.time()
+            frame = FrameData(
+                array=planar_array,
+                width=self.width,
+                height=self.height,
+                channels=3,
+                presentation_timestamp=timestamp,
+                duration=self.frame_interval,
+            )
+
+            return frame
 
         except Exception as e:
             self.logger.error(f"Error generating frame: {e}")
             return None
-
-    def get_frame(self) -> Optional[FrameData]:
-        """Get the next frame from the current effect.
-
-        Returns:
-            FrameData with the generated frame, or None if no effect active
-        """
-        frame_data = self.get_next_frame()
-        if frame_data is None:
-            return None
-
-        # Create FrameData
-        timestamp = time.time()
-        frame = FrameData(
-            data=frame_data, timestamp=timestamp, frame_id=self.frame_count, width=self.width, height=self.height
-        )
-        self.frame_count += 1
-        return frame
 
     def _rotate_to_next_effect(self):
         """Rotate to the next effect in the list."""
