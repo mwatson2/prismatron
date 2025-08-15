@@ -37,6 +37,7 @@ class EffectSource(ContentSource):
         self.effect_duration = 30.0  # Default duration
         self.frame_count = 0
         self.last_frame_time = 0
+        self.start_time = 0.0  # When effect actually started playing
 
         self.logger = logging.getLogger(__name__)
 
@@ -167,6 +168,9 @@ class EffectSource(ContentSource):
             self.effect_start_time = time.time()
             self.effect_duration = duration
             self.frame_count = 0
+            self.current_frame = 0
+            self.current_time = 0.0
+            self.start_time = 0.0  # Will be set when first frame is requested
 
             effect_info = EffectRegistry.get_effect(effect_id)
             self.logger.info(
@@ -222,14 +226,24 @@ class EffectSource(ContentSource):
                 return None
 
         try:
-            # Check if current effect should end
-            if self.current_time >= self.duration:
+            # Set start time on first frame
+            if self.start_time == 0.0:
+                self.start_time = time.time()
+
+            # Calculate elapsed time and current frame (like text source)
+            elapsed_time = time.time() - self.start_time
+            frame_index = int(elapsed_time / self.frame_interval)
+
+            # Check if current effect should end based on elapsed time
+            if elapsed_time >= self.duration:
                 if self.auto_rotate and self.rotation_effects:
                     self._rotate_to_next_effect()
                 else:
-                    self.logger.info("Effect duration expired, stopping")
+                    self.logger.info(
+                        f"Effect duration expired after {elapsed_time:.1f}s (target: {self.duration}s), stopping"
+                    )
                     self.current_effect = None
-                    self.status = ContentStatus.FINISHED
+                    self.status = ContentStatus.ENDED
                     return None
 
             # Generate frame from effect (returns numpy array in H, W, C format)
@@ -242,18 +256,18 @@ class EffectSource(ContentSource):
             # Convert from interleaved (H, W, C) to planar (C, H, W) format
             planar_array = FrameData.convert_interleaved_to_planar(frame_data)
 
-            # Update timing
-            self.current_frame += 1
-            self.current_time = self.current_frame / self.fps
+            # Update timing (like text source)
+            self.current_time = elapsed_time
+            self.current_frame = frame_index
             self.last_frame_time = time.time()
 
-            # Create FrameData with proper presentation_timestamp (local timestamp from frame count and FPS)
+            # Create FrameData with proper presentation_timestamp (local timestamp from elapsed time)
             frame = FrameData(
                 array=planar_array,
                 width=self.width,
                 height=self.height,
                 channels=3,
-                presentation_timestamp=self.current_time,  # Local timestamp based on frame count and FPS
+                presentation_timestamp=elapsed_time,  # Local timestamp based on elapsed time
                 duration=self.frame_interval,
             )
 
@@ -328,6 +342,20 @@ class EffectSource(ContentSource):
         self.current_effect = None
         self.auto_rotate = False
         self.frame_count = 0
+
+    def reset(self) -> bool:
+        """Reset effect to beginning.
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if self.current_effect is not None:
+            self.start_time = time.time()
+            self.current_time = 0.0
+            self.current_frame = 0
+            self.status = ContentStatus.READY
+            return True
+        return False
 
 
 class EffectSourceManager:
