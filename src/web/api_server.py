@@ -1849,12 +1849,13 @@ async def remove_playlist_item(item_id: str):
 @app.post("/api/playlist/clear")
 async def clear_playlist():
     """Clear all playlist items."""
+    global current_playlist_file
+
     # Send clear command to playlist sync service
     if playlist_sync_client and playlist_sync_client.connected:
         success = playlist_sync_client.clear_playlist()
         if success:
             # Clear the current playlist file tracking
-            global current_playlist_file
             current_playlist_file = None
             return {"status": "cleared"}
         else:
@@ -1869,7 +1870,6 @@ async def clear_playlist():
         playlist_state.is_playing = False
 
         # Clear the current playlist file tracking
-        global current_playlist_file
         current_playlist_file = None
 
         return {"status": "cleared"}
@@ -2725,6 +2725,8 @@ async def list_saved_playlists():
 @app.get("/api/playlists/{filename}")
 async def load_playlist(filename: str):
     """Load a saved playlist and replace current playlist."""
+    global current_playlist_file
+
     try:
         # Validate filename
         if not filename.endswith(".json"):
@@ -2793,7 +2795,6 @@ async def load_playlist(filename: str):
         playlist_state.shuffle = data.get("shuffle", False)
 
         # Track the currently loaded playlist file
-        global current_playlist_file
         current_playlist_file = filename
 
         logger.info(f"Loaded playlist {filename} with {items_added} items")
