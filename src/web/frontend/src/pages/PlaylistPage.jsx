@@ -21,7 +21,7 @@ import { useWebSocket } from '../hooks/useWebSocket'
 import TransitionConfig from '../components/TransitionConfig'
 
 const PlaylistPage = () => {
-  const { playlist, previewData, systemStatus } = useWebSocket()
+  const { playlist, previewData, systemStatus, currentPlaylistFile, setCurrentPlaylistFile, playlistModified, setPlaylistModified, setIsLoadingPlaylist } = useWebSocket()
   const [isDragging, setIsDragging] = useState(false)
 
   // Debug log to track producer vs renderer sync
@@ -37,8 +37,6 @@ const PlaylistPage = () => {
   const [showSaveDialog, setShowSaveDialog] = useState(false)
   const [playlistName, setPlaylistName] = useState('')
   const [playlistDescription, setPlaylistDescription] = useState('')
-  const [currentPlaylistFile, setCurrentPlaylistFile] = useState(null)
-  const [showSavedPlaylists, setShowSavedPlaylists] = useState(false)
 
   // Load saved playlists on mount
   useEffect(() => {
@@ -59,18 +57,27 @@ const PlaylistPage = () => {
 
   const loadPlaylist = async (filename) => {
     try {
+      // Set loading flag BEFORE making the API call
+      setIsLoadingPlaylist(true)
+      setCurrentPlaylistFile(filename)
+      setPlaylistModified(false) // Mark as unmodified after loading
+
       const response = await fetch(`/api/playlists/${filename}`)
       if (response.ok) {
         const data = await response.json()
-        setCurrentPlaylistFile(filename)
-        setShowSavedPlaylists(false)
         // Reload saved playlists to update metadata
         loadSavedPlaylists()
       } else {
         console.error('Failed to load playlist')
+        // Reset if load failed
+        setIsLoadingPlaylist(false)
+        setCurrentPlaylistFile(null)
       }
     } catch (error) {
       console.error('Failed to load playlist:', error)
+      // Reset if load failed
+      setIsLoadingPlaylist(false)
+      setCurrentPlaylistFile(null)
     }
   }
 
@@ -93,6 +100,7 @@ const PlaylistPage = () => {
       if (response.ok) {
         const data = await response.json()
         setCurrentPlaylistFile(data.filename)
+        setPlaylistModified(false) // Mark as saved
         setShowSaveDialog(false)
         setPlaylistName('')
         setPlaylistDescription('')
@@ -115,6 +123,7 @@ const PlaylistPage = () => {
           if (overwriteResponse.ok) {
             const data = await overwriteResponse.json()
             setCurrentPlaylistFile(data.filename)
+            setPlaylistModified(false) // Mark as saved
             setShowSaveDialog(false)
             setPlaylistName('')
             setPlaylistDescription('')
@@ -227,7 +236,11 @@ const PlaylistPage = () => {
           method: 'POST'
         })
 
-        if (!response.ok) {
+        if (response.ok) {
+          // Clear the current playlist file so SAVE will prompt for new name
+          setCurrentPlaylistFile(null)
+          setPlaylistModified(false)
+        } else {
           console.error('Failed to clear playlist')
         }
       } catch (error) {
@@ -311,14 +324,6 @@ const PlaylistPage = () => {
 
         <div className="flex flex-wrap gap-3">
           <button
-            onClick={() => setShowSavedPlaylists(!showSavedPlaylists)}
-            className="retro-button px-4 py-2 text-sm font-retro font-bold text-neon-cyan"
-          >
-            <FolderOpenIcon className="w-4 h-4 inline mr-2" />
-            LOAD
-          </button>
-
-          <button
             onClick={() => {
               if (currentPlaylistFile) {
                 // Quick save to current file
@@ -330,7 +335,10 @@ const PlaylistPage = () => {
                     description: '',
                     overwrite: true
                   })
-                }).then(() => loadSavedPlaylists())
+                }).then(() => {
+                  setPlaylistModified(false) // Mark as saved
+                  loadSavedPlaylists()
+                })
               } else {
                 setShowSaveDialog(true)
               }
@@ -392,7 +400,15 @@ const PlaylistPage = () => {
       {playlist.items?.length > 0 ? (
         <div className="retro-container">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-retro text-neon-cyan">QUEUE</h3>
+            <div>
+              <h3 className="text-lg font-retro text-neon-cyan">QUEUE</h3>
+              {currentPlaylistFile && (
+                <p className="text-xs font-mono text-metal-silver mt-1">
+                  {currentPlaylistFile.replace('.json', '')}
+                  {!playlistModified && <span className="text-neon-green ml-2">(saved)</span>}
+                </p>
+              )}
+            </div>
             <div className="flex items-center gap-2 text-xs text-metal-silver font-mono">
               <ArrowsUpDownIcon className="w-4 h-4" />
               Drag to reorder
@@ -571,23 +587,19 @@ const PlaylistPage = () => {
       )}
 
       {/* Saved Playlists Section */}
-      {showSavedPlaylists && savedPlaylists.length > 0 && (
-        <div className="retro-container">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-retro text-neon-green">SAVED PLAYLISTS</h3>
-            <button
-              onClick={() => setShowSavedPlaylists(false)}
-              className="p-1 text-metal-silver hover:text-neon-orange"
-            >
-              <XMarkIcon className="w-5 h-5" />
-            </button>
-          </div>
+      <div className="retro-container">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-retro text-neon-green">SAVED PLAYLISTS</h3>
+        </div>
+
+        {savedPlaylists.length > 0 ? (
 
           <div className="space-y-2 max-h-64 overflow-y-auto">
             {savedPlaylists.map(savedPlaylist => (
               <div
                 key={savedPlaylist.filename}
-                className="playlist-item flex items-center justify-between"
+                onClick={() => loadPlaylist(savedPlaylist.filename)}
+                className="playlist-item flex items-center justify-between cursor-pointer hover:border-neon-cyan hover:border-opacity-75"
               >
                 <div className="flex-1 min-w-0">
                   <h4 className="text-sm font-medium text-neon-cyan truncate">
@@ -603,14 +615,10 @@ const PlaylistPage = () => {
                 </div>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => loadPlaylist(savedPlaylist.filename)}
-                    className="p-2 text-metal-silver hover:text-neon-cyan"
-                    aria-label="Load playlist"
-                  >
-                    <FolderOpenIcon className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => deletePlaylist(savedPlaylist.filename)}
+                    onClick={(e) => {
+                      e.stopPropagation() // Prevent triggering the parent onClick
+                      deletePlaylist(savedPlaylist.filename)
+                    }}
                     className="p-2 text-metal-silver hover:text-neon-orange"
                     aria-label="Delete playlist"
                   >
@@ -620,8 +628,13 @@ const PlaylistPage = () => {
               </div>
             ))}
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="text-center py-4">
+            <p className="text-sm text-metal-silver font-mono">No saved playlists</p>
+            <p className="text-xs text-metal-silver font-mono mt-1">Save a playlist to see it here</p>
+          </div>
+        )}
+      </div>
 
       {/* Save Dialog Modal */}
       {showSaveDialog && (

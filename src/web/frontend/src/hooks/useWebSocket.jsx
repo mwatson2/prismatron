@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react'
 
 const WebSocketContext = createContext(null)
 
@@ -17,6 +17,26 @@ export const WebSocketProvider = ({ children }) => {
   const [playlist, setPlaylist] = useState({ items: [], current_index: 0, is_playing: false })
   const [settings, setSettings] = useState(null)
   const [previewData, setPreviewData] = useState(null)
+  const [currentPlaylistFile, setCurrentPlaylistFile] = useState(null)
+  const [playlistModified, setPlaylistModified] = useState(false)
+  const [isLoadingPlaylist, setIsLoadingPlaylist] = useState(false)
+
+  // Use refs to avoid stale closures in callbacks
+  const currentPlaylistFileRef = useRef(currentPlaylistFile)
+  const playlistModifiedRef = useRef(playlistModified)
+  const isLoadingPlaylistRef = useRef(isLoadingPlaylist)
+
+  useEffect(() => {
+    currentPlaylistFileRef.current = currentPlaylistFile
+  }, [currentPlaylistFile])
+
+  useEffect(() => {
+    playlistModifiedRef.current = playlistModified
+  }, [playlistModified])
+
+  useEffect(() => {
+    isLoadingPlaylistRef.current = isLoadingPlaylist
+  }, [isLoadingPlaylist])
 
   const connect = useCallback(() => {
     const wsUrl = import.meta.env.DEV
@@ -85,14 +105,30 @@ export const WebSocketProvider = ({ children }) => {
         break
 
       case 'playlist_updated':
-        setPlaylist(prev => ({
-          ...prev,
-          items: data.items || [],
-          current_index: data.current_index ?? prev.current_index,
-          is_playing: data.is_playing ?? prev.is_playing,
-          auto_repeat: data.auto_repeat ?? prev.auto_repeat,
-          shuffle: data.shuffle ?? prev.shuffle
-        }))
+        setPlaylist(prev => {
+          // Check if items actually changed (not just playback state)
+          const itemsChanged = JSON.stringify(prev.items) !== JSON.stringify(data.items || [])
+
+          // Mark as modified if we have a loaded file and items changed
+          // BUT skip if we're in the process of loading a playlist
+          if (itemsChanged && currentPlaylistFileRef.current && !isLoadingPlaylistRef.current) {
+            setPlaylistModified(true)
+          }
+
+          // Clear loading flag after playlist update
+          if (isLoadingPlaylistRef.current) {
+            setIsLoadingPlaylist(false)
+          }
+
+          return {
+            ...prev,
+            items: data.items || [],
+            current_index: data.current_index ?? prev.current_index,
+            is_playing: data.is_playing ?? prev.is_playing,
+            auto_repeat: data.auto_repeat ?? prev.auto_repeat,
+            shuffle: data.shuffle ?? prev.shuffle
+          }
+        })
         break
 
       case 'playlist_state':
@@ -151,11 +187,16 @@ export const WebSocketProvider = ({ children }) => {
     playlist,
     settings,
     previewData,
+    currentPlaylistFile,
+    playlistModified,
     sendMessage,
     // Convenience methods for common operations
     updatePlaylist: (newPlaylist) => setPlaylist(newPlaylist),
     updateSettings: (newSettings) => setSettings(newSettings),
-    updateSystemStatus: (status) => setSystemStatus(status)
+    updateSystemStatus: (status) => setSystemStatus(status),
+    setCurrentPlaylistFile: (filename) => setCurrentPlaylistFile(filename),
+    setPlaylistModified: (modified) => setPlaylistModified(modified),
+    setIsLoadingPlaylist: (loading) => setIsLoadingPlaylist(loading)
   }
 
   return (
