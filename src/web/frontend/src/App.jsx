@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import Navigation from './components/Navigation'
 import HomePage from './pages/HomePage'
 import UploadPage from './pages/UploadPage'
+import MediaPage from './pages/MediaPage'
 import EffectsPage from './pages/EffectsPage'
 import PlaylistPage from './pages/PlaylistPage'
 import SettingsPage from './pages/SettingsPage'
@@ -59,6 +60,7 @@ function App() {
             <Route path="/" element={<Navigate to="/home" replace />} />
             <Route path="/home" element={<HomePage />} />
             <Route path="/upload" element={<UploadPage />} />
+            <Route path="/media" element={<MediaPage />} />
             <Route path="/effects" element={<EffectsPage />} />
             <Route path="/playlist" element={<PlaylistPage />} />
             <Route path="/settings" element={<SettingsPage />} />

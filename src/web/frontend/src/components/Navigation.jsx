@@ -3,6 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import {
   HomeIcon,
   CloudArrowUpIcon,
+  FolderIcon,
   SparklesIcon,
   QueueListIcon,
   CogIcon
@@ -10,6 +11,7 @@ import {
 import {
   HomeIcon as HomeSolidIcon,
   CloudArrowUpIcon as CloudArrowUpSolidIcon,
+  FolderIcon as FolderSolidIcon,
   SparklesIcon as SparklesSolidIcon,
   QueueListIcon as QueueListSolidIcon,
   CogIcon as CogSolidIcon
@@ -32,6 +34,13 @@ const Navigation = () => {
       Icon: CloudArrowUpIcon,
       IconSolid: CloudArrowUpSolidIcon,
       description: 'Add Content'
+    },
+    {
+      path: '/media',
+      label: 'MEDIA',
+      Icon: FolderIcon,
+      IconSolid: FolderSolidIcon,
+      description: 'Manage Files'
     },
     {
       path: '/effects',
