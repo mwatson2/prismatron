@@ -230,22 +230,20 @@ const PlaylistPage = () => {
   const clearPlaylist = async () => {
     if (playlist.items?.length === 0) return
 
-    if (window.confirm('Clear entire playlist? This cannot be undone.')) {
-      try {
-        const response = await fetch('/api/playlist/clear', {
-          method: 'POST'
-        })
+    try {
+      const response = await fetch('/api/playlist/clear', {
+        method: 'POST'
+      })
 
-        if (response.ok) {
-          // Clear the current playlist file so SAVE will prompt for new name
-          setCurrentPlaylistFile(null)
-          setPlaylistModified(false)
-        } else {
-          console.error('Failed to clear playlist')
-        }
-      } catch (error) {
-        console.error('Failed to clear playlist:', error)
+      if (response.ok) {
+        // Clear the current playlist file so SAVE will prompt for new name
+        setCurrentPlaylistFile(null)
+        setPlaylistModified(false)
+      } else {
+        console.error('Failed to clear playlist')
       }
+    } catch (error) {
+      console.error('Failed to clear playlist:', error)
     }
   }
 
