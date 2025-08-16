@@ -229,6 +229,7 @@ def manage_uploads_playlist(new_item: PlaylistItem) -> None:
     """
     Manage the uploads playlist by adding new item and maintaining max 8 items.
     When exceeding max items, delete oldest item from both playlist and uploads directory.
+    If uploads playlist is currently active, notify playlist sync service of changes.
     """
     playlist_data = load_uploads_playlist()
 
@@ -248,12 +249,16 @@ def manage_uploads_playlist(new_item: PlaylistItem) -> None:
         "created_at": new_item.created_at.isoformat(),
     }
 
+    # Track items that will be removed for live update
+    items_to_remove = []
+
     # Add new item to end of playlist
     playlist_data["items"].append(playlist_item)
 
     # Remove oldest items if exceeding max count
     while len(playlist_data["items"]) > UPLOADS_PLAYLIST_MAX_ITEMS:
         oldest_item = playlist_data["items"].pop(0)
+        items_to_remove.append(oldest_item)
 
         # Delete the oldest file from uploads directory
         try:
@@ -271,6 +276,43 @@ def manage_uploads_playlist(new_item: PlaylistItem) -> None:
 
     # Save the updated playlist
     save_uploads_playlist(playlist_data)
+
+    # If uploads playlist is currently active, apply changes to live playlist
+    global current_playlist_file
+    if current_playlist_file == UPLOADS_PLAYLIST_NAME and playlist_sync_client and playlist_sync_client.connected:
+
+        logger.info("Uploads playlist is active - applying live updates")
+
+        # Remove old items from live playlist
+        for old_item in items_to_remove:
+            try:
+                if playlist_sync_client.remove_item(old_item["id"]):
+                    logger.info(f"Removed old item {old_item['name']} from live playlist")
+            except Exception as e:
+                logger.warning(f"Failed to remove old item from live playlist: {e}")
+
+        # Add new item to live playlist
+        try:
+            # Convert to PlaylistItem for sync
+            live_item = PlaylistItem(
+                id=playlist_item["id"],
+                name=playlist_item["name"],
+                type=playlist_item["type"],
+                file_path=playlist_item["file_path"],
+                duration=playlist_item["duration"],
+                order=playlist_item["order"],
+                transition_in=TransitionConfig(**playlist_item["transition_in"]),
+                transition_out=TransitionConfig(**playlist_item["transition_out"]),
+            )
+
+            sync_item = api_item_to_sync_item(live_item)
+            if playlist_sync_client.add_item(sync_item):
+                logger.info(f"Added new item {playlist_item['name']} to live playlist")
+            else:
+                logger.warning("Failed to add new item to live playlist")
+
+        except Exception as e:
+            logger.warning(f"Failed to add new item to live playlist: {e}")
 
 
 class EffectPreset(BaseModel):
@@ -320,6 +362,9 @@ control_state: Optional[ControlState] = None
 consumer_process: Optional[object] = None  # Will be set by main process
 producer_process: Optional[object] = None  # Will be set by main process
 diffusion_patterns_path: Optional[str] = None  # Will be set by main process
+
+# Track currently loaded playlist file for real-time updates
+current_playlist_file: Optional[str] = None
 
 # Playlist synchronization client
 playlist_sync_client: Optional[PlaylistSyncClient] = None
@@ -620,6 +665,7 @@ async def on_playlist_sync_update(sync_state: SyncPlaylistState) -> None:
                 "is_playing": playlist_state.is_playing,
                 "auto_repeat": playlist_state.auto_repeat,
                 "shuffle": playlist_state.shuffle,
+                "current_playlist_file": current_playlist_file,
             }
         )
 
@@ -1807,6 +1853,9 @@ async def clear_playlist():
     if playlist_sync_client and playlist_sync_client.connected:
         success = playlist_sync_client.clear_playlist()
         if success:
+            # Clear the current playlist file tracking
+            global current_playlist_file
+            current_playlist_file = None
             return {"status": "cleared"}
         else:
             logger.warning("Failed to clear playlist via sync service")
@@ -1818,6 +1867,10 @@ async def clear_playlist():
         playlist_state.items.clear()
         playlist_state.current_index = 0
         playlist_state.is_playing = False
+
+        # Clear the current playlist file tracking
+        global current_playlist_file
+        current_playlist_file = None
 
         return {"status": "cleared"}
 
@@ -2640,8 +2693,8 @@ async def list_saved_playlists():
                     with open(file_path) as f:
                         data = json.load(f)
 
-                    # Calculate total duration
-                    total_duration = sum(item.get("duration", 0) for item in data.get("items", []))
+                    # Calculate total duration (handle None values)
+                    total_duration = sum(item.get("duration") or 0 for item in data.get("items", []))
 
                     playlists.append(
                         {
@@ -2738,6 +2791,10 @@ async def load_playlist(filename: str):
         # Update playlist settings
         playlist_state.auto_repeat = data.get("auto_repeat", True)
         playlist_state.shuffle = data.get("shuffle", False)
+
+        # Track the currently loaded playlist file
+        global current_playlist_file
+        current_playlist_file = filename
 
         logger.info(f"Loaded playlist {filename} with {items_added} items")
 

@@ -129,6 +129,11 @@ export const WebSocketProvider = ({ children }) => {
             shuffle: data.shuffle ?? prev.shuffle
           }
         })
+
+        // Update current playlist file if provided in the message
+        if (data.current_playlist_file !== undefined) {
+          setCurrentPlaylistFile(data.current_playlist_file)
+        }
         break
 
       case 'playlist_state':
