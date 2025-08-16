@@ -232,11 +232,12 @@ playlist_sync_client: Optional[PlaylistSyncClient] = None
 
 # File storage paths
 UPLOAD_DIR = Path("uploads")
+MEDIA_DIR = Path("media")
 THUMBNAILS_DIR = Path("thumbnails")
 PLAYLISTS_DIR = Path("playlists")
 
 # Ensure directories exist
-for dir_path in [UPLOAD_DIR, THUMBNAILS_DIR, PLAYLISTS_DIR]:
+for dir_path in [UPLOAD_DIR, MEDIA_DIR, THUMBNAILS_DIR, PLAYLISTS_DIR]:
     dir_path.mkdir(exist_ok=True)
 
 # Import the visual effects system
@@ -1421,6 +1422,111 @@ async def upload_file(
 
     except Exception as e:
         logger.error(f"Upload failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# Media endpoints
+@app.get("/api/media")
+async def list_media():
+    """List existing files in the media directory."""
+    try:
+        media_files = []
+        if MEDIA_DIR.exists():
+            for file_path in MEDIA_DIR.iterdir():
+                if file_path.is_file():
+                    # Determine file type
+                    file_ext = file_path.suffix.lower().lstrip(".")
+                    allowed_types = {
+                        "image": ["jpg", "jpeg", "png", "gif", "bmp", "webp"],
+                        "video": ["mp4", "avi", "mov", "mkv", "webm", "m4v"],
+                    }
+
+                    content_type = None
+                    for type_name, extensions in allowed_types.items():
+                        if file_ext in extensions:
+                            content_type = type_name
+                            break
+
+                    if content_type:
+                        file_stats = file_path.stat()
+                        media_files.append(
+                            {
+                                "id": file_path.stem,  # filename without extension
+                                "name": file_path.name,
+                                "type": content_type,
+                                "size": file_stats.st_size,
+                                "modified": file_stats.st_mtime,
+                                "path": str(file_path),
+                            }
+                        )
+
+        # Sort by modification time (newest first)
+        media_files.sort(key=lambda x: x["modified"], reverse=True)
+        return {"files": media_files}
+
+    except Exception as e:
+        logger.error(f"Failed to list media files: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/media/{file_id}/add")
+async def add_existing_media_file_to_playlist(file_id: str, name: Optional[str] = None, duration: Optional[float] = None):
+    """Add an existing file from media directory to the playlist."""
+    try:
+        # Find the file in media directory
+        file_path = None
+        for candidate in MEDIA_DIR.iterdir():
+            if candidate.is_file() and candidate.stem == file_id:
+                file_path = candidate
+                break
+
+        if not file_path:
+            raise HTTPException(status_code=404, detail="File not found")
+
+        # Determine file type
+        file_ext = file_path.suffix.lower().lstrip(".")
+        allowed_types = {
+            "image": ["jpg", "jpeg", "png", "gif", "bmp", "webp"],
+            "video": ["mp4", "avi", "mov", "mkv", "webm", "m4v"],
+        }
+
+        content_type = None
+        for type_name, extensions in allowed_types.items():
+            if file_ext in extensions:
+                content_type = type_name
+                break
+
+        if not content_type:
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_ext}")
+
+        # Create playlist item
+        item = PlaylistItem(
+            id=str(uuid.uuid4()),
+            name=name or file_path.name,
+            type=content_type,
+            file_path=str(file_path),
+            duration=duration,
+            order=len(playlist_state.items),
+        )
+
+        # Send to playlist sync service
+        if playlist_sync_client and playlist_sync_client.connected:
+            sync_item = api_item_to_sync_item(item)
+            success = playlist_sync_client.add_item(sync_item)
+            if not success:
+                logger.error("Failed to add item to playlist sync service")
+                raise HTTPException(status_code=500, detail="Failed to add item to playlist")
+        else:
+            logger.error("Playlist sync service not available")
+            raise HTTPException(status_code=503, detail="Playlist sync service not available")
+
+        # Note: WebSocket broadcast will happen via sync service callback
+        return {"status": "added", "item": item.dict_serializable()}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to add existing media file to playlist: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

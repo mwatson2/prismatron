@@ -53,7 +53,7 @@ const MediaPage = () => {
   const loadExistingFiles = async () => {
     setLoadingFiles(true)
     try {
-      const response = await fetch('/api/uploads')
+      const response = await fetch('/api/media')
       if (response.ok) {
         const data = await response.json()
         setExistingFiles(data.files || [])
@@ -67,7 +67,7 @@ const MediaPage = () => {
 
   const addExistingFileToPlaylist = async (file) => {
     try {
-      const response = await fetch(`/api/uploads/${file.id}/add`, {
+      const response = await fetch(`/api/media/${file.id}/add`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -146,7 +146,7 @@ const MediaPage = () => {
           <div className="text-center py-8">
             <FolderIcon className="w-12 h-12 text-metal-silver mx-auto mb-2 opacity-50" />
             <p className="text-metal-silver font-mono text-sm">
-              No existing files found in uploads folder
+              No existing files found in media folder
             </p>
           </div>
         )}
@@ -180,4 +180,3 @@ const MediaPage = () => {
 }
 
 export default MediaPage
-
