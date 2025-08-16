@@ -229,6 +229,10 @@ class LissajousCurves(BaseEffect):
         self.trail_buffer = np.zeros((self.height, self.width, 3), dtype=np.float32)
 
     def generate_frame(self, presentation_time: float) -> np.ndarray:
+        import time
+
+        start_time = time.perf_counter()
+
         t = self.get_time(presentation_time)
 
         # Fade trail buffer
@@ -237,8 +241,8 @@ class LissajousCurves(BaseEffect):
         # Animate phase shift for morphing patterns
         phase = self.phase_shift + t * self.animation_speed
 
-        # Generate Lissajous curve points
-        num_points = 500  # Reduced for LED display
+        # Generate Lissajous curve points - REDUCED for performance
+        num_points = 100  # Reduced from 500 for much better performance
         curve_t = np.linspace(0, 2 * np.pi, num_points)
 
         # Calculate curve positions
@@ -249,7 +253,9 @@ class LissajousCurves(BaseEffect):
         x_pixels = ((x + 1) / 2 * self.width).astype(int)
         y_pixels = ((y + 1) / 2 * self.height).astype(int)
 
-        # Draw thick curve
+        # Use OpenCV for efficient line drawing instead of manual calculation
+        frame_temp = self.trail_buffer.copy()
+
         for i in range(len(x_pixels) - 1):
             if self.color_cycle:
                 # Color changes along curve
@@ -258,37 +264,34 @@ class LissajousCurves(BaseEffect):
                 # Single color
                 hue = 0.6  # Blue
 
+            # Convert HSV to RGB more efficiently
             color_hsv = np.array([[[hue * 180, 255, 255]]], dtype=np.uint8)
             color_rgb = cv2.cvtColor(color_hsv, cv2.COLOR_HSV2RGB)[0, 0]
+            color_rgb_tuple = tuple(int(c) for c in color_rgb)
 
-            # Draw line segment with thickness
-            x1, y1 = x_pixels[i], y_pixels[i]
-            x2, y2 = x_pixels[i + 1], y_pixels[i + 1]
+            # Use cv2.line for efficient line drawing
+            thickness = max(1, int(self.line_thickness * min(self.width, self.height)))
+            cv2.line(
+                frame_temp, (x_pixels[i], y_pixels[i]), (x_pixels[i + 1], y_pixels[i + 1]), color_rgb_tuple, thickness
+            )
 
-            # Simple line drawing (could use cv2.line but doing it manually for control)
-            # Create a mask for the line segment
-            xx, yy = np.meshgrid(range(self.width), range(self.height))
-
-            # Distance from point to line segment
-            line_vec = np.array([x2 - x1, y2 - y1])
-            line_len = np.linalg.norm(line_vec)
-
-            if line_len > 0:
-                line_vec = line_vec / line_len
-                point_vec = np.stack([xx - x1, yy - y1], axis=-1)
-                proj_len = np.clip(np.sum(point_vec * line_vec, axis=-1), 0, line_len)
-                proj_point = np.stack([x1, y1]) + proj_len[:, :, np.newaxis] * line_vec
-
-                dist = np.linalg.norm(np.stack([xx, yy], axis=-1) - proj_point, axis=-1)
-                mask = dist < self.line_thickness * min(self.width, self.height)
-
-                # Add to trail buffer
-                self.trail_buffer[mask] = color_rgb
+        self.trail_buffer = frame_temp
 
         # Convert trail buffer to output frame
         frame = np.clip(self.trail_buffer, 0, 255).astype(np.uint8)
 
         self.frame_count += 1
+
+        # Log performance
+        elapsed = time.perf_counter() - start_time
+        if self.frame_count % 30 == 0:  # Log every second at 30fps
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.info(
+                f"LissajousCurves frame generation took {elapsed*1000:.2f}ms (presentation_time={presentation_time:.3f}s)"
+            )
+
         return frame
 
 
