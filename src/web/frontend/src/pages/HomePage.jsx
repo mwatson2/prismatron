@@ -48,12 +48,7 @@ const HomePage = () => {
     }
   }, [previewData?.current_item?.name])
 
-  // Track playback position changes for debugging
-  useEffect(() => {
-    if (previewData?.playback_position !== undefined) {
-      console.log(`🕒 PLAYBACK_POSITION_LOG: HomePage sees position ${previewData.playback_position.toFixed(3)}s`);
-    }
-  }, [previewData?.playback_position])
+  // Removed spammy playback position logging
 
   // Track rendering index changes separately
   useEffect(() => {

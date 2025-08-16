@@ -836,9 +836,7 @@ async def preview_broadcast_task():
                                     preview_data["playback_position"] = (
                                         shm_playback_position if shm_playback_position >= 0 else 0.0
                                     )
-                                    logger.info(
-                                        f"PLAYBACK_POSITION_LOG: WebSocket broadcast sending position {preview_data['playback_position']:.3f}s for item {shm_rendering_index} (raw={shm_playback_position:.3f})"
-                                    )
+                                    # Removed spammy playback position log
 
                                     # Debug: Compare rendering_index from different sources (reduced frequency)
                                     if hasattr(preview_broadcast_task, "_last_debug_time"):
@@ -2174,9 +2172,7 @@ async def get_led_preview():
                             preview_data["playback_position"] = (
                                 shm_playback_position if shm_playback_position >= 0 else 0.0
                             )
-                            logger.info(
-                                f"PLAYBACK_POSITION_LOG: API endpoint sending position {preview_data['playback_position']:.3f}s for item {shm_rendering_index} (raw={shm_playback_position:.3f})"
-                            )
+                            # Removed spammy playback position log
                         else:
                             logger.debug(
                                 f"Incomplete LED data in shared memory: {len(led_data)} bytes for {led_count} LEDs"

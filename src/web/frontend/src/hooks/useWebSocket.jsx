@@ -152,9 +152,7 @@ export const WebSocketProvider = ({ children }) => {
         break
 
       case 'preview_data':
-        if (data.playback_position !== undefined) {
-          console.log(`PLAYBACK_POSITION_LOG: Frontend received position ${data.playback_position.toFixed(3)}s for item ${data.shm_rendering_index}`)
-        }
+        // Removed spammy playback position log
         setPreviewData(data)
         break
 

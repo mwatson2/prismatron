@@ -414,9 +414,7 @@ class PreviewSink:
 
             if metadata and "playback_position" in metadata:
                 playback_position = metadata["playback_position"]
-                logger.info(
-                    f"PLAYBACK_POSITION_LOG: PreviewSink received position {playback_position:.3f}s for item {rendering_index}"
-                )
+                # Removed spammy playback position log
 
             # Update shared memory with new LED data
             with self._lock:

@@ -458,9 +458,7 @@ class FrameRenderer:
                 if hasattr(self, "_current_frame_timestamp"):
                     playback_position = self._current_frame_timestamp - self.current_item_first_frame_timestamp
                     enhanced_metadata["playback_position"] = max(0.0, playback_position)  # Ensure non-negative
-                    logger.info(
-                        f"PLAYBACK_POSITION_LOG: Calculated position {playback_position:.3f}s for item {new_rendering_index} (current_ts={self._current_frame_timestamp:.3f}, first_ts={self.current_item_first_frame_timestamp:.3f})"
-                    )
+                    # Removed spammy playback position log
 
         # Debug: Write first 10 different LED value sets to temporary files for analysis
         if self._debug_led_count < self._debug_max_leds:
