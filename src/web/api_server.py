@@ -2752,9 +2752,15 @@ async def load_playlist(filename: str):
                 if item_data.get("file_path"):
                     # For media files, ensure they're absolute paths
                     if item_data["type"] in ["image", "video"]:
-                        # If it's just a filename, prepend uploads directory
+                        # If it's not already an absolute path
                         if not item_data["file_path"].startswith("/"):
-                            item_data["file_path"] = str(UPLOAD_DIR / item_data["file_path"])
+                            file_path = item_data["file_path"]
+                            # If path already includes uploads/ or media/, use as-is
+                            if file_path.startswith("uploads/") or file_path.startswith("media/"):
+                                item_data["file_path"] = str(Path(file_path))
+                            else:
+                                # If it's just a filename, default to uploads directory
+                                item_data["file_path"] = str(UPLOAD_DIR / file_path)
                     # For text type, file_path contains JSON config string
 
                 # Create PlaylistItem with transitions
