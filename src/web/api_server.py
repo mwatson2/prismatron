@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import shutil
 
 # Add src to path for imports
@@ -179,6 +180,99 @@ def get_actual_led_count() -> int:
         return 2624
 
 
+def generate_random_led_transition() -> TransitionConfig:
+    """Generate a random LED transition with 1s duration and default parameters."""
+    led_transitions = ["ledblur", "ledfade", "ledrandom"]
+    transition_type = random.choice(led_transitions)
+
+    # LED transitions use default parameters for the specified duration
+    return TransitionConfig(type=transition_type, parameters={"duration": 1.0})  # 1 second duration as requested
+
+
+def load_uploads_playlist() -> Dict:
+    """Load the uploads playlist from disk, or create a new one if it doesn't exist."""
+    uploads_playlist_path = PLAYLISTS_DIR / UPLOADS_PLAYLIST_NAME
+
+    if uploads_playlist_path.exists():
+        try:
+            with open(uploads_playlist_path) as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load uploads playlist: {e}")
+
+    # Return empty playlist structure
+    return {
+        "version": "1.0",
+        "name": "Uploads Playlist",
+        "description": "Automatically managed playlist for uploaded files",
+        "created_at": datetime.now().isoformat(),
+        "modified_at": datetime.now().isoformat(),
+        "auto_repeat": True,
+        "shuffle": False,
+        "items": [],
+    }
+
+
+def save_uploads_playlist(playlist_data: Dict) -> None:
+    """Save the uploads playlist to disk."""
+    uploads_playlist_path = PLAYLISTS_DIR / UPLOADS_PLAYLIST_NAME
+    playlist_data["modified_at"] = datetime.now().isoformat()
+
+    try:
+        with open(uploads_playlist_path, "w") as f:
+            json.dump(playlist_data, f, indent=2)
+    except Exception as e:
+        logger.error(f"Failed to save uploads playlist: {e}")
+
+
+def manage_uploads_playlist(new_item: PlaylistItem) -> None:
+    """
+    Manage the uploads playlist by adding new item and maintaining max 8 items.
+    When exceeding max items, delete oldest item from both playlist and uploads directory.
+    """
+    playlist_data = load_uploads_playlist()
+
+    # Create new playlist item with random LED transitions
+    transition_in = generate_random_led_transition()
+    transition_out = generate_random_led_transition()
+
+    playlist_item = {
+        "id": new_item.id,
+        "name": new_item.name,
+        "type": new_item.type,
+        "duration": new_item.duration or (10.0 if new_item.type == "image" else None),
+        "order": len(playlist_data["items"]),
+        "transition_in": {"type": transition_in.type, "parameters": transition_in.parameters},
+        "transition_out": {"type": transition_out.type, "parameters": transition_out.parameters},
+        "file_path": new_item.file_path,
+        "created_at": new_item.created_at.isoformat(),
+    }
+
+    # Add new item to end of playlist
+    playlist_data["items"].append(playlist_item)
+
+    # Remove oldest items if exceeding max count
+    while len(playlist_data["items"]) > UPLOADS_PLAYLIST_MAX_ITEMS:
+        oldest_item = playlist_data["items"].pop(0)
+
+        # Delete the oldest file from uploads directory
+        try:
+            if oldest_item.get("file_path"):
+                oldest_file_path = Path(oldest_item["file_path"])
+                if oldest_file_path.exists():
+                    oldest_file_path.unlink()
+                    logger.info(f"Deleted oldest upload file: {oldest_file_path}")
+        except Exception as e:
+            logger.warning(f"Failed to delete oldest upload file: {e}")
+
+    # Update order indices
+    for i, item in enumerate(playlist_data["items"]):
+        item["order"] = i
+
+    # Save the updated playlist
+    save_uploads_playlist(playlist_data)
+
+
 class EffectPreset(BaseModel):
     """Effect preset model."""
 
@@ -229,6 +323,10 @@ diffusion_patterns_path: Optional[str] = None  # Will be set by main process
 
 # Playlist synchronization client
 playlist_sync_client: Optional[PlaylistSyncClient] = None
+
+# Uploads playlist configuration
+UPLOADS_PLAYLIST_NAME = "Uploads Playlist.json"
+UPLOADS_PLAYLIST_MAX_ITEMS = 8
 
 # File storage paths
 UPLOAD_DIR = Path("uploads")
@@ -1391,7 +1489,14 @@ async def upload_file(
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # Create playlist item
+        # Set default duration for images to 10s as requested
+        if content_type == "image" and duration is None:
+            duration = 10.0
+
+        # Create playlist item with random LED transitions
+        transition_in = generate_random_led_transition()
+        transition_out = generate_random_led_transition()
+
         item = PlaylistItem(
             id=file_id,
             name=name or file.filename or f"Uploaded {content_type}",
@@ -1399,14 +1504,19 @@ async def upload_file(
             file_path=str(file_path),
             duration=duration,
             order=len(playlist_state.items),
+            transition_in=transition_in,
+            transition_out=transition_out,
         )
 
-        # Validate the item (including default transitions)
+        # Validate the item (including transitions)
         validation_errors = validate_playlist_item(item)
         if validation_errors:
             raise HTTPException(status_code=400, detail={"errors": validation_errors})
 
-        # Send to playlist sync service
+        # Automatically manage uploads playlist (separate from main playlist)
+        manage_uploads_playlist(item)
+
+        # Send to main playlist sync service
         if playlist_sync_client and playlist_sync_client.connected:
             sync_item = api_item_to_sync_item(item)
             success = playlist_sync_client.add_item(sync_item)
@@ -1470,7 +1580,9 @@ async def list_media():
 
 
 @app.post("/api/media/{file_id}/add")
-async def add_existing_media_file_to_playlist(file_id: str, name: Optional[str] = None, duration: Optional[float] = None):
+async def add_existing_media_file_to_playlist(
+    file_id: str, name: Optional[str] = None, duration: Optional[float] = None
+):
     """Add an existing file from media directory to the playlist."""
     try:
         # Find the file in media directory

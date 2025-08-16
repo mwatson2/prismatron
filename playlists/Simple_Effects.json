@@ -1,9 +1,9 @@
 {
   "version": "1.0",
-  "name": "Simple Effects",
+  "name": "Simple_Effects",
   "description": "",
   "created_at": "2025-08-15T14:15:54.207019",
-  "modified_at": "2025-08-15T14:15:54.207019",
+  "modified_at": "2025-08-15T20:58:00.238204",
   "auto_repeat": true,
   "shuffle": false,
   "items": [
@@ -117,6 +117,62 @@
           "flow_direction": "horizontal",
           "gradient_type": "linear",
           "blend_width": 0.5,
+          "duration": 15
+        }
+      }
+    },
+    {
+      "id": "917eead4-4cd5-4642-b77f-c37d96362018",
+      "name": "Swarm",
+      "type": "effect",
+      "duration": 15.0,
+      "order": 3,
+      "transition_in": {
+        "type": "none",
+        "parameters": {}
+      },
+      "transition_out": {
+        "type": "none",
+        "parameters": {}
+      },
+      "effect_config": {
+        "effect_id": "swarm",
+        "parameters": {
+          "swarm_size": 20,
+          "cohesion": 0.5,
+          "separation": 0.5,
+          "alignment": 0.5,
+          "max_speed": 0.02,
+          "color_mode": "gradient",
+          "trail": true,
+          "duration": 15
+        }
+      }
+    },
+    {
+      "id": "899a6729-8c7e-48f1-8eca-48afa5c03900",
+      "name": "Lissajous Curves",
+      "type": "effect",
+      "duration": 15.0,
+      "order": 4,
+      "transition_in": {
+        "type": "none",
+        "parameters": {}
+      },
+      "transition_out": {
+        "type": "none",
+        "parameters": {}
+      },
+      "effect_config": {
+        "effect_id": "lissajous",
+        "parameters": {
+          "x_frequency": 3,
+          "y_frequency": 2,
+          "phase_shift": 0.5,
+          "animation_speed": 0.2,
+          "trail_length": 0.5,
+          "line_thickness": 0.02,
+          "color_cycle": true,
           "duration": 15
         }
       }
