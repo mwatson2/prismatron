@@ -120,7 +120,7 @@ class FrameRenderer:
 
         # Output FPS tracking (frames sent to sinks per second)
         self.output_fps_ewma = 0.0
-        self.last_output_time = 0.0
+        self._last_sink_call_time = 0.0  # Track sink call completion time for FPS calculation
 
         # Timing distribution tracking
         self.timing_errors = []  # Track last 100 timing errors for analysis
@@ -379,12 +379,11 @@ class FrameRenderer:
             self._current_frame_timestamp = frame_timestamp
 
             # Capture first frame timestamp for current item if needed
-            if metadata and "playlist_item_index" in metadata:
-                if self.current_item_first_frame_timestamp is None:
-                    self.current_item_first_frame_timestamp = frame_timestamp
-                    logger.debug(
-                        f"Captured first frame timestamp {frame_timestamp:.3f} for item {metadata['playlist_item_index']}"
-                    )
+            if metadata and "playlist_item_index" in metadata and self.current_item_first_frame_timestamp is None:
+                self.current_item_first_frame_timestamp = frame_timestamp
+                logger.debug(
+                    f"Captured first frame timestamp {frame_timestamp:.3f} for item {metadata['playlist_item_index']}"
+                )
 
             if time_diff > self.timing_tolerance:
                 # Late frame - render immediately
@@ -451,14 +450,13 @@ class FrameRenderer:
                 logger.debug(f"Rendering index changed to {new_rendering_index}, resetting first frame timestamp")
 
             # Add playback position if we have the first frame timestamp
-            if self.current_item_first_frame_timestamp is not None:
+            if self.current_item_first_frame_timestamp is not None and hasattr(self, "_current_frame_timestamp"):
                 # Calculate playback position as difference from first frame timestamp for this item
                 # This gets the frame_timestamp that was passed to render_frame_at_timestamp
                 # We need to access it from the current frame being rendered
-                if hasattr(self, "_current_frame_timestamp"):
-                    playback_position = self._current_frame_timestamp - self.current_item_first_frame_timestamp
-                    enhanced_metadata["playback_position"] = max(0.0, playback_position)  # Ensure non-negative
-                    # Removed spammy playback position log
+                playback_position = self._current_frame_timestamp - self.current_item_first_frame_timestamp
+                enhanced_metadata["playback_position"] = max(0.0, playback_position)  # Ensure non-negative
+                # Removed spammy playback position log
 
         # Debug: Write first 10 different LED value sets to temporary files for analysis
         if self._debug_led_count < self._debug_max_leds:
@@ -536,8 +534,9 @@ class FrameRenderer:
             except Exception as e:
                 logger.error(f"{name} sink error: {e}")
 
-        # Update output FPS tracking after sending to sinks
-        self._update_output_fps()
+        # Measure time immediately after sending to all sinks for FPS calculation
+        current_time = time.time()
+        self._update_output_fps(current_time)
 
     def _track_timing_error(self, time_diff: float) -> None:
         """
@@ -599,14 +598,18 @@ class FrameRenderer:
         self.last_ewma_update = current_time
         self.last_frame_timestamp = frame_timestamp
 
-    def _update_output_fps(self, alpha: float = 0.1) -> None:
+    def _update_output_fps(self, current_time: float, alpha: float = 0.1) -> None:
         """
-        Update output FPS tracking based on wall-clock time when frames are sent to sinks.
-        This measures the actual rate at which frames are delivered to output sinks.
+        Update output FPS tracking based on wall-clock time between sink calls.
+        This measures the actual rate at which frames are rendered to sinks.
+
+        Args:
+            current_time: Time when sink calls completed (from time.time())
+            alpha: EWMA smoothing factor
         """
-        current_time = time.time()
-        if hasattr(self, "last_output_time") and self.last_output_time > 0:
-            time_diff = current_time - self.last_output_time
+        # Calculate FPS based on the time since the PREVIOUS sink call completed
+        if hasattr(self, "_last_sink_call_time") and self._last_sink_call_time > 0:
+            time_diff = current_time - self._last_sink_call_time
             if time_diff > 0:
                 current_fps = 1.0 / time_diff
                 if not hasattr(self, "output_fps_ewma"):
@@ -614,9 +617,10 @@ class FrameRenderer:
                 else:
                     self.output_fps_ewma = (1 - alpha) * self.output_fps_ewma + alpha * current_fps
 
-        self.last_output_time = current_time
+        # Store this time as the start of the next interval
+        self._last_sink_call_time = current_time
 
-        # Initialize output_fps_ewma if it doesn't exist
+        # Initialize if needed
         if not hasattr(self, "output_fps_ewma"):
             self.output_fps_ewma = 0.0
 
@@ -739,7 +743,7 @@ class FrameRenderer:
 
         # Reset output FPS tracking
         self.output_fps_ewma = 0.0
-        self.last_output_time = 0.0
+        self._last_sink_call_time = 0.0
 
         # Reset pause tracking
         self.is_paused = False
