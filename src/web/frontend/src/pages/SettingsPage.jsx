@@ -114,6 +114,76 @@ const SettingsPage = () => {
     }
   }
 
+  const handleRestart = async () => {
+    if (!confirm('Are you sure you want to restart the application? The system will be unavailable for a few seconds.')) {
+      return
+    }
+
+    try {
+      setSaveStatus({ type: 'info', message: 'Restarting application...' })
+
+      const response = await fetch('/api/system/restart', {
+        method: 'POST'
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setSaveStatus({ type: 'info', message: data.message || 'Application restarting...' })
+
+        // Start polling for reconnection after a delay
+        setTimeout(() => {
+          pollForReconnection()
+        }, 5000)
+      } else {
+        throw new Error('Failed to restart application')
+      }
+    } catch (error) {
+      console.error('Failed to restart:', error)
+      setSaveStatus({ type: 'error', message: 'Failed to restart application' })
+      setTimeout(() => setSaveStatus(null), 3000)
+    }
+  }
+
+  const handleReboot = async () => {
+    // Placeholder for future implementation
+    alert('System reboot is not yet implemented. This will be available once the systemd service is configured.')
+  }
+
+  const pollForReconnection = async () => {
+    let attempts = 0
+    const maxAttempts = 30 // Try for up to 30 seconds
+
+    const checkConnection = async () => {
+      try {
+        const response = await fetch('/api/status', {
+          method: 'GET',
+          cache: 'no-cache'
+        })
+
+        if (response.ok) {
+          setSaveStatus({ type: 'success', message: 'Application restarted successfully' })
+          setTimeout(() => {
+            setSaveStatus(null)
+            window.location.reload() // Reload the page to reconnect WebSocket
+          }, 2000)
+          return true
+        }
+      } catch (error) {
+        // Still connecting
+      }
+
+      attempts++
+      if (attempts < maxAttempts) {
+        setTimeout(checkConnection, 1000) // Check every second
+      } else {
+        setSaveStatus({ type: 'error', message: 'Failed to reconnect after restart. Please refresh the page.' })
+      }
+      return false
+    }
+
+    checkConnection()
+  }
+
   const currentSettings = settings || localSettings
 
   if (!currentSettings) {
@@ -379,12 +449,15 @@ const SettingsPage = () => {
         <div className="space-y-4">
           <div className="flex items-center justify-between p-3 bg-dark-800 rounded-retro">
             <div>
-              <h4 className="text-sm font-retro text-neon-orange">SYSTEM RESTART</h4>
+              <h4 className="text-sm font-retro text-neon-orange">RESTART</h4>
               <p className="text-xs text-metal-silver font-mono">
-                Restart all system processes
+                Restart the application
               </p>
             </div>
-            <button className="retro-button px-4 py-2 text-neon-orange text-sm font-retro font-bold">
+            <button
+              onClick={handleRestart}
+              className="retro-button px-4 py-2 text-neon-orange text-sm font-retro font-bold hover:bg-neon-orange hover:bg-opacity-10 transition-colors"
+            >
               <PowerIcon className="w-4 h-4 inline mr-2" />
               RESTART
             </button>
@@ -392,13 +465,18 @@ const SettingsPage = () => {
 
           <div className="flex items-center justify-between p-3 bg-dark-800 rounded-retro">
             <div>
-              <h4 className="text-sm font-retro text-neon-orange">FACTORY RESET</h4>
+              <h4 className="text-sm font-retro text-neon-orange">REBOOT</h4>
               <p className="text-xs text-metal-silver font-mono">
-                Reset all settings to defaults
+                Reboot the system
               </p>
             </div>
-            <button className="retro-button px-4 py-2 text-neon-orange text-sm font-retro font-bold">
-              RESET
+            <button
+              onClick={handleReboot}
+              disabled={true}
+              className="retro-button px-4 py-2 text-metal-silver text-sm font-retro font-bold cursor-not-allowed opacity-50"
+              title="System reboot not yet implemented"
+            >
+              REBOOT
             </button>
           </div>
         </div>

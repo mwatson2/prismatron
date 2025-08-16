@@ -2340,19 +2340,31 @@ async def websocket_endpoint(websocket: WebSocket):
 # System control endpoints
 @app.post("/api/system/restart")
 async def restart_system():
-    """Restart the Prismatron system processes."""
+    """Restart the Prismatron application by exiting (systemd will restart)."""
     try:
-        # Send restart signal via control state
-        if control_state:
-            control_state.signal_restart()
+        logger.warning("Application restart requested via API")
 
         await manager.broadcast({"type": "system_restart", "timestamp": time.time()})
 
-        return {"status": "restart_initiated", "message": "System restart initiated"}
+        # Schedule exit after response is sent
+        asyncio.create_task(perform_restart())
+
+        return {
+            "status": "restart_initiated",
+            "message": "Application restarting. System will be back online in approximately 15 seconds.",
+        }
 
     except Exception as e:
         logger.error(f"Failed to restart system: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+async def perform_restart():
+    """Execute restart by exiting after delay to allow response to be sent."""
+    await asyncio.sleep(2)  # Give time for HTTP response to be sent
+
+    logger.info("Exiting application for restart...")
+    os._exit(0)  # Exit cleanly - systemd will restart us
 
 
 @app.post("/api/system/reboot")
