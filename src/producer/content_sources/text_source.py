@@ -93,9 +93,9 @@ class TextContentSource(ContentSource):
         self.vertical_alignment = self.config.get("vertical_alignment", "center")  # top, center, bottom
 
         # Animation state
-        self.start_time = 0.0
         self.frame_count = int(self.duration * self.fps)
         self.frame_interval = 1.0 / self.fps
+        self._next_frame_index = 0  # Track which frame to return next
 
         # Rendered frames cache
         self._frames = []
@@ -506,7 +506,6 @@ class TextContentSource(ContentSource):
 
             self._frame_generated = True
             self.status = ContentStatus.READY
-            self.start_time = time.time()
 
             logger.info(f"Text content ready: '{self.text}' ({len(self._frames)} frames)")
             return True
@@ -528,19 +527,18 @@ class TextContentSource(ContentSource):
         if self.status == ContentStatus.ENDED:
             return None
 
-        # Calculate current frame based on elapsed time
+        # Use sequential frame counter instead of real time
         if self.status != ContentStatus.PLAYING:
             self.status = ContentStatus.PLAYING
 
-        elapsed_time = time.time() - self.start_time
-        frame_index = int(elapsed_time / self.frame_interval)
+        frame_index = self._next_frame_index
 
         if frame_index >= len(self._frames):
             self.status = ContentStatus.ENDED
             return None
 
-        # Update current time and frame
-        self.current_time = elapsed_time
+        # Update current time and frame based on frame index
+        self.current_time = frame_index * self.frame_interval
         self.current_frame = frame_index
 
         # Create FrameData object with local timestamp (starting from zero)
@@ -552,6 +550,9 @@ class TextContentSource(ContentSource):
             presentation_timestamp=frame_index * self.frame_interval,  # Local timestamp from zero
             duration=self.duration,  # Total duration of this text item
         )
+
+        # Increment for next call
+        self._next_frame_index += 1
 
         return frame_data
 
@@ -580,10 +581,10 @@ class TextContentSource(ContentSource):
         if timestamp < 0 or timestamp > self.duration:
             return False
 
-        # Update timing
-        self.start_time = time.time() - timestamp
+        # Update frame index based on timestamp
+        self._next_frame_index = int(timestamp / self.frame_interval)
         self.current_time = timestamp
-        self.current_frame = int(timestamp / self.frame_interval)
+        self.current_frame = self._next_frame_index
 
         if self.status == ContentStatus.ENDED and timestamp < self.duration:
             self.status = ContentStatus.READY
@@ -605,7 +606,7 @@ class TextContentSource(ContentSource):
             True if successful, False otherwise
         """
         if self._frame_generated:
-            self.start_time = time.time()
+            self._next_frame_index = 0
             self.current_time = 0.0
             self.current_frame = 0
             self.status = ContentStatus.READY

@@ -969,10 +969,12 @@ class ProducerProcess:
                     metadata_record["transition_out_type"] = out_type
                     metadata_record["transition_out_duration"] = out_duration
 
-                    # Set item timestamp and duration for transition calculations
-                    item_duration = current_item.get_effective_duration()
+                    # Set item timestamp for transition calculations
+                    # Note: item_duration is already set by _update_timing_data_in_shared_memory
+                    # and may have been clamped based on frame_data.duration
                     metadata_record["item_timestamp"] = item_timestamp
-                    metadata_record["item_duration"] = item_duration
+                    # Don't overwrite item_duration - it's already correctly set
+                    item_duration = metadata_record["item_duration"]
 
                     # Log transition metadata being written to frame
                     logger.debug(

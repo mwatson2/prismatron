@@ -1726,8 +1726,6 @@ async def add_effect_to_playlist(
     # Handle text effects specially
     if effect_id == "text_display":
         # For text effects, we create a JSON config string as the "file_path"
-        import json
-
         text_config = json.dumps(final_config)
 
         # Create playlist item for text content
@@ -1736,12 +1734,15 @@ async def add_effect_to_playlist(
             f"Creating text effect with name: '{final_name}' (request.name='{request.name}', text='{final_config.get('text')}')"
         )
 
+        # Use duration from config or request, with fallback to 10.0
+        text_duration = request.duration or final_config.get("duration", 10.0)
+
         item = PlaylistItem(
             id=str(uuid.uuid4()),
             name=final_name,
             type="text",
             file_path=text_config,  # JSON config as file path for text content
-            duration=request.duration or final_config.get("duration", 10.0),
+            duration=text_duration,
             order=len(playlist_state.items),
         )
     else:
@@ -2774,6 +2775,15 @@ async def load_playlist(filename: str):
                                 # If it's just a filename, default to uploads directory
                                 item_data["file_path"] = str(UPLOAD_DIR / file_path)
                     # For text type, file_path contains JSON config string
+                    elif item_data["type"] == "text":
+                        # Extract duration from text config if available
+                        try:
+                            text_config = json.loads(item_data["file_path"])
+                            # Override duration with the one from text config
+                            if "duration" in text_config:
+                                item_data["duration"] = text_config["duration"]
+                        except (json.JSONDecodeError, KeyError):
+                            pass  # Keep original duration if parsing fails
 
                 # Create PlaylistItem with transitions
                 item = PlaylistItem(
@@ -2883,11 +2893,21 @@ async def save_playlist(request: SavePlaylistRequest):
 
         # Convert items to save format
         for item in playlist_state.items:
+            # For text items, extract the actual duration from the config
+            actual_duration = item.duration
+            if item.type == "text" and item.file_path:
+                try:
+                    text_config = json.loads(item.file_path)
+                    # Use the duration from the text config if available
+                    actual_duration = text_config.get("duration", item.duration)
+                except (json.JSONDecodeError, AttributeError):
+                    pass  # Keep original duration if parsing fails
+
             item_data = {
                 "id": item.id,
                 "name": item.name,
                 "type": item.type,
-                "duration": item.duration,
+                "duration": actual_duration,
                 "order": item.order,
                 "transition_in": {"type": item.transition_in.type, "parameters": item.transition_in.parameters},
                 "transition_out": {"type": item.transition_out.type, "parameters": item.transition_out.parameters},
