@@ -149,16 +149,19 @@ class ConsumerProcess:
             enable_batch_mode=enable_batch_mode,
         )
 
-        # Audio beat analyzer (optional)
+        # Audio beat analyzer (always try to initialize for dynamic enable/disable)
         self._audio_beat_analyzer: Optional[AudioBeatAnalyzer] = None
         self._enable_audio_reactive = enable_audio_reactive
-        if enable_audio_reactive:
-            try:
-                self._audio_beat_analyzer = AudioBeatAnalyzer(beat_callback=self._on_beat_detected, device=audio_device)
-                logger.info("Audio beat analyzer initialized")
-            except Exception as e:
-                logger.error(f"Failed to initialize audio beat analyzer: {e}")
-                self._enable_audio_reactive = False
+        self._audio_analysis_running = False
+        self._audio_device = audio_device
+
+        # Always try to initialize audio analyzer for potential runtime enabling
+        try:
+            self._audio_beat_analyzer = AudioBeatAnalyzer(beat_callback=self._on_beat_detected, device=audio_device)
+            logger.info("Audio beat analyzer initialized (ready for dynamic enable/disable)")
+        except Exception as e:
+            logger.warning(f"Audio beat analyzer unavailable: {e}")
+            self._audio_beat_analyzer = None
 
         # Note: Playlist sync handled by producer, consumer just tracks rendered items
         # WLED and LED buffer will be created after LED optimizer loads pattern file
@@ -292,12 +295,43 @@ class ConsumerProcess:
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
 
+    def _update_audio_reactive_state(self):
+        """Check control state and start/stop audio analysis as needed."""
+        if not self._audio_beat_analyzer:
+            return  # Audio analyzer not available
+
+        try:
+            # Get current control state
+            status = self._control_state.get_status()
+            should_be_running = status and status.audio_reactive_enabled
+
+            # Start audio analysis if needed
+            if should_be_running and not self._audio_analysis_running:
+                try:
+                    self._audio_beat_analyzer.start_analysis()
+                    self._audio_analysis_running = True
+                    logger.info("Audio reactive system started")
+                except Exception as e:
+                    logger.error(f"Failed to start audio analysis: {e}")
+
+            # Stop audio analysis if needed
+            elif not should_be_running and self._audio_analysis_running:
+                try:
+                    self._audio_beat_analyzer.stop_analysis()
+                    self._audio_analysis_running = False
+                    logger.info("Audio reactive system stopped")
+                except Exception as e:
+                    logger.error(f"Failed to stop audio analysis: {e}")
+
+        except Exception as e:
+            logger.warning(f"Error updating audio reactive state: {e}")
+
     def _on_beat_detected(self, beat_event: BeatEvent):
         """Handle detected beat events and update control state"""
         try:
             # Update control state with beat information
             self._control_state.update_status(
-                audio_enabled=self._enable_audio_reactive,
+                audio_enabled=self._audio_analysis_running,
                 current_bpm=beat_event.bpm,
                 beat_count=beat_event.beat_count,
                 last_beat_time=beat_event.timestamp,
@@ -309,10 +343,11 @@ class ConsumerProcess:
             if beat_event.is_downbeat:
                 self._control_state.update_status(last_downbeat_time=beat_event.timestamp)
 
-            logger.debug(
-                f"Beat event: BPM={beat_event.bpm:.1f}, "
-                f"Downbeat={beat_event.is_downbeat}, "
-                f"Intensity={beat_event.intensity:.2f}"
+            beat_type = "DOWNBEAT" if beat_event.is_downbeat else "BEAT"
+            logger.info(
+                f"🎵 {beat_type} #{beat_event.beat_count}: BPM={beat_event.bpm:.1f}, "
+                f"Intensity={beat_event.intensity:.2f}, "
+                f"Confidence={beat_event.confidence:.2f}"
             )
 
         except Exception as e:
@@ -442,13 +477,8 @@ class ConsumerProcess:
             self._renderer_thread.start()
             self._wled_reconnection_thread.start()
 
-            # Start audio beat analyzer if enabled
-            if self._enable_audio_reactive and self._audio_beat_analyzer:
-                try:
-                    self._audio_beat_analyzer.start_analysis()
-                    logger.info("Audio beat analysis started")
-                except Exception as e:
-                    logger.error(f"Failed to start audio beat analysis: {e}")
+            # Check initial audio reactive state from control state
+            self._update_audio_reactive_state()
 
             logger.info("Consumer process started with optimization, renderer, and WLED reconnection threads")
             return True
@@ -473,9 +503,10 @@ class ConsumerProcess:
             self._wled_reconnection_event.set()
 
             # Stop audio beat analyzer if running
-            if self._audio_beat_analyzer:
+            if self._audio_beat_analyzer and self._audio_analysis_running:
                 try:
                     self._audio_beat_analyzer.stop_analysis()
+                    self._audio_analysis_running = False
                     logger.info("Audio beat analysis stopped")
                 except Exception as e:
                     logger.error(f"Error stopping audio beat analysis: {e}")
@@ -547,12 +578,22 @@ class ConsumerProcess:
         """Optimization thread - processes frames as fast as possible."""
         logger.info("Optimization thread started")
 
+        # Track last audio state check to avoid checking too frequently
+        last_audio_check = 0.0
+        audio_check_interval = 1.0  # Check every 1 second
+
         while self._running and not self._shutdown_requested:
             try:
                 # Check for shutdown signal from control state
                 if self._control_state.should_shutdown():
                     logger.info("Shutdown signal received from control state")
                     break
+
+                # Periodically check for audio reactive state changes
+                current_time = time.time()
+                if current_time - last_audio_check >= audio_check_interval:
+                    self._update_audio_reactive_state()
+                    last_audio_check = current_time
 
                 # Wait for new frame
                 buffer_info = self._frame_consumer.wait_for_ready_buffer(timeout=self.max_frame_wait_timeout)

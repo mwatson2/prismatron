@@ -93,7 +93,12 @@ def get_gpu_usage():
                 return float(jetson.gpu["gpu"]["status"]["load"])
         return 0.0
     except Exception as e:
-        logger.warning(f"Failed to read GPU usage: {e}")
+        # Only warn once about jtop service issues to avoid log spam
+        if not hasattr(get_gpu_usage, "_jtop_warning_shown"):
+            logger.warning(f"Failed to read GPU usage: {e}")
+            if "jtop.service" in str(e):
+                logger.warning("Please run: sudo systemctl restart jtop.service")
+            get_gpu_usage._jtop_warning_shown = True
         return 0.0
 
 
@@ -2070,7 +2075,7 @@ async def get_settings():
             logger.warning(f"Failed to get audio reactive status: {e}")
 
     # Update system settings with current control state values
-    current_settings = get_system_settings().copy()
+    current_settings = get_system_settings().model_copy()
     current_settings.audio_reactive_enabled = audio_reactive_enabled
 
     return current_settings

@@ -141,6 +141,9 @@ class FrameRenderer:
         self.current_item_first_frame_timestamp = None
         self.current_rendering_index = -1
 
+        # Beat boost logging state
+        self._beat_boost_logged = False
+
         logger.info(
             f"FrameRenderer initialized: delay={first_frame_delay_ms}ms, " f"tolerance=±{timing_tolerance_ms}ms"
         )
@@ -164,16 +167,27 @@ class FrameRenderer:
         """
         # Check if audio reactive effects are enabled
         if not self._control_state or not self._audio_beat_analyzer:
+            logger.debug("Beat brightness boost: No control state or audio analyzer")
             return 1.0
 
         try:
             # Get current control state to check if audio reactive is enabled
             status = self._control_state.get_status()
-            if not status or not status.audio_reactive_enabled or not status.audio_enabled:
+            if not status:
+                logger.debug("Beat brightness boost: No status available")
+                return 1.0
+
+            if not status.audio_reactive_enabled:
+                logger.debug("Beat brightness boost: Audio reactive not enabled")
+                return 1.0
+
+            if not status.audio_enabled:
+                logger.debug("Beat brightness boost: Audio not enabled")
                 return 1.0
 
             # Check if beat brightness boost is specifically enabled
             if not status.beat_brightness_enabled:
+                logger.debug("Beat brightness boost: Beat brightness not enabled")
                 return 1.0
 
             # Get configurable parameters with fallbacks
@@ -183,6 +197,13 @@ class FrameRenderer:
             # Clamp parameters to safe ranges
             boost_intensity = max(0.0, min(1.0, boost_intensity))
             boost_duration_fraction = max(0.1, min(1.0, boost_duration_fraction))
+
+            # Log beat boost configuration once
+            if not self._beat_boost_logged:
+                logger.info(
+                    f"🎵 Beat brightness boost enabled: intensity={boost_intensity:.2f}, duration={boost_duration_fraction:.2f}"
+                )
+                self._beat_boost_logged = True
 
             # Get audio beat state
             beat_state = self._audio_beat_analyzer.get_current_state()
@@ -213,7 +234,10 @@ class FrameRenderer:
             if 0 <= t <= boost_duration:
                 # Configurable sine wave boost
                 boost = boost_intensity * math.sin(t * math.pi / boost_duration)
-                return 1.0 + boost
+                multiplier = 1.0 + boost
+                if np.random.random() < 0.1:  # Log 10% of brightness boost events
+                    logger.info(f"🎵 Beat brightness boost: {multiplier:.3f}x (t={t:.3f}s, boost={boost:.3f})")
+                return multiplier
             else:
                 return 1.0  # No boost outside beat window
 
@@ -428,6 +452,8 @@ class FrameRenderer:
         # Apply audio-reactive brightness boost if enabled
         brightness_multiplier = self._calculate_beat_brightness_boost(time.time())
         if brightness_multiplier != 1.0:
+            # Log brightness boost application
+            logger.info(f"🎵 Beat brightness boost applied: {brightness_multiplier:.3f}x")
             # Apply brightness boost to all LED values
             physical_led_values = (physical_led_values * brightness_multiplier).astype(np.uint8)
             # Ensure values stay within valid range [0, 255]
