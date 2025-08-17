@@ -14,6 +14,7 @@ and handles graceful shutdown coordination.
 
 import argparse
 import atexit
+import json
 import logging
 import multiprocessing
 import os
@@ -301,6 +302,8 @@ class ProcessManager:
                         max_shift_distance=self.config.get("max_shift_distance", 3),
                         shift_direction=self.config.get("shift_direction", "alternating"),
                         enable_adaptive_frame_dropping=self.config.get("enable_adaptive_frame_dropping", True),
+                        enable_audio_reactive=self.config.get("enable_audio_reactive", False),
+                        audio_device=self.config.get("audio_device"),
                     )
 
                     # Initialize consumer (WLED connection not required for startup)
@@ -675,41 +678,128 @@ def load_led_count_from_patterns(patterns_path: str) -> int:
         raise ValueError(f"Failed to load LED count from patterns file: {e}")
 
 
+def load_config_file(config_path: str = "config.json") -> Dict:
+    """Load configuration from JSON file."""
+    config = {}
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r") as f:
+                loaded_config = json.load(f)
+                # Filter out comments and null values
+                config = {k: v for k, v in loaded_config.items() if k != "comments" and v is not None}
+            logger.info(f"Loaded configuration from {config_path}")
+        except Exception as e:
+            logger.warning(f"Failed to load config file {config_path}: {e}")
+    return config
+
+
 def main():
     """Main entry point."""
 
+    # Parse just the config argument first to know which config file to load
+    parser_config = argparse.ArgumentParser(add_help=False)
+    parser_config.add_argument("--config", default="config.json", help="Path to configuration file")
+    config_args, remaining = parser_config.parse_known_args()
+
+    # Load default configuration from specified file
+    file_config = load_config_file(config_args.config)
+
     parser = argparse.ArgumentParser(description="Prismatron LED Display System")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("--web-host", default="0.0.0.0", help="Web server host")
-    parser.add_argument("--web-port", type=int, default=8080, help="Web server port")
-    parser.add_argument("--wled-host", default="192.168.7.140", help="WLED controller IP")
-    parser.add_argument("--wled-port", type=int, default=4048, help="WLED controller port")
-    parser.add_argument("--content-dir", help="Default content directory to load")
-    parser.add_argument("--diffusion-patterns", help="Path to diffusion patterns file")
-    parser.add_argument("--timing-log", help="Path to CSV file for frame timing data logging")
     parser.add_argument(
-        "--batch-mode",
+        "--config", default=config_args.config, help="Path to configuration file (default: config.json)"
+    )
+    parser.add_argument(
+        "--debug", action="store_true", default=file_config.get("debug", False), help="Enable debug logging"
+    )
+    parser.add_argument("--web-host", default=file_config.get("web_host", "0.0.0.0"), help="Web server host")
+    parser.add_argument("--web-port", type=int, default=file_config.get("web_port", 8080), help="Web server port")
+    parser.add_argument("--wled-host", default=file_config.get("wled_host", "192.168.7.140"), help="WLED controller IP")
+    parser.add_argument(
+        "--wled-port", type=int, default=file_config.get("wled_port", 4048), help="WLED controller port"
+    )
+    parser.add_argument(
+        "--content-dir", default=file_config.get("content_dir"), help="Default content directory to load"
+    )
+    parser.add_argument(
+        "--diffusion-patterns", default=file_config.get("diffusion_patterns"), help="Path to diffusion patterns file"
+    )
+    parser.add_argument(
+        "--timing-log", default=file_config.get("timing_log"), help="Path to CSV file for frame timing data logging"
+    )
+
+    # Handle batch-mode with config file default
+    batch_mode_default = file_config.get("batch_mode", True)
+    if batch_mode_default:
+        parser.add_argument(
+            "--batch-mode",
+            action="store_true",
+            default=True,
+            help="Enable batch processing (8 frames at once) for improved performance",
+        )
+        parser.add_argument("--no-batch-mode", dest="batch_mode", action="store_false", help="Disable batch processing")
+    else:
+        parser.add_argument(
+            "--batch-mode",
+            action="store_true",
+            default=False,
+            help="Enable batch processing (8 frames at once) for improved performance",
+        )
+
+    parser.add_argument(
+        "--position-shifting",
         action="store_true",
-        default=True,
-        help="Enable batch processing (8 frames at once) for improved performance",
+        default=file_config.get("position_shifting", False),
+        help="Enable audio-reactive LED position shifting effects",
     )
     parser.add_argument(
-        "--position-shifting", action="store_true", help="Enable audio-reactive LED position shifting effects"
-    )
-    parser.add_argument(
-        "--max-shift-distance", type=int, default=3, help="Maximum LED positions to shift on beats (default: 3)"
+        "--max-shift-distance",
+        type=int,
+        default=file_config.get("max_shift_distance", 3),
+        help="Maximum LED positions to shift on beats (default: 3)",
     )
     parser.add_argument(
         "--shift-direction",
-        default="alternating",
+        default=file_config.get("shift_direction", "alternating"),
         choices=["left", "right", "alternating"],
         help="Position shift direction (default: alternating)",
     )
+
+    # Handle adaptive-dropping with config file default
+    adaptive_dropping_default = file_config.get("adaptive_dropping", False)
+    if adaptive_dropping_default:
+        parser.add_argument(
+            "--adaptive-dropping",
+            dest="no_adaptive_dropping",
+            action="store_false",
+            default=False,
+            help="Enable adaptive frame dropping for LED buffer management",
+        )
+        parser.add_argument(
+            "--no-adaptive-dropping", action="store_true", default=False, help="Disable adaptive frame dropping"
+        )
+    else:
+        parser.add_argument(
+            "--no-adaptive-dropping",
+            action="store_true",
+            default=True,
+            help="Disable adaptive frame dropping for LED buffer management",
+        )
+        parser.add_argument(
+            "--adaptive-dropping",
+            dest="no_adaptive_dropping",
+            action="store_false",
+            help="Enable adaptive frame dropping",
+        )
+
+    # Audio reactive settings
     parser.add_argument(
-        "--no-adaptive-dropping",
+        "--audio-reactive",
         action="store_true",
-        default=True,
-        help="Disable adaptive frame dropping for LED buffer management",
+        default=file_config.get("audio_reactive", False),
+        help="Enable audio reactive effects",
+    )
+    parser.add_argument(
+        "--audio-device", default=file_config.get("audio_device"), help="Audio device index or name for beat detection"
     )
 
     args = parser.parse_args()
@@ -745,6 +835,8 @@ def main():
         "max_shift_distance": args.max_shift_distance,
         "shift_direction": args.shift_direction,
         "enable_adaptive_frame_dropping": not args.no_adaptive_dropping,  # Invert the flag
+        "enable_audio_reactive": args.audio_reactive,
+        "audio_device": args.audio_device,
     }
 
     logger.info("Starting Prismatron LED Display System")
