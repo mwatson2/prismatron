@@ -412,7 +412,8 @@ class ConsumerProcess:
             if self._wled_client.connect():
                 logger.info("Connected to WLED controller successfully")
             else:
-                logger.warning("Failed to connect to WLED controller - will retry periodically")
+                # WLED sink already logs the specific connection failure with IP address
+                pass
 
             # Initialize test renderer if enabled
             if self.enable_test_renderer:
