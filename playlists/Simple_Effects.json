@@ -11,7 +11,7 @@
       "id": "8da2a048-18d2-4263-9e30-69b59625e017",
       "name": "Rainbow Sweep",
       "type": "effect",
-      "duration": 15.0,
+      "duration": 10.0,
       "order": 0,
       "transition_in": {
         "type": "none",
@@ -29,7 +29,7 @@
           "saturation": 1,
           "brightness": 1,
           "wave_width": 1,
-          "duration": 15
+          "duration": 10
         }
       }
     },
@@ -37,7 +37,7 @@
       "id": "e4092049-c03c-474b-9c0b-9441349444a5",
       "name": "Color Breathe",
       "type": "effect",
-      "duration": 15.0,
+      "duration": 10.0,
       "order": 1,
       "transition_in": {
         "type": "none",
@@ -60,7 +60,7 @@
           "intensity_max": 1,
           "color_shift": false,
           "shift_amount": 0.1,
-          "duration": 15
+          "duration": 10
         }
       }
     },
@@ -68,7 +68,7 @@
       "id": "fa202e99-5d55-4784-9d3f-b79cf0a0f198",
       "name": "Gradient Flow",
       "type": "effect",
-      "duration": 15.0,
+      "duration": 10.0,
       "order": 2,
       "transition_in": {
         "type": "none",
@@ -117,7 +117,7 @@
           "flow_direction": "horizontal",
           "gradient_type": "linear",
           "blend_width": 0.5,
-          "duration": 15
+          "duration": 10
         }
       }
     },
@@ -125,7 +125,7 @@
       "id": "917eead4-4cd5-4642-b77f-c37d96362018",
       "name": "Swarm",
       "type": "effect",
-      "duration": 15.0,
+      "duration": 10.0,
       "order": 3,
       "transition_in": {
         "type": "none",
@@ -145,7 +145,7 @@
           "max_speed": 0.02,
           "color_mode": "gradient",
           "trail": true,
-          "duration": 15
+          "duration": 10
         }
       }
     },
@@ -153,7 +153,7 @@
       "id": "899a6729-8c7e-48f1-8eca-48afa5c03900",
       "name": "Lissajous Curves",
       "type": "effect",
-      "duration": 15.0,
+      "duration": 10.0,
       "order": 4,
       "transition_in": {
         "type": "none",
@@ -173,7 +173,7 @@
           "trail_length": 0.5,
           "line_thickness": 0.02,
           "color_cycle": true,
-          "duration": 15
+          "duration": 10
         }
       }
     }

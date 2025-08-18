@@ -41,7 +41,7 @@
   }
 
   .nav-item {
-    @apply flex flex-col items-center justify-center p-3 text-xs font-retro transition-all duration-200;
+    @apply flex flex-col items-center justify-center p-2 sm:p-3 text-xs font-retro transition-all duration-200;
   }
 
   .nav-item-active {
