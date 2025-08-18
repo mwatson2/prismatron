@@ -824,7 +824,7 @@ async def preview_broadcast_task():
                         # Debug log every 5 seconds to verify values more frequently
                         if hasattr(preview_broadcast_task, "_last_fps_debug_log"):
                             if current_time - preview_broadcast_task._last_fps_debug_log > 5.0:
-                                logger.info(
+                                logger.debug(
                                     f"WEBSOCKET FPS DEBUG: Read from ControlState - input_fps={consumer_input_fps:.2f}, output_fps={renderer_output_fps:.2f}, dropped={dropped_frames_percentage:.1f}%"
                                 )
                                 preview_broadcast_task._last_fps_debug_log = current_time

@@ -514,13 +514,19 @@ class ProcessManager:
     def monitor_processes(self) -> None:
         """Monitor process health and handle control signals."""
         logger.info("Starting process monitoring loop...")
-        monitor_count = 0
+        start_time = time.time()
+        last_log_time = start_time
         while not self.shutdown_requested:
             try:
-                monitor_count += 1
-                # Log every 10 iterations for debugging
-                if monitor_count % 10 == 0:
-                    logger.info(f"Monitor loop iteration {monitor_count}")
+                current_time = time.time()
+                # Log every 10 minutes (600 seconds)
+                if current_time - last_log_time >= 600:
+                    uptime_seconds = int(current_time - start_time)
+                    hours = uptime_seconds // 3600
+                    minutes = (uptime_seconds % 3600) // 60
+                    seconds = uptime_seconds % 60
+                    logger.info(f"Monitor loop - Uptime: {hours:02d}:{minutes:02d}:{seconds:02d}")
+                    last_log_time = current_time
 
                 # Check for control signals
                 restart_requested = self.control_state.is_restart_requested()

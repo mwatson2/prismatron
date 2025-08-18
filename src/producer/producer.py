@@ -421,6 +421,7 @@ class ProducerProcess:
         self._last_log_time = 0.0
         self._log_interval = 2.0  # Log every 2 seconds
         self._frames_with_content = 0  # Frames with non-zero content
+        self._last_logged_state = None  # Track last logged state to avoid repetitive STOPPED logs
 
         # Global timestamp mapping state
         self._playlist_start_time = 0.0  # When the playlist started playing
@@ -674,12 +675,18 @@ class ProducerProcess:
                 # Periodic logging for pipeline debugging (only when playing or if there's activity)
                 current_time = time.time()
                 if current_time - self._last_log_time >= self._log_interval:
-                    # Only log if we're playing, or if we have frames produced, or every 10 seconds when idle
+                    current_state = status.producer_state if status else None
+
+                    # Only log if we're playing, or if we have frames produced, or if state changed
                     should_log = (
                         (status and status.producer_state == ProducerState.PLAYING)
                         or self._frames_produced > 0
-                        or (current_time - self._last_log_time) >= 10.0
+                        or (current_state != self._last_logged_state)
                     )
+
+                    # For STOPPED state, only log once when entering the state
+                    if current_state == ProducerState.STOPPED and self._last_logged_state == ProducerState.STOPPED:
+                        should_log = False
 
                     if should_log:
                         content_ratio = (self._frames_with_content / max(1, self._frames_produced)) * 100
@@ -690,6 +697,7 @@ class ProducerProcess:
                             f"current: {self._current_item.filepath if self._current_item else 'None'}"
                         )
                         self._last_log_time = current_time
+                        self._last_logged_state = current_state
 
                 # Brief sleep to prevent busy waiting
                 time.sleep(0.001)
