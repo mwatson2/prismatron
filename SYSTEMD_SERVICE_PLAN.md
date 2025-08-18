@@ -22,7 +22,7 @@ prismatron.service (main service)
 ├── Auto-restarts on failure
 └── Starts after network is ready
 
-prismatron-admin.socket (optional)
+prismatron-admin.socket (optional, add later)
 └── Privileged operations endpoint
     └── Handles system reboot requests
 ```
@@ -57,7 +57,7 @@ sudo usermod -a -G video,gpio,i2c,dialout prismatron
 ```ini
 [Unit]
 Description=Prismatron LED Display System
-Documentation=https://github.com/yourusername/prismatron
+Documentation=https://github.com/mwatson2/prismatron
 After=network-online.target
 Wants=network-online.target
 # If using WLED, ensure network is truly ready
@@ -74,7 +74,7 @@ WorkingDirectory=/mnt/dev/prismatron
 Environment="PYTHONPATH=/mnt/dev/prismatron"
 Environment="PATH=/mnt/dev/prismatron/env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="PYTHONUNBUFFERED=1"
-Environment="DISPLAY=:0"  # If display output needed
+Environment="DISPLAY=:99"  #  display output needed - see ~/.bashrc and start-dummy-display.sh
 
 # Pre-start cleanup (remove stale shared memory)
 ExecStartPre=/bin/bash -c 'rm -f /dev/shm/prismatron_*'
@@ -120,7 +120,7 @@ SupplementaryGroups=video gpio i2c
 # Resource limits
 LimitNOFILE=65536
 LimitNPROC=4096
-MemoryMax=4G
+MemoryMax=8G
 CPUQuota=200%
 
 [Install]
@@ -135,7 +135,7 @@ d /run/prismatron 0755 prismatron prismatron -
 
 ### 4. Restart and Reboot Implementation
 
-#### Option A: Sudo Configuration (`/etc/sudoers.d/prismatron`)
+#### Option A: Sudo Configuration (`/etc/sudoers.d/prismatron`) <-- CHOSEN OPTION
 
 ```bash
 # Allow prismatron user to restart its own service and reboot
@@ -455,6 +455,8 @@ const handleReboot = async () => {
 ### 8. Monitoring and Logging
 
 #### Log Rotation (`/etc/logrotate.d/prismatron`)
+
+We will need to move the log file from the current prismatron root to the logs directory:
 
 ```
 /mnt/dev/prismatron/logs/*.log {

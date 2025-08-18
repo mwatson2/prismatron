@@ -27,7 +27,8 @@ from typing import Dict, Optional
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from src.consumer.consumer import ConsumerProcess
+# Don't import ConsumerProcess here - it imports cupy which breaks fork()
+# from src.consumer.consumer import ConsumerProcess
 from src.core.control_state import ControlState, PlayState, SystemState
 from src.core.playlist_sync import PlaylistSyncService
 from src.producer.producer import ProducerProcess
@@ -48,6 +49,11 @@ class ProcessManager:
         """
         self.config = config
         self.processes: Dict[str, multiprocessing.Process] = {}
+
+        # Set umask to allow group access for shared memory
+        import os
+
+        os.umask(0o002)
 
         # Create a shared lock for inter-process synchronization of ControlState
         self.shared_control_lock = multiprocessing.Lock()
@@ -290,6 +296,17 @@ class ProcessManager:
                     root_logger.setLevel(logging.INFO if not self.config.get("debug") else logging.DEBUG)
                     root_logger.addHandler(console_handler)
                     root_logger.addHandler(file_handler)
+
+                    # Debug environment variables
+                    logger.info(f"Consumer worker environment:")
+                    logger.info(f"  PATH: {os.environ.get('PATH', 'NOT SET')}")
+                    logger.info(f"  LD_LIBRARY_PATH: {os.environ.get('LD_LIBRARY_PATH', 'NOT SET')}")
+                    logger.info(f"  CUDA_HOME: {os.environ.get('CUDA_HOME', 'NOT SET')}")
+                    logger.info(f"  CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES', 'NOT SET')}")
+                    logger.info(f"  NVIDIA_VISIBLE_DEVICES: {os.environ.get('NVIDIA_VISIBLE_DEVICES', 'NOT SET')}")
+
+                    # Import ConsumerProcess
+                    from src.consumer.consumer import ConsumerProcess
 
                     # Create consumer with configuration
                     consumer = ConsumerProcess(
@@ -678,6 +695,53 @@ def load_led_count_from_patterns(patterns_path: str) -> int:
         raise ValueError(f"Failed to load LED count from patterns file: {e}")
 
 
+def write_pid_file(pid_file: Path):
+    """Write PID file for systemd tracking."""
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+    pid_file.write_text(str(os.getpid()))
+    logger.info(f"Written PID {os.getpid()} to {pid_file}")
+
+
+def cleanup_pid_file(pid_file: Path):
+    """Remove PID file on exit."""
+    try:
+        pid_file.unlink()
+        logger.info(f"Removed PID file {pid_file}")
+    except FileNotFoundError:
+        pass
+
+
+def daemonize():
+    """Daemonize the process for systemd Type=forking."""
+    # First fork
+    pid = os.fork()
+    if pid > 0:
+        # Parent process exits
+        sys.exit(0)
+
+    # Decouple from parent environment
+    os.setsid()
+    os.umask(0)
+
+    # Second fork
+    pid = os.fork()
+    if pid > 0:
+        # Parent process exits
+        sys.exit(0)
+
+    # We're now in the daemon process
+    # Redirect standard file descriptors
+    sys.stdout.flush()
+    sys.stderr.flush()
+
+    # Close file descriptors
+    devnull = os.open(os.devnull, os.O_RDWR)
+    os.dup2(devnull, sys.stdin.fileno())
+    os.dup2(devnull, sys.stdout.fileno())
+    os.dup2(devnull, sys.stderr.fileno())
+    os.close(devnull)
+
+
 def load_config_file(config_path: str = "config.json") -> Dict:
     """Load configuration from JSON file."""
     config = {}
@@ -802,9 +866,25 @@ def main():
         "--audio-device", default=file_config.get("audio_device"), help="Audio device index or name for beat detection"
     )
 
+    # Daemon mode for systemd
+    parser.add_argument("--daemon", action="store_true", help="Run as daemon (for systemd service)")
+
     args = parser.parse_args()
 
-    # Setup logging
+    # Handle daemon mode before setting up logging
+    pid_file = None
+    if args.daemon:
+        # Daemonize the process
+        daemonize()
+
+        # Write PID file
+        pid_file = Path("/run/prismatron/prismatron.pid")
+        write_pid_file(pid_file)
+
+        # Register cleanup for PID file
+        atexit.register(cleanup_pid_file, pid_file)
+
+    # Setup logging (after daemonization so logs go to the right place)
     setup_logging(args.debug)
 
     # Register emergency cleanup for all exit scenarios

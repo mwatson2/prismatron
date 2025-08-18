@@ -11,6 +11,7 @@ import logging
 import os
 import random
 import shutil
+import subprocess
 
 # Add src to path for imports
 import sys
@@ -3024,6 +3025,85 @@ async def catch_all(path: str):
         return response
     else:
         raise HTTPException(status_code=404, detail="Frontend not found")
+
+
+@app.post("/api/system/restart")
+async def restart_application():
+    """
+    Restart the Prismatron application via systemd.
+    Requires prismatron user to have sudo permission for this command.
+    """
+    try:
+        # Log who requested the restart
+        logger.warning("Application restart requested via API")
+
+        # Schedule restart after response is sent
+        asyncio.create_task(perform_restart())
+
+        return {
+            "status": "accepted",
+            "message": "Application restart initiated. System will be back online in approximately 15 seconds.",
+        }
+    except Exception as e:
+        logger.error(f"Failed to initiate restart: {e}")
+        raise HTTPException(status_code=500, detail="Failed to initiate restart")
+
+
+async def perform_restart():
+    """Execute restart after delay to allow response to be sent."""
+    await asyncio.sleep(2)
+
+    try:
+        # Method 1: If we have sudo permission (configured in sudoers)
+        result = subprocess.run(
+            ["sudo", "/bin/systemctl", "restart", "prismatron.service"], capture_output=True, text=True, timeout=5
+        )
+
+        if result.returncode != 0:
+            logger.error(f"Restart command failed: {result.stderr}")
+            # Method 2: Try to exit with special code that systemd will restart
+            os._exit(123)  # Special exit code for restart
+    except Exception as e:
+        logger.error(f"Restart failed: {e}")
+        # Last resort: exit and let systemd restart us
+        os._exit(1)
+
+
+@app.post("/api/system/reboot")
+async def reboot_system():
+    """
+    Reboot the entire system.
+    Requires prismatron user to have sudo permission for reboot.
+    """
+    try:
+        # Log who requested the reboot
+        logger.warning("System reboot requested via API")
+
+        # Schedule reboot after response is sent
+        asyncio.create_task(perform_reboot())
+
+        return {"status": "accepted", "message": "System reboot initiated. The system will restart in 5 seconds."}
+    except Exception as e:
+        logger.error(f"Failed to initiate reboot: {e}")
+        raise HTTPException(status_code=500, detail="Failed to initiate reboot")
+
+
+async def perform_reboot():
+    """Execute system reboot after delay."""
+    # Give time for response and any cleanup
+    await asyncio.sleep(5)
+
+    try:
+        # Save any critical state
+        logger.info("Saving state before reboot...")
+        control_state = get_control_state()
+        if control_state:
+            control_state.signal_shutdown()
+
+        # Execute reboot
+        subprocess.run(["sudo", "/bin/systemctl", "reboot"], timeout=5)
+    except Exception as e:
+        logger.error(f"Reboot command failed: {e}")
 
 
 def run_server(
