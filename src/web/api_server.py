@@ -2746,7 +2746,7 @@ async def list_saved_playlists():
 
     except Exception as e:
         logger.error(f"Failed to list playlists: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.get("/api/playlists/{filename}")
@@ -2783,7 +2783,7 @@ async def load_playlist(filename: str):
                         if not item_data["file_path"].startswith("/"):
                             file_path = item_data["file_path"]
                             # If path already includes uploads/ or media/, use as-is
-                            if file_path.startswith("uploads/") or file_path.startswith("media/"):
+                            if file_path.startswith(("uploads/", "media/")):
                                 item_data["file_path"] = str(Path(file_path))
                             else:
                                 # If it's just a filename, default to uploads directory
@@ -2853,7 +2853,7 @@ async def load_playlist(filename: str):
         raise
     except Exception as e:
         logger.error(f"Failed to load playlist: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 class SavePlaylistRequest(BaseModel):
@@ -2900,7 +2900,7 @@ async def save_playlist(request: SavePlaylistRequest):
                 with open(file_path) as f:
                     existing_data = json.load(f)
                     playlist_data["created_at"] = existing_data.get("created_at", now)
-            except:
+            except Exception:
                 playlist_data["created_at"] = now
         else:
             playlist_data["created_at"] = now
@@ -2963,7 +2963,7 @@ async def save_playlist(request: SavePlaylistRequest):
         raise
     except Exception as e:
         logger.error(f"Failed to save playlist: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.delete("/api/playlists/{filename}")
@@ -2989,7 +2989,7 @@ async def delete_playlist(filename: str):
         raise
     except Exception as e:
         logger.error(f"Failed to delete playlist: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # Serve service worker files from root

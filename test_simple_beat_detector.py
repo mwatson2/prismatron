@@ -267,7 +267,7 @@ def test_beat_detector():
 
         # Final statistics
         stats = detector.get_stats()
-        print(f"\nFinal Statistics:")
+        print("\nFinal Statistics:")
         print(f"  Total beats detected: {stats['total_beats']}")
         print(f"  Processing time: {stats['processing_time']:.1f}s")
         print(f"  Final BPM: {stats['beats_per_minute']:.1f}")

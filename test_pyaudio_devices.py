@@ -40,7 +40,7 @@ def test_audio_device(device_index, sample_rate=None, duration=2):
             frames_per_buffer=chunk_size,
         )
 
-        print(f"  ✅ Stream opened successfully")
+        print("  ✅ Stream opened successfully")
         print(f"  Recording {duration} seconds...")
 
         # Record audio
@@ -75,7 +75,7 @@ def test_audio_device(device_index, sample_rate=None, duration=2):
             overall_peak = np.max(np.abs(full_audio))
             overall_mean = np.mean(np.abs(full_audio))
 
-            print(f"\n  📊 Overall Statistics:")
+            print("\n  📊 Overall Statistics:")
             print(f"    RMS Level: {overall_rms:.6f}")
             print(f"    Peak Level: {overall_peak:.6f}")
             print(f"    Mean Level: {overall_mean:.6f}")
@@ -85,10 +85,10 @@ def test_audio_device(device_index, sample_rate=None, duration=2):
             # Even a silent USB mic should show some noise floor
             if overall_rms > 0.000001 or overall_peak > 0.000001:
                 print(f"  ✅ AUDIO DEVICE WORKING! Device {device_index} is capturing data!")
-                print(f"     (Even in silence, USB mics show tiny noise values)")
+                print("     (Even in silence, USB mics show tiny noise values)")
                 return True
             else:
-                print(f"  ⚠️ No audio data detected (all zeros - device may not be working)")
+                print("  ⚠️ No audio data detected (all zeros - device may not be working)")
                 return False
 
     except Exception as e:
@@ -121,7 +121,7 @@ def find_working_microphone():
             # Focus on USB Audio Device only
             if "USB Audio" in info["name"]:
                 usb_devices.append(i)
-                print(f"    👉 Found USB Audio Device!")
+                print("    👉 Found USB Audio Device!")
 
     p.terminate()
 

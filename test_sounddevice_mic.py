@@ -65,24 +65,24 @@ def test_recording(device_id=None, duration=3, samplerate=44100):
         peak = np.max(np.abs(recording))
         mean = np.mean(np.abs(recording))
 
-        print(f"\n  Audio Levels:")
+        print("\n  Audio Levels:")
         print(f"    RMS:  {rms:.9f}")
         print(f"    Peak: {peak:.9f}")
         print(f"    Mean: {mean:.9f}")
 
         # Check if we got any data
         if rms > 0 or peak > 0:
-            print(f"\n✅ SUCCESS! Microphone is capturing data!")
-            print(f"   Even in silence, we see noise floor values")
+            print("\n✅ SUCCESS! Microphone is capturing data!")
+            print("   Even in silence, we see noise floor values")
 
             # Show a sample of the raw data
-            print(f"\n  Sample of raw audio data (first 10 values):")
+            print("\n  Sample of raw audio data (first 10 values):")
             for i in range(min(10, len(recording))):
                 print(f"    [{i}]: {recording[i][0]:.9f}")
 
             return True
         else:
-            print(f"\n❌ All zeros - microphone may not be working properly")
+            print("\n❌ All zeros - microphone may not be working properly")
             return False
 
     except Exception as e:

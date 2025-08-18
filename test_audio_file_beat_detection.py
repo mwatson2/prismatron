@@ -328,21 +328,21 @@ class AudioFileBeatDetector:
         print("=" * 80)
 
         # File information
-        print(f"\n📁 FILE INFORMATION:")
+        print("\n📁 FILE INFORMATION:")
         print(f"   File: {self.audio_file_path}")
         print(f"   Duration: {self.stats.total_duration:.1f} seconds")
         print(f"   Sample Rate: {self.sample_rate} Hz")
         print(f"   Samples: {len(self.audio_data) if self.audio_data is not None else 0:,}")
 
         # Processing statistics
-        print(f"\n⚡ PROCESSING STATISTICS:")
+        print("\n⚡ PROCESSING STATISTICS:")
         print(f"   Processing Speed: {self.stats.processing_fps:.1f}x real-time")
         print(f"   Total Beats: {self.stats.total_beats}")
         print(f"   Total Downbeats: {self.stats.total_downbeats}")
         print(f"   Beat Density: {self.stats.total_beats / self.stats.total_duration:.1f} beats/second")
 
         # BPM information
-        print(f"\n🎼 BPM ANALYSIS:")
+        print("\n🎼 BPM ANALYSIS:")
         print(f"   Average BPM: {self.stats.average_bpm:.1f}")
         print(f"   Final BPM: {self.stats.current_bpm:.1f}")
         if self.bpm_calculator.all_bpms:
@@ -350,7 +350,7 @@ class AudioFileBeatDetector:
             print(f"   BPM Std Dev: {np.std(self.bpm_calculator.all_bpms):.1f}")
 
         # Beat timeline (show first 20 beats)
-        print(f"\n🎵 BEAT TIMELINE (first 20 beats):")
+        print("\n🎵 BEAT TIMELINE (first 20 beats):")
         for i, beat in enumerate(self.beat_events[:20]):
             beat_type = "DOWNBEAT" if beat.is_downbeat else "beat    "
             print(
@@ -363,7 +363,7 @@ class AudioFileBeatDetector:
 
         # Timing analysis
         if len(self.beat_events) > 1:
-            print(f"\n⏱️  TIMING ANALYSIS:")
+            print("\n⏱️  TIMING ANALYSIS:")
             beat_intervals = []
             for i in range(1, len(self.beat_events)):
                 interval = self.beat_events[i].timestamp - self.beat_events[i - 1].timestamp
@@ -376,7 +376,7 @@ class AudioFileBeatDetector:
         # Downbeat analysis
         downbeats = [beat for beat in self.beat_events if beat.is_downbeat]
         if len(downbeats) > 1:
-            print(f"\n🎼 DOWNBEAT ANALYSIS:")
+            print("\n🎼 DOWNBEAT ANALYSIS:")
             downbeat_intervals = []
             for i in range(1, len(downbeats)):
                 interval = downbeats[i].timestamp - downbeats[i - 1].timestamp

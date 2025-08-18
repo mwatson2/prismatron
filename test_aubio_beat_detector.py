@@ -35,11 +35,11 @@ class AubioRealTimeBeatDetector:
         self.total_frames = 0
         self.last_beat_time = 0
 
-        print(f"Aubio initialized:")
+        print("Aubio initialized:")
         print(f"  Sample rate: {sample_rate}Hz")
         print(f"  Hop size: {hop_size} samples ({hop_size/sample_rate*1000:.1f}ms)")
         print(f"  Window size: {self.win_s} samples ({self.win_s/sample_rate*1000:.1f}ms)")
-        print(f"  Tempo method: specdiff (good for EDM/house)")
+        print("  Tempo method: specdiff (good for EDM/house)")
 
     def process_frame(self, audio_frame):
         """
@@ -219,7 +219,7 @@ def test_aubio_beat_detector():
 
         # Final statistics
         stats = detector.get_stats()
-        print(f"\nFinal Aubio Statistics:")
+        print("\nFinal Aubio Statistics:")
         print(f"  Total beats detected: {stats['total_beats']}")
         print(f"  Processing time: {stats['processing_time']:.1f}s")
         print(f"  Final BPM: {stats['current_bpm']:.1f}")

@@ -370,7 +370,7 @@ class RealTimeAudioBeatDetector:
 
                 # Audio input status
                 avg_rms, avg_peak = self.level_monitor.get_average_levels()
-                print(f"🎤 AUDIO INPUT:")
+                print("🎤 AUDIO INPUT:")
                 print(f"   Current Level: RMS={self.stats.rms_level:.6f}, Peak={self.stats.peak_level:.6f}")
                 print(f"   Average Level: RMS={avg_rms:.6f}, Peak={avg_peak:.6f}")
 
@@ -383,13 +383,13 @@ class RealTimeAudioBeatDetector:
                 print(f"   Peak: [{peak_bar:<{level_bar_length}}]")
 
                 if avg_rms > 0:
-                    print(f"   ✅ Audio capture working! (seeing noise floor values)")
+                    print("   ✅ Audio capture working! (seeing noise floor values)")
                 else:
-                    print(f"   ⚠️ No audio data detected")
+                    print("   ⚠️ No audio data detected")
                 print()
 
                 # Beat detection status
-                print(f"🎵 BEAT DETECTION:")
+                print("🎵 BEAT DETECTION:")
                 print(f"   Total Beats: {self.stats.total_beats}")
                 print(f"   Total Downbeats: {self.stats.total_downbeats}")
                 print(f"   Current BPM: {self.stats.current_bpm:.1f}")
@@ -398,11 +398,11 @@ class RealTimeAudioBeatDetector:
                     time_since_beat = time.time() - self.stats.last_beat_time
                     print(f"   Last Beat: {time_since_beat:.1f}s ago")
                 else:
-                    print(f"   No beats detected yet (normal in silence)")
+                    print("   No beats detected yet (normal in silence)")
                 print()
 
                 # Recent beat events
-                print(f"🎼 RECENT BEATS (last 10):")
+                print("🎼 RECENT BEATS (last 10):")
                 recent_beats = list(self.beat_events)[-10:]
                 for i, beat in enumerate(recent_beats):
                     beat_type = "DOWNBEAT" if beat.is_downbeat else "beat    "
@@ -413,7 +413,7 @@ class RealTimeAudioBeatDetector:
                     )
 
                 if not recent_beats:
-                    print(f"   (No beats detected yet - this is normal in a silent environment)")
+                    print("   (No beats detected yet - this is normal in a silent environment)")
                 print()
 
                 # System status
@@ -421,7 +421,7 @@ class RealTimeAudioBeatDetector:
                 audio_status = "✅ Active" if self.running else "❌ Failed"
                 device_status = f"USB Device {self.usb_device_index}" if self.usb_device_index else "Default"
 
-                print(f"🔧 SYSTEM STATUS:")
+                print("🔧 SYSTEM STATUS:")
                 print(f"   BeatNet: {beatnet_status}")
                 print(f"   Audio Input: {audio_status} ({device_status})")
                 print(f"   Capture Rate: {self.capture_rate}Hz → BeatNet Rate: {self.beatnet_rate}Hz")

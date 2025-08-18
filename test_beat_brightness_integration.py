@@ -106,7 +106,7 @@ def test_brightness_calculation():
 
             time.sleep(0.05)  # 20Hz sampling
 
-        print(f"\nTest completed:")
+        print("\nTest completed:")
         print(f"- Total beats detected: {beat_count}")
         print(f"- Brightness samples: {len(brightness_values)}")
         print(f"- Min brightness: {min(brightness_values):.3f}")

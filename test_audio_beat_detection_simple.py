@@ -97,7 +97,7 @@ def main():
     chunk_duration = 0.1  # 100ms chunks
     chunk_size = int(capture_rate * chunk_duration)
 
-    print(f"\n🎤 Starting audio capture...")
+    print("\n🎤 Starting audio capture...")
     print(f"   Capture Rate: {capture_rate}Hz (USB device)")
     print(f"   BeatNet Rate: {beatnet_rate}Hz (will downsample)")
     print(f"   Chunk Size: {chunk_size} samples ({chunk_duration*1000:.0f}ms)")
