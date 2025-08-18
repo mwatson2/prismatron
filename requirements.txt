@@ -32,7 +32,8 @@ mypy>=0.910,<2.0.0
 # Graph and network analysis
 networkx>=2.6,<4.0
 # Core numerical and scientific computing
-numpy>=1.21.0,<3.0.0
+# Pin to NumPy 1.x for aubio compatibility (aubio compiled against NumPy 1.x)
+numpy>=1.24.0,<2.0.0
 
 # Computer vision and image processing
 opencv-python>=4.5.0,<5.0.0
@@ -46,6 +47,11 @@ pydantic>=1.8.0,<3.0.0
 
 # Network and serial communication
 pyserial>=3.4,<4.0
+
+# Audio processing and device control
+sounddevice>=0.4.0,<1.0.0
+librosa>=0.10.0,<1.0.0
+aubio>=0.4.9,<1.0.0
 
 # Development and testing
 pytest>=6.0.0,<8.0.0
@@ -82,8 +88,8 @@ websockets>=10.0,<12.0
 # These may not be available on all systems but provide additional features
 
 # GPU acceleration for NVIDIA CUDA (Jetson Orin Nano)
-# Uncomment for systems with NVIDIA GPU and CUDA 12.x support
-# cupy-cuda12x>=13.0.0,<14.0.0
+# Required for systems with NVIDIA GPU and CUDA 12.x support
+cupy-cuda12x>=13.0.0,<14.0.0
 
 # Hardware acceleration (NVIDIA only)
 # nvidia-ml-py3>=7.352.0,<12.0.0
