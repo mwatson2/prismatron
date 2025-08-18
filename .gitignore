@@ -208,3 +208,8 @@ uploads/
 timing.csv
 timing/
 experiments/
+
+# Root-level PNG and LOG files (but keep prismatron.log)
+/*.png
+/*.log
+!prismatron.log
