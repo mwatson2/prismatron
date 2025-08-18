@@ -56,6 +56,8 @@ from src.core.playlist_sync import (
     PlaylistSyncClient,
 )
 from src.core.playlist_sync import TransitionConfig as SyncTransitionConfig
+from src.network import NetworkManager
+from src.network.models import APConfig, ClientConfig, NetworkConfig, NetworkMode, NetworkStatus, WiFiNetwork
 
 logger = logging.getLogger(__name__)
 
@@ -361,6 +363,38 @@ class SystemStatus(BaseModel):
     late_frame_percentage: float = Field(0.0, description="Percentage of late frames")
 
 
+# Network Management Models
+class WiFiConnectRequest(BaseModel):
+    """Request model for connecting to WiFi."""
+
+    ssid: str = Field(..., description="WiFi network SSID")
+    password: Optional[str] = Field(None, description="WiFi password (if required)")
+
+
+class NetworkStatusResponse(BaseModel):
+    """Response model for network status."""
+
+    mode: str = Field(..., description="Current network mode: ap, client, disconnected")
+    connected: bool = Field(..., description="Whether currently connected")
+    interface: str = Field(..., description="Network interface name")
+    ip_address: Optional[str] = Field(None, description="Current IP address")
+    ssid: Optional[str] = Field(None, description="Connected network SSID")
+    signal_strength: Optional[int] = Field(None, description="Signal strength (0-100)")
+    gateway: Optional[str] = Field(None, description="Gateway IP address")
+    dns_servers: Optional[List[str]] = Field(None, description="DNS server addresses")
+
+
+class WiFiNetworkResponse(BaseModel):
+    """Response model for WiFi network."""
+
+    ssid: str = Field(..., description="Network SSID")
+    bssid: str = Field(..., description="Network BSSID")
+    signal_strength: int = Field(..., description="Signal strength (0-100)")
+    frequency: int = Field(..., description="Frequency in MHz")
+    security: str = Field(..., description="Security type")
+    connected: bool = Field(..., description="Whether currently connected")
+
+
 # Global state
 playlist_state = PlaylistState()
 system_settings: Optional[SystemSettings] = None  # Will be initialized after consumer provides LED count
@@ -368,6 +402,7 @@ control_state: Optional[ControlState] = None
 consumer_process: Optional[object] = None  # Will be set by main process
 producer_process: Optional[object] = None  # Will be set by main process
 diffusion_patterns_path: Optional[str] = None  # Will be set by main process
+network_manager: Optional[NetworkManager] = None  # Network management instance
 
 # Track currently loaded playlist file for real-time updates
 current_playlist_file: Optional[str] = None
@@ -709,7 +744,14 @@ def sync_playlist_update_handler(sync_state: SyncPlaylistState) -> None:
 @app.on_event("startup")
 async def startup_event():
     """Start background tasks on application startup."""
-    global preview_task, playlist_sync_client
+    global preview_task, playlist_sync_client, network_manager
+
+    # Initialize network manager
+    try:
+        network_manager = NetworkManager()
+        logger.info("Network manager initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize network manager: {e}")
 
     # Start playlist synchronization client
     playlist_sync_client = PlaylistSyncClient(client_name="web_interface")
@@ -2396,6 +2438,130 @@ async def reboot_system():
 
     except Exception as e:
         logger.error(f"Failed to reboot system: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# Network Management Endpoints
+@app.get("/api/network/status", response_model=NetworkStatusResponse)
+async def get_network_status():
+    """Get current network status."""
+    try:
+        if not network_manager:
+            raise HTTPException(status_code=503, detail="Network manager not available")
+
+        status = await network_manager.get_status()
+        return NetworkStatusResponse(
+            mode=status.mode.value,
+            connected=status.connected,
+            interface=status.interface,
+            ip_address=status.ip_address,
+            ssid=status.ssid,
+            signal_strength=status.signal_strength,
+            gateway=status.gateway,
+            dns_servers=status.dns_servers,
+        )
+    except Exception as e:
+        logger.error(f"Failed to get network status: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/api/network/scan", response_model=List[WiFiNetworkResponse])
+async def scan_wifi_networks():
+    """Scan for available WiFi networks."""
+    try:
+        if not network_manager:
+            raise HTTPException(status_code=503, detail="Network manager not available")
+
+        networks = await network_manager.scan_wifi()
+        return [
+            WiFiNetworkResponse(
+                ssid=network.ssid,
+                bssid=network.bssid,
+                signal_strength=network.signal_strength,
+                frequency=network.frequency,
+                security=network.security.value,
+                connected=network.connected,
+            )
+            for network in networks
+        ]
+    except Exception as e:
+        logger.error(f"Failed to scan WiFi networks: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/network/connect")
+async def connect_wifi(request: WiFiConnectRequest):
+    """Connect to a WiFi network."""
+    try:
+        if not network_manager:
+            raise HTTPException(status_code=503, detail="Network manager not available")
+
+        success = await network_manager.connect_wifi(request.ssid, request.password)
+        if success:
+            # Broadcast network status change
+            await manager.broadcast({"type": "network_status_changed", "mode": "client", "ssid": request.ssid})
+            return {"status": "connected", "ssid": request.ssid}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to connect to WiFi")
+    except Exception as e:
+        logger.error(f"Failed to connect to WiFi {request.ssid}: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/network/disconnect")
+async def disconnect_wifi():
+    """Disconnect from current network."""
+    try:
+        if not network_manager:
+            raise HTTPException(status_code=503, detail="Network manager not available")
+
+        success = await network_manager.disconnect()
+        if success:
+            # Broadcast network status change
+            await manager.broadcast({"type": "network_status_changed", "mode": "disconnected"})
+            return {"status": "disconnected"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to disconnect")
+    except Exception as e:
+        logger.error(f"Failed to disconnect: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/network/ap/enable")
+async def enable_ap_mode():
+    """Enable WiFi access point mode."""
+    try:
+        if not network_manager:
+            raise HTTPException(status_code=503, detail="Network manager not available")
+
+        success = await network_manager.enable_ap_mode()
+        if success:
+            # Broadcast network status change
+            await manager.broadcast({"type": "network_status_changed", "mode": "ap", "ssid": "prismatron"})
+            return {"status": "ap_enabled", "ssid": "prismatron"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to enable AP mode")
+    except Exception as e:
+        logger.error(f"Failed to enable AP mode: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/network/ap/disable")
+async def disable_ap_mode():
+    """Disable WiFi access point mode."""
+    try:
+        if not network_manager:
+            raise HTTPException(status_code=503, detail="Network manager not available")
+
+        success = await network_manager.disable_ap_mode()
+        if success:
+            # Broadcast network status change
+            await manager.broadcast({"type": "network_status_changed", "mode": "disconnected"})
+            return {"status": "ap_disabled"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to disable AP mode")
+    except Exception as e:
+        logger.error(f"Failed to disable AP mode: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

@@ -7,7 +7,10 @@ import {
   PowerIcon,
   InformationCircleIcon,
   ExclamationTriangleIcon,
-  SpeakerWaveIcon
+  SpeakerWaveIcon,
+  SignalIcon,
+  ShieldCheckIcon,
+  ArrowPathIcon
 } from '@heroicons/react/24/outline'
 import { useWebSocket } from '../hooks/useWebSocket'
 
@@ -17,8 +20,18 @@ const SettingsPage = () => {
   const [saving, setSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState(null)
 
+  // Network state
+  const [networkStatus, setNetworkStatus] = useState(null)
+  const [wifiNetworks, setWifiNetworks] = useState([])
+  const [selectedNetwork, setSelectedNetwork] = useState(null)
+  const [wifiPassword, setWifiPassword] = useState('')
+  const [networkLoading, setNetworkLoading] = useState(false)
+  const [networkMessage, setNetworkMessage] = useState(null)
+  const [scanning, setScanning] = useState(false)
+
   useEffect(() => {
     fetchSettings()
+    fetchNetworkStatus()
   }, [])
 
   const fetchSettings = async () => {
@@ -114,6 +127,123 @@ const SettingsPage = () => {
     }
   }
 
+  // Network management functions
+  const fetchNetworkStatus = async () => {
+    try {
+      const response = await fetch('/api/network/status')
+      if (response.ok) {
+        const status = await response.json()
+        setNetworkStatus(status)
+      }
+    } catch (error) {
+      console.error('Failed to fetch network status:', error)
+    }
+  }
+
+  const scanWifiNetworks = async () => {
+    setScanning(true)
+    try {
+      const response = await fetch('/api/network/scan')
+      if (response.ok) {
+        const networks = await response.json()
+        setWifiNetworks(networks)
+      }
+    } catch (error) {
+      console.error('Failed to scan WiFi networks:', error)
+      setNetworkMessage({ type: 'error', message: 'Failed to scan WiFi networks' })
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  const connectToWifi = async (ssid, password) => {
+    setNetworkLoading(true)
+    setNetworkMessage(null)
+    try {
+      const response = await fetch('/api/network/connect', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ ssid, password })
+      })
+
+      if (response.ok) {
+        setNetworkMessage({ type: 'success', message: `Connected to ${ssid}` })
+        setSelectedNetwork(null)
+        setWifiPassword('')
+        await fetchNetworkStatus()
+      } else {
+        const error = await response.json()
+        setNetworkMessage({ type: 'error', message: error.detail || 'Failed to connect' })
+      }
+    } catch (error) {
+      console.error('Failed to connect to WiFi:', error)
+      setNetworkMessage({ type: 'error', message: 'Failed to connect to WiFi' })
+    } finally {
+      setNetworkLoading(false)
+    }
+  }
+
+  const enableApMode = async () => {
+    setNetworkLoading(true)
+    setNetworkMessage(null)
+    try {
+      const response = await fetch('/api/network/ap/enable', {
+        method: 'POST'
+      })
+
+      if (response.ok) {
+        setNetworkMessage({ type: 'success', message: 'AP mode enabled (prismatron)' })
+        await fetchNetworkStatus()
+      } else {
+        const error = await response.json()
+        setNetworkMessage({ type: 'error', message: error.detail || 'Failed to enable AP mode' })
+      }
+    } catch (error) {
+      console.error('Failed to enable AP mode:', error)
+      setNetworkMessage({ type: 'error', message: 'Failed to enable AP mode' })
+    } finally {
+      setNetworkLoading(false)
+    }
+  }
+
+  const disableApMode = async () => {
+    setNetworkLoading(true)
+    setNetworkMessage(null)
+    try {
+      const response = await fetch('/api/network/ap/disable', {
+        method: 'POST'
+      })
+
+      if (response.ok) {
+        setNetworkMessage({ type: 'success', message: 'AP mode disabled' })
+        await fetchNetworkStatus()
+      } else {
+        const error = await response.json()
+        setNetworkMessage({ type: 'error', message: error.detail || 'Failed to disable AP mode' })
+      }
+    } catch (error) {
+      console.error('Failed to disable AP mode:', error)
+      setNetworkMessage({ type: 'error', message: 'Failed to disable AP mode' })
+    } finally {
+      setNetworkLoading(false)
+    }
+  }
+
+  const handleNetworkSelect = (network) => {
+    setSelectedNetwork(network)
+    setWifiPassword('')
+    setNetworkMessage(null)
+  }
+
+  const handleWifiConnect = () => {
+    if (selectedNetwork) {
+      connectToWifi(selectedNetwork.ssid, wifiPassword)
+    }
+  }
+
+  // System management functions
   const handleRestart = async () => {
     if (!confirm('Are you sure you want to restart the application? The system will be unavailable for a few seconds.')) {
       return
@@ -317,6 +447,199 @@ const SettingsPage = () => {
               <div className="w-11 h-6 bg-dark-700 peer-focus:outline-none rounded-retro peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-neon-green after:rounded-retro after:h-5 after:w-5 after:transition-all peer-checked:bg-neon-green peer-checked:bg-opacity-30"></div>
             </label>
           </div>
+        </div>
+      </div>
+
+      {/* Network Settings */}
+      <div className="retro-container">
+        <h3 className="text-lg font-retro text-neon-purple mb-4 flex items-center gap-2">
+          <WifiIcon className="w-5 h-5" />
+          NETWORK SETTINGS
+        </h3>
+
+        <div className="space-y-6">
+          {/* Current Network Status */}
+          <div>
+            <label className="block text-sm font-retro text-neon-cyan mb-2">
+              NETWORK STATUS
+            </label>
+            {networkStatus ? (
+              <div className="retro-input bg-dark-700 text-metal-silver">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <WifiIcon className="w-4 h-4" />
+                    <span className="font-mono text-sm">
+                      {networkStatus.mode.toUpperCase()}{networkStatus.ssid ? ` - ${networkStatus.ssid}` : ''}
+                    </span>
+                  </div>
+                  <div className={`px-2 py-1 rounded text-xs font-mono ${
+                    networkStatus.connected
+                      ? 'text-neon-green bg-neon-green bg-opacity-10'
+                      : 'text-neon-orange bg-neon-orange bg-opacity-10'
+                  }`}>
+                    {networkStatus.connected ? 'CONNECTED' : 'DISCONNECTED'}
+                  </div>
+                </div>
+                {networkStatus.ip_address && (
+                  <div className="mt-2 text-xs text-metal-silver font-mono">
+                    IP: {networkStatus.ip_address}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="retro-input bg-dark-700 text-metal-silver">
+                <span className="font-mono text-sm">Loading network status...</span>
+              </div>
+            )}
+          </div>
+
+          {/* AP Mode Toggle */}
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-sm font-retro text-neon-cyan">
+                ACCESS POINT MODE
+              </label>
+              <p className="text-xs text-metal-silver font-mono mt-1">
+                Create WiFi hotspot: "prismatron" (no password)
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              {networkStatus?.mode === 'ap' ? (
+                <button
+                  onClick={disableApMode}
+                  disabled={networkLoading}
+                  className="retro-button px-3 py-1 text-neon-orange text-sm font-retro font-bold disabled:opacity-50"
+                >
+                  DISABLE AP
+                </button>
+              ) : (
+                <button
+                  onClick={enableApMode}
+                  disabled={networkLoading}
+                  className="retro-button px-3 py-1 text-neon-purple text-sm font-retro font-bold disabled:opacity-50"
+                >
+                  ENABLE AP
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* WiFi Client Mode */}
+          {networkStatus?.mode !== 'ap' && (
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <label className="text-sm font-retro text-neon-cyan">
+                  WIFI NETWORKS
+                </label>
+                <button
+                  onClick={scanWifiNetworks}
+                  disabled={scanning}
+                  className="retro-button px-3 py-1 text-neon-cyan text-xs font-retro font-bold disabled:opacity-50 flex items-center gap-1"
+                >
+                  <ArrowPathIcon className={`w-3 h-3 ${scanning ? 'animate-spin' : ''}`} />
+                  {scanning ? 'SCANNING...' : 'SCAN'}
+                </button>
+              </div>
+
+              {wifiNetworks.length > 0 ? (
+                <div className="space-y-2 max-h-48 overflow-y-auto border border-metal-silver border-opacity-30 rounded-retro p-2">
+                  {wifiNetworks.map((network, index) => (
+                    <div
+                      key={index}
+                      onClick={() => handleNetworkSelect(network)}
+                      className={`p-3 border rounded-retro cursor-pointer transition-colors ${
+                        selectedNetwork?.ssid === network.ssid
+                          ? 'border-neon-cyan bg-neon-cyan bg-opacity-10'
+                          : 'border-metal-silver border-opacity-30 hover:border-neon-cyan hover:border-opacity-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <SignalIcon className="w-4 h-4 text-neon-cyan" />
+                          <span className="text-sm font-mono text-neon-cyan">{network.ssid}</span>
+                          {network.security !== 'open' && (
+                            <ShieldCheckIcon className="w-3 h-3 text-neon-orange" />
+                          )}
+                          {network.connected && (
+                            <span className="text-xs text-neon-green font-mono">CONNECTED</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-metal-silver font-mono">
+                            {network.signal_strength}%
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="retro-input bg-dark-700 text-metal-silver text-center py-4">
+                  <span className="font-mono text-sm">No networks found. Click SCAN to search.</span>
+                </div>
+              )}
+
+              {/* WiFi Connection Form */}
+              {selectedNetwork && (
+                <div className="retro-container border border-neon-cyan border-opacity-30 bg-neon-cyan bg-opacity-5">
+                  <h4 className="text-sm font-retro text-neon-cyan mb-3">
+                    CONNECT TO: {selectedNetwork.ssid}
+                  </h4>
+                  {selectedNetwork.security !== 'open' && (
+                    <div className="mb-3">
+                      <label className="block text-xs font-retro text-neon-cyan mb-1">
+                        PASSWORD
+                      </label>
+                      <input
+                        type="password"
+                        value={wifiPassword}
+                        onChange={(e) => setWifiPassword(e.target.value)}
+                        className="retro-input w-full"
+                        placeholder="Enter WiFi password"
+                      />
+                    </div>
+                  )}
+                  <div className="flex justify-end gap-2">
+                    <button
+                      onClick={() => setSelectedNetwork(null)}
+                      className="retro-button px-3 py-1 text-metal-silver text-xs font-retro font-bold"
+                    >
+                      CANCEL
+                    </button>
+                    <button
+                      onClick={handleWifiConnect}
+                      disabled={networkLoading || (selectedNetwork.security !== 'open' && !wifiPassword)}
+                      className="retro-button px-3 py-1 text-neon-green text-xs font-retro font-bold disabled:opacity-50"
+                    >
+                      {networkLoading ? 'CONNECTING...' : 'CONNECT'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Network Status Message */}
+          {networkMessage && (
+            <div className={`retro-container border ${
+              networkMessage.type === 'success'
+                ? 'border-neon-green border-opacity-50 bg-neon-green bg-opacity-10'
+                : 'border-neon-orange border-opacity-50 bg-neon-orange bg-opacity-10'
+            }`}>
+              <div className="flex items-center gap-3">
+                {networkMessage.type === 'success' ? (
+                  <InformationCircleIcon className="w-6 h-6 text-neon-green" />
+                ) : (
+                  <ExclamationTriangleIcon className="w-6 h-6 text-neon-orange" />
+                )}
+                <p className={`font-mono text-sm ${
+                  networkMessage.type === 'success' ? 'text-neon-green' : 'text-neon-orange'
+                }`}>
+                  {networkMessage.message}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
