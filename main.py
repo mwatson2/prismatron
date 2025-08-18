@@ -58,8 +58,22 @@ class ProcessManager:
         # Create a shared lock for inter-process synchronization of ControlState
         self.shared_control_lock = multiprocessing.Lock()
 
-        # Set the shared lock in ControlState before creating instances
+        # Create shared events for inter-process coordination
+        self.shared_shutdown_event = multiprocessing.Event()
+        self.shared_restart_event = multiprocessing.Event()
+        self.shared_reboot_event = multiprocessing.Event()
+        self.shared_config_updated_event = multiprocessing.Event()
+        self.shared_status_updated_event = multiprocessing.Event()
+
+        # Set the shared lock and events in ControlState before creating instances
         ControlState.set_shared_lock(self.shared_control_lock)
+        ControlState.set_shared_events(
+            self.shared_shutdown_event,
+            self.shared_restart_event,
+            self.shared_reboot_event,
+            self.shared_config_updated_event,
+            self.shared_status_updated_event,
+        )
 
         self.control_state = ControlState()
         self.shutdown_requested = False
@@ -149,9 +163,16 @@ class ProcessManager:
             def playlist_sync_worker():
                 """Playlist sync service worker."""
                 try:
-                    # Ensure the shared lock is set in the child process
-                    # (it should already be inherited, but this makes it explicit)
+                    # Ensure the shared lock and events are set in the child process
+                    # (they should already be inherited, but this makes it explicit)
                     ControlState.set_shared_lock(self.shared_control_lock)
+                    ControlState.set_shared_events(
+                        self.shared_shutdown_event,
+                        self.shared_restart_event,
+                        self.shared_reboot_event,
+                        self.shared_config_updated_event,
+                        self.shared_status_updated_event,
+                    )
 
                     # Setup logging for subprocess
                     import os
@@ -210,9 +231,16 @@ class ProcessManager:
             def web_server_worker():
                 """Web server process worker."""
                 try:
-                    # Ensure the shared lock is set in the child process
-                    # (it should already be inherited, but this makes it explicit)
+                    # Ensure the shared lock and events are set in the child process
+                    # (they should already be inherited, but this makes it explicit)
                     ControlState.set_shared_lock(self.shared_control_lock)
+                    ControlState.set_shared_events(
+                        self.shared_shutdown_event,
+                        self.shared_restart_event,
+                        self.shared_reboot_event,
+                        self.shared_config_updated_event,
+                        self.shared_status_updated_event,
+                    )
 
                     # Setup logging for subprocess
                     import os
@@ -270,9 +298,16 @@ class ProcessManager:
             def consumer_worker():
                 """Consumer process worker."""
                 try:
-                    # Ensure the shared lock is set in the child process
-                    # (it should already be inherited, but this makes it explicit)
+                    # Ensure the shared lock and events are set in the child process
+                    # (they should already be inherited, but this makes it explicit)
                     ControlState.set_shared_lock(self.shared_control_lock)
+                    ControlState.set_shared_events(
+                        self.shared_shutdown_event,
+                        self.shared_restart_event,
+                        self.shared_reboot_event,
+                        self.shared_config_updated_event,
+                        self.shared_status_updated_event,
+                    )
 
                     # Setup logging for subprocess
                     import os
@@ -364,9 +399,16 @@ class ProcessManager:
             def producer_worker():
                 """Producer process worker."""
                 try:
-                    # Ensure the shared lock is set in the child process
-                    # (it should already be inherited, but this makes it explicit)
+                    # Ensure the shared lock and events are set in the child process
+                    # (they should already be inherited, but this makes it explicit)
                     ControlState.set_shared_lock(self.shared_control_lock)
+                    ControlState.set_shared_events(
+                        self.shared_shutdown_event,
+                        self.shared_restart_event,
+                        self.shared_reboot_event,
+                        self.shared_config_updated_event,
+                        self.shared_status_updated_event,
+                    )
 
                     # Setup logging for subprocess
                     import os
@@ -471,16 +513,23 @@ class ProcessManager:
 
     def monitor_processes(self) -> None:
         """Monitor process health and handle control signals."""
+        logger.info("Starting process monitoring loop...")
+        monitor_count = 0
         while not self.shutdown_requested:
             try:
+                monitor_count += 1
+                # Log every 10 iterations for debugging
+                if monitor_count % 10 == 0:
+                    logger.info(f"Monitor loop iteration {monitor_count}")
+
                 # Check for control signals
-                if self.control_state.is_restart_requested():
-                    logger.info("Restart signal detected")
-                    if self.restart_system():
-                        logger.info("System restart completed successfully")
-                    else:
-                        logger.error("System restart failed")
-                    continue
+                restart_requested = self.control_state.is_restart_requested()
+                if restart_requested:
+                    logger.info("Restart signal detected - shutting down for systemd restart")
+                    self.stop_all_processes()
+                    logger.info("All processes stopped, exiting for restart...")
+                    # Exit with code 1 to trigger systemd restart (Restart=on-failure)
+                    sys.exit(1)
 
                 if self.control_state.is_reboot_requested():
                     logger.info("Reboot signal detected")

@@ -139,6 +139,13 @@ class ControlState:
     # Class-level shared lock that will be set by the main process
     _shared_lock: Optional[mp.Lock] = None
 
+    # Class-level shared events that will be set by the main process
+    _shared_shutdown_event: Optional[mp.Event] = None
+    _shared_restart_event: Optional[mp.Event] = None
+    _shared_reboot_event: Optional[mp.Event] = None
+    _shared_config_updated_event: Optional[mp.Event] = None
+    _shared_status_updated_event: Optional[mp.Event] = None
+
     @classmethod
     def set_shared_lock(cls, lock: mp.Lock) -> None:
         """
@@ -150,6 +157,33 @@ class ControlState:
         """
         cls._shared_lock = lock
         logger.info("Shared lock set for inter-process synchronization")
+
+    @classmethod
+    def set_shared_events(
+        cls,
+        shutdown_event: mp.Event,
+        restart_event: mp.Event,
+        reboot_event: mp.Event,
+        config_updated_event: mp.Event,
+        status_updated_event: mp.Event,
+    ) -> None:
+        """
+        Set the shared events to be used by all ControlState instances.
+        This must be called by the main process before creating subprocesses.
+
+        Args:
+            shutdown_event: Shared shutdown event
+            restart_event: Shared restart event
+            reboot_event: Shared reboot event
+            config_updated_event: Shared config update event
+            status_updated_event: Shared status update event
+        """
+        cls._shared_shutdown_event = shutdown_event
+        cls._shared_restart_event = restart_event
+        cls._shared_reboot_event = reboot_event
+        cls._shared_config_updated_event = config_updated_event
+        cls._shared_status_updated_event = status_updated_event
+        logger.info("Shared events set for inter-process coordination")
 
     def __init__(self, name: str = "prismatron_control"):
         """
@@ -173,12 +207,21 @@ class ControlState:
         self._start_time = time.time()
         self._is_creator = False  # Track if this instance created the shared memory
 
-        # Events for coordination
-        self._shutdown_event = mp.Event()
-        self._restart_event = mp.Event()
-        self._reboot_event = mp.Event()
-        self._config_updated_event = mp.Event()
-        self._status_updated_event = mp.Event()
+        # Use shared events if available, otherwise create local ones
+        if ControlState._shared_shutdown_event is not None:
+            self._shutdown_event = ControlState._shared_shutdown_event
+            self._restart_event = ControlState._shared_restart_event
+            self._reboot_event = ControlState._shared_reboot_event
+            self._config_updated_event = ControlState._shared_config_updated_event
+            self._status_updated_event = ControlState._shared_status_updated_event
+        else:
+            # Fallback to local events (will only work within same process)
+            self._shutdown_event = mp.Event()
+            self._restart_event = mp.Event()
+            self._reboot_event = mp.Event()
+            self._config_updated_event = mp.Event()
+            self._status_updated_event = mp.Event()
+            logger.warning("Using process-local events - inter-process event coordination may not work correctly")
 
         # Default status
         self._default_status = SystemStatus()
