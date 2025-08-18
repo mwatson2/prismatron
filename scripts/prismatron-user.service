@@ -1,0 +1,49 @@
+[Unit]
+Description=Prismatron LED Display System
+Documentation=https://github.com/mwatson2/prismatron
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+WorkingDirectory=/home/mark/dev/prismatron
+
+# Environment setup
+Environment="PYTHONPATH=/home/mark/dev/prismatron"
+Environment="PATH=/home/mark/dev/prismatron/env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+Environment="DISPLAY=:99"
+Environment="XDG_SESSION_TYPE=x11"
+Environment="LD_LIBRARY_PATH=/usr/local/cuda/lib64"
+Environment="CUDA_HOME=/usr/local/cuda"
+
+# Pre-start cleanup (remove stale shared memory)
+ExecStartPre=-/bin/bash -c 'rm -f /dev/shm/prismatron_* 2>/dev/null || true'
+# Set umask for group access to shared memory
+ExecStartPre=-/bin/bash -c 'umask 0002'
+
+# Main execution
+ExecStart=/home/mark/dev/prismatron/env/bin/python /home/mark/dev/prismatron/main.py --config /home/mark/dev/prismatron/config.json
+
+# Graceful shutdown
+ExecStop=/bin/kill -TERM $MAINPID
+TimeoutStopSec=30
+KillMode=mixed
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+StartLimitInterval=600
+StartLimitBurst=3
+
+# User service - inherits user permissions
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+MemoryMax=8G
+CPUQuota=200%
+
+[Install]
+WantedBy=default.target
