@@ -209,7 +209,6 @@ timing.csv
 timing/
 experiments/
 
-# Root-level PNG and LOG files (but keep prismatron.log)
+# Root-level PNG and LOG files
 /*.png
 /*.log
-!prismatron.log
