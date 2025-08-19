@@ -42,17 +42,19 @@ src/network/
 - [x] **Task 4**: Add WiFi configuration UI to Settings page
 - [x] **Task 5**: Create network scanning and connection components
 
-### Phase 3: System Configuration ✅ COMPLETED
-- [x] **Task 6**: Create systemd service for AP mode configuration
-- [x] **Task 7**: Write installation/setup script for network dependencies
+### Phase 3: Simplified Architecture ✅ COMPLETED (REVISED)
+- [x] **Task 6**: ~~Create systemd service~~ Removed - NetworkManager handles persistence
+- [x] **Task 7**: ~~Write installation script~~ Not needed - uses standard NetworkManager
+- [x] **Task 8**: Add persistence support to NetworkManager class
+- [x] **Task 9**: Implement priority-based startup preferences
 
 ### Phase 4: Integration ✅ COMPLETED
-- [x] **Task 8**: Add missing WiFiConnectRequest model to API server
-- [x] **Task 9**: Verify all API endpoints properly integrated
-- [x] **Task 10**: Confirm network manager initialization in API server
+- [x] **Task 10**: Add missing WiFiConnectRequest model to API server
+- [x] **Task 11**: Verify all API endpoints properly integrated
+- [x] **Task 12**: Confirm network manager initialization in API server
 
-### Phase 5: Testing (DEFERRED - DO NOT TEST NETWORK CHANGES)
-- [ ] **Task 11**: Test WiFi AP mode and client switching (MANUAL TESTING ONLY)
+### Phase 5: Testing (USE SAFE TESTING GUIDE)
+- [ ] **Task 13**: Test using NETWORK_SAFE_TESTING_GUIDE.md procedures
 
 ## Technical Specifications
 
@@ -100,14 +102,13 @@ src/network/
 7. Toggle back to AP mode when needed
 
 ## Safety Notes
-⚠️ **CRITICAL**: Do not test network configuration changes during development as this will disconnect the current session. All network functionality must be manually tested by user after implementation is complete.
+⚠️ **IMPORTANT**: Test network changes using the NETWORK_SAFE_TESTING_GUIDE.md from a physical terminal to avoid losing remote connectivity.
 
 ## Implementation Notes
-- Follow existing Prismatron code patterns and styling
-- Integrate with existing FastAPI backend architecture
-- Use existing retro UI components for consistency
-- Maintain error handling and logging patterns
-- No fallback implementations - log errors for debugging
+- Uses NetworkManager's built-in persistence - no systemd service needed
+- Connection priorities determine boot behavior (client > AP by default)
+- Integrate directly into main application startup
+- No installation script required - uses standard NetworkManager
 
 ---
 
@@ -116,53 +117,47 @@ src/network/
 ### Backend Components
 - ✅ `src/network/__init__.py` - Network module initialization
 - ✅ `src/network/models.py` - Data models for network management
-- ✅ `src/network/manager.py` - NetworkManager wrapper class
-- ✅ `src/web/api_server.py` - Added network API endpoints and models
+- ✅ `src/network/manager.py` - NetworkManager wrapper with persistence support
+- ✅ `src/web/api_server.py` - Network API endpoints
 
 ### Frontend Components  
-- ✅ `src/web/frontend/src/pages/SettingsPage.jsx` - Added Network Settings section
+- ✅ `src/web/frontend/src/pages/SettingsPage.jsx` - Network Settings UI
 
-### System Configuration
-- ✅ `scripts/prismatron-network.service` - systemd service definition
-- ✅ `scripts/network-startup.py` - Network initialization script
-- ✅ `scripts/network-shutdown.py` - Network cleanup script
-- ✅ `scripts/install-network-support.sh` - Installation and setup script
+### Documentation
+- ✅ `NETWORK_SAFE_TESTING_GUIDE.md` - Safe testing procedures
 
-## Installation Instructions
+## Simplified Architecture (No systemd service!)
 
-To install WiFi AP mode support on the Jetson Orin Nano:
+The NetworkManager class now handles persistence automatically:
 
-1. **Run the installation script as root:**
-   ```bash
-   sudo /mnt/dev/prismatron2/scripts/install-network-support.sh
-   ```
+1. **AP Mode**: Created with `autoconnect yes` and priority 50
+2. **Client Mode**: Connections have priority 100 (preferred on boot)
+3. **No service needed**: NetworkManager remembers and auto-connects
 
-2. **The script will:**
-   - Install required packages (hostapd, dnsmasq, python dependencies)
-   - Configure NetworkManager for AP mode support
-   - Install and enable the prismatron-network systemd service
-   - Set up log rotation and initial configuration
-   - Configure the system to start in AP mode by default
+## Usage in Application
 
-3. **After installation:**
-   - System will boot with SSID 'prismatron' (no password)
-   - Access web interface at http://192.168.4.1
-   - Use Network Settings to switch between AP and client modes
+```python
+# In main.py or api_server.py startup:
+from src.network.manager import NetworkManager
 
-4. **Service management:**
-   ```bash
-   # Check service status
-   sudo systemctl status prismatron-network
+async def startup():
+    nm = NetworkManager()
+    status = await nm.get_status()
 
-   # View logs
-   sudo journalctl -u prismatron-network -f
+    if not status.connected:
+        # Enable AP mode as fallback
+        await nm.enable_ap_mode(persist=True)
+```
 
-   # Restart service
-   sudo systemctl restart prismatron-network
-   ```
+## Testing Instructions
 
-**Last Updated**: 2025-08-13  
-**Status**: FULLY IMPLEMENTED - Ready for installation and testing
+1. **Follow NETWORK_SAFE_TESTING_GUIDE.md** from physical terminal
+2. **Test read-only operations first** (status, scan)
+3. **Use safety timer** when testing mode switches
+4. **Verify persistence** with connection priorities
+
+**Last Updated**: 2025-08-19
+**Status**: SIMPLIFIED & READY - Test using safe procedures
 
 ## Summary
 

@@ -94,11 +94,12 @@ class HardwareAccelerationCache:
 
             if result.returncode == 0:
                 decoders = result.stdout.lower()
-                self.available_decoders = {
-                    line.split()[1]
-                    for line in decoders.split("\n")
-                    if line.strip() and not line.startswith("---") and " " in line
-                }
+                self.available_decoders = set()
+                for line in decoders.split("\n"):
+                    if line.strip() and not line.startswith("---") and " " in line:
+                        parts = line.split()
+                        if len(parts) >= 2 and not parts[1].startswith("="):
+                            self.available_decoders.add(parts[1])
 
                 # Check for Jetson-specific hardware decoders (NVMPI or NVV4L2DEC)
                 if (

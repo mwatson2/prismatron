@@ -141,6 +141,9 @@ class FrameRenderer:
         self.current_item_first_frame_timestamp = None
         self.current_rendering_index = -1
 
+        # Track if we need to adjust timeline for a new playlist item
+        self._pending_timeline_adjustment = False
+
         # Beat boost logging state
         self._beat_boost_logged = False
 
@@ -374,8 +377,28 @@ class FrameRenderer:
         Returns:
             True if rendered successfully, False otherwise
         """
+        # Use the metadata from producer to check if this is the first frame of a new item
+        is_first_frame_of_new_item = metadata.get("is_first_frame_of_item", False) if metadata else False
+        playlist_item_index = metadata.get("playlist_item_index", -1) if metadata else -1
+
+        if is_first_frame_of_new_item and playlist_item_index >= 0:
+            logger.info(f"RENDERER: First frame of new playlist item {playlist_item_index} detected")
+
         if not self.first_frame_received:
             self.establish_wallclock_delta(frame_timestamp)
+        elif is_first_frame_of_new_item:
+            # First frame of a new item - check if we need to adjust timeline
+            current_wallclock = time.time()
+            test_target = frame_timestamp + self.get_adjusted_wallclock_delta()
+            lateness = current_wallclock - test_target
+
+            if lateness > 0.05:  # If more than 50ms late
+                # Adjust the wallclock delta to make this frame on-time
+                logger.warning(f"🎬 Adjusting timeline for new playlist item - frame was {lateness*1000:.1f}ms late")
+                self.wallclock_delta = current_wallclock - frame_timestamp
+                # Reset pause time since we're resetting the timeline
+                self.total_pause_time = 0.0
+                logger.info(f"New wallclock delta: {self.wallclock_delta:.3f}s")
 
         # Calculate target wallclock time with pause compensation
         target_wallclock = frame_timestamp + self.get_adjusted_wallclock_delta()
@@ -855,19 +878,27 @@ class FrameRenderer:
         """Check if renderer is initialized with timing delta."""
         return self.first_frame_received and self.wallclock_delta is not None
 
-    def is_frame_late(self, frame_timestamp: float, late_threshold_ms: float = 50.0) -> bool:
+    def is_frame_late(
+        self, frame_timestamp: float, late_threshold_ms: float = 50.0, metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
         """
         Check if a frame is already late for rendering.
 
         Args:
             frame_timestamp: Presentation timestamp of the frame
             late_threshold_ms: Threshold in milliseconds for considering a frame late
+            metadata: Optional frame metadata to check for first frame of new item
 
         Returns:
             True if frame is late and should be dropped, False if frame should be processed
         """
         if not self.is_initialized():
             # If renderer not initialized, we can't determine timing - process the frame
+            return False
+
+        # Use the metadata from producer to check if this is the first frame of a new item
+        if metadata and metadata.get("is_first_frame_of_item", False):
+            # First frame of new item - never consider it late (will adjust timeline instead)
             return False
 
         # Calculate target wallclock time with pause compensation

@@ -250,6 +250,12 @@ class ConsumerProcess:
         # Track last rendered playlist item index to detect transitions
         self._last_rendered_item_index = -1
 
+        # Track current playlist item for early drop decisions (changes before renderer sees it)
+        self._current_optimization_item_index = -1
+
+        # Track late frame dropping suspension for new items
+        self._suspend_late_frame_drops = False
+
         # Track renderer state for pause/resume handling
         self._last_renderer_state = None
 
@@ -288,7 +294,7 @@ class ConsumerProcess:
         self._frame_batch = []  # Accumulate frames for batch processing
         self._batch_metadata = []  # Metadata for each frame in batch
         self._batch_size = 8  # Target batch size
-        self._batch_timeout = 0.1  # Max time to wait for batch completion (seconds)
+        self._batch_timeout = 0.5  # Max time to wait for batch completion (seconds)
         self._last_batch_start_time = 0.0  # When current batch started accumulating
 
         # Setup signal handlers
@@ -397,8 +403,8 @@ class ConsumerProcess:
             actual_led_count = self._led_optimizer._actual_led_count
             logger.info(f"Using LED count from pattern: {actual_led_count}")
 
-            # Create LED buffer with actual LED count - increased to 16 for video startup latency
-            self._led_buffer = LEDBuffer(led_count=actual_led_count, buffer_size=16)
+            # Create LED buffer with actual LED count - increased to 20 for video startup latency
+            self._led_buffer = LEDBuffer(led_count=actual_led_count, buffer_size=20)
 
             # Configure WLED client with actual LED count
             wled_config = WLEDSinkConfig(
@@ -972,33 +978,52 @@ class ConsumerProcess:
                     )
                     return True
 
-            # Check if frame is already late - drop if so, otherwise proceed with optimization
-            if self._frame_renderer.is_frame_late(timestamp, late_threshold_ms=50.0):
-                # Frame already late - drop it
-                self._stats.frames_dropped_early += 1
-                self.pre_optimization_drop_rate_ewma.update(dropped=True)
+            # Track current playlist item for early drop decisions (changes before renderer sees it)
+            if playlist_item_index >= 0 and playlist_item_index != self._current_optimization_item_index:
+                self._current_optimization_item_index = playlist_item_index
+                self._suspend_late_frame_drops = False  # Reset suspension for new item
+                logger.info(f"CONSUMER: Processing playlist item {playlist_item_index} in optimization")
 
-                # Log dropped frame to timing data if configured (Case 2: Dropped before optimization)
-                if timing_data and self._timing_logger:
-                    # Case 2: Frame dropped before optimization - has frame info and buffer times, but no optimization/render times
-                    self._timing_logger.log_frame(timing_data)
-                    # Log early-dropped frame to timing data
+            # Check if we should drop this frame due to lateness
+            frame_is_late = self._frame_renderer.is_frame_late(timestamp, late_threshold_ms=50.0)
 
-                # Enhanced logging for late frame drops
-                current_time = time.time()
-                if self._frame_renderer.is_initialized():
-                    target_wallclock = timestamp + self._frame_renderer.get_adjusted_wallclock_delta()
-                    lateness_ms = (current_time - target_wallclock) * 1000
-                    mode_info = f"batch_size={len(self._frame_batch)}" if self.enable_batch_mode else "single"
-                    logger.info(
-                        f"⏰ FRAME DROPPED (late): Frame {timing_data.frame_index if timing_data else 'unknown'} - {lateness_ms:.1f}ms late, {mode_info}, drop_rate: {self.pre_optimization_drop_rate_ewma.get_rate_percentage():.1f}%"
+            if frame_is_late and not self._suspend_late_frame_drops:
+                if is_first_frame_of_item:
+                    # First frame of new item is late - suspend late drops until we catch up
+                    self._suspend_late_frame_drops = True
+                    logger.warning(
+                        f"🎬 First frame of new playlist item {playlist_item_index} is late - suspending late frame drops until caught up"
                     )
                 else:
-                    logger.info(
-                        f"⏰ FRAME DROPPED (uninitialized): Frame {timing_data.frame_index if timing_data else 'unknown'} - renderer not ready, drop_rate: {self.pre_optimization_drop_rate_ewma.get_rate_percentage():.1f}%"
-                    )
+                    # Frame already late - drop it
+                    self._stats.frames_dropped_early += 1
+                    self.pre_optimization_drop_rate_ewma.update(dropped=True)
 
-                return True
+                    # Log dropped frame to timing data if configured (Case 2: Dropped before optimization)
+                    if timing_data and self._timing_logger:
+                        # Case 2: Frame dropped before optimization - has frame info and buffer times, but no optimization/render times
+                        self._timing_logger.log_frame(timing_data)
+                        # Log early-dropped frame to timing data
+
+                    # Enhanced logging for late frame drops
+                    current_time = time.time()
+                    if self._frame_renderer.is_initialized():
+                        target_wallclock = timestamp + self._frame_renderer.get_adjusted_wallclock_delta()
+                        lateness_ms = (current_time - target_wallclock) * 1000
+                        mode_info = f"batch_size={len(self._frame_batch)}" if self.enable_batch_mode else "single"
+                        logger.info(
+                            f"⏰ FRAME DROPPED (late): Frame {timing_data.frame_index if timing_data else 'unknown'} - {lateness_ms:.1f}ms late, {mode_info}, drop_rate: {self.pre_optimization_drop_rate_ewma.get_rate_percentage():.1f}%"
+                        )
+                    else:
+                        logger.info(
+                            f"⏰ FRAME DROPPED (uninitialized): Frame {timing_data.frame_index if timing_data else 'unknown'} - renderer not ready, drop_rate: {self.pre_optimization_drop_rate_ewma.get_rate_percentage():.1f}%"
+                        )
+
+                    return True
+            elif not frame_is_late and self._suspend_late_frame_drops:
+                # Frame is not late and we were suspending drops - we've caught up
+                self._suspend_late_frame_drops = False
+                logger.warning("⏰ Caught up with timeline - resuming normal late frame dropping")
 
             # Validate frame shape
             if frame_array.shape != (FRAME_HEIGHT, FRAME_WIDTH, FRAME_CHANNELS):
