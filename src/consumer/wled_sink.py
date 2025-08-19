@@ -216,7 +216,7 @@ class WLEDSink:
                         # Only log connection failure if within first minute
                         elapsed_minutes = (time.time() - self._error_message_start_time) / 60.0
                         if elapsed_minutes < self._silent_after_minutes:
-                            logger.error(
+                            logger.debug(
                                 f"Failed to connect to WLED controller at {self.config.host}:{self.config.port}"
                             )
                         self.disconnect()
@@ -271,10 +271,10 @@ class WLEDSink:
                 self.socket = None
 
         self.is_connected = False
-        # Only log disconnect message if within first minute
+        # Only log disconnect message if within first minute (debug level to reduce noise)
         elapsed_minutes = (time.time() - self._error_message_start_time) / 60.0
         if elapsed_minutes < self._silent_after_minutes:
-            logger.info("Disconnected from WLED controller")
+            logger.debug("Disconnected from WLED controller")
 
     def _send_query(self) -> Tuple[bool, Optional[Dict[str, Any]]]:
         """

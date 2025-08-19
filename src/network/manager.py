@@ -24,10 +24,42 @@ class NetworkManager:
     """Manages WiFi connections and AP mode using NetworkManager."""
 
     CONFIG_FILE = "/etc/prismatron/network-config.json"
-    INTERFACE = "wlan0"
 
     def __init__(self):
         self.config = self._load_config()
+        self.interface = self._detect_wifi_interface()
+
+    def _detect_wifi_interface(self) -> str:
+        """Detect the WiFi interface name."""
+        try:
+            result = subprocess.run(
+                ["nmcli", "--terse", "--fields", "DEVICE,TYPE", "device", "status"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            for line in result.stdout.strip().split("\n"):
+                if line:
+                    device, device_type = line.split(":")
+                    if device_type == "wifi":
+                        logger.info(f"Detected WiFi interface: {device}")
+                        return device
+
+            # Fallback to common names
+            for interface in ["wlP1p1s0", "wlan0", "wlo1"]:
+                try:
+                    subprocess.run(["nmcli", "device", "show", interface], capture_output=True, check=True)
+                    logger.info(f"Found WiFi interface: {interface}")
+                    return interface
+                except subprocess.CalledProcessError:
+                    continue
+
+            raise NetworkManagerError("No WiFi interface found")
+
+        except Exception as e:
+            logger.warning(f"Failed to detect WiFi interface: {e}, using fallback wlP1p1s0")
+            return "wlP1p1s0"
 
     def _load_config(self) -> NetworkConfig:
         """Load network configuration from file."""
@@ -83,7 +115,7 @@ class NetworkManager:
         """Get current network status."""
         try:
             # Get interface status
-            result = await self._run_command(["nmcli", "device", "show", self.INTERFACE])
+            result = await self._run_command(["nmcli", "device", "show", self.interface])
             output = result.stdout.decode()
 
             # Parse status
@@ -118,7 +150,7 @@ class NetworkManager:
             return NetworkStatus(
                 mode=mode,
                 connected=connected,
-                interface=self.INTERFACE,
+                interface=self.interface,
                 ip_address=ip_address,
                 ssid=ssid,
                 signal_strength=signal_strength,
@@ -128,13 +160,17 @@ class NetworkManager:
 
         except Exception as e:
             logger.error(f"Failed to get network status: {e}")
-            return NetworkStatus(mode=NetworkMode.DISCONNECTED, connected=False, interface=self.INTERFACE)
+            return NetworkStatus(mode=NetworkMode.DISCONNECTED, connected=False, interface=self.interface)
 
     async def scan_wifi(self) -> List[WiFiNetwork]:
         """Scan for available WiFi networks."""
         try:
-            # Trigger scan
-            await self._run_command(["nmcli", "device", "wifi", "rescan"])
+            # Try to trigger scan, but continue even if it fails due to permissions
+            try:
+                await self._run_command(["nmcli", "device", "wifi", "rescan"])
+                logger.debug("WiFi rescan completed")
+            except NetworkManagerError as e:
+                logger.warning(f"WiFi rescan failed (using cached results): {e}")
 
             # Get scan results
             result = await self._run_command(
@@ -203,7 +239,7 @@ class NetworkManager:
             cmd = ["nmcli", "device", "wifi", "connect", ssid]
             if password:
                 cmd.extend(["password", password])
-            cmd.extend(["ifname", self.INTERFACE])
+            cmd.extend(["ifname", self.interface])
 
             await self._run_command(cmd)
 
@@ -256,7 +292,7 @@ class NetworkManager:
                 "type",
                 "wifi",
                 "ifname",
-                self.INTERFACE,
+                self.interface,
                 "con-name",
                 f"{ap_config.ssid}-hotspot",
                 "autoconnect",

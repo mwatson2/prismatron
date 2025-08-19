@@ -70,9 +70,9 @@ install_python_deps() {
     log_info "Installing Python dependencies..."
 
     # Install in the virtual environment if it exists, otherwise system-wide
-    if [[ -f "/mnt/dev/prismatron2/env/bin/activate" ]]; then
+    if [[ -f "/mnt/dev/prismatron/env/bin/activate" ]]; then
         log_info "Installing in virtual environment..."
-        source /mnt/dev/prismatron2/env/bin/activate
+        source /mnt/dev/prismatron/env/bin/activate
         pip install python-networkmanager asyncio-subprocess
     else
         log_info "Installing system-wide..."
@@ -103,11 +103,11 @@ install_service() {
     log_info "Installing network management service..."
 
     # Copy service file
-    cp /mnt/dev/prismatron2/scripts/prismatron-network.service /etc/systemd/system/
+    cp /mnt/dev/prismatron/scripts/prismatron-network.service /etc/systemd/system/
 
     # Copy startup/shutdown scripts
-    cp /mnt/dev/prismatron2/scripts/network-startup.py /opt/prismatron/scripts/
-    cp /mnt/dev/prismatron2/scripts/network-shutdown.py /opt/prismatron/scripts/
+    cp /mnt/dev/prismatron/scripts/network-startup.py /opt/prismatron/scripts/
+    cp /mnt/dev/prismatron/scripts/network-shutdown.py /opt/prismatron/scripts/
 
     # Make scripts executable
     chmod +x /opt/prismatron/scripts/network-startup.py

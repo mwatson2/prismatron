@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 # Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, "/mnt/dev/prismatron/src")
 
 from src.network import NetworkManager
 from src.network.models import NetworkMode
