@@ -349,7 +349,7 @@ def manage_uploads_playlist(new_item: PlaylistItem) -> None:
         "name": new_item.name,
         "type": new_item.type,
         "duration": new_item.duration or (10.0 if new_item.type == "image" else None),
-        "order": len(playlist_data["items"]),
+        "order": 0,  # New items go to the beginning
         "transition_in": {"type": transition_in.type, "parameters": transition_in.parameters},
         "transition_out": {"type": transition_out.type, "parameters": transition_out.parameters},
         "file_path": new_item.file_path,
@@ -359,12 +359,12 @@ def manage_uploads_playlist(new_item: PlaylistItem) -> None:
     # Track items that will be removed for live update
     items_to_remove = []
 
-    # Add new item to end of playlist
-    playlist_data["items"].append(playlist_item)
+    # Add new item to beginning of playlist (most recent uploads first)
+    playlist_data["items"].insert(0, playlist_item)
 
-    # Remove oldest items if exceeding max count
+    # Remove oldest items if exceeding max count (oldest are now at the end)
     while len(playlist_data["items"]) > UPLOADS_PLAYLIST_MAX_ITEMS:
-        oldest_item = playlist_data["items"].pop(0)
+        oldest_item = playlist_data["items"].pop(-1)  # Remove from end (oldest)
         items_to_remove.append(oldest_item)
 
         # Delete the oldest file from uploads directory
@@ -413,6 +413,47 @@ def manage_uploads_playlist(new_item: PlaylistItem) -> None:
 
         except Exception as e:
             logger.warning(f"Failed to add new item to live playlist: {e}")
+
+    # If no playlist is currently playing, auto-load and start the Uploads Playlist
+    elif current_playlist_file is None and playlist_sync_client and playlist_sync_client.connected:
+        logger.info("No playlist currently playing - auto-loading and starting Uploads Playlist")
+        try:
+            # Load the uploads playlist
+            current_playlist_file = UPLOADS_PLAYLIST_NAME
+
+            # Clear current playlist and add all uploads playlist items
+            playlist_sync_client.clear_playlist()
+
+            # Add all items from uploads playlist to live playlist
+            for item_data in playlist_data["items"]:
+                try:
+                    # Convert to PlaylistItem for sync
+                    live_item = PlaylistItem(
+                        id=item_data["id"],
+                        name=item_data["name"],
+                        type=item_data["type"],
+                        file_path=item_data["file_path"],
+                        duration=item_data["duration"],
+                        order=item_data["order"],
+                        transition_in=TransitionConfig(**item_data["transition_in"]),
+                        transition_out=TransitionConfig(**item_data["transition_out"]),
+                    )
+
+                    sync_item = api_item_to_sync_item(live_item)
+                    playlist_sync_client.add_item(sync_item)
+
+                except Exception as e:
+                    logger.warning(f"Failed to add uploads playlist item to live playlist: {e}")
+
+            # Start playing the uploads playlist
+            if playlist_sync_client.play():
+                logger.info("Successfully auto-loaded and started Uploads Playlist")
+            else:
+                logger.warning("Failed to start Uploads Playlist after auto-loading")
+
+        except Exception as e:
+            logger.warning(f"Failed to auto-load and start Uploads Playlist: {e}")
+            current_playlist_file = None
 
 
 class EffectPreset(BaseModel):
