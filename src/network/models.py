@@ -76,9 +76,7 @@ class ClientConfig:
 
 @dataclass
 class NetworkConfig:
-    """Complete network configuration."""
+    """Network preferences and credentials (not current state)."""
 
-    mode: NetworkMode
     ap_config: APConfig
     client_config: Optional[ClientConfig] = None
-    startup_mode: NetworkMode = NetworkMode.AP

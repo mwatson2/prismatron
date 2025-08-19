@@ -993,6 +993,34 @@ def main():
         logger.info("System started successfully!")
         logger.info(f"Web interface available at http://{args.web_host}:{args.web_port}")
 
+        # Ensure network connectivity (run in background)
+        import asyncio
+
+        from src.network.manager import NetworkManager
+
+        async def setup_network():
+            """Setup network connectivity in background."""
+            try:
+                nm = NetworkManager()
+                mode = await nm.ensure_connectivity(startup_delay=10)
+                if mode == "client":
+                    logger.info("Network startup complete - WiFi client mode active")
+                elif mode == "ap":
+                    logger.info("Network startup complete - AP mode active (connect to 'prismatron' WiFi)")
+                else:
+                    logger.warning("Network startup failed - no connectivity available")
+            except Exception as e:
+                logger.error(f"Network startup error: {e}")
+
+        # Start network setup in background (don't block main process)
+        import threading
+
+        def run_network_setup():
+            asyncio.run(setup_network())
+
+        network_thread = threading.Thread(target=run_network_setup, daemon=True)
+        network_thread.start()
+
         # Monitor processes
         manager.monitor_processes()
 

@@ -24,6 +24,7 @@ class NetworkManager:
     """Manages WiFi connections and AP mode using NetworkManager."""
 
     CONFIG_FILE = "/etc/prismatron/network-config.json"
+    AP_CONNECTION_NAME = "prismatron-ap"  # Consistent connection name for AP mode
 
     def __init__(self):
         self.config = self._load_config()
@@ -62,34 +63,41 @@ class NetworkManager:
             return "wlP1p1s0"
 
     def _load_config(self) -> NetworkConfig:
-        """Load network configuration from file."""
+        """Load network preferences from file."""
         try:
             if Path(self.CONFIG_FILE).exists():
                 with open(self.CONFIG_FILE) as f:
                     data = json.load(f)
                     return NetworkConfig(
-                        mode=NetworkMode(data.get("mode", "ap")),
                         ap_config=APConfig(**data.get("ap_config", {})),
                         client_config=ClientConfig(**data["client_config"]) if data.get("client_config") else None,
-                        startup_mode=NetworkMode(data.get("startup_mode", "ap")),
                     )
         except Exception as e:
             logger.warning(f"Failed to load config: {e}, using defaults")
 
-        return NetworkConfig(mode=NetworkMode.AP, ap_config=APConfig(), startup_mode=NetworkMode.AP)
+        return NetworkConfig(ap_config=APConfig())
 
     def _save_config(self) -> None:
-        """Save network configuration to file."""
+        """Save network preferences to file."""
         try:
             Path(self.CONFIG_FILE).parent.mkdir(parents=True, exist_ok=True)
             with open(self.CONFIG_FILE, "w") as f:
                 json.dump(asdict(self.config), f, indent=2)
         except Exception as e:
             logger.error(f"Failed to save config: {e}")
-            raise NetworkManagerError(f"Failed to save configuration: {e}") from e
+            # Don't raise - preferences saving is not critical for operation
+            logger.warning("Continuing without saving preferences")
 
-    async def _run_command(self, cmd: List[str], check: bool = True) -> subprocess.CompletedProcess:
-        """Run a shell command asynchronously."""
+    async def _run_command(
+        self, cmd: List[str], check: bool = True, try_sudo: bool = False
+    ) -> subprocess.CompletedProcess:
+        """Run a shell command asynchronously.
+
+        Args:
+            cmd: Command and arguments to run
+            check: If True, raise exception on non-zero exit code
+            try_sudo: If True, try with sudo if regular command fails due to permissions
+        """
         try:
             logger.debug(f"Running command: {' '.join(cmd)}")
             process = await asyncio.create_subprocess_exec(
@@ -101,6 +109,13 @@ class NetworkManager:
 
             if check and result.returncode != 0:
                 error_msg = stderr.decode().strip() or stdout.decode().strip()
+
+                # Try sudo if requested and permission error detected
+                if try_sudo and ("Insufficient privileges" in error_msg or "not authorized" in error_msg.lower()):
+                    logger.debug(f"Trying command with sudo: {' '.join(cmd)}")
+                    sudo_cmd = ["sudo"] + cmd
+                    return await self._run_command(sudo_cmd, check=check, try_sudo=False)  # Avoid infinite recursion
+
                 logger.error(f"Command failed: {' '.join(cmd)}, error: {error_msg}")
                 raise NetworkManagerError(f"Command failed: {error_msg}")
 
@@ -167,10 +182,10 @@ class NetworkManager:
         try:
             # Try to trigger scan, but continue even if it fails due to permissions
             try:
-                await self._run_command(["nmcli", "device", "wifi", "rescan"])
+                await self._run_command(["nmcli", "device", "wifi", "rescan"], check=False, try_sudo=True)
                 logger.debug("WiFi rescan completed")
-            except NetworkManagerError as e:
-                logger.warning(f"WiFi rescan failed (using cached results): {e}")
+            except Exception:
+                logger.debug("WiFi rescan not available (using cached results)")
 
             # Get scan results
             result = await self._run_command(
@@ -184,14 +199,26 @@ class NetworkManager:
                 if not line:
                     continue
 
+                # Handle escaped colons in BSSID by replacing them temporarily
+                line = line.replace(r"\:", "COLON_PLACEHOLDER")
                 parts = line.split(":")
+
                 if len(parts) >= 6:
+                    # Restore colons in BSSID
                     ssid = parts[0].strip()
-                    bssid = parts[1].strip()
+                    bssid = parts[1].replace("COLON_PLACEHOLDER", ":").strip()
                     signal = int(parts[2]) if parts[2].isdigit() else 0
-                    frequency = int(parts[3]) if parts[3].isdigit() else 0
+
+                    # Parse frequency field (e.g., "2437 MHz" or "5280 MHz")
+                    freq_str = parts[3].strip()
+                    frequency = 0
+                    if freq_str:
+                        freq_parts = freq_str.split()
+                        if freq_parts and freq_parts[0].isdigit():
+                            frequency = int(freq_parts[0])
+
                     security_str = parts[4].strip().lower()
-                    active = parts[5].strip() == "yes"
+                    active = parts[5].strip().lower() == "yes"
 
                     # Skip duplicates and empty SSIDs
                     if not ssid or ssid in seen_ssids:
@@ -229,8 +256,14 @@ class NetworkManager:
             logger.error(f"Failed to scan WiFi: {e}")
             raise NetworkManagerError(f"WiFi scan failed: {e}") from e
 
-    async def connect_wifi(self, ssid: str, password: Optional[str] = None) -> bool:
-        """Connect to a WiFi network."""
+    async def connect_wifi(self, ssid: str, password: Optional[str] = None, persist: bool = True) -> bool:
+        """Connect to a WiFi network.
+
+        Args:
+            ssid: Network SSID to connect to
+            password: Network password (if required)
+            persist: If True, connection will auto-connect on boot (default: True)
+        """
         try:
             # Disconnect current connections first
             await self.disconnect()
@@ -241,14 +274,38 @@ class NetworkManager:
                 cmd.extend(["password", password])
             cmd.extend(["ifname", self.interface])
 
-            await self._run_command(cmd)
+            await self._run_command(cmd, try_sudo=True)
 
-            # Update configuration
+            # Set autoconnect and priority if needed
+            if persist:
+                await self._run_command(
+                    [
+                        "nmcli",
+                        "connection",
+                        "modify",
+                        ssid,
+                        "connection.autoconnect",
+                        "yes",
+                        "connection.autoconnect-priority",
+                        "100",  # Higher priority than AP mode
+                    ],
+                    try_sudo=True,
+                )
+                logger.info(f"Set {ssid} to auto-connect on boot")
+
+            # Wait a moment and verify connection is established
+            await asyncio.sleep(2)  # Give NetworkManager time to establish connection
+
+            # Verify we're actually connected to the target network
+            status = await self.get_status()
+            if not status.connected or status.ssid != ssid:
+                raise NetworkManagerError(f"Connection verification failed - not connected to {ssid}")
+
+            # Save client credentials for future use
             self.config.client_config = ClientConfig(ssid=ssid, password=password)
-            self.config.mode = NetworkMode.CLIENT
             self._save_config()
 
-            logger.info(f"Successfully connected to WiFi: {ssid}")
+            logger.info(f"Successfully connected to WiFi: {ssid} (persist={persist})")
             return True
 
         except Exception as e:
@@ -266,7 +323,7 @@ class NetworkManager:
             connections = result.stdout.decode().strip().split("\n")
             for connection in connections:
                 if connection.strip():
-                    await self._run_command(["nmcli", "connection", "down", connection.strip()])
+                    await self._run_command(["nmcli", "connection", "down", connection.strip()], try_sudo=True)
 
             logger.info("Disconnected from network")
             return True
@@ -275,8 +332,12 @@ class NetworkManager:
             logger.error(f"Failed to disconnect: {e}")
             return False
 
-    async def enable_ap_mode(self) -> bool:
-        """Enable WiFi access point mode."""
+    async def enable_ap_mode(self, persist: bool = True) -> bool:
+        """Enable WiFi access point mode.
+
+        Args:
+            persist: If True, AP mode will auto-start on boot (default: True)
+        """
         try:
             # Disconnect from any current connections
             await self.disconnect()
@@ -284,49 +345,79 @@ class NetworkManager:
             # Create hostapd configuration
             ap_config = self.config.ap_config
 
-            # Create connection with nmcli
-            cmd = [
-                "nmcli",
-                "connection",
-                "add",
-                "type",
-                "wifi",
-                "ifname",
-                self.interface,
-                "con-name",
-                f"{ap_config.ssid}-hotspot",
-                "autoconnect",
-                "no",
-                "ssid",
-                ap_config.ssid,
-                "mode",
-                "ap",
-                "802-11-wireless.band",
-                "bg",
-                "802-11-wireless.channel",
-                str(ap_config.channel),
-                "ipv4.method",
-                "shared",
-                "ipv4.address",
-                f"{ap_config.ip_address}/24",
-            ]
+            # Check if AP connection already exists
+            check_result = await self._run_command(
+                ["nmcli", "connection", "show", self.AP_CONNECTION_NAME], check=False
+            )
 
-            # Add password if configured
-            if ap_config.password:
-                cmd.extend(
-                    ["802-11-wireless-security.key-mgmt", "wpa-psk", "802-11-wireless-security.psk", ap_config.password]
+            if check_result.returncode == 0:
+                # Connection exists, update it and activate
+                logger.info("AP connection exists, updating settings...")
+
+                # Update autoconnect setting
+                await self._run_command(
+                    [
+                        "nmcli",
+                        "connection",
+                        "modify",
+                        self.AP_CONNECTION_NAME,
+                        "connection.autoconnect",
+                        "yes" if persist else "no",
+                        "connection.autoconnect-priority",
+                        "50",  # Lower priority than client connections
+                    ],
+                    try_sudo=True,
                 )
+            else:
+                # Create new connection with nmcli
+                cmd = [
+                    "nmcli",
+                    "connection",
+                    "add",
+                    "type",
+                    "wifi",
+                    "ifname",
+                    self.interface,
+                    "con-name",
+                    self.AP_CONNECTION_NAME,
+                    "autoconnect",
+                    "yes" if persist else "no",  # KEY CHANGE: Enable persistence by default
+                    "connection.autoconnect-priority",
+                    "50",  # Lower priority so client connections are preferred
+                    "ssid",
+                    ap_config.ssid,
+                    "mode",
+                    "ap",
+                    "802-11-wireless.band",
+                    "bg",
+                    "802-11-wireless.channel",
+                    str(ap_config.channel),
+                    "ipv4.method",
+                    "shared",
+                    "ipv4.address",
+                    f"{ap_config.ip_address}/24",
+                ]
 
-            await self._run_command(cmd)
+                # Add password if configured
+                if ap_config.password:
+                    cmd.extend(
+                        [
+                            "802-11-wireless-security.key-mgmt",
+                            "wpa-psk",
+                            "802-11-wireless-security.psk",
+                            ap_config.password,
+                        ]
+                    )
+
+                await self._run_command(cmd, try_sudo=True)
 
             # Activate the connection
-            await self._run_command(["nmcli", "connection", "up", f"{ap_config.ssid}-hotspot"])
+            await self._run_command(["nmcli", "connection", "up", self.AP_CONNECTION_NAME], try_sudo=True)
 
-            # Update configuration
-            self.config.mode = NetworkMode.AP
+            # Save preferences (AP config might have been updated)
             self._save_config()
 
-            logger.info(f"AP mode enabled: {ap_config.ssid}")
+            logger.info(f"AP mode enabled: {ap_config.ssid} (persist={persist})")
             return True
 
         except Exception as e:
@@ -334,14 +425,19 @@ class NetworkManager:
             raise NetworkManagerError(f"AP mode activation failed: {e}") from e
 
     async def disable_ap_mode(self) -> bool:
-        """Disable WiFi access point mode."""
+        """Disable WiFi access point mode and remove autoconnect."""
         try:
             # Disconnect AP connection
-            ap_name = f"{self.config.ap_config.ssid}-hotspot"
-            await self._run_command(["nmcli", "connection", "down", ap_name], check=False)
+            await self._run_command(
+                ["nmcli", "connection", "down", self.AP_CONNECTION_NAME], check=False, try_sudo=True
+            )
 
-            # Delete AP connection
-            await self._run_command(["nmcli", "connection", "delete", ap_name], check=False)
+            # Disable autoconnect instead of deleting (preserves settings)
+            await self._run_command(
+                ["nmcli", "connection", "modify", self.AP_CONNECTION_NAME, "connection.autoconnect", "no"],
+                check=False,
+                try_sudo=True,
+            )
 
             logger.info("AP mode disabled")
             return True
@@ -349,6 +445,55 @@ class NetworkManager:
         except Exception as e:
             logger.error(f"Failed to disable AP mode: {e}")
             return False
+
+    async def ensure_connectivity(self, startup_delay: int = 10) -> str:
+        """Ensure network connectivity on startup.
+
+        Waits for system to establish connections, then checks if connected.
+        If no connection exists, enables AP mode as fallback.
+
+        Args:
+            startup_delay: Seconds to wait for system to establish connections
+
+        Returns:
+            "client" if connected to WiFi, "ap" if AP mode was enabled
+        """
+        logger.info(f"Checking network connectivity in {startup_delay} seconds...")
+        await asyncio.sleep(startup_delay)
+
+        try:
+            # Check current network status
+            status = await self.get_status()
+
+            if status.connected and status.mode == NetworkMode.CLIENT:
+                logger.info(f"Network connectivity OK - connected to {status.ssid} ({status.ip_address})")
+                return "client"
+
+            elif status.mode == NetworkMode.AP:
+                logger.info(f"Already in AP mode - network available as {self.config.ap_config.ssid}")
+                return "ap"
+
+            else:
+                logger.info("No network connectivity detected - enabling AP mode as fallback")
+                success = await self.enable_ap_mode(persist=True)
+
+                if success:
+                    logger.info(f"AP mode enabled - network available as {self.config.ap_config.ssid}")
+                    return "ap"
+                else:
+                    logger.error("Failed to enable AP mode - no network connectivity available")
+                    return "disconnected"
+
+        except Exception as e:
+            logger.error(f"Error checking network connectivity: {e}")
+            try:
+                # Try to enable AP mode as last resort
+                logger.info("Attempting AP mode as emergency fallback")
+                await self.enable_ap_mode(persist=True)
+                return "ap"
+            except Exception:
+                logger.error("Emergency AP mode failed - no network available")
+                return "disconnected"
 
     async def switch_to_client_mode(self, ssid: str, password: Optional[str] = None) -> bool:
         """Switch from AP mode to client mode."""
@@ -386,3 +531,94 @@ class NetworkManager:
             if hasattr(self.config.ap_config, key):
                 setattr(self.config.ap_config, key, value)
         self._save_config()
+
+    async def set_startup_preference(self, prefer_ap: bool = False) -> bool:
+        """Set network startup preference.
+
+        Args:
+            prefer_ap: If True, prefer AP mode on boot. If False, prefer saved WiFi.
+
+        Returns:
+            True if preference was set successfully
+        """
+        try:
+            if prefer_ap:
+                # Set AP mode to higher priority
+                await self._run_command(
+                    [
+                        "nmcli",
+                        "connection",
+                        "modify",
+                        self.AP_CONNECTION_NAME,
+                        "connection.autoconnect-priority",
+                        "200",
+                    ],
+                    check=False,
+                )
+
+                # Lower priority for all client connections
+                result = await self._run_command(
+                    ["nmcli", "--terse", "--fields", "NAME,TYPE", "connection", "show"], check=False
+                )
+
+                for line in result.stdout.decode().strip().split("\n"):
+                    if "802-11-wireless" in line and self.AP_CONNECTION_NAME not in line:
+                        conn_name = line.split(":")[0]
+                        await self._run_command(
+                            ["nmcli", "connection", "modify", conn_name, "connection.autoconnect-priority", "50"],
+                            check=False,
+                        )
+
+                logger.info("Set startup preference to AP mode")
+            else:
+                # Set AP mode to lower priority
+                await self._run_command(
+                    ["nmcli", "connection", "modify", self.AP_CONNECTION_NAME, "connection.autoconnect-priority", "50"],
+                    check=False,
+                )
+
+                # Higher priority for client connections
+                if self.config.client_config and self.config.client_config.ssid:
+                    await self._run_command(
+                        [
+                            "nmcli",
+                            "connection",
+                            "modify",
+                            self.config.client_config.ssid,
+                            "connection.autoconnect-priority",
+                            "100",
+                        ],
+                        check=False,
+                    )
+
+                logger.info("Set startup preference to client mode")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to set startup preference: {e}")
+            return False
+
+    async def get_saved_connections(self) -> List[str]:
+        """Get list of saved WiFi connections.
+
+        Returns:
+            List of saved connection names (SSIDs)
+        """
+        try:
+            result = await self._run_command(
+                ["nmcli", "--terse", "--fields", "NAME,TYPE", "connection", "show"], check=False
+            )
+
+            connections = []
+            for line in result.stdout.decode().strip().split("\n"):
+                if "802-11-wireless" in line:
+                    conn_name = line.split(":")[0]
+                    if conn_name != self.AP_CONNECTION_NAME:
+                        connections.append(conn_name)
+
+            return connections
+
+        except Exception as e:
+            logger.error(f"Failed to get saved connections: {e}")
+            return []
