@@ -440,7 +440,7 @@ const SettingsPage = () => {
             <label className="relative inline-flex items-center cursor-pointer">
               <input
                 type="checkbox"
-                checked={currentSettings.audio_reactive_enabled || false}
+                checked={!!currentSettings.audio_reactive_enabled}
                 onChange={(e) => setAudioReactiveEnabled(e.target.checked)}
                 className="sr-only peer"
               />
