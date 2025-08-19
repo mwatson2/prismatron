@@ -233,6 +233,105 @@ def save_uploads_playlist(playlist_data: Dict) -> None:
         logger.error(f"Failed to save uploads playlist: {e}")
 
 
+async def periodic_upload_cleanup_task():
+    """Background task to periodically clean up old upload files every 10 minutes."""
+    while True:
+        try:
+            # Wait 10 minutes between cleanups
+            await asyncio.sleep(10 * 60)  # 10 minutes = 600 seconds
+
+            # Run the cleanup
+            cleanup_old_uploads()
+
+        except Exception as e:
+            logger.error(f"Error in periodic upload cleanup task: {e}")
+
+
+def cleanup_old_uploads() -> None:
+    """
+    Remove files from uploads folder that are older than 24 hours.
+    Also removes them from uploads playlist and syncs with live playlist.
+    """
+    try:
+        current_time = time.time()
+        cutoff_time = current_time - (24 * 60 * 60)  # 24 hours ago
+
+        items_to_remove = []
+        files_removed_count = 0
+
+        # Check files in uploads directory
+        if UPLOAD_DIR.exists():
+            for file_path in UPLOAD_DIR.iterdir():
+                if file_path.is_file():
+                    try:
+                        file_stats = file_path.stat()
+                        # Check if file is older than 24 hours
+                        if file_stats.st_mtime < cutoff_time:
+                            # Find corresponding playlist item
+                            playlist_data = load_uploads_playlist()
+                            for item in playlist_data["items"]:
+                                if item.get("file_path") == str(file_path):
+                                    items_to_remove.append(item)
+                                    break
+
+                            # Delete the file
+                            file_path.unlink()
+                            files_removed_count += 1
+                            logger.info(f"Cleaned up old upload file (24h+): {file_path.name}")
+
+                    except Exception as e:
+                        logger.warning(f"Failed to process upload file {file_path}: {e}")
+
+        # Remove items from playlist and sync
+        if items_to_remove:
+            remove_files_from_uploads_playlist_and_sync(items_to_remove)
+            logger.info(
+                f"Periodic cleanup: removed {files_removed_count} old files and {len(items_to_remove)} playlist items"
+            )
+        elif files_removed_count > 0:
+            logger.info(f"Periodic cleanup: removed {files_removed_count} old files (no playlist items)")
+
+    except Exception as e:
+        logger.error(f"Failed to perform periodic upload cleanup: {e}")
+
+
+def remove_files_from_uploads_playlist_and_sync(items_to_remove: List[Dict]) -> None:
+    """
+    Remove items from uploads playlist and notify playlist sync service if active.
+
+    Args:
+        items_to_remove: List of playlist items to remove
+    """
+    if not items_to_remove:
+        return
+
+    # Remove items from uploads playlist file
+    playlist_data = load_uploads_playlist()
+
+    # Remove items by ID
+    item_ids_to_remove = {item["id"] for item in items_to_remove}
+    playlist_data["items"] = [item for item in playlist_data["items"] if item["id"] not in item_ids_to_remove]
+
+    # Update order indices
+    for i, item in enumerate(playlist_data["items"]):
+        item["order"] = i
+
+    # Save the updated playlist
+    save_uploads_playlist(playlist_data)
+
+    # If uploads playlist is currently active, remove from live playlist
+    global current_playlist_file
+    if current_playlist_file == UPLOADS_PLAYLIST_NAME and playlist_sync_client and playlist_sync_client.connected:
+        logger.info("Uploads playlist is active - removing items from live playlist")
+
+        for old_item in items_to_remove:
+            try:
+                if playlist_sync_client.remove_item(old_item["id"]):
+                    logger.info(f"Removed item {old_item['name']} from live playlist")
+            except Exception as e:
+                logger.warning(f"Failed to remove item from live playlist: {e}")
+
+
 def manage_uploads_playlist(new_item: PlaylistItem) -> None:
     """
     Manage the uploads playlist by adding new item and maintaining max 8 items.
@@ -278,26 +377,19 @@ def manage_uploads_playlist(new_item: PlaylistItem) -> None:
         except Exception as e:
             logger.warning(f"Failed to delete oldest upload file: {e}")
 
-    # Update order indices
+    # Update order indices and save playlist
     for i, item in enumerate(playlist_data["items"]):
         item["order"] = i
-
-    # Save the updated playlist
     save_uploads_playlist(playlist_data)
 
-    # If uploads playlist is currently active, apply changes to live playlist
+    # Remove old items from uploads playlist and sync with live playlist
+    remove_files_from_uploads_playlist_and_sync(items_to_remove)
+
+    # If uploads playlist is currently active, add new item to live playlist
     global current_playlist_file
     if current_playlist_file == UPLOADS_PLAYLIST_NAME and playlist_sync_client and playlist_sync_client.connected:
 
-        logger.info("Uploads playlist is active - applying live updates")
-
-        # Remove old items from live playlist
-        for old_item in items_to_remove:
-            try:
-                if playlist_sync_client.remove_item(old_item["id"]):
-                    logger.info(f"Removed old item {old_item['name']} from live playlist")
-            except Exception as e:
-                logger.warning(f"Failed to remove old item from live playlist: {e}")
+        logger.info("Uploads playlist is active - adding new item to live playlist")
 
         # Add new item to live playlist
         try:
@@ -543,6 +635,7 @@ app.add_middleware(
 
 # Background task for preview data broadcasting
 preview_task: Optional[asyncio.Task] = None
+upload_cleanup_task: Optional[asyncio.Task] = None
 
 
 def sync_item_to_api_item(sync_item: SyncPlaylistItem) -> PlaylistItem:
@@ -744,7 +837,7 @@ def sync_playlist_update_handler(sync_state: SyncPlaylistState) -> None:
 @app.on_event("startup")
 async def startup_event():
     """Start background tasks on application startup."""
-    global preview_task, playlist_sync_client, network_manager
+    global preview_task, upload_cleanup_task, playlist_sync_client, network_manager
 
     # Initialize network manager
     try:
@@ -764,13 +857,16 @@ async def startup_event():
     preview_task = asyncio.create_task(preview_broadcast_task())
     logger.info("Started preview data broadcasting task")
 
+    upload_cleanup_task = asyncio.create_task(periodic_upload_cleanup_task())
+    logger.info("Started periodic upload cleanup task (10 minute intervals)")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up background tasks on application shutdown."""
     import contextlib
 
-    global preview_task, playlist_sync_client
+    global preview_task, upload_cleanup_task, playlist_sync_client
 
     # Disconnect playlist sync client
     if playlist_sync_client:
@@ -782,6 +878,12 @@ async def shutdown_event():
         with contextlib.suppress(asyncio.CancelledError):
             await preview_task
         logger.info("Stopped preview data broadcasting task")
+
+    if upload_cleanup_task:
+        upload_cleanup_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await upload_cleanup_task
+        logger.info("Stopped periodic upload cleanup task")
 
 
 # Add no-cache middleware for static files

@@ -305,6 +305,14 @@ const UploadPage = () => {
             <span className="text-neon-cyan">•</span>
             <span>Files are automatically added to the playlist</span>
           </div>
+          <div className="flex items-start gap-2">
+            <span className="text-neon-orange">⚠</span>
+            <span><strong>Uploaded files are automatically deleted after 24 hours</strong></span>
+          </div>
+          <div className="flex items-start gap-2">
+            <span className="text-neon-purple">•</span>
+            <span>Move files to Media folder for permanent storage</span>
+          </div>
         </div>
       </div>
     </div>
