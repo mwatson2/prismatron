@@ -1,6 +1,7 @@
 # Core Python dependencies for Prismatron LED Display Software
 # This file lists all required packages with version constraints
 
+aubio>=0.4.9,<1.0.0
 
 # Code quality and formatting
 black>=21.0.0,<24.0.0
@@ -8,6 +9,13 @@ click>=8.0.0,<9.0.0
 
 # Security and encryption
 cryptography>=3.0.0,<42.0.0
+
+# Optional dependencies for enhanced functionality
+# These may not be available on all systems but provide additional features
+
+# GPU acceleration for NVIDIA CUDA (Jetson Orin Nano)
+# Required for systems with NVIDIA GPU and CUDA 12.x support
+cupy-cuda12x>=13.0.0,<14.0.0
 
 # Web framework and API
 fastapi>=0.68.0,<1.0.0
@@ -22,6 +30,7 @@ jinja2>=3.0.0,<4.0.0
 
 # Job scheduling and parallel processing
 joblib>=1.0.0,<2.0.0
+librosa>=0.10.0,<1.0.0
 matplotlib>=3.3.0,<4.0.0
 
 # Documentation
@@ -39,6 +48,9 @@ numpy>=1.24.0,<2.0.0
 opencv-python>=4.5.0,<5.0.0
 Pillow>=8.0.0,<12.0.0
 
+# Development and testing
+pre-commit>=4.0.0,<5.0.0
+
 # Process and system utilities
 psutil>=5.8.0,<6.0.0
 
@@ -47,13 +59,6 @@ pydantic>=1.8.0,<3.0.0
 
 # Network and serial communication
 pyserial>=3.4,<4.0
-
-# Audio processing and device control
-sounddevice>=0.4.0,<1.0.0
-librosa>=0.10.0,<1.0.0
-aubio>=0.4.9,<1.0.0
-
-# Development and testing
 pytest>=6.0.0,<8.0.0
 pytest-asyncio>=0.15.0,<1.0.0
 pytest-cov>=2.12.0,<5.0.0
@@ -67,6 +72,9 @@ requests>=2.25.0,<3.0.0
 # Mathematical optimization
 scikit-learn>=1.0.0,<2.0.0
 scipy>=1.7.0,<2.0.0
+
+# Audio processing and device control
+sounddevice>=0.4.0,<1.0.0
 
 # Logging and monitoring
 structlog>=21.1.0,<24.0.0
@@ -83,13 +91,6 @@ torchvision>=0.10.0,<1.0.0
 tqdm>=4.60.0,<5.0.0
 uvicorn[standard]>=0.15.0,<1.0.0
 websockets>=10.0,<12.0
-
-# Optional dependencies for enhanced functionality
-# These may not be available on all systems but provide additional features
-
-# GPU acceleration for NVIDIA CUDA (Jetson Orin Nano)
-# Required for systems with NVIDIA GPU and CUDA 12.x support
-cupy-cuda12x>=13.0.0,<14.0.0
 
 # Hardware acceleration (NVIDIA only)
 # nvidia-ml-py3>=7.352.0,<12.0.0
