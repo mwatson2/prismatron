@@ -1629,6 +1629,77 @@ async def upload_file(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+@app.post("/api/uploads/{file_id}/move-to-media")
+async def move_upload_to_media(file_id: str):
+    """Move a file from uploads folder to media folder."""
+    try:
+        # Find the file in uploads directory
+        source_path = None
+        for candidate in UPLOAD_DIR.iterdir():
+            if candidate.is_file() and candidate.stem == file_id:
+                source_path = candidate
+                break
+
+        if not source_path:
+            raise HTTPException(status_code=404, detail="File not found in uploads")
+
+        # Create destination path in media directory
+        dest_path = MEDIA_DIR / source_path.name
+
+        # Check if file already exists in media directory
+        if dest_path.exists():
+            # Generate unique filename
+            name_parts = source_path.stem, source_path.suffix
+            counter = 1
+            while dest_path.exists():
+                dest_path = MEDIA_DIR / f"{name_parts[0]}_{counter}{name_parts[1]}"
+                counter += 1
+
+        # Move the file
+        shutil.move(str(source_path), str(dest_path))
+
+        # Determine file type
+        file_ext = dest_path.suffix.lower().lstrip(".")
+        allowed_types = {
+            "image": ["jpg", "jpeg", "png", "gif", "bmp", "webp"],
+            "video": ["mp4", "avi", "mov", "mkv", "webm", "m4v"],
+        }
+
+        content_type = None
+        for type_name, extensions in allowed_types.items():
+            if file_ext in extensions:
+                content_type = type_name
+                break
+
+        if not content_type:
+            # Move back if unsupported type
+            shutil.move(str(dest_path), str(source_path))
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_ext}")
+
+        # Get file stats
+        file_stats = dest_path.stat()
+
+        logger.info(f"Moved file from uploads to media: {source_path.name} -> {dest_path.name}")
+
+        return {
+            "status": "moved",
+            "file": {
+                "id": dest_path.stem,
+                "name": dest_path.name,
+                "type": content_type,
+                "size": file_stats.st_size,
+                "modified": file_stats.st_mtime,
+                "path": str(dest_path),
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to move file from uploads to media: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 # Media endpoints
 @app.get("/api/media")
 async def list_media():
