@@ -34,7 +34,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -1290,6 +1290,75 @@ async def root():
                 },
             }
         )
+
+
+# Captive Portal Detection Endpoints
+# These endpoints handle various OS captive portal detection mechanisms
+# They redirect to the main Prismatron interface when detected
+
+
+@app.get("/generate_204")
+async def android_captive_portal():
+    """Android captive portal detection - expects 204 No Content normally."""
+    # Redirect to main interface to trigger captive portal popup
+    return RedirectResponse(url="/", status_code=302)
+
+
+@app.get("/connectivitycheck.gstatic.com/generate_204")
+async def chrome_captive_portal():
+    """Chrome/Android captive portal detection."""
+    return RedirectResponse(url="/", status_code=302)
+
+
+@app.get("/hotspot-detect.html")
+async def apple_captive_portal():
+    """Apple iOS/macOS captive portal detection."""
+    # Apple expects an HTML response
+    return RedirectResponse(url="/", status_code=302)
+
+
+@app.get("/captive.apple.com/hotspot-detect.html")
+async def apple_captive_portal_alt():
+    """Alternative Apple captive portal detection endpoint."""
+    return RedirectResponse(url="/", status_code=302)
+
+
+@app.get("/ncsi.txt")
+async def windows_captive_portal():
+    """Windows Network Connectivity Status Indicator."""
+    # Windows expects specific text content
+    return PlainTextResponse("Microsoft NCSI", status_code=200)
+
+
+@app.get("/connecttest.txt")
+async def windows_captive_portal_alt():
+    """Windows 10 connectivity test."""
+    return PlainTextResponse("Microsoft Connect Test", status_code=200)
+
+
+@app.get("/www.msftconnecttest.com/connecttest.txt")
+async def windows_captive_portal_full():
+    """Windows 10 full URL connectivity test."""
+    return PlainTextResponse("Microsoft Connect Test", status_code=200)
+
+
+@app.get("/success.txt")
+async def firefox_captive_portal():
+    """Firefox captive portal detection."""
+    # Firefox expects "success" response normally
+    return RedirectResponse(url="/", status_code=302)
+
+
+@app.get("/kindle-wifi/wifistub.html")
+async def kindle_captive_portal():
+    """Amazon Kindle captive portal detection."""
+    return RedirectResponse(url="/", status_code=302)
+
+
+@app.get("/library/test/success.html")
+async def apple_library_test():
+    """Apple library test endpoint."""
+    return RedirectResponse(url="/", status_code=302)
 
 
 # Home/Status endpoints

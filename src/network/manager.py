@@ -126,6 +126,16 @@ class NetworkManager:
             logger.error(f"Failed to run command {' '.join(cmd)}: {e}")
             raise NetworkManagerError(f"Failed to execute command: {e}") from e
 
+    async def _restart_avahi(self) -> None:
+        """Restart avahi-daemon to update .local address advertising."""
+        try:
+            logger.debug("Restarting avahi-daemon for network change")
+            await self._run_command(["sudo", "systemctl", "restart", "avahi-daemon"], try_sudo=False)
+            logger.debug("Avahi daemon restarted successfully")
+        except Exception as e:
+            logger.warning(f"Failed to restart avahi-daemon: {e}")
+            # Don't raise - avahi restart is not critical for network operation
+
     async def get_status(self) -> NetworkStatus:
         """Get current network status."""
         try:
@@ -268,11 +278,35 @@ class NetworkManager:
             # Disconnect current connections first
             await self.disconnect()
 
-            # Build connection command
-            cmd = ["nmcli", "device", "wifi", "connect", ssid]
-            if password:
-                cmd.extend(["password", password])
-            cmd.extend(["ifname", self.interface])
+            # Check if a connection profile already exists for this SSID
+            check_result = await self._run_command(["nmcli", "connection", "show", ssid], check=False)
+
+            if check_result.returncode == 0:
+                # Connection profile exists, use it directly
+                logger.info(f"Using existing connection profile for {ssid}")
+                cmd = ["nmcli", "connection", "up", ssid]
+
+                # If a new password is provided, update the profile first
+                if password:
+                    logger.info("Updating connection password")
+                    await self._run_command(
+                        [
+                            "nmcli",
+                            "connection",
+                            "modify",
+                            ssid,
+                            "802-11-wireless-security.psk",
+                            password,
+                        ],
+                        try_sudo=True,
+                    )
+            else:
+                # No existing profile, create new connection
+                logger.info(f"Creating new connection profile for {ssid}")
+                cmd = ["nmcli", "device", "wifi", "connect", ssid]
+                if password:
+                    cmd.extend(["password", password])
+                cmd.extend(["ifname", self.interface])
 
             await self._run_command(cmd, try_sudo=True)
 
@@ -304,6 +338,9 @@ class NetworkManager:
             # Save client credentials for future use
             self.config.client_config = ClientConfig(ssid=ssid, password=password)
             self._save_config()
+
+            # Restart avahi to update .local address advertising on new network
+            await self._restart_avahi()
 
             logger.info(f"Successfully connected to WiFi: {ssid} (persist={persist})")
             return True
@@ -416,6 +453,9 @@ class NetworkManager:
 
             # Save preferences (AP config might have been updated)
             self._save_config()
+
+            # Restart avahi to advertise .local address on AP network
+            await self._restart_avahi()
 
             logger.info(f"AP mode enabled: {ap_config.ssid} (persist={persist})")
             return True
