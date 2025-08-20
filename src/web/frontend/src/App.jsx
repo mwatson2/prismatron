@@ -17,9 +17,15 @@ function App() {
   useEffect(() => {
     // Check if we're running in development or production
     const apiBase = import.meta.env.DEV ? 'http://localhost:8000' : ''
+    let interval = null
 
     // Test API connection
     const checkConnection = async () => {
+      // Skip health check if page is hidden to save battery
+      if (document.hidden) {
+        return
+      }
+
       try {
         const response = await fetch(`${apiBase}/api/health`)
         if (response.ok) {
@@ -31,12 +37,47 @@ function App() {
       }
     }
 
-    checkConnection()
+    const startHealthCheck = () => {
+      checkConnection()
+      interval = setInterval(checkConnection, 30000)
+    }
 
-    // Check connection every 30 seconds
-    const interval = setInterval(checkConnection, 30000)
+    const stopHealthCheck = () => {
+      if (interval) {
+        clearInterval(interval)
+        interval = null
+      }
+    }
 
-    return () => clearInterval(interval)
+    // Page Visibility API to pause/resume health checks
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        stopHealthCheck()
+      } else {
+        startHealthCheck()
+      }
+    }
+
+    // Start initial health check
+    startHealthCheck()
+
+    // Listen for visibility changes
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    // Safari mobile support
+    window.addEventListener('pagehide', stopHealthCheck)
+    window.addEventListener('pageshow', (event) => {
+      if (!event.persisted || !interval) {
+        startHealthCheck()
+      }
+    })
+
+    return () => {
+      stopHealthCheck()
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('pagehide', stopHealthCheck)
+      window.removeEventListener('pageshow', startHealthCheck)
+    }
   }, [])
 
   return (

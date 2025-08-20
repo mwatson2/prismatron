@@ -20,11 +20,14 @@ export const WebSocketProvider = ({ children }) => {
   const [currentPlaylistFile, setCurrentPlaylistFile] = useState(null)
   const [playlistModified, setPlaylistModified] = useState(false)
   const [isLoadingPlaylist, setIsLoadingPlaylist] = useState(false)
+  const [isPageVisible, setIsPageVisible] = useState(!document.hidden)
 
   // Use refs to avoid stale closures in callbacks
   const currentPlaylistFileRef = useRef(currentPlaylistFile)
   const playlistModifiedRef = useRef(playlistModified)
   const isLoadingPlaylistRef = useRef(isLoadingPlaylist)
+  const socketRef = useRef(socket)
+  const reconnectTimeoutRef = useRef(null)
 
   useEffect(() => {
     currentPlaylistFileRef.current = currentPlaylistFile
@@ -38,7 +41,88 @@ export const WebSocketProvider = ({ children }) => {
     isLoadingPlaylistRef.current = isLoadingPlaylist
   }, [isLoadingPlaylist])
 
+  useEffect(() => {
+    socketRef.current = socket
+  }, [socket])
+
+  // Page Visibility API with Safari mobile support
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      const isVisible = !document.hidden
+      setIsPageVisible(isVisible)
+
+      if (isVisible) {
+        // Page became visible - reconnect if not already connected
+        if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+          connect()
+        }
+      } else {
+        // Page became hidden - disconnect WebSocket
+        disconnect()
+      }
+    }
+
+    // Standard Page Visibility API
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    // Safari mobile support - additional events
+    window.addEventListener('pagehide', () => {
+      setIsPageVisible(false)
+      disconnect()
+    })
+
+    window.addEventListener('pageshow', (event) => {
+      setIsPageVisible(true)
+      if (!event.persisted) {
+        // Page was not loaded from cache, normal page load
+        if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+          connect()
+        }
+      } else {
+        // Page was loaded from cache (back/forward navigation)
+        connect()
+      }
+    })
+
+    // iOS Safari additional support
+    window.addEventListener('beforeunload', () => {
+      disconnect()
+    })
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('pagehide', handleVisibilityChange)
+      window.removeEventListener('pageshow', handleVisibilityChange)
+      window.removeEventListener('beforeunload', disconnect)
+    }
+  }, [])
+
+  const disconnect = useCallback(() => {
+    // Clear any pending reconnection attempts
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current)
+      reconnectTimeoutRef.current = null
+    }
+
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.close()
+    }
+    setSocket(null)
+    setIsConnected(false)
+  }, [])
+
   const connect = useCallback(() => {
+    // Only connect if page is visible
+    if (document.hidden) {
+      return
+    }
+
+    // Clear any pending reconnection attempts
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current)
+      reconnectTimeoutRef.current = null
+    }
+
     const wsUrl = import.meta.env.DEV
       ? 'ws://localhost:8000/ws'
       : `ws://${window.location.host}/ws`
@@ -66,8 +150,10 @@ export const WebSocketProvider = ({ children }) => {
         setIsConnected(false)
         setSocket(null)
 
-        // Attempt to reconnect after 3 seconds
-        setTimeout(connect, 3000)
+        // Only attempt to reconnect if page is still visible
+        if (!document.hidden) {
+          reconnectTimeoutRef.current = setTimeout(connect, 3000)
+        }
       }
 
       ws.onerror = (error) => {
@@ -77,8 +163,10 @@ export const WebSocketProvider = ({ children }) => {
 
     } catch (error) {
       console.error('Failed to create WebSocket connection:', error)
-      // Retry connection after 5 seconds
-      setTimeout(connect, 5000)
+      // Only retry if page is still visible
+      if (!document.hidden) {
+        reconnectTimeoutRef.current = setTimeout(connect, 5000)
+      }
     }
   }, [])
 
@@ -178,6 +266,12 @@ export const WebSocketProvider = ({ children }) => {
     connect()
 
     return () => {
+      // Clear any pending reconnection attempts
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current)
+        reconnectTimeoutRef.current = null
+      }
+
       if (socket) {
         socket.close()
       }
