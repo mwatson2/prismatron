@@ -2,7 +2,7 @@
   "debug": false,
   "web_host": "0.0.0.0",
   "web_port": 8080,
-  "wled_host": "192.168.7.140",
+  "wled_host": "192.168.4.174",
   "wled_port": 4048,
   "content_dir": null,
   "diffusion_patterns": "diffusion_patterns/capture-0813.npz",

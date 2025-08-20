@@ -6,6 +6,7 @@ for various video formats, hardware acceleration, and FFmpeg integration.
 """
 
 import contextlib
+import json
 import logging
 import os
 import queue
@@ -151,7 +152,7 @@ class VideoSource(ContentSource):
             probe_start = time.time()
             probe = ffmpeg.probe(self.filepath)
             probe_time = time.time() - probe_start
-            logger.debug(f"ffprobe took {probe_time*1000:.1f}ms for {self.filepath}")
+            logger.debug(f"ffprobe completed in {probe_time*1000:.1f}ms for {self.filepath}")
 
             # Find video stream
             video_stream = None
@@ -206,6 +207,7 @@ class VideoSource(ContentSource):
             return True
 
         except Exception as e:
+            logger.error(f"Failed to probe video metadata: {e}")
             self.set_error(f"Failed to probe video metadata: {e}")
             return False
 
