@@ -70,11 +70,14 @@ class TextContentSource(ContentSource):
         self.text = self.config.get("text", "Hello World")
         self.font_family = self.config.get("font_family", "arial")
         self.font_style = self.config.get("font_style", "normal")  # normal, bold, italic, bold-italic
-        self.font_size = self.config.get("font_size", 24)
         self.fg_color = self._parse_color(self.config.get("fg_color", "#FFFFFF"))
         self.bg_color = self._parse_color(self.config.get("bg_color", "#000000"))
 
-        # Handle auto font sizing
+        # Animation and timing (set before font size calculation)
+        self.animation = self.config.get("animation", "static")  # static, scroll, fade
+
+        # Handle font sizing (after animation is set)
+        self.font_size = self.config.get("font_size", 24)
         if self.font_size == "auto":
             self.font_size = self._calculate_auto_font_size()
         elif isinstance(self.font_size, str):
@@ -82,9 +85,6 @@ class TextContentSource(ContentSource):
                 self.font_size = int(self.font_size)
             except ValueError:
                 self.font_size = 24
-
-        # Animation and timing
-        self.animation = self.config.get("animation", "static")  # static, scroll, fade
         self.duration = self.config.get("duration", 10.0)  # seconds
         self.fps = self.config.get("fps", DEFAULT_CONTENT_FPS)
 
@@ -220,7 +220,9 @@ class TextContentSource(ContentSource):
 
     def _calculate_auto_font_size(self) -> int:
         """
-        Calculate font size to fill the frame without any border.
+        Calculate font size based on animation type.
+        For scroll animation: fills 90% of frame height for horizontal scrolling.
+        For other animations: fills the entire frame without borders.
 
         Returns:
             Optimal font size in pixels
@@ -228,18 +230,25 @@ class TextContentSource(ContentSource):
         if not self.text.strip():
             return 24  # Default size for empty text
 
-        # Target width and height to fill the frame without any border
-        target_width = FRAME_WIDTH
-        target_height = FRAME_HEIGHT
+        if self.animation == "scroll":
+            # For scroll animation: target 90% height for horizontal scrolling
+            target_width = None  # No width constraint for scrolling
+            target_height = int(FRAME_HEIGHT * 0.9)
+            logger.info(
+                f"Auto font sizing for horizontal scroll text '{self.text}': target_height={target_height} (90% of {FRAME_HEIGHT})"
+            )
+        else:
+            # For static/fade animations: fill the frame without borders
+            target_width = FRAME_WIDTH
+            target_height = FRAME_HEIGHT
+            logger.info(
+                f"Auto font sizing for text '{self.text}': target_width={target_width}, target_height={target_height}"
+            )
 
         # Binary search for optimal font size
         min_size = 8
         max_size = target_height
         best_size = 24
-
-        logger.info(
-            f"Auto font sizing for text '{self.text}': target_width={target_width}, target_height={target_height}"
-        )
 
         try:
             while min_size <= max_size:
@@ -255,12 +264,21 @@ class TextContentSource(ContentSource):
 
                 logger.info(f"Testing font size {test_size}: text_width={text_width}, text_height={text_height}")
 
-                # Check both width and height constraints
-                if text_width <= target_width and text_height <= target_height:
-                    best_size = test_size
-                    min_size = test_size + 1
+                # Check constraints based on animation type
+                if self.animation == "scroll":
+                    # For scroll: only check height constraint
+                    if text_height <= target_height:
+                        best_size = test_size
+                        min_size = test_size + 1
+                    else:
+                        max_size = test_size - 1
                 else:
-                    max_size = test_size - 1
+                    # For static/fade: check both width and height constraints
+                    if text_width <= target_width and text_height <= target_height:
+                        best_size = test_size
+                        min_size = test_size + 1
+                    else:
+                        max_size = test_size - 1
 
         except Exception as e:
             logger.warning(f"Error calculating auto font size: {e}, using default")
@@ -404,7 +422,8 @@ class TextContentSource(ContentSource):
 
     def _render_scrolling_frames(self) -> list:
         """
-        Render scrolling text animation frames.
+        Render horizontal scrolling text animation frames.
+        Text starts at 10% from left edge and scrolls until right edge is 10% from right edge.
 
         Returns:
             List of RGB frame arrays in planar format
@@ -422,18 +441,27 @@ class TextContentSource(ContentSource):
         # Get the bbox offset (this accounts for ascenders/descenders)
         bbox_offset_y = bbox[1]  # Top offset from baseline
 
-        # Calculate scroll range (text moves from right to left)
-        start_x = FRAME_WIDTH
-        end_x = -text_width
-        total_distance = start_x - end_x
-
-        # Calculate vertical position (no borders)
-        if self.vertical_alignment == "top":
-            y = -bbox_offset_y  # Compensate for bbox offset
-        elif self.vertical_alignment == "bottom":
-            y = FRAME_HEIGHT - text_height - bbox_offset_y  # Compensate for bbox offset
-        else:  # center
-            y = (FRAME_HEIGHT - text_height) // 2 - bbox_offset_y  # Compensate for bbox offset
+        # Calculate scroll range based on font sizing mode
+        if self.font_size == "auto" or (isinstance(self.font_size, str) and self.font_size == "auto"):
+            # For auto-sized scroll: use 10% margins and center vertically
+            margin = int(FRAME_WIDTH * 0.1)
+            start_x = margin  # Start at 10% from left edge
+            end_x = FRAME_WIDTH - margin - text_width  # End when right edge is 10% from right edge
+            total_distance = start_x - end_x
+            # Center vertically for auto-sized text
+            y = (FRAME_HEIGHT - text_height) // 2 - bbox_offset_y
+        else:
+            # For manual font size: use original scroll behavior (right to left across full width)
+            start_x = FRAME_WIDTH
+            end_x = -text_width
+            total_distance = start_x - end_x
+            # Use original vertical alignment
+            if self.vertical_alignment == "top":
+                y = -bbox_offset_y
+            elif self.vertical_alignment == "bottom":
+                y = FRAME_HEIGHT - text_height - bbox_offset_y
+            else:  # center
+                y = (FRAME_HEIGHT - text_height) // 2 - bbox_offset_y
 
         # Generate frames
         for frame_idx in range(self.frame_count):
