@@ -25,6 +25,9 @@ ffmpeg-python>=0.2.0,<1.0.0
 flake8>=3.9.0,<7.0.0
 flask>=3.1.1
 
+# Jetson system monitoring and GPU stats
+jetson-stats>=4.0.0,<5.0.0
+
 # Template engine for web interface
 jinja2>=3.0.0,<4.0.0
 
