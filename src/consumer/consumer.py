@@ -328,6 +328,8 @@ class ConsumerProcess:
                 try:
                     self._audio_beat_analyzer.start_analysis()
                     self._audio_analysis_running = True
+                    # Update control state to indicate audio is enabled
+                    self._control_state.update_status(audio_enabled=True)
                     logger.info("Audio reactive system started")
                 except Exception as e:
                     logger.error(f"Failed to start audio analysis: {e}")
@@ -337,6 +339,8 @@ class ConsumerProcess:
                 try:
                     self._audio_beat_analyzer.stop_analysis()
                     self._audio_analysis_running = False
+                    # Update control state to indicate audio is disabled
+                    self._control_state.update_status(audio_enabled=False)
                     logger.info("Audio reactive system stopped")
                 except Exception as e:
                     logger.error(f"Failed to stop audio analysis: {e}")
