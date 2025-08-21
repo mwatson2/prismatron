@@ -197,6 +197,12 @@ class ProcessManager:
                     root_logger.addHandler(console_handler)
                     root_logger.addHandler(file_handler)
 
+                    # Enable DEBUG for consumer and producer components to debug thread issues
+                    logging.getLogger("src.consumer.consumer").setLevel(logging.DEBUG)
+                    logging.getLogger("src.consumer.frame_renderer").setLevel(logging.DEBUG)
+                    logging.getLogger("src.consumer.led_buffer").setLevel(logging.DEBUG)
+                    logging.getLogger("src.producer.producer").setLevel(logging.DEBUG)
+
                     # Create and start playlist sync service
                     service = PlaylistSyncService()
                     if not service.start():
@@ -265,6 +271,12 @@ class ProcessManager:
                     root_logger.addHandler(console_handler)
                     root_logger.addHandler(file_handler)
 
+                    # Enable DEBUG for consumer and producer components to debug thread issues
+                    logging.getLogger("src.consumer.consumer").setLevel(logging.DEBUG)
+                    logging.getLogger("src.consumer.frame_renderer").setLevel(logging.DEBUG)
+                    logging.getLogger("src.consumer.led_buffer").setLevel(logging.DEBUG)
+                    logging.getLogger("src.producer.producer").setLevel(logging.DEBUG)
+
                     # Signal ready
                     self.web_server_ready.set()
 
@@ -331,6 +343,12 @@ class ProcessManager:
                     root_logger.setLevel(logging.INFO if not self.config.get("debug") else logging.DEBUG)
                     root_logger.addHandler(console_handler)
                     root_logger.addHandler(file_handler)
+
+                    # Enable DEBUG for consumer and producer components to debug thread issues
+                    logging.getLogger("src.consumer.consumer").setLevel(logging.DEBUG)
+                    logging.getLogger("src.consumer.frame_renderer").setLevel(logging.DEBUG)
+                    logging.getLogger("src.consumer.led_buffer").setLevel(logging.DEBUG)
+                    logging.getLogger("src.producer.producer").setLevel(logging.DEBUG)
 
                     # Debug environment variables
                     logger.info(f"Consumer worker environment:")
@@ -437,6 +455,12 @@ class ProcessManager:
                     root_logger.setLevel(logging.INFO if not self.config.get("debug") else logging.DEBUG)
                     root_logger.addHandler(console_handler)
                     root_logger.addHandler(file_handler)
+
+                    # Enable DEBUG for consumer and producer components to debug thread issues
+                    logging.getLogger("src.consumer.consumer").setLevel(logging.DEBUG)
+                    logging.getLogger("src.consumer.frame_renderer").setLevel(logging.DEBUG)
+                    logging.getLogger("src.consumer.led_buffer").setLevel(logging.DEBUG)
+                    logging.getLogger("src.producer.producer").setLevel(logging.DEBUG)
 
                     # Create producer
                     producer = ProducerProcess()

@@ -100,8 +100,36 @@ class LogRotator:
             # Rename current log to backup
             if self.log_file_path.exists():
                 try:
+                    # First, we need to close and remove the existing FileHandler
+                    # to release the file handle before renaming
+                    root_logger = logging.getLogger()
+
+                    # Find and remove the FileHandler that's writing to prismatron.log
+                    file_handlers_to_remove = []
+                    for handler in root_logger.handlers:
+                        if isinstance(handler, logging.FileHandler) and handler.baseFilename == str(
+                            self.log_file_path.absolute()
+                        ):
+                            file_handlers_to_remove.append(handler)
+
+                    # Close and remove the old handlers
+                    for handler in file_handlers_to_remove:
+                        handler.close()
+                        root_logger.removeHandler(handler)
+
+                    # Now rename the file
                     self.log_file_path.rename(self.backup_log_path)
                     logger.info(f"Rotated {self.log_file_path} -> {self.backup_log_path}")
+
+                    # Create a new FileHandler for the fresh log file
+                    if file_handlers_to_remove:
+                        # Use the same formatter from the old handler
+                        old_handler = file_handlers_to_remove[0]
+                        new_handler = logging.FileHandler(str(self.log_file_path), mode="a")
+                        new_handler.setFormatter(old_handler.formatter)
+                        new_handler.setLevel(old_handler.level)
+                        root_logger.addHandler(new_handler)
+                        logger.info(f"Created new FileHandler for {self.log_file_path}")
 
                     # Log the new state
                     backup_size_mb = self.get_file_size_mb(self.backup_log_path)

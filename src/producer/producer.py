@@ -6,12 +6,13 @@ manages playlists, and renders frames to shared memory buffers for
 the consumer process.
 """
 
+import contextlib
 import logging
 import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from ..const import FRAME_CHANNELS, FRAME_HEIGHT, FRAME_WIDTH
 from ..core.control_state import ControlState, PlayState, ProducerState, SystemState
@@ -366,6 +367,27 @@ class ContentPlaylist:
         with self._lock:
             return len(self._items)
 
+    @contextlib.contextmanager
+    def batch_update(self):
+        """Context manager for performing multiple playlist operations atomically."""
+        with self._lock:
+            yield self
+
+    def set_current_index(self, index: int) -> None:
+        """Set current playlist index (used internally, can be called within batch_update)."""
+        with self._lock:
+            if 0 <= index < len(self._items):
+                self._current_index = index
+            else:
+                self._current_index = 0
+
+    def get_current_item_and_index(self) -> Tuple[Optional["PlaylistItem"], Optional[int]]:
+        """Atomically get current item and index together to avoid race conditions."""
+        with self._lock:
+            if 0 <= self._current_index < len(self._items):
+                return self._items[self._current_index], self._current_index
+            return None, None
+
 
 class ProducerProcess:
     """
@@ -407,6 +429,7 @@ class ProducerProcess:
         self._producer_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._running = False
+        self._sync_lock = threading.RLock()  # Protect producer state from sync callbacks
 
         # Frame timing
         self._target_fps = 30.0  # Default target FPS
@@ -756,12 +779,15 @@ class ProducerProcess:
                 # Prevent duplicate next_item() calls for the same content
                 if not self._content_finished_processed:
                     self._content_finished_processed = True
+                    self._content_finished_time = time.time()  # Track when we first detected finish
                     logger.debug(f"Advancing to next content after {current_item_name} finished")
                     self._advance_to_next_content()
                 else:
-                    logger.debug(
-                        f"Content '{current_item_name}' already processed for advancement, skipping duplicate call"
-                    )
+                    # Log more details about the stuck state
+                    stuck_duration = time.time() - getattr(self, "_content_finished_time", time.time())
+                    current_playlist_index = self._playlist.get_current_index()
+
+                    # Content already processed, skip duplicate call
             else:
                 # No frame available yet (but not finished)
                 if not hasattr(self, "_no_frame_logged") or not self._no_frame_logged:
@@ -794,13 +820,12 @@ class ProducerProcess:
         if self._current_source and self._current_source.status == ContentStatus.PLAYING:
             return True
 
-        # Try to load current playlist item
-        current_item = self._playlist.get_current_item()
-        if not current_item:
+        # Atomically get current playlist item and index to avoid race conditions
+        current_item, current_playlist_index = self._playlist.get_current_item_and_index()
+        if not current_item or current_playlist_index is None:
             logger.debug("No current playlist item available")
             return False
 
-        current_playlist_index = self._playlist.get_current_index()
         logger.debug(
             f"_ensure_current_content called - playlist_index={current_playlist_index}, loaded_index={self._current_item_index}"
         )
@@ -828,7 +853,7 @@ class ProducerProcess:
 
             self._current_source = current_item.get_content_source()
             self._current_item = current_item
-            self._current_item_index = self._playlist.get_current_index()  # Store the index of the loaded content
+            self._current_item_index = current_playlist_index  # Store the index that was atomically read
             self._is_first_frame_of_current_item = True  # Reset flag for new item
             self._content_finished_processed = False  # Reset flag for new content
 
@@ -867,7 +892,6 @@ class ProducerProcess:
                 logger.info(f"Loaded effect content (fps: {self._target_fps})")
             else:
                 logger.info(f"Loaded content: {current_item.filepath} (fps: {self._target_fps})")
-
         return True
 
     def _advance_to_next_content(self) -> None:
@@ -875,13 +899,16 @@ class ProducerProcess:
         try:
             # If connected to sync service, send next command instead of advancing locally
             if self._playlist_sync_client and self._playlist_sync_client.connected:
-                logger.debug("Requesting next item from sync service")
+                current_index = self._playlist.get_current_index()
+                logger.info(f"Requesting next item from sync service (current index: {current_index})")
                 success = self._playlist_sync_client.next_item()
                 if not success:
-                    logger.warning("Failed to send next command to sync service")
+                    logger.error("Failed to send next command to sync service - message send failed")
                     # Note: Don't advance locally - let sync service handle it
+                else:
+                    logger.debug(f"Successfully sent next_item request to sync service from index {current_index}")
             else:
-                logger.warning("Playlist sync client not connected - cannot advance to next content")
+                logger.error("Playlist sync client not connected - cannot advance to next content")
                 self._control_state.set_producer_state(ProducerState.STOPPED)
 
         except Exception as e:
@@ -1457,60 +1484,73 @@ class ProducerProcess:
     def _on_playlist_sync_update(self, sync_state: SyncPlaylistState) -> None:
         """Handle playlist updates from synchronization service."""
         try:
-            logger.debug(
-                f"Received playlist update: {len(sync_state.items)} items, current_index={sync_state.current_index}"
+            old_index = self._playlist.get_current_index() if hasattr(self, "_playlist") else -1
+            logger.info(
+                f"Received playlist sync update: {len(sync_state.items)} items, "
+                f"index change: {old_index} -> {sync_state.current_index}, "
+                f"playing={sync_state.is_playing}, loaded_index={self._current_item_index}"
             )
 
-            # Clear current playlist
-            self._playlist.clear()
+            # Use batch update to perform all playlist changes atomically
+            with self._playlist.batch_update():
+                # Clear current playlist
+                self._playlist.clear()
 
-            # Convert sync playlist items to producer playlist items
-            for sync_item in sync_state.items:
-                if sync_item.type in ["image", "video"] and sync_item.file_path:
-                    # Add regular media files with transition configurations
-                    self._playlist.add_item(
-                        filepath=sync_item.file_path,
-                        duration=sync_item.duration,
-                        repeat=1,
-                        transition_in=sync_item.transition_in,
-                        transition_out=sync_item.transition_out,
-                    )
-                elif sync_item.type == "text" and sync_item.file_path:
-                    # Handle text content (file_path contains JSON config) with transitions
-                    self._playlist.add_item(
-                        filepath=sync_item.file_path,
-                        duration=sync_item.duration,
-                        repeat=1,
-                        transition_in=sync_item.transition_in,
-                        transition_out=sync_item.transition_out,
-                    )
-                elif sync_item.type == "effect" and sync_item.effect_config:
-                    # Handle effect content - convert effect_config to JSON string for playlist
-                    import json
+                # Convert sync playlist items to producer playlist items
+                for sync_item in sync_state.items:
+                    if sync_item.type in ["image", "video"] and sync_item.file_path:
+                        # Add regular media files with transition configurations
+                        self._playlist.add_item(
+                            filepath=sync_item.file_path,
+                            duration=sync_item.duration,
+                            repeat=1,
+                            transition_in=sync_item.transition_in,
+                            transition_out=sync_item.transition_out,
+                        )
+                    elif sync_item.type == "text" and sync_item.file_path:
+                        # Handle text content (file_path contains JSON config) with transitions
+                        self._playlist.add_item(
+                            filepath=sync_item.file_path,
+                            duration=sync_item.duration,
+                            repeat=1,
+                            transition_in=sync_item.transition_in,
+                            transition_out=sync_item.transition_out,
+                        )
+                    elif sync_item.type == "effect" and sync_item.effect_config:
+                        # Handle effect content - convert effect_config to JSON string for playlist
+                        import json
 
-                    # Add item-level duration to effect config
-                    effect_config_with_duration = sync_item.effect_config.copy()
-                    effect_config_with_duration["duration"] = sync_item.duration
+                        # Add item-level duration to effect config
+                        effect_config_with_duration = sync_item.effect_config.copy()
+                        effect_config_with_duration["duration"] = sync_item.duration
 
-                    effect_json = json.dumps(effect_config_with_duration)
-                    self._playlist.add_item(
-                        filepath=effect_json,
-                        duration=sync_item.duration,
-                        repeat=1,
-                        transition_in=sync_item.transition_in,
-                        transition_out=sync_item.transition_out,
-                    )
+                        effect_json = json.dumps(effect_config_with_duration)
+                        self._playlist.add_item(
+                            filepath=effect_json,
+                            duration=sync_item.duration,
+                            repeat=1,
+                            transition_in=sync_item.transition_in,
+                            transition_out=sync_item.transition_out,
+                        )
 
-            # Update current index and playback state
-            self._playlist._current_index = sync_state.current_index
+                # Update current index (still within batch_update context)
+                self._playlist.set_current_index(sync_state.current_index)
+
+            # All playlist operations completed atomically
 
             # If the current content needs to change (different index), reset loaded content tracking
             if self._current_item_index != sync_state.current_index:
                 logger.info(
                     f"PLAYLIST INDEX SYNC: Producer index {self._current_item_index} -> playlist index {sync_state.current_index}"
                 )
+                # Clear stuck state tracking since we're advancing
+                if hasattr(self, "_content_finished_time"):
+                    delattr(self, "_content_finished_time")
+
                 # Mark that content needs to be reloaded to sync with new index
+                # Don't modify _current_source here - let producer thread handle cleanup to avoid race conditions
                 self._current_item = None  # Force content reload in _ensure_current_content
+                logger.debug("Set _current_item = None to force content reload (sync callback thread)")
             else:
                 # Even if staying on the same item, update the global timestamp offset
                 # to account for new items added after the current position

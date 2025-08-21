@@ -692,7 +692,12 @@ class PlaylistSyncClient:
         try:
             if message.type == "full_state" and message.data and self.on_playlist_update:
                 playlist_state = PlaylistState.from_dict(message.data)
+                logger.debug(
+                    f"Client '{self.client_name}' received full_state: index={playlist_state.current_index}, playing={playlist_state.is_playing}"
+                )
                 self.on_playlist_update(playlist_state)
+            else:
+                logger.debug(f"Client '{self.client_name}' ignoring message type: {message.type}")
 
         except Exception as e:
             logger.error(f"Error handling message in client '{self.client_name}': {e}")
@@ -701,17 +706,18 @@ class PlaylistSyncClient:
         """Send message to server."""
         try:
             if not self.connected or not self.socket:
-                logger.warning(f"Client '{self.client_name}' not connected")
+                logger.warning(f"Client '{self.client_name}' not connected, cannot send {message.type}")
                 return False
 
             message_json = message.to_json()
             # Add newline delimiter for proper message framing
             message_data = (message_json + "\n").encode("utf-8")
             self.socket.send(message_data)
+            logger.debug(f"Client '{self.client_name}' sent message: {message.type}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to send message from client '{self.client_name}': {e}")
+            logger.error(f"Failed to send {message.type} message from client '{self.client_name}': {e}")
             return False
 
     # Convenience methods for common operations

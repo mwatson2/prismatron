@@ -1,34 +1,36 @@
 #!/bin/bash
 
 # Script to extract relevant logs from journalctl around a specific time
-# Usage: ./extract_crash_logs.sh [time] [duration_before] [duration_after]
-# Example: ./extract_crash_logs.sh "23:01:49" 30 60
-# This would get logs from 30 seconds before to 60 seconds after 23:01:49
+# Usage: ./extract_crash_logs.sh [time] [duration_minutes_before] [duration_minutes_after]
+# Example: ./extract_crash_logs.sh "23:01" 1 2
+# This would get logs from 1 minute before to 2 minutes after 23:01
 
-TIME=${1:-"23:01:49"}
-BEFORE=${2:-30}
-AFTER=${3:-60}
+TIME=${1:-"23:01"}
+BEFORE_MIN=${2:-1}
+AFTER_MIN=${3:-2}
 SERVICE="prismatron.service"
 
-echo "Extracting logs around $TIME (${BEFORE}s before, ${AFTER}s after) for service: $SERVICE"
+echo "Extracting logs around $TIME (${BEFORE_MIN} min before, ${AFTER_MIN} min after) for service: $SERVICE"
 echo "=================================================="
 
-# Get today's date
-TODAY=$(date +%Y-%m-%d)
-
-# Calculate time range
-START_TIME=$(date -d "$TODAY $TIME - $BEFORE seconds" "+%Y-%m-%d %H:%M:%S")
-END_TIME=$(date -d "$TODAY $TIME + $AFTER seconds" "+%Y-%m-%d %H:%M:%S")
-
-echo "Time range: $START_TIME to $END_TIME"
+# Use journalctl's built-in time parsing
+# Get logs from the last 24 hours and grep for our time window
+echo "Looking for CRITICAL/ERROR messages:"
 echo ""
 
-# Extract logs with context
-journalctl -u $SERVICE --since="$START_TIME" --until="$END_TIME" --no-pager | grep -E "(CRITICAL|ERROR|RENDERER|renderer|thread|Thread|crash|failed|Exception|Traceback)" -A 2 -B 2
+# First, get any CRITICAL or thread crash messages from the last hour
+journalctl -u $SERVICE --since="1 hour ago" --no-pager | grep -E "(CRITICAL|RENDERER THREAD|renderer thread|Thread crashed|thread died|heartbeat)" -A 3 -B 3
 
 echo ""
 echo "=================================================="
-echo "Full logs for the time range (last 100 lines):"
+echo "Looking for renderer/thread errors:"
 echo ""
 
-journalctl -u $SERVICE --since="$START_TIME" --until="$END_TIME" --no-pager | tail -n 100
+journalctl -u $SERVICE --since="1 hour ago" --no-pager | grep -E "(Error in rendering loop|render_frame_at_timestamp|Failed to render|Frame rendering failed)" -A 5 -B 2
+
+echo ""
+echo "=================================================="
+echo "Last 50 lines of recent logs:"
+echo ""
+
+journalctl -u $SERVICE --since="10 minutes ago" --no-pager | tail -n 50

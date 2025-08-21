@@ -630,14 +630,21 @@ class ConsumerProcess:
                     last_audio_check = current_time
 
                 # Wait for new frame
+                logger.debug(
+                    f"Optimization: About to wait for ready buffer (heartbeat={self._optimization_thread_heartbeat:.1f})"
+                )
                 buffer_info = self._frame_consumer.wait_for_ready_buffer(timeout=self.max_frame_wait_timeout)
+                logger.debug(f"Optimization: wait_for_ready_buffer returned, got buffer_info={buffer_info is not None}")
 
                 if buffer_info is None:
                     # Timeout waiting for frame
+                    logger.debug("Optimization: Timeout waiting for frame")
                     continue
 
                 # Process the frame for optimization only
+                logger.debug("Optimization: About to process frame optimization")
                 self._process_frame_optimization(buffer_info)
+                logger.debug("Optimization: process_frame_optimization completed")
 
             except Exception as e:
                 logger.error(f"Error in optimization loop: {e}", exc_info=True)
@@ -776,7 +783,11 @@ class ConsumerProcess:
                 if control_status and control_status.renderer_state == RendererState.PLAYING:
                     # Get next LED values with timeout
                     try:
+                        logger.debug(
+                            f"Renderer: About to read from LED buffer (heartbeat={self._renderer_thread_heartbeat:.1f})"
+                        )
                         led_data = self._led_buffer.read_led_values(timeout=0.1)
+                        logger.debug(f"Renderer: Read from LED buffer complete, got data={led_data is not None}")
                     except Exception as buffer_error:
                         logger.error(f"Failed to read from LED buffer: {buffer_error}", exc_info=True)
                         consecutive_errors += 1
@@ -857,7 +868,11 @@ class ConsumerProcess:
 
                 # Render with timestamp-based timing
                 try:
+                    logger.debug(
+                        f"Renderer: About to call render_frame_at_timestamp for frame index {current_frame_index}"
+                    )
                     success = self._frame_renderer.render_frame_at_timestamp(led_values, timestamp, metadata)
+                    logger.debug(f"Renderer: render_frame_at_timestamp returned success={success}")
                     last_frame_render_time = time.time()
                     consecutive_errors = 0  # Reset error counter on success
                 except Exception as render_error:
@@ -949,22 +964,22 @@ class ConsumerProcess:
             try:
                 current_time = time.time()
 
-                # Check optimization thread
+                # Check optimization thread (reduced to 10 seconds for faster detection)
                 if self._optimization_thread_heartbeat > 0:
                     opt_age = current_time - self._optimization_thread_heartbeat
-                    if opt_age > 60.0:  # No heartbeat for 60 seconds
-                        logger.critical(f"OPTIMIZATION THREAD APPEARS DEAD: No heartbeat for {opt_age:.1f} seconds")
+                    if opt_age > 10.0:  # No heartbeat for 10 seconds
+                        logger.critical(f"OPTIMIZATION THREAD APPEARS STUCK: No heartbeat for {opt_age:.1f} seconds")
                         # Log thread state
                         if self._optimization_thread and self._optimization_thread.is_alive():
                             logger.critical("Optimization thread is_alive=True but not responding")
                         else:
                             logger.critical("Optimization thread is_alive=False - thread has crashed!")
 
-                # Check renderer thread
+                # Check renderer thread (reduced to 10 seconds for faster detection)
                 if self._renderer_thread_heartbeat > 0:
                     render_age = current_time - self._renderer_thread_heartbeat
-                    if render_age > 60.0:  # No heartbeat for 60 seconds
-                        logger.critical(f"RENDERER THREAD APPEARS DEAD: No heartbeat for {render_age:.1f} seconds")
+                    if render_age > 10.0:  # No heartbeat for 10 seconds
+                        logger.critical(f"RENDERER THREAD APPEARS STUCK: No heartbeat for {render_age:.1f} seconds")
                         # Log thread state and buffer status
                         if self._renderer_thread and self._renderer_thread.is_alive():
                             logger.critical("Renderer thread is_alive=True but not responding")
@@ -1206,9 +1221,11 @@ class ConsumerProcess:
 
             # Handle batch vs single frame processing
             if self.enable_batch_mode and self._led_optimizer.supports_batch_optimization():
+                logger.debug("Optimization: Processing frame for batch")
                 return self._process_frame_for_batch(rgb_frame, buffer_info, metadata_dict, transition_time, start_time)
             else:
                 # Single frame processing (existing logic)
+                logger.debug("Optimization: Processing single frame")
                 return self._process_single_frame(rgb_frame, buffer_info, metadata_dict, transition_time, start_time)
 
         except Exception as e:
@@ -1267,7 +1284,9 @@ class ConsumerProcess:
 
             # Check if batch should be processed
             if self._should_process_batch():
+                logger.debug(f"Optimization: Processing batch of {len(self._frame_batch)} frames")
                 batch_success = self._process_frame_batch()
+                logger.debug(f"Optimization: Batch processing completed, success={batch_success}")
                 if not batch_success:
                     logger.warning("Batch processing failed")
 
