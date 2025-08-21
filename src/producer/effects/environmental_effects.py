@@ -197,7 +197,7 @@ class AuroraBorealis(BaseEffect):
         self.wave_speed = self.config.get("wave_speed", 0.3)
         self.color_palette = self.config.get("color_palette", "classic")  # classic, purple, blue
         self.intensity = self.config.get("intensity", 0.8)
-        self.wave_count = self.config.get("wave_count", 3)
+        self.wave_count = self.config.get("wave_count", 2)  # Reduced from 3 to 2
         self.curtain_height = self.config.get("curtain_height", 0.7)  # How much of screen
 
         # Define color palettes
@@ -209,6 +209,12 @@ class AuroraBorealis(BaseEffect):
 
         self.colors = self.palettes.get(self.color_palette, self.palettes["classic"])
 
+        # Pre-compute wave pattern arrays for efficiency
+        self.x_positions = np.arange(self.width)
+        self.wave_cache_time = -1
+        self.wave_cache_interval = 0.016  # Update every ~60fps
+        self.cached_wave_y = np.zeros((self.wave_count, self.width))
+
     def generate_frame(self, presentation_time: float) -> np.ndarray:
         t = self.get_time(presentation_time) * self.wave_speed
         frame = np.zeros((self.height, self.width, 3), dtype=np.float32)
@@ -216,23 +222,26 @@ class AuroraBorealis(BaseEffect):
         # Create multiple aurora curtains
         curtain_base_y = int(self.height * (1 - self.curtain_height))
 
-        for wave in range(self.wave_count):
-            # Wave parameters
-            wave_offset = wave * 2 * np.pi / self.wave_count
-            frequency = 1 + wave * 0.5
-            amplitude = 30 + wave * 10
-            color = self.colors[wave % len(self.colors)]
+        # Update wave cache if needed
+        if t - self.wave_cache_time > self.wave_cache_interval:
+            for wave in range(self.wave_count):
+                wave_offset = wave * 2 * np.pi / self.wave_count
+                frequency = 1 + wave * 0.5
+                amplitude = 30 + wave * 10
 
-            # Generate wave shape
-            wave_y = np.zeros(self.width)
-            for x in range(self.width):
-                # Multiple sine components for natural look
+                # Vectorized wave calculation
+                x_norm = self.x_positions / self.width * 2 * np.pi
                 wave_height = amplitude * (
-                    np.sin(frequency * x / self.width * 2 * np.pi + t + wave_offset) * 0.6
-                    + np.sin(frequency * 1.7 * x / self.width * 2 * np.pi + t * 1.3 + wave_offset) * 0.3
-                    + np.sin(frequency * 2.3 * x / self.width * 2 * np.pi - t * 0.7 + wave_offset) * 0.1
+                    np.sin(frequency * x_norm + t + wave_offset) * 0.6
+                    + np.sin(frequency * 1.7 * x_norm + t * 1.3 + wave_offset) * 0.3
+                    + np.sin(frequency * 2.3 * x_norm - t * 0.7 + wave_offset) * 0.1
                 )
-                wave_y[x] = curtain_base_y + wave_height
+                self.cached_wave_y[wave] = curtain_base_y + wave_height
+            self.wave_cache_time = t
+
+        for wave in range(self.wave_count):
+            color = self.colors[wave % len(self.colors)]
+            wave_y = self.cached_wave_y[wave]
 
             # Draw aurora curtain with vertical streaks
             for x in range(self.width):
@@ -248,19 +257,20 @@ class AuroraBorealis(BaseEffect):
                         fade = max(0, 1 - y_offset / streak_length)
                         fade *= self.intensity
 
-                        # Add some horizontal spread for glow
-                        for x_spread in range(-2, 3):
+                        # Add some horizontal spread for glow (reduced from ±2 to ±1)
+                        for x_spread in range(-1, 2):
                             x_pos = x + x_spread
                             if 0 <= x_pos < self.width:
-                                spread_fade = fade * max(0, 1 - abs(x_spread) / 3)
+                                spread_fade = fade * max(0, 1 - abs(x_spread) / 2)
 
                                 # Blend color
                                 for c in range(3):
                                     frame[y, x_pos, c] = max(frame[y, x_pos, c], color[c] * spread_fade)
 
-        # Add shimmering effect
-        shimmer = (np.sin(t * 3 + self.x_grid * 0.1) + 1) / 2 * 0.2 + 0.8
-        frame *= shimmer[:, :, np.newaxis]
+        # Simplified shimmer effect (optional - can be removed for more performance)
+        if hasattr(self, "x_grid"):
+            shimmer = (np.sin(t * 3 + self.x_grid * 0.1) + 1) * 0.1 + 0.9
+            frame *= shimmer[:, :, np.newaxis]
 
         # Convert to uint8
         frame = np.clip(frame, 0, 255).astype(np.uint8)
@@ -300,5 +310,5 @@ EffectRegistry.register(
     "Aurora",
     "Northern Lights simulation",
     "environmental",
-    {"wave_speed": 0.3, "color_palette": "classic", "intensity": 0.8, "wave_count": 3, "curtain_height": 0.7},
+    {"wave_speed": 0.3, "color_palette": "classic", "intensity": 0.8, "wave_count": 2, "curtain_height": 0.7},
 )
