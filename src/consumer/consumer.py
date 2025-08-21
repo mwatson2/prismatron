@@ -5,13 +5,14 @@ This module implements the main consumer process that reads frames from
 shared memory, optimizes LED values, and transmits to WLED controller.
 """
 
+import contextlib
 import logging
 import signal
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import cupy as cp
 import numpy as np
@@ -104,7 +105,7 @@ class ConsumerProcess:
         self,
         buffer_name: str = "prismatron_buffer",
         control_name: str = "prismatron_control",
-        wled_host: str = "192.168.7.140",
+        wled_hosts: Union[str, List[str]] = "192.168.7.140",
         wled_port: int = 4048,
         diffusion_patterns_path: Optional[str] = None,
         enable_test_renderer: bool = False,
@@ -124,7 +125,7 @@ class ConsumerProcess:
         Args:
             buffer_name: Shared memory buffer name
             control_name: Control state name
-            wled_host: WLED controller IP address
+            wled_hosts: WLED controller IP address(es) or hostname(s) - can be a single string or list
             wled_port: WLED controller port
             diffusion_patterns_path: Path to diffusion patterns
             enable_test_renderer: Enable test renderer for debugging
@@ -165,7 +166,11 @@ class ConsumerProcess:
 
         # Note: Playlist sync handled by producer, consumer just tracks rendered items
         # WLED and LED buffer will be created after LED optimizer loads pattern file
-        self.wled_host = wled_host
+        # Convert single host to list for uniform handling
+        if isinstance(wled_hosts, str):
+            self.wled_hosts = [wled_hosts]
+        else:
+            self.wled_hosts = wled_hosts
         self.wled_port = wled_port
         self._wled_client = None  # Will be created after LED count is known
         self._led_buffer = None  # Will be created after LED count is known
@@ -289,6 +294,13 @@ class ConsumerProcess:
         # LED transition processor for LED-based transitions
         self._led_transition_processor = LEDTransitionProcessor()
 
+        # Thread health monitoring
+        self._renderer_thread_heartbeat = 0.0
+        self._optimization_thread_heartbeat = 0.0
+        self._thread_monitor_interval = 5.0  # Check thread health every 5 seconds
+        self._thread_monitor_thread: Optional[threading.Thread] = None
+        self._last_thread_check = 0.0
+
         # Batch processing configuration
         self.enable_batch_mode = enable_batch_mode
         self._frame_batch = []  # Accumulate frames for batch processing
@@ -406,10 +418,10 @@ class ConsumerProcess:
             # Create LED buffer with actual LED count - increased to 20 for video startup latency
             self._led_buffer = LEDBuffer(led_count=actual_led_count, buffer_size=20)
 
-            # Configure WLED client with actual LED count
+            # Configure WLED client with actual LED count and list of hosts
             wled_config = WLEDSinkConfig(
                 led_count=actual_led_count,
-                host=self.wled_host,
+                hosts=self.wled_hosts,  # Pass list of hosts
                 port=self.wled_port,
             )
             self._wled_client = WLEDSink(wled_config)
@@ -479,10 +491,12 @@ class ConsumerProcess:
             self._wled_reconnection_thread = threading.Thread(
                 target=self._wled_reconnection_loop, name="WLEDReconnectionThread"
             )
+            self._thread_monitor_thread = threading.Thread(target=self._thread_monitor_loop, name="ThreadMonitorThread")
 
             self._optimization_thread.start()
             self._renderer_thread.start()
             self._wled_reconnection_thread.start()
+            self._thread_monitor_thread.start()
 
             # Check initial audio reactive state from control state
             self._update_audio_reactive_state()
@@ -536,6 +550,11 @@ class ConsumerProcess:
                 if self._wled_reconnection_thread.is_alive():
                     logger.warning("WLED reconnection thread did not stop gracefully")
 
+            if self._thread_monitor_thread and self._thread_monitor_thread.is_alive():
+                self._thread_monitor_thread.join(timeout=2.0)
+                if self._thread_monitor_thread.is_alive():
+                    logger.warning("Thread monitor thread did not stop gracefully")
+
             # Cleanup components
             self._cleanup()
 
@@ -588,9 +607,17 @@ class ConsumerProcess:
         # Track last audio state check to avoid checking too frequently
         last_audio_check = 0.0
         audio_check_interval = 1.0  # Check every 1 second
+        last_heartbeat_log = 0.0
 
         while self._running and not self._shutdown_requested:
             try:
+                # Update heartbeat
+                self._optimization_thread_heartbeat = time.time()
+
+                # Log heartbeat periodically
+                if time.time() - last_heartbeat_log > 30.0:
+                    logger.debug("Optimization thread heartbeat")
+                    last_heartbeat_log = time.time()
                 # Check for shutdown signal from control state
                 if self._control_state.should_shutdown():
                     logger.info("Shutdown signal received from control state")
@@ -617,6 +644,8 @@ class ConsumerProcess:
                 time.sleep(0.1)  # Brief pause before retrying
 
         logger.info("Optimization thread ended")
+        # Clear heartbeat to signal thread death
+        self._optimization_thread_heartbeat = 0.0
 
     def _handle_renderer_state_transitions(self, control_status) -> None:
         """
@@ -698,6 +727,11 @@ class ConsumerProcess:
         """Rendering thread - handles timestamp-based frame output."""
         logger.info("Renderer thread started")
 
+        consecutive_errors = 0
+        max_consecutive_errors = 10
+        last_heartbeat_log = 0.0
+        last_frame_render_time = 0.0
+
         # Log initial renderer state
         initial_status = self._control_state.get_status()
         if initial_status:
@@ -705,6 +739,15 @@ class ConsumerProcess:
 
         while self._running and not self._shutdown_requested:
             try:
+                # Update heartbeat
+                self._renderer_thread_heartbeat = time.time()
+
+                # Log heartbeat periodically
+                if time.time() - last_heartbeat_log > 30.0:
+                    logger.debug(
+                        f"Renderer thread heartbeat (last frame {time.time() - last_frame_render_time:.1f}s ago)"
+                    )
+                    last_heartbeat_log = time.time()
                 # Check renderer state and handle transitions
                 control_status = self._control_state.get_status()
                 if control_status:
@@ -732,7 +775,12 @@ class ConsumerProcess:
                 # Handle renderer state
                 if control_status and control_status.renderer_state == RendererState.PLAYING:
                     # Get next LED values with timeout
-                    led_data = self._led_buffer.read_led_values(timeout=0.1)
+                    try:
+                        led_data = self._led_buffer.read_led_values(timeout=0.1)
+                    except Exception as buffer_error:
+                        logger.error(f"Failed to read from LED buffer: {buffer_error}", exc_info=True)
+                        consecutive_errors += 1
+                        continue
 
                     if led_data is None:
                         continue  # Timeout - no data available
@@ -808,7 +856,23 @@ class ConsumerProcess:
                     # Debug logging for high FPS investigation
 
                 # Render with timestamp-based timing
-                success = self._frame_renderer.render_frame_at_timestamp(led_values, timestamp, metadata)
+                try:
+                    success = self._frame_renderer.render_frame_at_timestamp(led_values, timestamp, metadata)
+                    last_frame_render_time = time.time()
+                    consecutive_errors = 0  # Reset error counter on success
+                except Exception as render_error:
+                    logger.error(
+                        f"CRITICAL: Frame renderer crashed during render_frame_at_timestamp: {render_error}",
+                        exc_info=True,
+                    )
+                    success = False
+                    consecutive_errors += 1
+
+                    if consecutive_errors >= max_consecutive_errors:
+                        logger.critical(
+                            f"Renderer thread has failed {consecutive_errors} times consecutively - stopping thread"
+                        )
+                        break
 
                 # Update rendering_index AFTER successful render to reflect what's actually been rendered
                 if success and should_update_rendering_index:
@@ -851,9 +915,92 @@ class ConsumerProcess:
 
             except Exception as e:
                 logger.error(f"Error in rendering loop: {e}", exc_info=True)
+                consecutive_errors += 1
+
+                if consecutive_errors >= max_consecutive_errors:
+                    logger.critical(
+                        f"Renderer thread has encountered {consecutive_errors} consecutive errors - exiting thread"
+                    )
+                    # Set renderer state to STOPPED to signal issue
+                    with contextlib.suppress(Exception):
+                        self._control_state.set_renderer_state(RendererState.STOPPED)
+                    break
+
                 time.sleep(0.01)
 
-        logger.info("Renderer thread ended")
+        # Thread is exiting - log reason
+        if consecutive_errors >= max_consecutive_errors:
+            logger.critical("RENDERER THREAD CRASHED: Exiting due to excessive consecutive errors")
+        elif self._shutdown_requested:
+            logger.info("Renderer thread ended: Shutdown requested")
+        elif not self._running:
+            logger.info("Renderer thread ended: Consumer stopped")
+        else:
+            logger.warning("Renderer thread ended: Unknown reason")
+
+        # Clear heartbeat to signal thread death
+        self._renderer_thread_heartbeat = 0.0
+
+    def _thread_monitor_loop(self) -> None:
+        """Monitor thread health and log warnings if threads appear stuck or dead."""
+        logger.info("Thread monitor started")
+
+        while self._running and not self._shutdown_requested:
+            try:
+                current_time = time.time()
+
+                # Check optimization thread
+                if self._optimization_thread_heartbeat > 0:
+                    opt_age = current_time - self._optimization_thread_heartbeat
+                    if opt_age > 60.0:  # No heartbeat for 60 seconds
+                        logger.critical(f"OPTIMIZATION THREAD APPEARS DEAD: No heartbeat for {opt_age:.1f} seconds")
+                        # Log thread state
+                        if self._optimization_thread and self._optimization_thread.is_alive():
+                            logger.critical("Optimization thread is_alive=True but not responding")
+                        else:
+                            logger.critical("Optimization thread is_alive=False - thread has crashed!")
+
+                # Check renderer thread
+                if self._renderer_thread_heartbeat > 0:
+                    render_age = current_time - self._renderer_thread_heartbeat
+                    if render_age > 60.0:  # No heartbeat for 60 seconds
+                        logger.critical(f"RENDERER THREAD APPEARS DEAD: No heartbeat for {render_age:.1f} seconds")
+                        # Log thread state and buffer status
+                        if self._renderer_thread and self._renderer_thread.is_alive():
+                            logger.critical("Renderer thread is_alive=True but not responding")
+                            # Check LED buffer status
+                            try:
+                                buffer_stats = self._led_buffer.get_buffer_stats()
+                                logger.critical(f"LED buffer status: {buffer_stats}")
+                            except Exception:
+                                pass
+                        else:
+                            logger.critical("Renderer thread is_alive=False - thread has crashed!")
+                            # Try to get more info
+                            try:
+                                control_status = self._control_state.get_status()
+                                if control_status:
+                                    logger.critical(
+                                        f"System state at crash: renderer_state={control_status.renderer_state}, producer_state={control_status.producer_state}"
+                                    )
+                            except Exception:
+                                pass
+                elif self._renderer_thread_heartbeat == 0.0 and current_time - self._last_thread_check > 30.0:
+                    # Heartbeat was cleared (thread died)
+                    logger.critical("RENDERER THREAD HEARTBEAT CLEARED - Thread has terminated!")
+                    if self._renderer_thread and not self._renderer_thread.is_alive():
+                        logger.critical("Confirmed: Renderer thread is not alive")
+
+                self._last_thread_check = current_time
+
+                # Sleep for monitor interval
+                time.sleep(self._thread_monitor_interval)
+
+            except Exception as e:
+                logger.error(f"Error in thread monitor loop: {e}", exc_info=True)
+                time.sleep(1.0)
+
+        logger.info("Thread monitor ended")
 
     def _wled_reconnection_loop(self) -> None:
         """Dedicated thread for WLED reconnection attempts."""

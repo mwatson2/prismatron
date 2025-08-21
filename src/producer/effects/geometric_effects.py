@@ -307,6 +307,138 @@ class Mandala(BaseEffect):
         return frame
 
 
+class BouncingBeachBall(BaseEffect):
+    """Striped beach ball bouncing around the screen."""
+
+    def initialize(self):
+        self.speed = self.config.get("speed", 1.0)  # Speed multiplier
+        self.ball_size = self.config.get("ball_size", 0.25)  # 25% of screen height
+        self.stripe_count = self.config.get("stripe_count", 6)  # Number of stripes
+        self.spin_speed = self.config.get("spin_speed", 2.0)  # Spin rate multiplier
+
+        # Ball radius in pixels
+        self.radius = int(self.height * self.ball_size)
+
+        # Random starting position (ensure ball stays on screen)
+        self.x = np.random.uniform(self.radius, self.width - self.radius)
+        self.y = np.random.uniform(self.radius, self.height - self.radius)
+
+        # Random starting direction
+        angle = np.random.uniform(0, 2 * np.pi)
+        base_speed = self.speed * 50  # Base pixels per second
+        self.vx = base_speed * np.cos(angle)
+        self.vy = base_speed * np.sin(angle)
+
+        # Spin angle
+        self.spin_angle = 0
+
+    def generate_frame(self, presentation_time: float) -> np.ndarray:
+        t = self.get_time(presentation_time)
+        frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+
+        # Update position based on constant velocity
+        dt = 1.0 / self.fps
+        self.x += self.vx * dt
+        self.y += self.vy * dt
+
+        # Bounce off walls
+        if self.x - self.radius <= 0 or self.x + self.radius >= self.width:
+            self.vx = -self.vx
+            self.x = np.clip(self.x, self.radius, self.width - self.radius)
+
+        if self.y - self.radius <= 0 or self.y + self.radius >= self.height:
+            self.vy = -self.vy
+            self.y = np.clip(self.y, self.radius, self.height - self.radius)
+
+        # Update spin around tilted axis
+        self.spin_angle += self.spin_speed * dt * 2 * np.pi
+
+        # Draw the beach ball
+        center = (int(self.x), int(self.y))
+
+        # Create a mask for the ball
+        ball_mask = np.zeros((self.height, self.width), dtype=np.uint8)
+        cv2.circle(ball_mask, center, self.radius, 255, -1)
+
+        # Create stripe pattern with 3D rotation effect
+        stripe_frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+
+        # Define the rotation axis - nearly vertical with slight tilt
+        # Tilt towards viewer (positive Z) and slightly right (positive X)
+        axis_x = 0.15  # Slight tilt to the right
+        axis_y = 0.98  # Nearly vertical
+        axis_z = 0.1  # Slight tilt towards viewer
+
+        # Normalize the axis
+        axis_length = np.sqrt(axis_x**2 + axis_y**2 + axis_z**2)
+        axis_x /= axis_length
+        axis_y /= axis_length
+        axis_z /= axis_length
+
+        # Get coordinates relative to ball center
+        y_coords, x_coords = np.mgrid[0 : self.height, 0 : self.width]
+        x_centered = x_coords - self.x
+        y_centered = y_coords - self.y
+
+        # Calculate distance from center for each pixel
+        dist_from_center = np.sqrt(x_centered**2 + y_centered**2)
+
+        # Create spherical coordinates for 3D effect
+        # Map 2D position to sphere surface
+        sphere_x = x_centered / (self.radius + 1e-6)
+        sphere_y = y_centered / (self.radius + 1e-6)
+        sphere_z = np.sqrt(np.maximum(0, 1 - sphere_x**2 - sphere_y**2))
+
+        # Apply 3D rotation around tilted axis using Rodrigues' rotation formula
+        cos_angle = np.cos(self.spin_angle)
+        sin_angle = np.sin(self.spin_angle)
+
+        # Dot product of position with axis
+        dot = sphere_x * axis_x + sphere_y * axis_y + sphere_z * axis_z
+
+        # Cross product components
+        cross_x = axis_y * sphere_z - axis_z * sphere_y
+        cross_y = axis_z * sphere_x - axis_x * sphere_z
+        cross_z = axis_x * sphere_y - axis_y * sphere_x
+
+        # Rodrigues' formula
+        rot_x = sphere_x * cos_angle + cross_x * sin_angle + axis_x * dot * (1 - cos_angle)
+        rot_y = sphere_y * cos_angle + cross_y * sin_angle + axis_y * dot * (1 - cos_angle)
+        rot_z = sphere_z * cos_angle + cross_z * sin_angle + axis_z * dot * (1 - cos_angle)
+
+        # Calculate longitude angle from rotated coordinates for stripe pattern
+        longitude = np.arctan2(rot_x, rot_z)
+
+        # Create stripes based on longitude
+        for i in range(self.stripe_count):
+            stripe_start = (i * 2 * np.pi / self.stripe_count) - np.pi
+            stripe_end = stripe_start + (2 * np.pi / self.stripe_count)
+
+            # Alternate between blue and red stripes
+            if i % 2 == 0:
+                color = (255, 0, 0)  # Red (BGR format for OpenCV)
+            else:
+                color = (0, 0, 255)  # Blue (BGR format for OpenCV)
+
+            # Create stripe mask
+            stripe_mask = ((longitude >= stripe_start) & (longitude < stripe_end)) | (
+                (longitude + 2 * np.pi >= stripe_start) & (longitude + 2 * np.pi < stripe_end)
+            )
+
+            # Apply stripe color within ball area
+            combined_mask = stripe_mask & (ball_mask > 0) & (dist_from_center <= self.radius)
+            stripe_frame[combined_mask] = color
+
+        # Apply the striped ball to the frame
+        frame[ball_mask > 0] = stripe_frame[ball_mask > 0]
+
+        # Convert from BGR to RGB
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        self.frame_count += 1
+        return frame
+
+
 # Register effects
 EffectRegistry.register(
     "rotating_shapes",
@@ -357,4 +489,13 @@ EffectRegistry.register(
     "Simple mandala with radial symmetry",
     "geometric",
     {"complexity": 3, "symmetry": 8, "rotation_speed": 0.1, "color_palette": "rainbow", "pulse_speed": 0.5},
+)
+
+EffectRegistry.register(
+    "bouncing_beach_ball",
+    BouncingBeachBall,
+    "Bouncing Beach Ball",
+    "Striped beach ball bouncing around the screen",
+    "geometric",
+    {"speed": 1.0, "ball_size": 0.25, "stripe_count": 6, "spin_speed": 2.0},
 )

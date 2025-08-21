@@ -75,7 +75,8 @@ class WLEDSinkConfig:
     """Configuration for WLED controller communication."""
 
     led_count: int  # Must be provided from pattern file
-    host: str = WLED_DEFAULT_HOST
+    hosts: Union[str, List[str]] = None  # List of hosts to try in order
+    host: str = None  # Legacy single host support
     port: int = WLED_DEFAULT_PORT
     timeout: float = WLED_TIMEOUT_SECONDS
     retry_count: int = WLED_RETRY_COUNT
@@ -102,6 +103,24 @@ class WLEDSink:
             config: WLED configuration (uses defaults if None)
         """
         self.config = config or WLEDSinkConfig()
+
+        # Handle host configuration - support both hosts list and legacy single host
+        if self.config.hosts is not None:
+            # Use hosts list if provided
+            if isinstance(self.config.hosts, str):
+                self.hosts_to_try = [self.config.hosts]
+            else:
+                self.hosts_to_try = list(self.config.hosts)
+        elif self.config.host is not None:
+            # Fall back to single host for backward compatibility
+            self.hosts_to_try = [self.config.host]
+        else:
+            # Use default if neither is provided
+            self.hosts_to_try = [WLED_DEFAULT_HOST]
+
+        # Track which host we're currently connected to
+        self.current_host = None
+
         self.socket: Optional[socket.socket] = None
         self.sequence_number = 0
         self.last_frame_time = 0.0
@@ -160,7 +179,31 @@ class WLEDSink:
 
     def connect(self) -> bool:
         """
-        Establish connection to WLED controller.
+        Establish connection to WLED controller by trying each host in sequence.
+
+        Returns:
+            True if connection successful to any host, False otherwise
+        """
+        logger.info(f"Attempting to connect to WLED controller (trying {len(self.hosts_to_try)} host(s))")
+
+        for host in self.hosts_to_try:
+            logger.info(f"Trying WLED host: {host}:{self.config.port}")
+            if self._connect_to_host(host):
+                self.current_host = host
+                logger.info(f"Successfully connected to WLED at {host}:{self.config.port}")
+                return True
+            else:
+                logger.debug(f"Failed to connect to {host}, trying next host if available")
+
+        logger.warning(f"Failed to connect to any WLED host from: {self.hosts_to_try}")
+        return False
+
+    def _connect_to_host(self, host: str) -> bool:
+        """
+        Try to connect to a specific WLED host.
+
+        Args:
+            host: Host to connect to
 
         Returns:
             True if connection successful, False otherwise
@@ -178,8 +221,8 @@ class WLEDSink:
                 self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 self.socket.settimeout(self.config.timeout)
 
-                # Test connectivity with a query packet
-                success, status = self._send_query()
+                # Test connectivity with a query packet to this specific host
+                success, status = self._send_query(host)
                 if success:
                     self.is_connected = True
 
@@ -189,7 +232,7 @@ class WLEDSink:
                         logger.info(
                             f"Connected to WLED '{status.get('name', 'Unknown')}' "
                             f"v{status.get('ver', 'Unknown')} at "
-                            f"{self.config.host}:{self.config.port}"
+                            f"{host}:{self.config.port}"
                         )
 
                         # Validate LED count if available
@@ -202,9 +245,7 @@ class WLEDSink:
                             )
                     else:
                         logger.info(
-                            f"Connected to WLED controller at "
-                            f"{self.config.host}:{self.config.port} "
-                            f"(no status response)"
+                            f"Connected to WLED controller at " f"{host}:{self.config.port} " f"(no status response)"
                         )
 
                     # Start keepalive thread if enabled
@@ -216,9 +257,7 @@ class WLEDSink:
                         # Only log connection failure if within first minute
                         elapsed_minutes = (time.time() - self._error_message_start_time) / 60.0
                         if elapsed_minutes < self._silent_after_minutes:
-                            logger.debug(
-                                f"Failed to connect to WLED controller at {self.config.host}:{self.config.port}"
-                            )
+                            logger.debug(f"Failed to connect to WLED controller at {host}:{self.config.port}")
                         self.disconnect()
                         return False
 
@@ -227,7 +266,7 @@ class WLEDSink:
                     if attempt == 1:
                         logger.info(
                             f"Attempting to connect to WLED controller at "
-                            f"{self.config.host}:{self.config.port} "
+                            f"{host}:{self.config.port} "
                             f"(persistent retry enabled, interval: {self.config.retry_interval}s)"
                         )
                     else:
@@ -276,23 +315,31 @@ class WLEDSink:
         if elapsed_minutes < self._silent_after_minutes:
             logger.debug("Disconnected from WLED controller")
 
-    def _send_query(self) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    def _send_query(self, host: Optional[str] = None) -> Tuple[bool, Optional[Dict[str, Any]]]:
         """
         Query WLED device via HTTP to test connectivity and get status.
 
         WLED does not respond to DDP query packets, so we use the HTTP API instead.
         Fetches device information from http://wled.local/json/info
 
+        Args:
+            host: Host to query (uses current_host if not specified)
+
         Returns:
             Tuple of (success, status_dict) where status_dict contains WLED info
         """
+        # Use provided host or fall back to current host
+        if host is None:
+            host = self.current_host
+        if host is None:
+            return False, None
         try:
             # Construct HTTP URL - support both hostname and IP address
-            if self.config.host in ["wled.local", "WLED.local"]:
-                base_url = f"http://{self.config.host}"
+            if host in ["wled.local", "WLED.local"]:
+                base_url = f"http://{host}"
             else:
                 # For IP addresses, use the IP directly
-                base_url = f"http://{self.config.host}"
+                base_url = f"http://{host}"
 
             info_url = f"{base_url}/json/info"
 
@@ -351,7 +398,7 @@ class WLEDSink:
             # Only log connection errors if within first minute
             elapsed_minutes = (time.time() - self._error_message_start_time) / 60.0
             if elapsed_minutes < self._silent_after_minutes:
-                logger.warning(f"Failed to connect to WLED at {self.config.host}")
+                logger.warning(f"Failed to connect to WLED at {host}")
             return False, None
         except Exception as e:
             # Only log general errors if within first minute
@@ -387,7 +434,10 @@ class WLEDSink:
             )
 
             # Send the packet - don't wait for response since WLED doesn't reply to queries
-            self.socket.sendto(packet, (self.config.host, self.config.port))
+            if self.current_host:
+                self.socket.sendto(packet, (self.current_host, self.config.port))
+            else:
+                return False
             return True
 
         except Exception as e:
@@ -536,6 +586,23 @@ class WLEDSink:
                     error_msg = f"Failed to send packet {packet_index + 1}/{self.packets_per_frame}"
                     logger.error(error_msg)
                     errors.append(error_msg)
+                    # Try to reconnect to any available host on transmission failure
+                    if not self.is_failing:
+                        logger.info("Attempting to reconnect to WLED after transmission failure...")
+                        if self.connect():
+                            logger.info("Reconnected successfully, retrying packet transmission")
+                            # Retry the failed packet with new connection
+                            packet_result = self._send_ddp_packet(
+                                data=packet_data,
+                                data_offset=data_offset,
+                                is_last_packet=(packet_index == self.packets_per_frame - 1),
+                            )
+                            if packet_result:
+                                errors.pop()  # Remove the error since retry succeeded
+                                packets_sent += 1
+                                bytes_sent += len(packet_data) + DDP_HEADER_SIZE
+                    if not packet_result:
+                        continue  # Skip to next packet if still failed
                 else:
                     packets_sent += 1
                     bytes_sent += len(packet_data) + DDP_HEADER_SIZE
@@ -610,7 +677,10 @@ class WLEDSink:
                 try:
                     if self.socket is None:
                         return False
-                    self.socket.sendto(packet, (self.config.host, self.config.port))
+                    if self.current_host:
+                        self.socket.sendto(packet, (self.current_host, self.config.port))
+                    else:
+                        return False
                     return True
                 except socket.timeout:
                     logger.warning(f"Packet send timeout, attempt {attempt + 1}/{self.config.retry_count}")
@@ -754,7 +824,8 @@ class WLEDSink:
                 "transmission_errors": self.transmission_errors,
                 "packets_per_frame": self.packets_per_frame,
                 "is_connected": self.is_connected,
-                "host": self.config.host,
+                "current_host": self.current_host,
+                "available_hosts": self.hosts_to_try,
                 "port": self.config.port,
                 "led_count": self.config.led_count,
                 "wled_status": self.wled_status,
@@ -942,7 +1013,7 @@ class WLEDSink:
         if self.connect():
             return self
         else:
-            raise ConnectionError(f"Failed to connect to WLED at {self.config.host}:{self.config.port}")
+            raise ConnectionError(f"Failed to connect to any WLED host from: {self.hosts_to_try}")
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""

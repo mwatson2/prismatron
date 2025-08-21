@@ -3,7 +3,7 @@
   "name": "Simple_Effects",
   "description": "",
   "created_at": "2025-08-15T14:15:54.207019",
-  "modified_at": "2025-08-15T20:58:00.238204",
+  "modified_at": "2025-08-20T22:51:49.521025",
   "auto_repeat": true,
   "shuffle": false,
   "items": [
@@ -34,99 +34,11 @@
       }
     },
     {
-      "id": "e4092049-c03c-474b-9c0b-9441349444a5",
-      "name": "Color Breathe",
-      "type": "effect",
-      "duration": 10.0,
-      "order": 1,
-      "transition_in": {
-        "type": "none",
-        "parameters": {}
-      },
-      "transition_out": {
-        "type": "none",
-        "parameters": {}
-      },
-      "effect_config": {
-        "effect_id": "color_breathe",
-        "parameters": {
-          "base_color": [
-            255,
-            0,
-            128
-          ],
-          "breathe_rate": 0.5,
-          "intensity_min": 0.2,
-          "intensity_max": 1,
-          "color_shift": false,
-          "shift_amount": 0.1,
-          "duration": 10
-        }
-      }
-    },
-    {
-      "id": "fa202e99-5d55-4784-9d3f-b79cf0a0f198",
-      "name": "Gradient Flow",
-      "type": "effect",
-      "duration": 10.0,
-      "order": 2,
-      "transition_in": {
-        "type": "none",
-        "parameters": {}
-      },
-      "transition_out": {
-        "type": "none",
-        "parameters": {}
-      },
-      "effect_config": {
-        "effect_id": "gradient_flow",
-        "parameters": {
-          "color_stops": [
-            [
-              255,
-              0,
-              0
-            ],
-            [
-              255,
-              255,
-              0
-            ],
-            [
-              0,
-              255,
-              0
-            ],
-            [
-              0,
-              255,
-              255
-            ],
-            [
-              0,
-              0,
-              255
-            ],
-            [
-              255,
-              0,
-              255
-            ]
-          ],
-          "flow_speed": 0.3,
-          "flow_direction": "horizontal",
-          "gradient_type": "linear",
-          "blend_width": 0.5,
-          "duration": 10
-        }
-      }
-    },
-    {
       "id": "917eead4-4cd5-4642-b77f-c37d96362018",
       "name": "Swarm",
       "type": "effect",
       "duration": 10.0,
-      "order": 3,
+      "order": 1,
       "transition_in": {
         "type": "none",
         "parameters": {}
@@ -154,7 +66,7 @@
       "name": "Lissajous Curves",
       "type": "effect",
       "duration": 10.0,
-      "order": 4,
+      "order": 2,
       "transition_in": {
         "type": "none",
         "parameters": {}
@@ -174,6 +86,136 @@
           "line_thickness": 0.02,
           "color_cycle": true,
           "duration": 10
+        }
+      }
+    },
+    {
+      "id": "26bc8dc2-45cc-4def-8013-d02ecb6b43ae",
+      "name": "Fire",
+      "type": "effect",
+      "duration": 15.0,
+      "order": 3,
+      "transition_in": {
+        "type": "none",
+        "parameters": {}
+      },
+      "transition_out": {
+        "type": "none",
+        "parameters": {}
+      },
+      "effect_config": {
+        "effect_id": "fire_simulation",
+        "parameters": {
+          "intensity": 1,
+          "wind_strength": 0.4,
+          "fuel_rate": 0.8,
+          "cooling_rate": 0.05,
+          "spark_probability": 0.02,
+          "duration": 15
+        }
+      }
+    },
+    {
+      "id": "e4ec9cfa-87a9-46df-a0cd-253745fa350d",
+      "name": "Mandala",
+      "type": "effect",
+      "duration": 15.0,
+      "order": 4,
+      "transition_in": {
+        "type": "none",
+        "parameters": {}
+      },
+      "transition_out": {
+        "type": "none",
+        "parameters": {}
+      },
+      "effect_config": {
+        "effect_id": "mandala",
+        "parameters": {
+          "complexity": 3,
+          "symmetry": 8,
+          "rotation_speed": 0.1,
+          "color_palette": "rainbow",
+          "pulse_speed": 0.5,
+          "duration": 15
+        }
+      }
+    },
+    {
+      "id": "54b2770b-781b-419c-8df0-c159b911441b",
+      "name": "Voronoi Cells",
+      "type": "effect",
+      "duration": 15.0,
+      "order": 5,
+      "transition_in": {
+        "type": "none",
+        "parameters": {}
+      },
+      "transition_out": {
+        "type": "none",
+        "parameters": {}
+      },
+      "effect_config": {
+        "effect_id": "voronoi_cells",
+        "parameters": {
+          "cell_count": 10,
+          "movement_pattern": "circular",
+          "color_mode": "distinct",
+          "movement_speed": 0.3,
+          "show_seeds": false,
+          "duration": 15
+        }
+      }
+    },
+    {
+      "id": "5660b416-644d-45ec-a0ad-7c89f08ee535",
+      "name": "Starfield",
+      "type": "effect",
+      "duration": 15.0,
+      "order": 6,
+      "transition_in": {
+        "type": "none",
+        "parameters": {}
+      },
+      "transition_out": {
+        "type": "none",
+        "parameters": {}
+      },
+      "effect_config": {
+        "effect_id": "starfield",
+        "parameters": {
+          "star_count": 50,
+          "speed": 0.5,
+          "direction": "forward",
+          "star_size": 3,
+          "twinkle": true,
+          "color_mode": "white",
+          "duration": 15
+        }
+      }
+    },
+    {
+      "id": "05b0bd97-d32f-40de-a6e3-acc4975acd02",
+      "name": "Plasma",
+      "type": "effect",
+      "duration": 15.0,
+      "order": 7,
+      "transition_in": {
+        "type": "none",
+        "parameters": {}
+      },
+      "transition_out": {
+        "type": "none",
+        "parameters": {}
+      },
+      "effect_config": {
+        "effect_id": "plasma",
+        "parameters": {
+          "color_palette": "rainbow",
+          "frequency": 2,
+          "animation_speed": 0.5,
+          "complexity": 3,
+          "duration": 15
         }
       }
     }

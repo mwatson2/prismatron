@@ -344,8 +344,13 @@ class ProcessManager:
                     from src.consumer.consumer import ConsumerProcess
 
                     # Create consumer with configuration
+                    # Support both single host (legacy) and list of hosts
+                    wled_hosts = self.config.get("wled_hosts")
+                    if wled_hosts is None:
+                        # Fallback to single host for backward compatibility
+                        wled_hosts = self.config.get("wled_host", "192.168.7.140")
                     consumer = ConsumerProcess(
-                        wled_host=self.config.get("wled_host", "192.168.7.140"),
+                        wled_hosts=wled_hosts,
                         wled_port=self.config.get("wled_port", 4048),
                         diffusion_patterns_path=self.config.get("diffusion_patterns_path"),
                         timing_log_path=self.config.get("timing_log_path"),
@@ -832,7 +837,16 @@ def main():
     )
     parser.add_argument("--web-host", default=file_config.get("web_host", "0.0.0.0"), help="Web server host")
     parser.add_argument("--web-port", type=int, default=file_config.get("web_port", 8080), help="Web server port")
-    parser.add_argument("--wled-host", default=file_config.get("wled_host", "192.168.7.140"), help="WLED controller IP")
+    # Handle both wled_hosts (list) and wled_host (single) for backward compatibility
+    wled_default = file_config.get("wled_hosts")
+    if wled_default is None:
+        wled_default = file_config.get("wled_host", "192.168.7.140")
+    parser.add_argument(
+        "--wled-hosts",
+        nargs="+",
+        default=wled_default if isinstance(wled_default, list) else [wled_default],
+        help="WLED controller IPs or hostnames (tries each in order)",
+    )
     parser.add_argument(
         "--wled-port", type=int, default=file_config.get("wled_port", 4048), help="WLED controller port"
     )
@@ -959,7 +973,7 @@ def main():
         "debug": args.debug,
         "web_host": args.web_host,
         "web_port": args.web_port,
-        "wled_host": args.wled_host,
+        "wled_hosts": args.wled_hosts,
         "wled_port": args.wled_port,
         "default_content_dir": args.content_dir,
         "diffusion_patterns_path": args.diffusion_patterns,
