@@ -369,13 +369,13 @@ const EffectsPage = () => {
                 {/* Brightness Intensity */}
                 <div className="space-y-2">
                   <label className="block text-xs text-metal-silver font-mono">
-                    INTENSITY ({Math.round(beatBrightnessIntensity * 100)}%)
+                    EFFECT STRENGTH ({beatBrightnessIntensity.toFixed(1)}x)
                   </label>
                   <input
                     type="range"
                     min="0"
-                    max="1"
-                    step="0.05"
+                    max="5"
+                    step="0.1"
                     value={beatBrightnessIntensity}
                     onChange={(e) => {
                       const newIntensity = parseFloat(e.target.value)
@@ -390,7 +390,7 @@ const EffectsPage = () => {
                     disabled={!beatBrightnessEnabled}
                   />
                   <div className="text-xs text-metal-silver font-mono text-center">
-                    0% → {Math.round(beatBrightnessIntensity * 100)}% → 100%
+                    0x → {beatBrightnessIntensity.toFixed(1)}x → 5x
                   </div>
                 </div>
 
@@ -426,7 +426,7 @@ const EffectsPage = () => {
               <div className="mt-3 p-3 bg-dark-800 rounded-retro border border-neon-purple border-opacity-20">
                 <p className="text-xs text-metal-silver font-mono leading-relaxed">
                   <span className="text-neon-purple">INFO:</span> Beat brightness boost creates a pulsing effect that brightens the entire panel on each detected beat.
-                  Intensity controls the maximum brightness increase, duration controls how long the pulse lasts.
+                  Effect strength (0-5x) is multiplied by beat intensity and confidence for dynamic response. Duration controls pulse length.
                 </p>
               </div>
             </div>

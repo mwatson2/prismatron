@@ -197,8 +197,8 @@ class FrameRenderer:
             boost_intensity = getattr(status, "beat_brightness_intensity", 0.25)
             boost_duration_fraction = getattr(status, "beat_brightness_duration", 0.25)
 
-            # Clamp parameters to safe ranges
-            boost_intensity = max(0.0, min(1.0, boost_intensity))
+            # Clamp parameters to safe ranges (intensity can now go up to 5x)
+            boost_intensity = max(0.0, min(5.0, boost_intensity))
             boost_duration_fraction = max(0.1, min(1.0, boost_duration_fraction))
 
             # Log beat boost configuration once
@@ -218,30 +218,48 @@ class FrameRenderer:
                 return 1.0
             beat_duration = 60.0 / beat_state.current_bpm
 
-            # Determine reference beat time (use prediction if beat has started, otherwise last detected beat)
-            audio_time = current_time - self._audio_beat_analyzer.start_time  # Convert to audio timeline
-            predicted_next_beat = self._audio_beat_analyzer.predict_next_beat(audio_time)
+            # Calculate audio timeline time
+            audio_time = current_time - self._audio_beat_analyzer.start_time
 
-            if predicted_next_beat < audio_time:
-                # Beat has started, use predicted time
-                reference_beat_time = predicted_next_beat
-            else:
-                # Use last detected beat time
-                reference_beat_time = beat_state.last_beat_time
+            # Get the most recent beat time from beat_state
+            last_beat_time = beat_state.last_beat_time
 
-            # Calculate time since beat start
-            t = audio_time - reference_beat_time
+            # Calculate time since the most recent beat
+            t = audio_time - last_beat_time
+
+            # If we're past one full beat interval, we need to find which beat we're in
+            if t > beat_duration:
+                # Calculate how many beats have passed since last detected beat
+                beats_passed = int(t / beat_duration)
+                # Find the start of the current beat interval
+                current_beat_start = last_beat_time + (beats_passed * beat_duration)
+                # Recalculate t as time since current beat start
+                t = audio_time - current_beat_start
 
             # Apply sine wave boost for configured duration of beat interval
             boost_duration = boost_duration_fraction * beat_duration
             if 0 <= t <= boost_duration:
-                # Configurable sine wave boost
-                boost = boost_intensity * math.sin(t * math.pi / boost_duration)
+                # Get beat intensity and confidence for dynamic boost
+                # Use the beat_intensity and confidence from the beat state
+                beat_intensity_value = getattr(beat_state, "beat_intensity", 1.0)
+                beat_confidence = getattr(beat_state, "confidence", 1.0)
+
+                # Calculate dynamic boost: base_intensity * beat_intensity * confidence * sine_wave
+                # This gives us a boost that responds to how strong and confident the beat detection is
+                dynamic_boost_factor = boost_intensity * beat_intensity_value * beat_confidence
+                boost = dynamic_boost_factor * math.sin(t * math.pi / boost_duration)
                 multiplier = 1.0 + boost
+
                 if np.random.random() < 0.1:  # Log 10% of brightness boost events
-                    logger.info(f"🎵 Beat brightness boost: {multiplier:.3f}x (t={t:.3f}s, boost={boost:.3f})")
+                    logger.info(
+                        f"🎵 Beat brightness boost: {multiplier:.3f}x (base={boost_intensity:.1f}, intensity={beat_intensity_value:.2f}, conf={beat_confidence:.2f}, boost={boost:.3f})"
+                    )
                 return multiplier
             else:
+                if np.random.random() < 0.01:  # Log 1% of non-boost events to reduce spam
+                    logger.debug(
+                        f"🎵 Beat brightness boost: No boost (t={t:.3f}s > duration={boost_duration:.3f}s), BPM={beat_state.current_bpm:.1f}"
+                    )
                 return 1.0  # No boost outside beat window
 
         except Exception as e:
@@ -474,13 +492,14 @@ class FrameRenderer:
 
         # Apply audio-reactive brightness boost if enabled
         brightness_multiplier = self._calculate_beat_brightness_boost(time.time())
-        if brightness_multiplier != 1.0:
-            # Log brightness boost application
-            logger.info(f"🎵 Beat brightness boost applied: {brightness_multiplier:.3f}x")
+        if brightness_multiplier > 1.01:  # Only apply if boost is meaningful (> 1%)
             # Apply brightness boost to all LED values
-            physical_led_values = (physical_led_values * brightness_multiplier).astype(np.uint8)
+            boosted_values = physical_led_values.astype(np.float32) * brightness_multiplier
             # Ensure values stay within valid range [0, 255]
-            physical_led_values = np.clip(physical_led_values, 0, 255)
+            physical_led_values = np.clip(boosted_values, 0, 255).astype(np.uint8)
+            # Log brightness boost application
+            if np.random.random() < 0.2:  # Log 20% of boost applications
+                logger.info(f"🎵 Beat brightness boost applied: {brightness_multiplier:.3f}x")
 
         # Calculate position offset for audio-reactive position shifting
         position_offset = self._position_shifter.calculate_position_offset(time.time(), physical_led_values.shape[0])
