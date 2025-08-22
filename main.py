@@ -198,10 +198,10 @@ class ProcessManager:
                     root_logger.addHandler(file_handler)
 
                     # Enable DEBUG for consumer and producer components to debug thread issues
-                    logging.getLogger("src.consumer.consumer").setLevel(logging.DEBUG)
-                    logging.getLogger("src.consumer.frame_renderer").setLevel(logging.DEBUG)
-                    logging.getLogger("src.consumer.led_buffer").setLevel(logging.DEBUG)
-                    logging.getLogger("src.producer.producer").setLevel(logging.DEBUG)
+                    logging.getLogger("src.consumer.consumer").setLevel(logging.INFO)
+                    logging.getLogger("src.consumer.frame_renderer").setLevel(logging.INFO)
+                    logging.getLogger("src.consumer.led_buffer").setLevel(logging.INFO)
+                    logging.getLogger("src.producer.producer").setLevel(logging.INFO)
 
                     # Create and start playlist sync service
                     service = PlaylistSyncService()
@@ -272,10 +272,10 @@ class ProcessManager:
                     root_logger.addHandler(file_handler)
 
                     # Enable DEBUG for consumer and producer components to debug thread issues
-                    logging.getLogger("src.consumer.consumer").setLevel(logging.DEBUG)
-                    logging.getLogger("src.consumer.frame_renderer").setLevel(logging.DEBUG)
-                    logging.getLogger("src.consumer.led_buffer").setLevel(logging.DEBUG)
-                    logging.getLogger("src.producer.producer").setLevel(logging.DEBUG)
+                    logging.getLogger("src.consumer.consumer").setLevel(logging.INFO)
+                    logging.getLogger("src.consumer.frame_renderer").setLevel(logging.INFO)
+                    logging.getLogger("src.consumer.led_buffer").setLevel(logging.INFO)
+                    logging.getLogger("src.producer.producer").setLevel(logging.INFO)
 
                     # Signal ready
                     self.web_server_ready.set()
@@ -345,10 +345,10 @@ class ProcessManager:
                     root_logger.addHandler(file_handler)
 
                     # Enable DEBUG for consumer and producer components to debug thread issues
-                    logging.getLogger("src.consumer.consumer").setLevel(logging.DEBUG)
-                    logging.getLogger("src.consumer.frame_renderer").setLevel(logging.DEBUG)
-                    logging.getLogger("src.consumer.led_buffer").setLevel(logging.DEBUG)
-                    logging.getLogger("src.producer.producer").setLevel(logging.DEBUG)
+                    logging.getLogger("src.consumer.consumer").setLevel(logging.INFO)
+                    logging.getLogger("src.consumer.frame_renderer").setLevel(logging.INFO)
+                    logging.getLogger("src.consumer.led_buffer").setLevel(logging.INFO)
+                    logging.getLogger("src.producer.producer").setLevel(logging.INFO)
 
                     # Debug environment variables
                     logger.info(f"Consumer worker environment:")
@@ -457,10 +457,10 @@ class ProcessManager:
                     root_logger.addHandler(file_handler)
 
                     # Enable DEBUG for consumer and producer components to debug thread issues
-                    logging.getLogger("src.consumer.consumer").setLevel(logging.DEBUG)
-                    logging.getLogger("src.consumer.frame_renderer").setLevel(logging.DEBUG)
-                    logging.getLogger("src.consumer.led_buffer").setLevel(logging.DEBUG)
-                    logging.getLogger("src.producer.producer").setLevel(logging.DEBUG)
+                    logging.getLogger("src.consumer.consumer").setLevel(logging.INFO)
+                    logging.getLogger("src.consumer.frame_renderer").setLevel(logging.INFO)
+                    logging.getLogger("src.consumer.led_buffer").setLevel(logging.INFO)
+                    logging.getLogger("src.producer.producer").setLevel(logging.INFO)
 
                     # Create producer
                     producer = ProducerProcess()
