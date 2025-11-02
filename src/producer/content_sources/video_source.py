@@ -77,6 +77,7 @@ class VideoSource(ContentSource):
 
         # Threading for frame reading
         self._lock = threading.Lock()
+        self._stderr_monitor_thread: Optional[threading.Thread] = None
 
     def setup(self) -> bool:
         """
@@ -202,6 +203,8 @@ class VideoSource(ContentSource):
                 "bit_rate": video_stream.get("bit_rate"),
                 "format_name": probe.get("format", {}).get("format_name"),
                 "file_size": probe.get("format", {}).get("size"),
+                "pix_fmt": video_stream.get("pix_fmt"),
+                "bits_per_raw_sample": video_stream.get("bits_per_raw_sample"),
             }
 
             return True
@@ -216,21 +219,43 @@ class VideoSource(ContentSource):
         Get hardware acceleration options from global cache.
 
         Uses cached results to avoid subprocess calls during video initialization.
+        Disables hardware acceleration for unsupported formats (e.g., 10-bit video).
         """
         start_time = time.time()
 
         try:
+            # Check if video format is compatible with hardware acceleration
+            pix_fmt = self.content_info.metadata.get("pix_fmt", "")
+            bits_per_sample = self.content_info.metadata.get("bits_per_raw_sample")
+            codec_name = self.content_info.metadata.get("codec_name", "")
+
+            # Check for 10-bit or unsupported formats
+            is_10bit = (
+                bits_per_sample == "10"
+                or "10le" in pix_fmt
+                or "p10" in pix_fmt
+                or "422" in pix_fmt  # 4:2:2 chroma subsampling often indicates professional/10-bit content
+            )
+
+            if is_10bit:
+                logger.warning(
+                    f"10-bit video detected ({pix_fmt}, {bits_per_sample}-bit) - hardware decoders may not support this format"
+                )
+                logger.info(f"Forcing software decoding for {os.path.basename(self.filepath)}")
+                self._hardware_acceleration = None
+                self._hw_decoder = None
+                return
+
             # Get cached hardware acceleration info
             cache = get_hardware_acceleration_cache()
             self._hardware_acceleration = cache.get_hardware_acceleration()
 
             if self._hardware_acceleration:
                 # Get codec-specific decoder from cache
-                codec_name = self.content_info.metadata.get("codec_name", "")
                 self._hw_decoder = cache.get_decoder_for_codec(codec_name)
 
                 if self._hw_decoder:
-                    logger.info(f"Using cached hardware decoder: {self._hw_decoder} for {codec_name}")
+                    logger.info(f"Using cached hardware decoder: {self._hw_decoder} for {codec_name} ({pix_fmt})")
                 else:
                     logger.info(
                         f"Hardware acceleration available ({self._hardware_acceleration}) but no decoder for codec: {codec_name}"
@@ -291,10 +316,14 @@ class VideoSource(ContentSource):
                 r=self._frame_rate,
             )
 
-            # Create process
-            self._ffmpeg_process = ffmpeg.run_async(output_stream, pipe_stdout=True, pipe_stderr=True, quiet=True)
+            # Create process with error capture
+            self._ffmpeg_process = ffmpeg.run_async(output_stream, pipe_stdout=True, pipe_stderr=True, quiet=False)
 
-            logger.debug(f"FFmpeg process started with PID: {self._ffmpeg_process.pid}")
+            logger.info(f"FFmpeg process started with PID: {self._ffmpeg_process.pid}")
+
+            # Start stderr monitoring thread to capture FFmpeg errors
+            self._start_stderr_monitor()
+
             return True
 
         except Exception as e:
@@ -305,6 +334,35 @@ class VideoSource(ContentSource):
         """Start background thread to read frames from FFmpeg."""
         self._frame_reader_thread = threading.Thread(target=self._frame_reader_worker, daemon=True)
         self._frame_reader_thread.start()
+
+    def _start_stderr_monitor(self) -> None:
+        """Start background thread to monitor FFmpeg stderr for errors."""
+        self._stderr_monitor_thread = threading.Thread(target=self._stderr_monitor_worker, daemon=True)
+        self._stderr_monitor_thread.start()
+
+    def _stderr_monitor_worker(self) -> None:
+        """Background worker that monitors FFmpeg stderr for errors."""
+        if not self._ffmpeg_process or not self._ffmpeg_process.stderr:
+            return
+
+        try:
+            while not self._stop_reading.is_set() and self._ffmpeg_process:
+                stderr_line = self._ffmpeg_process.stderr.readline()
+                if not stderr_line:
+                    break
+
+                stderr_text = stderr_line.decode("utf-8", errors="ignore").strip()
+                if stderr_text:
+                    # Log FFmpeg errors and warnings
+                    if "error" in stderr_text.lower() or "failed" in stderr_text.lower():
+                        logger.error(f"FFmpeg error for {os.path.basename(self.filepath)}: {stderr_text}")
+                    elif "warning" in stderr_text.lower():
+                        logger.warning(f"FFmpeg warning for {os.path.basename(self.filepath)}: {stderr_text}")
+                    else:
+                        logger.debug(f"FFmpeg info for {os.path.basename(self.filepath)}: {stderr_text}")
+
+        except Exception as e:
+            logger.debug(f"FFmpeg stderr monitor error: {e}")
 
     def _frame_reader_worker(self) -> None:
         """
@@ -458,6 +516,10 @@ class VideoSource(ContentSource):
         if self._frame_reader_thread and self._frame_reader_thread.is_alive():
             self._frame_reader_thread.join(timeout=2.0)
 
+        # Wait for stderr monitor thread
+        if self._stderr_monitor_thread and self._stderr_monitor_thread.is_alive():
+            self._stderr_monitor_thread.join(timeout=1.0)
+
         # Terminate FFmpeg process
         if self._ffmpeg_process:
             try:
@@ -525,10 +587,11 @@ class VideoSource(ContentSource):
                 r=self._frame_rate,
             )
 
-            # Create process
-            self._ffmpeg_process = ffmpeg.run_async(output_stream, pipe_stdout=True, pipe_stderr=True, quiet=True)
+            # Create process with error capture
+            self._ffmpeg_process = ffmpeg.run_async(output_stream, pipe_stdout=True, pipe_stderr=True, quiet=False)
 
-            # Restart frame reader
+            # Start monitors
+            self._start_stderr_monitor()
             self._start_frame_reader_thread()
 
             return True

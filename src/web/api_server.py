@@ -567,6 +567,22 @@ except ImportError as e:
     logger.warning(f"Visual effects system not available: {e}")
     EFFECTS_AVAILABLE = False
 
+# Import video conversion system
+try:
+    from src.web.video_converter import (
+        ConversionJob,
+        ConversionStatus,
+        get_conversion_manager,
+        initialize_conversion_manager,
+        shutdown_conversion_manager,
+    )
+
+    VIDEO_CONVERSION_AVAILABLE = True
+    logger.info("Video conversion system loaded successfully")
+except ImportError as e:
+    logger.warning(f"Video conversion system not available: {e}")
+    VIDEO_CONVERSION_AVAILABLE = False
+
 
 def get_effect_presets():
     """Get effect presets from the registry or fallback to hardcoded presets."""
@@ -925,6 +941,13 @@ async def shutdown_event():
         with contextlib.suppress(asyncio.CancelledError):
             await upload_cleanup_task
         logger.info("Stopped periodic upload cleanup task")
+
+    # Shutdown video conversion manager
+    if VIDEO_CONVERSION_AVAILABLE:
+        try:
+            shutdown_conversion_manager()
+        except Exception as e:
+            logger.error(f"Failed to shutdown video conversion manager: {e}")
 
 
 # Add no-cache middleware for static files
@@ -1795,46 +1818,95 @@ async def upload_file(
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # Set default duration for images to 10s as requested
-        if content_type == "image" and duration is None:
-            duration = 10.0
+        # Handle video vs image differently
+        if content_type == "video":
+            # Queue video for conversion instead of immediate playlist addition
+            if VIDEO_CONVERSION_AVAILABLE:
+                conversion_manager = get_conversion_manager()
+                if conversion_manager:
+                    original_name = name or file.filename or "Uploaded video"
+                    job = conversion_manager.queue_conversion(file_path, original_name)
 
-        # Create playlist item with random LED transitions
-        transition_in = generate_random_led_transition()
-        transition_out = generate_random_led_transition()
+                    # Register callback to add to playlist when conversion completes
+                    def on_conversion_complete(completed_job):
+                        if completed_job.id == job.id and completed_job.status == ConversionStatus.COMPLETED:
+                            # Create playlist item with converted file
+                            converted_item = PlaylistItem(
+                                id=file_id,
+                                name=original_name,
+                                type="video",
+                                file_path=str(completed_job.output_path),
+                                duration=duration,
+                                order=len(playlist_state.items),
+                                transition_in=generate_random_led_transition(),
+                                transition_out=generate_random_led_transition(),
+                            )
 
-        item = PlaylistItem(
-            id=file_id,
-            name=name or file.filename or f"Uploaded {content_type}",
-            type=content_type,
-            file_path=str(file_path),
-            duration=duration,
-            order=len(playlist_state.items),
-            transition_in=transition_in,
-            transition_out=transition_out,
-        )
+                            # Add to uploads playlist
+                            manage_uploads_playlist(converted_item)
 
-        # Validate the item (including transitions)
-        validation_errors = validate_playlist_item(item)
-        if validation_errors:
-            raise HTTPException(status_code=400, detail={"errors": validation_errors})
+                            # Add to main playlist sync service
+                            if playlist_sync_client and playlist_sync_client.connected:
+                                sync_item = api_item_to_sync_item(converted_item)
+                                success = playlist_sync_client.add_item(sync_item)
+                                if not success:
+                                    logger.warning("Failed to add converted item to playlist sync service")
 
-        # Automatically manage uploads playlist (separate from main playlist)
-        manage_uploads_playlist(item)
+                            logger.info(f"Added converted video to playlist: {original_name}")
 
-        # Send to main playlist sync service
-        if playlist_sync_client and playlist_sync_client.connected:
-            sync_item = api_item_to_sync_item(item)
-            success = playlist_sync_client.add_item(sync_item)
-            if not success:
-                logger.warning("Failed to add item to playlist sync service, adding locally")
-                playlist_state.items.append(item)
+                    conversion_manager.add_status_callback(on_conversion_complete)
+
+                    return {
+                        "status": "queued_for_conversion",
+                        "job_id": job.id,
+                        "message": "Video queued for conversion to H.264/800x480",
+                    }
+                else:
+                    raise HTTPException(status_code=503, detail="Video conversion manager not available")
+            else:
+                raise HTTPException(status_code=503, detail="Video conversion not available")
         else:
-            logger.warning("Playlist sync service not available, adding locally")
-            playlist_state.items.append(item)
+            # Handle images as before
+            # Set default duration for images to 10s as requested
+            if duration is None:
+                duration = 10.0
 
-        # Note: WebSocket broadcast will happen via sync service callback
-        return {"status": "uploaded", "item": item.dict_serializable()}
+            # Create playlist item with random LED transitions
+            transition_in = generate_random_led_transition()
+            transition_out = generate_random_led_transition()
+
+            item = PlaylistItem(
+                id=file_id,
+                name=name or file.filename or f"Uploaded {content_type}",
+                type=content_type,
+                file_path=str(file_path),
+                duration=duration,
+                order=len(playlist_state.items),
+                transition_in=transition_in,
+                transition_out=transition_out,
+            )
+
+            # Validate the item (including transitions)
+            validation_errors = validate_playlist_item(item)
+            if validation_errors:
+                raise HTTPException(status_code=400, detail={"errors": validation_errors})
+
+            # Automatically manage uploads playlist (separate from main playlist)
+            manage_uploads_playlist(item)
+
+            # Send to main playlist sync service
+            if playlist_sync_client and playlist_sync_client.connected:
+                sync_item = api_item_to_sync_item(item)
+                success = playlist_sync_client.add_item(sync_item)
+                if not success:
+                    logger.warning("Failed to add item to playlist sync service, adding locally")
+                    playlist_state.items.append(item)
+            else:
+                logger.warning("Playlist sync service not available, adding locally")
+                playlist_state.items.append(item)
+
+            # Note: WebSocket broadcast will happen via sync service callback
+            return {"status": "uploaded", "item": item.dict_serializable()}
 
     except Exception as e:
         logger.error(f"Upload failed: {e}")
@@ -1909,6 +1981,107 @@ async def move_upload_to_media(file_id: str):
         raise
     except Exception as e:
         logger.error(f"Failed to move file from uploads to media: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# Video Conversion endpoints
+@app.get("/api/conversions")
+async def list_conversions():
+    """List active and recent video conversion jobs."""
+    try:
+        if not VIDEO_CONVERSION_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Video conversion not available")
+
+        conversion_manager = get_conversion_manager()
+        if not conversion_manager:
+            raise HTTPException(status_code=503, detail="Video conversion manager not initialized")
+
+        jobs = conversion_manager.get_all_jobs()
+        return {"conversions": [job.to_dict() for job in jobs]}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to list conversions: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/api/conversions/{job_id}")
+async def get_conversion(job_id: str):
+    """Get details of a specific conversion job."""
+    try:
+        if not VIDEO_CONVERSION_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Video conversion not available")
+
+        conversion_manager = get_conversion_manager()
+        if not conversion_manager:
+            raise HTTPException(status_code=503, detail="Video conversion manager not initialized")
+
+        job = conversion_manager.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Conversion job not found")
+
+        return {"conversion": job.to_dict()}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get conversion {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/conversions/{job_id}/cancel")
+async def cancel_conversion(job_id: str):
+    """Cancel a video conversion job."""
+    try:
+        if not VIDEO_CONVERSION_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Video conversion not available")
+
+        conversion_manager = get_conversion_manager()
+        if not conversion_manager:
+            raise HTTPException(status_code=503, detail="Video conversion manager not initialized")
+
+        success = conversion_manager.cancel_job(job_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Conversion job not found or cannot be cancelled")
+
+        return {"status": "cancelled", "job_id": job_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to cancel conversion {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.delete("/api/conversions/{job_id}")
+async def remove_conversion(job_id: str):
+    """Remove a completed conversion job from the list."""
+    try:
+        if not VIDEO_CONVERSION_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Video conversion not available")
+
+        conversion_manager = get_conversion_manager()
+        if not conversion_manager:
+            raise HTTPException(status_code=503, detail="Video conversion manager not initialized")
+
+        job = conversion_manager.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Conversion job not found")
+
+        if job.status not in [ConversionStatus.COMPLETED, ConversionStatus.FAILED, ConversionStatus.CANCELLED]:
+            raise HTTPException(status_code=400, detail="Can only remove completed, failed, or cancelled jobs")
+
+        # Remove from queue (this is a simple implementation)
+        with conversion_manager.lock:
+            conversion_manager.conversion_queue = [j for j in conversion_manager.conversion_queue if j.id != job_id]
+
+        return {"status": "removed", "job_id": job_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to remove conversion {job_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
@@ -3496,10 +3669,43 @@ def run_server(
     debug: bool = False,
     patterns_path: Optional[str] = None,
     led_count: Optional[int] = None,
+    config: Optional[Dict] = None,
 ):
     """Run the API server."""
     global diffusion_patterns_path, system_settings
     diffusion_patterns_path = patterns_path
+
+    # Initialize video conversion manager if available and config provided
+    if VIDEO_CONVERSION_AVAILABLE and config:
+        try:
+            initialize_conversion_manager(config)
+
+            # Set up WebSocket broadcasting for conversion updates
+            conversion_manager = get_conversion_manager()
+            if conversion_manager:
+
+                def broadcast_conversion_update(job):
+                    try:
+                        # Create an async task to broadcast the update
+                        import asyncio
+
+                        try:
+                            loop = asyncio.get_running_loop()
+                            loop.create_task(
+                                manager.broadcast(
+                                    {"type": "conversion_update", "conversion": job.to_dict(), "timestamp": time.time()}
+                                )
+                            )
+                        except RuntimeError:
+                            # No running loop, ignore for now
+                            pass
+                    except Exception as e:
+                        logger.warning(f"Failed to broadcast conversion update: {e}")
+
+                conversion_manager.add_status_callback(broadcast_conversion_update)
+                logger.info("Conversion WebSocket broadcasting enabled")
+        except Exception as e:
+            logger.error(f"Failed to initialize video conversion manager: {e}")
 
     # Initialize SystemSettings with LED count from startup
     if led_count is not None:

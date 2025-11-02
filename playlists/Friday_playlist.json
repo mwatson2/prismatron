@@ -1,0 +1,303 @@
+{
+  "version": "1.0",
+  "name": "Friday playlist",
+  "description": "",
+  "created_at": "2025-08-21T22:14:57.983818",
+  "modified_at": "2025-08-21T22:14:57.983818",
+  "auto_repeat": true,
+  "shuffle": false,
+  "items": [
+    {
+      "id": "240614d0-4698-4c1e-b0ee-791ae79a3268",
+      "name": "LOVE",
+      "type": "text",
+      "duration": 8,
+      "order": 0,
+      "transition_in": {
+        "type": "ledfade",
+        "parameters": {
+          "duration": 1,
+          "curve": "linear",
+          "min_brightness": 0
+        }
+      },
+      "transition_out": {
+        "type": "ledfade",
+        "parameters": {
+          "duration": 1,
+          "curve": "linear",
+          "min_brightness": 0
+        }
+      },
+      "file_path": "{\"text\": \"LOVE\", \"font_family\": \"DejaVu Sans\", \"font_style\": \"bold\", \"font_size\": \"auto\", \"fg_color\": \"#e22400\", \"bg_color\": \"#000000\", \"animation\": \"scroll\", \"alignment\": \"center\", \"vertical_alignment\": \"center\", \"duration\": 8, \"fps\": 30}"
+    },
+    {
+      "id": "dec4d724-f032-4bf4-9a61-59528e9a5383",
+      "name": "Spirals",
+      "type": "effect",
+      "duration": 8.0,
+      "order": 1,
+      "transition_in": {
+        "type": "none",
+        "parameters": {}
+      },
+      "transition_out": {
+        "type": "none",
+        "parameters": {}
+      },
+      "effect_config": {
+        "effect_id": "spirals",
+        "parameters": {
+          "spiral_type": "archimedean",
+          "rotation_speed": 0.6,
+          "line_thickness": 0.15,
+          "num_arms": 2,
+          "color_mode": "rainbow",
+          "tightness": 0.5,
+          "duration": 8
+        }
+      }
+    },
+    {
+      "id": "6a5d0208-049f-4318-ad32-ff61e0d62a6e",
+      "name": "Swarm",
+      "type": "effect",
+      "duration": 8.0,
+      "order": 2,
+      "transition_in": {
+        "type": "none",
+        "parameters": {}
+      },
+      "transition_out": {
+        "type": "none",
+        "parameters": {}
+      },
+      "effect_config": {
+        "effect_id": "swarm",
+        "parameters": {
+          "swarm_size": 20,
+          "cohesion": 0.5,
+          "separation": 0.5,
+          "alignment": 0.5,
+          "max_speed": 0.8,
+          "color_mode": "gradient",
+          "trail": true,
+          "duration": 8
+        }
+      }
+    },
+    {
+      "id": "b6cc6723-9e1c-4c0e-8480-56fdd47e1f68",
+      "name": "PEACE",
+      "type": "text",
+      "duration": 8,
+      "order": 3,
+      "transition_in": {
+        "type": "ledfade",
+        "parameters": {
+          "duration": 1,
+          "curve": "linear",
+          "min_brightness": 0
+        }
+      },
+      "transition_out": {
+        "type": "ledfade",
+        "parameters": {
+          "duration": 1,
+          "curve": "linear",
+          "min_brightness": 0
+        }
+      },
+      "file_path": "{\"text\": \"PEACE\", \"font_family\": \"DejaVu Sans\", \"font_style\": \"bold\", \"font_size\": \"auto\", \"fg_color\": \"#76bb40\", \"bg_color\": \"#000000\", \"animation\": \"scroll\", \"alignment\": \"center\", \"vertical_alignment\": \"center\", \"duration\": 8, \"fps\": 30}"
+    },
+    {
+      "id": "5fde820a-fb07-40f5-a3ed-55ecd91463fc",
+      "name": "Fireworks",
+      "type": "effect",
+      "duration": 8.0,
+      "order": 4,
+      "transition_in": {
+        "type": "none",
+        "parameters": {}
+      },
+      "transition_out": {
+        "type": "none",
+        "parameters": {}
+      },
+      "effect_config": {
+        "effect_id": "fireworks",
+        "parameters": {
+          "explosion_frequency": 0.5,
+          "particle_count": 30,
+          "gravity": 0.1,
+          "colors": "rainbow",
+          "trail_length": 0.3,
+          "explosion_size": 0.3,
+          "duration": 8
+        }
+      }
+    },
+    {
+      "id": "ce47deec-76c2-4b8a-b954-373a88921398",
+      "name": "Perlin Flow",
+      "type": "effect",
+      "duration": 8.0,
+      "order": 5,
+      "transition_in": {
+        "type": "none",
+        "parameters": {}
+      },
+      "transition_out": {
+        "type": "none",
+        "parameters": {}
+      },
+      "effect_config": {
+        "effect_id": "perlin_flow",
+        "parameters": {
+          "noise_scale": 3,
+          "animation_speed": 1,
+          "color_mapping": "rainbow",
+          "octaves": 2,
+          "persistence": 0.5,
+          "duration": 8
+        }
+      }
+    },
+    {
+      "id": "d2a60bbc-22cf-4687-9a44-87a1be04ad8d",
+      "name": "Plasma",
+      "type": "effect",
+      "duration": 8.0,
+      "order": 6,
+      "transition_in": {
+        "type": "none",
+        "parameters": {}
+      },
+      "transition_out": {
+        "type": "none",
+        "parameters": {}
+      },
+      "effect_config": {
+        "effect_id": "plasma",
+        "parameters": {
+          "color_palette": "rainbow",
+          "frequency": 2,
+          "animation_speed": 1,
+          "complexity": 3,
+          "duration": 8
+        }
+      }
+    },
+    {
+      "id": "d465647a-230f-45ef-9cfa-f5a03b669335",
+      "name": "Fire",
+      "type": "effect",
+      "duration": 8.0,
+      "order": 7,
+      "transition_in": {
+        "type": "none",
+        "parameters": {}
+      },
+      "transition_out": {
+        "type": "none",
+        "parameters": {}
+      },
+      "effect_config": {
+        "effect_id": "fire_simulation",
+        "parameters": {
+          "intensity": 0.8,
+          "wind_strength": 0.1,
+          "fuel_rate": 0.7,
+          "cooling_rate": 0.05,
+          "spark_probability": 0.02,
+          "duration": 8
+        }
+      }
+    },
+    {
+      "id": "9b54a9ba-ae47-4599-a9b4-38372500cba6",
+      "name": "SAUNA",
+      "type": "text",
+      "duration": 8,
+      "order": 8,
+      "transition_in": {
+        "type": "none",
+        "parameters": {}
+      },
+      "transition_out": {
+        "type": "none",
+        "parameters": {}
+      },
+      "file_path": "{\"text\": \"SAUNA\", \"font_family\": \"DejaVu Sans\", \"font_style\": \"bold\", \"font_size\": \"auto\", \"fg_color\": \"#b51a00\", \"bg_color\": \"#000000\", \"animation\": \"scroll\", \"alignment\": \"center\", \"vertical_alignment\": \"center\", \"duration\": 8, \"fps\": 30}"
+    },
+    {
+      "id": "db9ac9ea-ca01-41a4-8eaa-df6738d71350",
+      "name": "Water Ripples",
+      "type": "effect",
+      "duration": 8.0,
+      "order": 9,
+      "transition_in": {
+        "type": "none",
+        "parameters": {}
+      },
+      "transition_out": {
+        "type": "none",
+        "parameters": {}
+      },
+      "effect_config": {
+        "effect_id": "water_ripples",
+        "parameters": {
+          "ripple_speed": 0.8,
+          "ripple_frequency": 1,
+          "max_ripples": 3,
+          "damping": 0.1,
+          "interference": true,
+          "color_mode": "blue",
+          "duration": 8
+        }
+      }
+    },
+    {
+      "id": "781f6e76-09bc-462f-8d8a-d207cb4b2c66",
+      "name": "SAUNA",
+      "type": "text",
+      "duration": 8,
+      "order": 10,
+      "transition_in": {
+        "type": "none",
+        "parameters": {}
+      },
+      "transition_out": {
+        "type": "none",
+        "parameters": {}
+      },
+      "file_path": "{\"text\": \"SAUNA\", \"font_family\": \"DejaVu Sans\", \"font_style\": \"bold\", \"font_size\": \"auto\", \"fg_color\": \"#b51a00\", \"bg_color\": \"#000000\", \"animation\": \"scroll\", \"alignment\": \"center\", \"vertical_alignment\": \"center\", \"duration\": 8, \"fps\": 30}"
+    },
+    {
+      "id": "78c2c9ce-ed28-4209-ac5d-8f3c0ded56dc",
+      "name": "9pm",
+      "type": "text",
+      "duration": 8,
+      "order": 11,
+      "transition_in": {
+        "type": "ledrandom",
+        "parameters": {
+          "duration": 2,
+          "leds_per_frame": 10,
+          "fade_tail": true,
+          "seed": 42
+        }
+      },
+      "transition_out": {
+        "type": "ledrandom",
+        "parameters": {
+          "duration": 2,
+          "leds_per_frame": 10,
+          "fade_tail": true,
+          "seed": 42
+        }
+      },
+      "file_path": "{\"text\": \"9pm\", \"font_family\": \"DejaVu Sans\", \"font_style\": \"bold\", \"font_size\": \"auto\", \"fg_color\": \"#e292fe\", \"bg_color\": \"#000000\", \"animation\": \"static\", \"alignment\": \"center\", \"vertical_alignment\": \"center\", \"duration\": 8, \"fps\": 30}"
+    }
+  ]
+}

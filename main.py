@@ -287,6 +287,7 @@ class ProcessManager:
                         debug=self.config.get("debug", False),
                         patterns_path=self.config.get("diffusion_patterns_path"),
                         led_count=self.config.get("led_count"),
+                        config=self.config,
                     )
 
                 except Exception as e:
@@ -1011,6 +1012,11 @@ def main():
         "enable_audio_reactive": args.audio_reactive,
         "audio_device": args.audio_device,
     }
+
+    # Merge in any additional configuration from the JSON file that isn't covered by command line args
+    for key, value in file_config.items():
+        if key not in config and key != "comments":
+            config[key] = value
 
     logger.info("Starting Prismatron LED Display System")
     logger.info(f"Configuration: {config}")

@@ -14,6 +14,28 @@
   "adaptive_dropping": false,
   "audio_reactive": false,
   "audio_device": null,
+  "video_conversion": {
+    "enabled": true,
+    "max_concurrent_jobs": 1,
+    "temp_directory": "temp_conversions",
+    "output_format": {
+      "codec": "libx264",
+      "profile": "high",
+      "level": "3.1",
+      "pixel_format": "yuv420p",
+      "width": 800,
+      "height": 480,
+      "preset": "fast",
+      "crf": 23,
+      "drop_audio": true
+    },
+    "validation": {
+      "check_resolution": true,
+      "check_codec": true,
+      "check_pixel_format": true,
+      "check_no_audio": true
+    }
+  },
   "comments": {
     "debug": "Enable debug logging",
     "web_host": "Web server host address",
@@ -29,6 +51,7 @@
     "shift_direction": "Position shift direction: left, right, or alternating",
     "adaptive_dropping": "Enable adaptive frame dropping for LED buffer management",
     "audio_reactive": "Enable audio reactive effects",
-    "audio_device": "Audio device index or name for beat detection (null for default)"
+    "audio_device": "Audio device index or name for beat detection (null for default)",
+    "video_conversion": "Automatic video conversion settings for hardware decoder compatibility"
   }
 }

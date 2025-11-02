@@ -7,6 +7,8 @@ import {
   XMarkIcon,
   CheckCircleIcon
 } from '@heroicons/react/24/outline'
+import ConversionProgress from '../components/ConversionProgress'
+import useConversions from '../hooks/useConversions'
 
 const UploadPage = () => {
   const [dragActive, setDragActive] = useState(false)
@@ -15,6 +17,15 @@ const UploadPage = () => {
   const [uploadStatus, setUploadStatus] = useState(null)
   const [selectedFiles, setSelectedFiles] = useState([])
   const fileInputRef = useRef(null)
+
+  // Conversion management
+  const {
+    conversions,
+    loading: conversionsLoading,
+    error: conversionsError,
+    cancelConversion,
+    removeConversion
+  } = useConversions()
 
   const allowedTypes = {
     image: ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'],
@@ -118,13 +129,31 @@ const UploadPage = () => {
       const totalFiles = selectedFiles.length
       let completedFiles = 0
 
+      let successCount = 0
+      let queuedCount = 0
+
       for (const file of selectedFiles) {
-        await uploadFile(file)
+        const result = await uploadFile(file)
         completedFiles++
         setUploadProgress((completedFiles / totalFiles) * 100)
+
+        if (result.status === 'uploaded') {
+          successCount++
+        } else if (result.status === 'queued_for_conversion') {
+          queuedCount++
+        }
       }
 
-      setUploadStatus({ type: 'success', message: `Successfully uploaded ${totalFiles} file(s)` })
+      let message = ''
+      if (successCount > 0 && queuedCount > 0) {
+        message = `${successCount} file(s) uploaded, ${queuedCount} video(s) queued for conversion`
+      } else if (successCount > 0) {
+        message = `Successfully uploaded ${successCount} file(s)`
+      } else if (queuedCount > 0) {
+        message = `${queuedCount} video(s) queued for conversion to H.264/800x480`
+      }
+
+      setUploadStatus({ type: 'success', message })
       setSelectedFiles([])
 
     } catch (error) {
@@ -283,6 +312,14 @@ const UploadPage = () => {
         </div>
       )}
 
+      {/* Video Conversion Progress */}
+      {conversions && conversions.length > 0 && (
+        <ConversionProgress
+          conversions={conversions}
+          onCancel={cancelConversion}
+          onRemove={removeConversion}
+        />
+      )}
 
       {/* Upload Guidelines */}
       <div className="retro-container">
@@ -295,7 +332,7 @@ const UploadPage = () => {
           </div>
           <div className="flex items-start gap-2">
             <span className="text-neon-cyan">•</span>
-            <span>Videos will be transcoded for optimal LED display</span>
+            <span>Videos automatically converted to H.264/800x480/8-bit (audio removed)</span>
           </div>
           <div className="flex items-start gap-2">
             <span className="text-neon-cyan">•</span>
@@ -303,7 +340,7 @@ const UploadPage = () => {
           </div>
           <div className="flex items-start gap-2">
             <span className="text-neon-cyan">•</span>
-            <span>Files are automatically added to the playlist</span>
+            <span>Images added to playlist immediately, videos after conversion</span>
           </div>
           <div className="flex items-start gap-2">
             <span className="text-neon-orange">⚠</span>
