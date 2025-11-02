@@ -204,6 +204,12 @@ test_images/
 # Uploads directory - user uploaded files for testing
 uploads/
 
+# Video conversion temp directory
+temp_conversions/
+
+# Media directory - uploaded video/image files
+media/
+
 # Timing data and performance logs
 timing.csv
 timing/
