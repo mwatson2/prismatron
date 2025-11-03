@@ -72,7 +72,7 @@ class LEDTransitionProcessor:
 
             # Apply LED transition_in if frame is in the transition region
             if self._should_apply_led_transition_in(transition_context):
-                logger.info(
+                logger.debug(
                     f"Frame {self._frame_count}: Applying LED transition IN ({transition_context['transition_in']['type']})"
                 )
                 led_values_with_transitions = self._apply_led_transition(
@@ -82,7 +82,7 @@ class LEDTransitionProcessor:
 
             # Apply LED transition_out if frame is in the transition region
             if self._should_apply_led_transition_out(transition_context):
-                logger.info(
+                logger.debug(
                     f"Frame {self._frame_count}: Applying LED transition OUT ({transition_context['transition_out']['type']})"
                 )
                 led_values_with_transitions = self._apply_led_transition(

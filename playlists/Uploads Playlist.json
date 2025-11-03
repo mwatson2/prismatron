@@ -2,73 +2,9 @@
   "version": "1.0",
   "name": "Uploads Playlist",
   "description": "Automatically managed playlist for uploaded files",
-  "created_at": "2025-08-15T23:25:55.920819",
-  "modified_at": "2025-11-02T10:44:47.758475",
+  "created_at": "2025-11-02T17:00:00.000000",
+  "modified_at": "2025-11-02T18:51:28.074611",
   "auto_repeat": true,
   "shuffle": false,
-  "items": [
-    {
-      "id": "1df7376f-214f-4fc3-b4ed-4a7dc4431ddd",
-      "name": "vecteezy_yellow-pink-blue-black-floating-glowing-color-rays-from-love_26687997 (1).mp4",
-      "type": "video",
-      "duration": null,
-      "order": 0,
-      "transition_in": {
-        "type": "ledrandom",
-        "parameters": {
-          "duration": 1.0
-        }
-      },
-      "transition_out": {
-        "type": "ledblur",
-        "parameters": {
-          "duration": 1.0
-        }
-      },
-      "file_path": "uploads/vecteezy_yellow-pink-blue-black-floating-glowing-color-rays-from-love_26687997 (1).mp4",
-      "created_at": "2025-11-02T10:44:47.757944"
-    },
-    {
-      "id": "87400eef-d79d-4b77-b76a-4221cd7042ce",
-      "name": "vecteezy_mirror-ball-moving-in-the-night-party-background_8895504 (1).mp4",
-      "type": "video",
-      "duration": null,
-      "order": 1,
-      "transition_in": {
-        "type": "ledrandom",
-        "parameters": {
-          "duration": 1.0
-        }
-      },
-      "transition_out": {
-        "type": "ledfade",
-        "parameters": {
-          "duration": 1.0
-        }
-      },
-      "file_path": "uploads/vecteezy_mirror-ball-moving-in-the-night-party-background_8895504 (1).mp4",
-      "created_at": "2025-11-02T10:29:41.435060"
-    },
-    {
-      "id": "2ffe85c7-8b78-4ecd-9a94-6fa0ff8c430e",
-      "name": "vecteezy_super-slow-motion-tongues-of-bright-flame-of-fire-high_42767976.mov",
-      "type": "video",
-      "duration": null,
-      "order": 2,
-      "transition_in": {
-        "type": "ledrandom",
-        "parameters": {
-          "duration": 1.0
-        }
-      },
-      "transition_out": {
-        "type": "ledfade",
-        "parameters": {
-          "duration": 1.0
-        }
-      },
-      "file_path": "uploads/2ffe85c7-8b78-4ecd-9a94-6fa0ff8c430e.mov",
-      "created_at": "2025-08-21T22:08:20.683905"
-    }
-  ]
+  "items": []
 }

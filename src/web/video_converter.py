@@ -109,29 +109,23 @@ class ConversionManager:
         """Queue a video file for conversion."""
         job_id = str(uuid.uuid4())
 
-        # Preserve original filename with _upload suffix for temp files
+        # Input file is already in temp_conversions with _upload suffix
+        # Output will be temp_conversions/{base_name}_converted.mp4
+        # Final destination will be uploads/{original_name}
         base_name = Path(original_name).stem
-        temp_input = self.temp_dir / f"{base_name}_upload{input_path.suffix}"
         temp_output = self.temp_dir / f"{base_name}_converted.mp4"
-        final_output = input_path.parent / f"{original_name}"
+        final_output = Path("uploads") / original_name
 
         job = ConversionJob(
             id=job_id,
-            input_path=input_path,
+            input_path=input_path,  # Already in temp_conversions with _upload suffix
             temp_path=temp_output,
             output_path=final_output,
             original_name=original_name,
         )
 
-        # Copy input file to temp directory
-        try:
-            shutil.copy2(input_path, temp_input)
-            logger.info(f"Copied input file to temp: {temp_input}")
-        except Exception as e:
-            logger.error(f"Failed to copy input file to temp: {e}")
-            job.status = ConversionStatus.FAILED
-            job.error_message = f"Failed to copy input file: {e}"
-            return job
+        # Input file is already in temp directory, no need to copy
+        logger.info(f"Queued conversion: {input_path} -> {final_output}")
 
         with self.lock:
             self.conversion_queue.append(job)
@@ -349,20 +343,17 @@ class ConversionManager:
                 input_info["width"], input_info["height"], config.get("width", 800), config.get("height", 480)
             )
 
-            # Build FFmpeg command
-            base_name = Path(job.original_name).stem
-            temp_input = self.temp_dir / f"{base_name}_upload{job.input_path.suffix}"
-
+            # Build FFmpeg command - input file is already in temp_conversions
             # Check that input file exists
-            if not temp_input.exists():
-                logger.error(f"Temp input file does not exist: {temp_input}")
+            if not job.input_path.exists():
+                logger.error(f"Input file does not exist: {job.input_path}")
                 return False
 
             cmd = [
                 "ffmpeg",
                 "-y",
                 "-i",
-                str(temp_input),
+                str(job.input_path),
                 "-vcodec",
                 config.get("codec", "libx264"),
                 "-profile:v",
@@ -533,16 +524,19 @@ class ConversionManager:
     def _finalize_conversion(self, job: ConversionJob) -> bool:
         """Move converted file to final location and cleanup."""
         try:
+            # Ensure uploads directory exists
+            job.output_path.parent.mkdir(exist_ok=True)
+
             # Move converted file to uploads directory
             shutil.move(str(job.temp_path), str(job.output_path))
             logger.info(f"Moved converted file to: {job.output_path}")
 
-            # Delete original uploaded file
+            # Delete original uploaded file (which is in temp_conversions)
             if job.input_path.exists():
                 job.input_path.unlink()
-                logger.info(f"Deleted original file: {job.input_path}")
+                logger.info(f"Deleted original temp file: {job.input_path}")
 
-            # Cleanup temp files
+            # Cleanup any remaining temp files
             self._cleanup_temp_files(job)
 
             return True
@@ -554,13 +548,12 @@ class ConversionManager:
     def _cleanup_temp_files(self, job: ConversionJob):
         """Clean up temporary files for a job."""
         try:
-            # Use the new naming pattern with original filename
-            base_name = Path(job.original_name).stem
-            temp_input = self.temp_dir / f"{base_name}_upload{job.input_path.suffix}"
-            if temp_input.exists():
-                temp_input.unlink()
-                logger.info(f"Cleaned up temp input: {temp_input}")
+            # Clean up input file (if it still exists - should already be deleted in finalize)
+            if job.input_path.exists():
+                job.input_path.unlink()
+                logger.info(f"Cleaned up temp input: {job.input_path}")
 
+            # Clean up temp output file (if it still exists)
             if job.temp_path.exists():
                 job.temp_path.unlink()
                 logger.info(f"Cleaned up temp output: {job.temp_path}")

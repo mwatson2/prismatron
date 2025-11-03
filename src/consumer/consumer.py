@@ -1510,7 +1510,7 @@ class ConsumerProcess:
                 metadata_dict.get(f) != "none" and metadata_dict.get(f) != 0.0
                 for f in ["transition_in_type", "transition_out_type"]
             ):
-                logger.info(
+                logger.debug(
                     f"CONSUMER: Received transition metadata - "
                     f"item_timestamp={metadata_dict.get('item_timestamp', 0.0):.3f}s, "
                     f"item_duration={metadata_dict.get('item_duration', 0.0):.3f}s, "
