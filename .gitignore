@@ -210,6 +210,9 @@ temp_conversions/
 # Media directory - uploaded video/image files
 media/
 
+# Playlists - runtime generated playlist files
+playlists/
+
 # Timing data and performance logs
 timing.csv
 timing/
