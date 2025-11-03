@@ -16,6 +16,8 @@ const UploadPage = () => {
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadStatus, setUploadStatus] = useState(null)
   const [selectedFiles, setSelectedFiles] = useState([])
+  const [currentFileName, setCurrentFileName] = useState('')
+  const [currentFileIndex, setCurrentFileIndex] = useState(0)
   const fileInputRef = useRef(null)
 
   // Conversion management
@@ -94,28 +96,51 @@ const UploadPage = () => {
     setSelectedFiles(prev => prev.filter((_, i) => i !== index))
   }
 
-  const uploadFile = async (file, customName = '', duration = null) => {
-    const formData = new FormData()
-    formData.append('file', file)
-    if (customName) formData.append('name', customName)
-    if (duration) formData.append('duration', duration.toString())
+  const uploadFile = (file, customName = '', duration = null, onProgress = null) => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      const formData = new FormData()
+      formData.append('file', file)
+      if (customName) formData.append('name', customName)
+      if (duration) formData.append('duration', duration.toString())
 
-    try {
-      const response = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData
-      })
-
-      if (!response.ok) {
-        throw new Error(`Upload failed: ${response.statusText}`)
+      // Track upload progress
+      if (onProgress) {
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable) {
+            const percentComplete = (e.loaded / e.total) * 100
+            onProgress(percentComplete)
+          }
+        })
       }
 
-      const result = await response.json()
-      return result
-    } catch (error) {
-      console.error('Upload error:', error)
-      throw error
-    }
+      // Handle completion
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const result = JSON.parse(xhr.responseText)
+            resolve(result)
+          } catch (error) {
+            reject(new Error('Invalid JSON response'))
+          }
+        } else {
+          reject(new Error(`Upload failed: ${xhr.statusText}`))
+        }
+      })
+
+      // Handle errors
+      xhr.addEventListener('error', () => {
+        reject(new Error('Network error during upload'))
+      })
+
+      xhr.addEventListener('abort', () => {
+        reject(new Error('Upload aborted'))
+      })
+
+      // Send request
+      xhr.open('POST', '/api/upload')
+      xhr.send(formData)
+    })
   }
 
   const handleUpload = async () => {
@@ -124,6 +149,8 @@ const UploadPage = () => {
     setUploading(true)
     setUploadProgress(0)
     setUploadStatus(null)
+    setCurrentFileIndex(0)
+    setCurrentFileName('')
 
     try {
       const totalFiles = selectedFiles.length
@@ -132,9 +159,22 @@ const UploadPage = () => {
       let successCount = 0
       let queuedCount = 0
 
-      for (const file of selectedFiles) {
-        const result = await uploadFile(file)
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const file = selectedFiles[i]
+        setCurrentFileName(file.name)
+        setCurrentFileIndex(i + 1)
+
+        // Progress callback for current file
+        const onFileProgress = (fileProgress) => {
+          // Overall progress = (completed files + current file progress) / total files
+          const overallProgress = ((completedFiles + (fileProgress / 100)) / totalFiles) * 100
+          setUploadProgress(overallProgress)
+        }
+
+        const result = await uploadFile(file, '', null, onFileProgress)
         completedFiles++
+
+        // Update to reflect completed file
         setUploadProgress((completedFiles / totalFiles) * 100)
 
         if (result.status === 'uploaded') {
@@ -278,16 +318,27 @@ const UploadPage = () => {
         <div className="retro-container">
           <h3 className="text-lg font-retro text-neon-cyan mb-4">UPLOAD PROGRESS</h3>
 
-          <div className="space-y-2">
-            <div className="w-full bg-dark-700 rounded-retro h-2 overflow-hidden">
-              <div
-                className="h-full bg-neon-green transition-all duration-300 animate-pulse-neon"
-                style={{ width: `${uploadProgress}%` }}
-              />
+          <div className="space-y-3">
+            {currentFileName && (
+              <div className="text-sm font-mono text-metal-silver">
+                <p className="text-neon-cyan">
+                  Uploading file {currentFileIndex} of {selectedFiles.length}
+                </p>
+                <p className="truncate mt-1">{currentFileName}</p>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <div className="w-full bg-dark-700 rounded-retro h-2 overflow-hidden">
+                <div
+                  className="h-full bg-neon-green transition-all duration-300 animate-pulse-neon"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+              <p className="text-center text-sm font-mono text-neon-green">
+                {Math.round(uploadProgress)}%
+              </p>
             </div>
-            <p className="text-center text-sm font-mono text-neon-green">
-              {Math.round(uploadProgress)}%
-            </p>
           </div>
         </div>
       )}
