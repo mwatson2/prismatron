@@ -74,6 +74,7 @@ class ConversionManager:
         """Initialize conversion manager with configuration."""
         self.config = config
         self.conversion_queue: List[ConversionJob] = []
+        self.completed_jobs: List[ConversionJob] = []  # Keep completed jobs for frontend
         self.current_job: Optional[ConversionJob] = None
         self.worker_thread: Optional[threading.Thread] = None
         self.status_callbacks: List[Callable] = []
@@ -153,12 +154,20 @@ class ConversionManager:
         return None
 
     def get_all_jobs(self) -> List[ConversionJob]:
-        """Get all jobs (current + queued)."""
+        """Get all jobs (current + queued + recently completed)."""
         with self.lock:
             jobs = []
             if self.current_job:
                 jobs.append(self.current_job)
             jobs.extend(self.conversion_queue)
+            jobs.extend(self.completed_jobs)
+
+            # Clean up old completed jobs (older than 30 seconds)
+            from datetime import datetime, timedelta
+
+            cutoff = datetime.now() - timedelta(seconds=30)
+            self.completed_jobs = [j for j in self.completed_jobs if j.completed_at and j.completed_at > cutoff]
+
             return jobs.copy()
 
     def cancel_job(self, job_id: str) -> bool:
@@ -203,8 +212,11 @@ class ConversionManager:
                 # Process the job
                 self._process_job(job)
 
-                # Clear current job
+                # Move to completed jobs if finished successfully or failed
                 with self.lock:
+                    if job.status in [ConversionStatus.COMPLETED, ConversionStatus.FAILED, ConversionStatus.CANCELLED]:
+                        self.completed_jobs.append(job)
+                        logger.info(f"Moved job {job.id} to completed jobs (status: {job.status})")
                     self.current_job = None
 
             except Exception as e:
@@ -352,6 +364,9 @@ class ConversionManager:
             cmd = [
                 "ffmpeg",
                 "-y",
+                "-stats",  # Enable stats output
+                "-stats_period",
+                "0.5",  # Update stats every 0.5 seconds
                 "-i",
                 str(job.input_path),
                 "-vcodec",
@@ -382,11 +397,21 @@ class ConversionManager:
 
             logger.info(f"FFmpeg command: {' '.join(cmd)}")
 
-            # Start FFmpeg process
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            # Start FFmpeg process with unbuffered I/O
+            # Use stdbuf to disable buffering on FFmpeg's output
+            buffered_cmd = ["stdbuf", "-oL", "-eL"] + cmd
+
+            process = subprocess.Popen(
+                buffered_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=0,  # Unbuffered
+                universal_newlines=True,
+            )
 
             # Monitor progress
-            return self._monitor_ffmpeg_progress(job, process, input_info["duration"])
+            return self._monitor_ffmpeg_progress(job, process, input_info["duration"], input_info["fps"])
 
         except Exception as e:
             logger.error(f"Failed to convert video: {e}")
@@ -412,13 +437,30 @@ class ConversionManager:
             crop_y = (input_height - new_height) // 2
             return f"crop={input_width}:{new_height}:0:{crop_y}"
 
-    def _monitor_ffmpeg_progress(self, job: ConversionJob, process: subprocess.Popen, total_duration: float) -> bool:
+    def _monitor_ffmpeg_progress(
+        self, job: ConversionJob, process: subprocess.Popen, total_duration: float, fps: float = 30.0
+    ) -> bool:
         """Monitor FFmpeg progress and update job status."""
+        import select
+
+        # Calculate total expected frames
+        total_frames = int(total_duration * fps)
+        logger.info(
+            f"Starting FFmpeg progress monitoring for job {job.id}, total duration: {total_duration:.2f}s, fps: {fps}, expected frames: {total_frames}"
+        )
         try:
             stderr_output = []
+            buffer = ""
+
             while True:
                 # Check if process finished
                 if process.poll() is not None:
+                    # Process finished, read any remaining output
+                    if process.stderr:
+                        remaining = process.stderr.read()
+                        if remaining:
+                            buffer += remaining
+                            logger.info(f"Read remaining output: {len(remaining)} chars")
                     break
 
                 # Check if cancelled
@@ -427,29 +469,52 @@ class ConversionManager:
                     process.wait(timeout=10)
                     return False
 
-                # Read stderr for progress
+                # Use select to check if data is available (non-blocking)
                 if process.stderr:
-                    line = process.stderr.readline()
-                    if line:
-                        stderr_output.append(line)
-                        # Parse FFmpeg progress line
-                        time_match = re.search(r"time=(\d+):(\d+):(\d+\.?\d*)", line)
-                        if time_match:
-                            hours = int(time_match.group(1))
-                            minutes = int(time_match.group(2))
-                            seconds = float(time_match.group(3))
-                            current_time = hours * 3600 + minutes * 60 + seconds
+                    ready, _, _ = select.select([process.stderr], [], [], 0.1)  # 100ms timeout
+                    if ready:
+                        # Read available data
+                        chunk = process.stderr.read(8192)  # Read up to 8KB at a time
+                        if chunk:
+                            buffer += chunk
 
-                            if total_duration > 0:
-                                progress = min(85.0, (current_time / total_duration) * 85.0)
-                                job.progress = progress
-                                self._notify_status_update(job)
+                            # Process complete lines (split on \n or \r)
+                            lines = buffer.split("\n")
+                            buffer = lines[-1]  # Keep incomplete line in buffer
 
-                time.sleep(0.5)
+                            for line in lines[:-1]:
+                                # Also handle \r within lines
+                                if "\r" in line:
+                                    sublines = line.split("\r")
+                                    line = sublines[-1]  # Take the last update
+
+                                if line.strip():
+                                    stderr_output.append(line)
+
+                                    # Parse FFmpeg progress output - look for frame number
+                                    if "frame=" in line:
+                                        frame_match = re.search(r"frame=\s*(\d+)", line)
+                                        if frame_match:
+                                            current_frame = int(frame_match.group(1))
+                                            if total_frames > 0:
+                                                progress = min(85.0, (current_frame / total_frames) * 85.0)
+                                                if (
+                                                    abs(progress - job.progress) >= 1.0
+                                                ):  # Only update if changed by at least 1%
+                                                    job.progress = progress
+                                                    logger.info(
+                                                        f"Progress: frame {current_frame}/{total_frames} = {progress:.1f}%"
+                                                    )
+                                                    self._notify_status_update(job)
+                else:
+                    time.sleep(0.1)
 
             # Check return code
             if process.returncode == 0:
+                logger.info(f"FFmpeg completed successfully for job {job.id}")
+                # Set to 85% and notify to ensure UI updates
                 job.progress = 85.0
+                self._notify_status_update(job)
                 return True
             else:
                 # Log the complete stderr output for debugging
@@ -563,6 +628,7 @@ class ConversionManager:
 
     def _notify_status_update(self, job: ConversionJob):
         """Notify all status callbacks of job update."""
+        logger.info(f"Notifying status update for job {job.id}: status={job.status}, progress={job.progress:.1f}%")
         for callback in self.status_callbacks:
             try:
                 callback(job)

@@ -1849,16 +1849,10 @@ async def upload_file(
                             )
 
                             # Add to uploads playlist
+                            # manage_uploads_playlist will also add to live playlist if uploads playlist is active
                             manage_uploads_playlist(converted_item)
 
-                            # Add to main playlist sync service
-                            if playlist_sync_client and playlist_sync_client.connected:
-                                sync_item = api_item_to_sync_item(converted_item)
-                                success = playlist_sync_client.add_item(sync_item)
-                                if not success:
-                                    logger.warning("Failed to add converted item to playlist sync service")
-
-                            logger.info(f"Added converted video to playlist: {original_name}")
+                            logger.info(f"Added converted video to uploads playlist: {original_name}")
 
                     conversion_manager.add_status_callback(on_conversion_complete)
 

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react'
+import React, { useState, useCallback, useRef, useEffect } from 'react'
 import {
   CloudArrowUpIcon,
   DocumentIcon,
@@ -7,7 +7,6 @@ import {
   XMarkIcon,
   CheckCircleIcon
 } from '@heroicons/react/24/outline'
-import ConversionProgress from '../components/ConversionProgress'
 import useConversions from '../hooks/useConversions'
 
 const UploadPage = () => {
@@ -18,15 +17,15 @@ const UploadPage = () => {
   const [selectedFiles, setSelectedFiles] = useState([])
   const [currentFileName, setCurrentFileName] = useState('')
   const [currentFileIndex, setCurrentFileIndex] = useState(0)
+  const [convertingJobIds, setConvertingJobIds] = useState([])
+  const [showingConversion, setShowingConversion] = useState(false)
+  const [completionStarted, setCompletionStarted] = useState(false)
   const fileInputRef = useRef(null)
 
   // Conversion management
   const {
     conversions,
-    loading: conversionsLoading,
-    error: conversionsError,
-    cancelConversion,
-    removeConversion
+    fetchConversions
   } = useConversions()
 
   const allowedTypes = {
@@ -151,6 +150,9 @@ const UploadPage = () => {
     setUploadStatus(null)
     setCurrentFileIndex(0)
     setCurrentFileName('')
+    setShowingConversion(false)
+    setConvertingJobIds([])
+    setCompletionStarted(false)
 
     try {
       const totalFiles = selectedFiles.length
@@ -158,6 +160,7 @@ const UploadPage = () => {
 
       let successCount = 0
       let queuedCount = 0
+      const jobIds = []
 
       for (let i = 0; i < selectedFiles.length; i++) {
         const file = selectedFiles[i]
@@ -181,31 +184,138 @@ const UploadPage = () => {
           successCount++
         } else if (result.status === 'queued_for_conversion') {
           queuedCount++
+          if (result.job_id) {
+            jobIds.push(result.job_id)
+          }
         }
       }
 
-      let message = ''
-      if (successCount > 0 && queuedCount > 0) {
-        message = `${successCount} file(s) uploaded, ${queuedCount} video(s) queued for conversion`
-      } else if (successCount > 0) {
-        message = `Successfully uploaded ${successCount} file(s)`
-      } else if (queuedCount > 0) {
-        message = `${queuedCount} video(s) queued for conversion to H.264/800x480`
-      }
+      // If videos were queued for conversion, transition immediately
+      if (jobIds.length > 0) {
+        setConvertingJobIds(jobIds)
+        setUploading(false)
+        setShowingConversion(true)
+        setUploadProgress(0)
+        setSelectedFiles([])
+        // Don't show upload status message when transitioning to conversion
+      } else {
+        // No conversions, show success message and hide after delay
+        let message = ''
+        if (successCount > 0) {
+          message = `Successfully uploaded ${successCount} file(s)`
+        }
 
-      setUploadStatus({ type: 'success', message })
-      setSelectedFiles([])
+        setUploadStatus({ type: 'success', message })
+        setSelectedFiles([])
+
+        setTimeout(() => {
+          setUploadProgress(0)
+          setUploadStatus(null)
+        }, 3000)
+      }
 
     } catch (error) {
       setUploadStatus({ type: 'error', message: error.message })
-    } finally {
-      setUploading(false)
       setTimeout(() => {
         setUploadProgress(0)
         setUploadStatus(null)
       }, 3000)
+    } finally {
+      if (!showingConversion) {
+        setUploading(false)
+      }
     }
   }
+
+  // Force fetch when entering conversion mode and poll continuously
+  useEffect(() => {
+    if (showingConversion && convertingJobIds.length > 0) {
+      console.log('Entering conversion mode, forcing fetch...')
+      fetchConversions()
+
+      // Poll every 2 seconds while showing conversion
+      const interval = setInterval(() => {
+        console.log('Polling conversions...')
+        fetchConversions()
+      }, 2000)
+
+      return () => clearInterval(interval)
+    }
+  }, [showingConversion, convertingJobIds, fetchConversions])
+
+  // Monitor conversion progress
+  useEffect(() => {
+    if (!showingConversion || convertingJobIds.length === 0) return
+
+    // Manually fetch conversions to debug
+    fetch('/api/conversions')
+      .then(res => res.json())
+      .then(data => {
+        console.log('API /api/conversions response:', data)
+      })
+      .catch(err => console.error('Failed to fetch conversions:', err))
+
+    console.log('Monitoring conversions:', {
+      showingConversion,
+      convertingJobIds,
+      allConversions: conversions
+    })
+
+    // Find conversions matching our job IDs
+    const activeConversions = conversions.filter(c => convertingJobIds.includes(c.id))
+
+    console.log('Active conversions:', activeConversions)
+
+    if (activeConversions.length === 0) {
+      // If we had conversions before but now they're gone, assume completion
+      // This handles the case where the job completes and is removed before the next poll
+      if (conversions.length === 0 && showingConversion && !completionStarted) {
+        console.log('Conversions disappeared, assuming completion. Starting countdown...')
+        setCompletionStarted(true)
+      }
+      // Otherwise, keep waiting for conversions to appear
+      return
+    }
+
+    // Get the first active conversion (or the first one if multiple)
+    const currentConversion = activeConversions[0]
+
+    console.log('Current conversion:', currentConversion)
+
+    // Update progress and current file name
+    setUploadProgress(currentConversion.progress || 0)
+    setCurrentFileName(currentConversion.original_name)
+
+    // Check if all conversions are complete
+    const allComplete = activeConversions.every(c =>
+      ['completed', 'failed', 'cancelled'].includes(c.status)
+    )
+
+    console.log('All complete?', allComplete)
+    console.log('Conversion statuses:', activeConversions.map(c => ({ id: c.id, status: c.status, progress: c.progress })))
+
+    if (allComplete && !completionStarted) {
+      console.log('All conversions complete! Starting completion countdown...')
+      setCompletionStarted(true)
+    }
+  }, [conversions, convertingJobIds, showingConversion, completionStarted])
+
+  // Separate effect to handle hiding after completion
+  useEffect(() => {
+    if (completionStarted) {
+      console.log('Hiding panel in 3 seconds...')
+      const timer = setTimeout(() => {
+        console.log('Hiding conversion panel now')
+        setShowingConversion(false)
+        setConvertingJobIds([])
+        setUploadProgress(0)
+        setCurrentFileName('')
+        setCompletionStarted(false)
+      }, 3000)
+
+      return () => clearTimeout(timer)
+    }
+  }, [completionStarted])
 
   return (
     <div className="space-y-6">
@@ -313,17 +423,23 @@ const UploadPage = () => {
         </div>
       )}
 
-      {/* Upload Progress */}
-      {uploading && (
+      {/* Upload/Conversion Progress */}
+      {(uploading || showingConversion) && (
         <div className="retro-container">
-          <h3 className="text-lg font-retro text-neon-cyan mb-4">UPLOAD PROGRESS</h3>
+          <h3 className="text-lg font-retro text-neon-cyan mb-4">
+            {showingConversion ? 'CONVERSION PROGRESS' : 'UPLOAD PROGRESS'}
+          </h3>
 
           <div className="space-y-3">
             {currentFileName && (
               <div className="text-sm font-mono text-metal-silver">
-                <p className="text-neon-cyan">
-                  Uploading file {currentFileIndex} of {selectedFiles.length}
-                </p>
+                {showingConversion ? (
+                  <p className="text-neon-cyan">Converting to H.264/800x480...</p>
+                ) : (
+                  <p className="text-neon-cyan">
+                    Uploading file {currentFileIndex} of {selectedFiles.length}
+                  </p>
+                )}
                 <p className="truncate mt-1">{currentFileName}</p>
               </div>
             )}
@@ -331,11 +447,15 @@ const UploadPage = () => {
             <div className="space-y-2">
               <div className="w-full bg-dark-700 rounded-retro h-2 overflow-hidden">
                 <div
-                  className="h-full bg-neon-green transition-all duration-300 animate-pulse-neon"
+                  className={`h-full transition-all duration-300 ${
+                    showingConversion ? 'bg-neon-purple animate-pulse-neon' : 'bg-neon-green animate-pulse-neon'
+                  }`}
                   style={{ width: `${uploadProgress}%` }}
                 />
               </div>
-              <p className="text-center text-sm font-mono text-neon-green">
+              <p className={`text-center text-sm font-mono ${
+                showingConversion ? 'text-neon-purple' : 'text-neon-green'
+              }`}>
                 {Math.round(uploadProgress)}%
               </p>
             </div>
@@ -361,15 +481,6 @@ const UploadPage = () => {
             </p>
           </div>
         </div>
-      )}
-
-      {/* Video Conversion Progress */}
-      {conversions && conversions.length > 0 && (
-        <ConversionProgress
-          conversions={conversions}
-          onCancel={cancelConversion}
-          onRemove={removeConversion}
-        />
       )}
 
       {/* Upload Guidelines */}

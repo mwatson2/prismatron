@@ -249,6 +249,13 @@ export const WebSocketProvider = ({ children }) => {
         setPreviewData(data)
         break
 
+      case 'conversion_update':
+        // Handle conversion progress updates
+        console.log('Conversion update received:', data)
+        // Note: This is handled by the useConversions hook via polling
+        // We just acknowledge the message here to avoid the "Unknown" warning
+        break
+
       default:
         console.log('Unknown WebSocket message type:', data.type)
     }
