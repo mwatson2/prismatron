@@ -1810,12 +1810,19 @@ async def upload_file(
         if not content_type:
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_ext}")
 
-        # Generate unique filename
+        # Generate unique ID for playlist item
         file_id = str(uuid.uuid4())
-        file_path = UPLOAD_DIR / f"{file_id}.{file_ext}"
 
-        # Save uploaded file
-        with open(file_path, "wb") as buffer:
+        # Use original filename and save to temp_conversions with _upload suffix
+        original_name = name or file.filename or f"uploaded_file.{file_ext}"
+        base_name = Path(original_name).stem
+        temp_file_path = Path("temp_conversions") / f"{base_name}_upload.{file_ext}"
+
+        # Ensure temp_conversions directory exists
+        temp_file_path.parent.mkdir(exist_ok=True)
+
+        # Save uploaded file to temp location
+        with open(temp_file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
         # Handle video vs image differently
@@ -1824,8 +1831,7 @@ async def upload_file(
             if VIDEO_CONVERSION_AVAILABLE:
                 conversion_manager = get_conversion_manager()
                 if conversion_manager:
-                    original_name = name or file.filename or "Uploaded video"
-                    job = conversion_manager.queue_conversion(file_path, original_name)
+                    job = conversion_manager.queue_conversion(temp_file_path, original_name)
 
                     # Register callback to add to playlist when conversion completes
                     def on_conversion_complete(completed_job):
@@ -1866,7 +1872,16 @@ async def upload_file(
             else:
                 raise HTTPException(status_code=503, detail="Video conversion not available")
         else:
-            # Handle images as before
+            # Handle images - move from temp to uploads directory
+            final_image_path = UPLOAD_DIR / original_name
+
+            try:
+                shutil.move(str(temp_file_path), str(final_image_path))
+                logger.info(f"Moved image from temp to uploads: {final_image_path}")
+            except Exception as e:
+                logger.error(f"Failed to move image file: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to process image file: {e}") from e
+
             # Set default duration for images to 10s as requested
             if duration is None:
                 duration = 10.0
@@ -1877,9 +1892,9 @@ async def upload_file(
 
             item = PlaylistItem(
                 id=file_id,
-                name=name or file.filename or f"Uploaded {content_type}",
+                name=original_name,
                 type=content_type,
-                file_path=str(file_path),
+                file_path=str(final_image_path),
                 duration=duration,
                 order=len(playlist_state.items),
                 transition_in=transition_in,
@@ -1964,6 +1979,21 @@ async def move_upload_to_media(file_id: str):
         file_stats = dest_path.stat()
 
         logger.info(f"Moved file from uploads to media: {source_path.name} -> {dest_path.name}")
+
+        # Remove from uploads playlist and sync with live playlist if active
+        playlist_data = load_uploads_playlist()
+        items_to_remove = []
+
+        # Find all playlist items that reference the moved file (using original source_path)
+        for item in playlist_data["items"]:
+            if item.get("file_path") == str(source_path):
+                items_to_remove.append(item)
+                logger.info(f"Found playlist item to remove: {item['name']} (id={item['id']})")
+
+        # Remove items from uploads playlist and sync
+        if items_to_remove:
+            remove_files_from_uploads_playlist_and_sync(items_to_remove)
+            logger.info(f"Removed {len(items_to_remove)} items from uploads playlist after moving to media")
 
         return {
             "status": "moved",
