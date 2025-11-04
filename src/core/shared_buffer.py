@@ -581,8 +581,9 @@ class FrameProducer(FrameRingBuffer):
                 # Buffer not available, wait briefly and retry
                 time.sleep(0.001)  # 1ms polling interval
 
-            # Timeout reached
-            logger.warning(f"Write buffer timeout after {timeout}s")
+            # Timeout reached - log at debug level since producer will handle error reporting
+            # appropriately based on renderer state (expected during PAUSED, error otherwise)
+            logger.debug(f"Write buffer timeout after {timeout}s")
             return None
 
         except Exception as e:

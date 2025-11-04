@@ -445,6 +445,7 @@ class ProducerProcess:
         self._log_interval = 2.0  # Log every 2 seconds
         self._frames_with_content = 0  # Frames with non-zero content
         self._last_logged_state = None  # Track last logged state to avoid repetitive STOPPED logs
+        self._last_logged_frames_produced = 0  # Track last logged frame count to avoid spam when paused
 
         # Global timestamp mapping state
         self._playlist_start_time = 0.0  # When the playlist started playing
@@ -700,12 +701,12 @@ class ProducerProcess:
                 if current_time - self._last_log_time >= self._log_interval:
                     current_state = status.producer_state if status else None
 
-                    # Only log if we're playing, or if we have frames produced, or if state changed
-                    should_log = (
-                        (status and status.producer_state == ProducerState.PLAYING)
-                        or self._frames_produced > 0
-                        or (current_state != self._last_logged_state)
-                    )
+                    # Check if frame count has changed (indicates actual progress)
+                    frames_changed = self._frames_produced != self._last_logged_frames_produced
+                    state_changed = current_state != self._last_logged_state
+
+                    # Only log if frames changed OR state changed (avoid spam when paused)
+                    should_log = frames_changed or state_changed
 
                     # For STOPPED state, only log once when entering the state
                     if current_state == ProducerState.STOPPED and self._last_logged_state == ProducerState.STOPPED:
@@ -721,6 +722,7 @@ class ProducerProcess:
                         )
                         self._last_log_time = current_time
                         self._last_logged_state = current_state
+                        self._last_logged_frames_produced = self._frames_produced
 
                 # Brief sleep to prevent busy waiting
                 time.sleep(0.001)
@@ -1054,8 +1056,21 @@ class ProducerProcess:
             )
 
             if not buffer_info:
-                # This indicates a more serious issue if we timeout after 2 seconds
-                logger.error("Unable to get write buffer after 2s timeout - consumer may be blocked")
+                # Check if renderer is paused - if so, timeout is expected (back-pressure working)
+                try:
+                    from ..core.control_state import RendererState
+
+                    status = self._control_state.get_status()
+                    is_paused = status and status.renderer_state == RendererState.PAUSED
+                except Exception:
+                    is_paused = False
+
+                if is_paused:
+                    # During pause, write buffer timeout is expected - back-pressure is working correctly
+                    logger.debug("Write buffer timeout during PAUSED state (back-pressure working correctly)")
+                else:
+                    # This indicates a more serious issue if we timeout after 2 seconds when not paused
+                    logger.error("Unable to get write buffer after 2s timeout - consumer may be blocked")
                 return False
 
             # Use the circular buffer's frame ID to ensure perfect synchronization

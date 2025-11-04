@@ -812,14 +812,20 @@ class ConsumerProcess:
 
                 else:
                     # Stopped or invalid state - just wait
-                    # Log if we're unexpectedly in STOPPED state with data in buffer
+                    # Note: Having frames in LED buffer during STOPPED is normal during shutdown,
+                    # so we only log at DEBUG level to avoid spam
                     if control_status and control_status.renderer_state == RendererState.STOPPED:
                         buffer_stats = self._led_buffer.get_buffer_stats()
                         if buffer_stats.get("current_count", 0) > 0:
-                            logger.warning(
-                                f"Renderer in STOPPED state but LED buffer has {buffer_stats.get('current_count')} frames - "
-                                "possible control state corruption"
-                            )
+                            # Rate-limit this log to once per 30 seconds
+                            if not hasattr(self, "_last_buffer_warning_time"):
+                                self._last_buffer_warning_time = 0.0
+                            current_time = time.time()
+                            if current_time - self._last_buffer_warning_time > 30.0:
+                                logger.debug(
+                                    f"Renderer STOPPED with {buffer_stats.get('current_count')} frames in LED buffer (normal during shutdown)"
+                                )
+                                self._last_buffer_warning_time = current_time
                     time.sleep(0.1)
                     continue
 
@@ -969,15 +975,32 @@ class ConsumerProcess:
                 current_time = time.time()
 
                 # Check optimization thread (reduced to 10 seconds for faster detection)
+                # Note: During PAUSED state, optimization thread is expected to block on full buffers (back-pressure)
                 if self._optimization_thread_heartbeat > 0:
                     opt_age = current_time - self._optimization_thread_heartbeat
                     if opt_age > 10.0:  # No heartbeat for 10 seconds
-                        logger.critical(f"OPTIMIZATION THREAD APPEARS STUCK: No heartbeat for {opt_age:.1f} seconds")
-                        # Log thread state
-                        if self._optimization_thread and self._optimization_thread.is_alive():
-                            logger.critical("Optimization thread is_alive=True but not responding")
+                        # Check if renderer is paused - if so, blocking is expected
+                        try:
+                            control_status = self._control_state.get_status()
+                            is_paused = control_status and control_status.renderer_state == RendererState.PAUSED
+                        except Exception:
+                            is_paused = False
+
+                        if not is_paused:
+                            logger.critical(
+                                f"OPTIMIZATION THREAD APPEARS STUCK: No heartbeat for {opt_age:.1f} seconds"
+                            )
+                            # Log thread state
+                            if self._optimization_thread and self._optimization_thread.is_alive():
+                                logger.critical("Optimization thread is_alive=True but not responding")
+                            else:
+                                logger.critical("Optimization thread is_alive=False - thread has crashed!")
                         else:
-                            logger.critical("Optimization thread is_alive=False - thread has crashed!")
+                            # Log at debug level during pause - blocking is expected
+                            if opt_age > 30.0 and opt_age % 30.0 < self._thread_monitor_interval:
+                                logger.debug(
+                                    f"Optimization thread blocked for {opt_age:.1f}s (expected during PAUSED state - back-pressure working)"
+                                )
 
                 # Check renderer thread (reduced to 10 seconds for faster detection)
                 if self._renderer_thread_heartbeat > 0:
