@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useWebSocket } from './useWebSocket'
 
 const useConversions = () => {
   const [conversions, setConversions] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const { conversionUpdate } = useWebSocket()
 
   // Fetch conversions from API
   const fetchConversions = useCallback(async () => {
@@ -83,17 +85,12 @@ const useConversions = () => {
     fetchConversions()
   }, [fetchConversions])
 
-  // Poll for updates every 2 seconds if there are active conversions
+  // Subscribe to WebSocket conversion updates
   useEffect(() => {
-    const hasActiveConversions = conversions.some(c =>
-      ['queued', 'processing', 'validating'].includes(c.status)
-    )
-
-    if (hasActiveConversions) {
-      const interval = setInterval(fetchConversions, 2000)
-      return () => clearInterval(interval)
+    if (conversionUpdate && conversionUpdate.conversion) {
+      updateConversion(conversionUpdate.conversion)
     }
-  }, [conversions, fetchConversions])
+  }, [conversionUpdate, updateConversion])
 
   return {
     conversions,

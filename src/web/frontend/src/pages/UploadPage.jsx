@@ -227,33 +227,9 @@ const UploadPage = () => {
     }
   }
 
-  // Force fetch when entering conversion mode and poll continuously
-  useEffect(() => {
-    if (showingConversion && convertingJobIds.length > 0) {
-      console.log('Entering conversion mode, forcing fetch...')
-      fetchConversions()
-
-      // Poll every 2 seconds while showing conversion
-      const interval = setInterval(() => {
-        console.log('Polling conversions...')
-        fetchConversions()
-      }, 2000)
-
-      return () => clearInterval(interval)
-    }
-  }, [showingConversion, convertingJobIds, fetchConversions])
-
-  // Monitor conversion progress
+  // Monitor conversion progress (updates now come via WebSocket)
   useEffect(() => {
     if (!showingConversion || convertingJobIds.length === 0) return
-
-    // Manually fetch conversions to debug
-    fetch('/api/conversions')
-      .then(res => res.json())
-      .then(data => {
-        console.log('API /api/conversions response:', data)
-      })
-      .catch(err => console.error('Failed to fetch conversions:', err))
 
     console.log('Monitoring conversions:', {
       showingConversion,

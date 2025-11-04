@@ -21,6 +21,7 @@ export const WebSocketProvider = ({ children }) => {
   const [playlistModified, setPlaylistModified] = useState(false)
   const [isLoadingPlaylist, setIsLoadingPlaylist] = useState(false)
   const [isPageVisible, setIsPageVisible] = useState(!document.hidden)
+  const [conversionUpdate, setConversionUpdate] = useState(null)
 
   // Use refs to avoid stale closures in callbacks
   const currentPlaylistFileRef = useRef(currentPlaylistFile)
@@ -252,8 +253,7 @@ export const WebSocketProvider = ({ children }) => {
       case 'conversion_update':
         // Handle conversion progress updates
         console.log('Conversion update received:', data)
-        // Note: This is handled by the useConversions hook via polling
-        // We just acknowledge the message here to avoid the "Unknown" warning
+        setConversionUpdate(data)
         break
 
       default:
@@ -293,6 +293,7 @@ export const WebSocketProvider = ({ children }) => {
     previewData,
     currentPlaylistFile,
     playlistModified,
+    conversionUpdate,
     sendMessage,
     // Convenience methods for common operations
     updatePlaylist: (newPlaylist) => setPlaylist(newPlaylist),

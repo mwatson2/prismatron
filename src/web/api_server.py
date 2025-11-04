@@ -917,6 +917,29 @@ async def startup_event():
     upload_cleanup_task = asyncio.create_task(periodic_upload_cleanup_task())
     logger.info("Started periodic upload cleanup task (10 minute intervals)")
 
+    # Register WebSocket broadcast callback for conversion updates
+    if VIDEO_CONVERSION_AVAILABLE:
+        conversion_manager = get_conversion_manager()
+        if conversion_manager:
+            # Get the main event loop to schedule tasks from worker thread
+            main_loop = asyncio.get_event_loop()
+
+            def on_conversion_status_update(job):
+                """Broadcast conversion status updates via WebSocket (called from worker thread)."""
+                try:
+                    # Use run_coroutine_threadsafe to schedule on main event loop from worker thread
+                    asyncio.run_coroutine_threadsafe(
+                        manager.broadcast({"type": "conversion_update", "conversion": job.to_dict()}), main_loop
+                    )
+                    logger.debug(
+                        f"Broadcasted conversion update for job {job.id}: {job.status.value} {job.progress:.1f}%"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to broadcast conversion update: {e}")
+
+            conversion_manager.add_status_callback(on_conversion_status_update)
+            logger.info("Registered WebSocket broadcast callback for conversion updates")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():

@@ -397,7 +397,7 @@ class ConversionManager:
 
             logger.info(f"FFmpeg command: {' '.join(cmd)}")
 
-            # Start FFmpeg process with unbuffered I/O
+            # Start FFmpeg process with line-buffered I/O
             # Use stdbuf to disable buffering on FFmpeg's output
             buffered_cmd = ["stdbuf", "-oL", "-eL"] + cmd
 
@@ -406,7 +406,7 @@ class ConversionManager:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                bufsize=0,  # Unbuffered
+                bufsize=1,  # Line buffered
                 universal_newlines=True,
             )
 
@@ -441,8 +441,6 @@ class ConversionManager:
         self, job: ConversionJob, process: subprocess.Popen, total_duration: float, fps: float = 30.0
     ) -> bool:
         """Monitor FFmpeg progress and update job status."""
-        import select
-
         # Calculate total expected frames
         total_frames = int(total_duration * fps)
         logger.info(
@@ -450,64 +448,56 @@ class ConversionManager:
         )
         try:
             stderr_output = []
-            buffer = ""
+            last_line = ""  # Track last line for carriage return handling
 
+            # Read stderr line by line in real-time
             while True:
-                # Check if process finished
-                if process.poll() is not None:
-                    # Process finished, read any remaining output
-                    if process.stderr:
-                        remaining = process.stderr.read()
-                        if remaining:
-                            buffer += remaining
-                            logger.info(f"Read remaining output: {len(remaining)} chars")
-                    break
-
                 # Check if cancelled
                 if job.status == ConversionStatus.CANCELLED:
                     process.terminate()
                     process.wait(timeout=10)
                     return False
 
-                # Use select to check if data is available (non-blocking)
-                if process.stderr:
-                    ready, _, _ = select.select([process.stderr], [], [], 0.1)  # 100ms timeout
-                    if ready:
-                        # Read available data
-                        chunk = process.stderr.read(8192)  # Read up to 8KB at a time
-                        if chunk:
-                            buffer += chunk
+                # Read one line at a time (blocks until line available or EOF)
+                line = process.stderr.readline()
 
-                            # Process complete lines (split on \n or \r)
-                            lines = buffer.split("\n")
-                            buffer = lines[-1]  # Keep incomplete line in buffer
+                # If empty string, process has finished
+                if not line:
+                    break
 
-                            for line in lines[:-1]:
-                                # Also handle \r within lines
-                                if "\r" in line:
-                                    sublines = line.split("\r")
-                                    line = sublines[-1]  # Take the last update
+                # Handle carriage return (\r) - FFmpeg uses this to update same line
+                # Split on \r and take the last part (the most recent update)
+                if "\r" in line:
+                    parts = line.split("\r")
+                    # Process all parts, last one is the current state
+                    for part in parts:
+                        if part.strip():
+                            last_line = part
 
-                                if line.strip():
-                                    stderr_output.append(line)
-
-                                    # Parse FFmpeg progress output - look for frame number
-                                    if "frame=" in line:
-                                        frame_match = re.search(r"frame=\s*(\d+)", line)
-                                        if frame_match:
-                                            current_frame = int(frame_match.group(1))
-                                            if total_frames > 0:
-                                                progress = min(85.0, (current_frame / total_frames) * 85.0)
-                                                if (
-                                                    abs(progress - job.progress) >= 1.0
-                                                ):  # Only update if changed by at least 1%
-                                                    job.progress = progress
-                                                    logger.info(
-                                                        f"Progress: frame {current_frame}/{total_frames} = {progress:.1f}%"
-                                                    )
-                                                    self._notify_status_update(job)
+                    # Use the last (most recent) update
+                    line = last_line
                 else:
-                    time.sleep(0.1)
+                    # Regular newline-terminated line
+                    line = line.rstrip("\n")
+
+                if line.strip():
+                    stderr_output.append(line)
+
+                    # Parse FFmpeg progress output - look for frame number
+                    if "frame=" in line:
+                        frame_match = re.search(r"frame=\s*(\d+)", line)
+                        if frame_match:
+                            current_frame = int(frame_match.group(1))
+                            if total_frames > 0:
+                                progress = min(85.0, (current_frame / total_frames) * 85.0)
+                                # Only update if changed by at least 1%
+                                if abs(progress - job.progress) >= 1.0:
+                                    job.progress = progress
+                                    logger.info(f"Progress: frame {current_frame}/{total_frames} = {progress:.1f}%")
+                                    self._notify_status_update(job)
+
+            # Wait for process to finish
+            process.wait()
 
             # Check return code
             if process.returncode == 0:
@@ -518,9 +508,9 @@ class ConversionManager:
                 return True
             else:
                 # Log the complete stderr output for debugging
-                stderr_text = "".join(stderr_output)
+                stderr_text = "\n".join(stderr_output)
                 logger.error(f"FFmpeg failed with return code: {process.returncode}")
-                logger.error(f"FFmpeg stderr output: {stderr_text}")
+                logger.error(f"FFmpeg stderr output: {stderr_text[-1000:]}")  # Last 1000 chars
                 job.error_message = f"FFmpeg failed: {stderr_text[-500:]}"  # Last 500 chars
                 return False
 
