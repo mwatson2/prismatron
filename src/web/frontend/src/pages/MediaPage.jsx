@@ -136,6 +136,9 @@ const MediaPage = () => {
     if (result.source.droppableId === 'uploads' && result.destination.droppableId === 'media') {
       const draggedFile = uploadFiles[result.source.index]
       if (draggedFile) {
+        // Optimistically remove the file from uploads immediately
+        setUploadFiles(prev => prev.filter((_, index) => index !== result.source.index))
+
         await moveFileToMedia(draggedFile)
       }
     }
