@@ -322,21 +322,32 @@ const PlaylistPage = () => {
 
         <div className="flex flex-wrap gap-3">
           <button
-            onClick={() => {
+            onClick={async () => {
               if (currentPlaylistFile) {
                 // Quick save to current file
-                fetch('/api/playlists/save', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    name: currentPlaylistFile.replace('.json', ''),
-                    description: '',
-                    overwrite: true
+                try {
+                  const response = await fetch('/api/playlists/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      name: currentPlaylistFile.replace('.json', ''),
+                      description: '',
+                      overwrite: true
+                    })
                   })
-                }).then(() => {
-                  setPlaylistModified(false) // Mark as saved
-                  loadSavedPlaylists()
-                })
+                  if (response.ok) {
+                    setPlaylistModified(false) // Mark as saved
+                    loadSavedPlaylists()
+                    console.log('Playlist saved successfully')
+                  } else {
+                    const error = await response.text()
+                    console.error('Failed to save playlist:', error)
+                    alert('Failed to save playlist: ' + error)
+                  }
+                } catch (error) {
+                  console.error('Failed to save playlist:', error)
+                  alert('Failed to save playlist: ' + error.message)
+                }
               } else {
                 setShowSaveDialog(true)
               }

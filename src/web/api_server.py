@@ -3900,9 +3900,9 @@ async def save_playlist(request: SavePlaylistRequest):
             if item.file_path:
                 if item.type in ["image", "video"]:
                     # Convert absolute path to relative (just filename)
-                    file_path = Path(item.file_path)
-                    if file_path.is_absolute():
-                        item_data["file_path"] = file_path.name
+                    item_file_path = Path(item.file_path)
+                    if item_file_path.is_absolute():
+                        item_data["file_path"] = item_file_path.name
                     else:
                         item_data["file_path"] = item.file_path
                 else:
@@ -3916,10 +3916,16 @@ async def save_playlist(request: SavePlaylistRequest):
             playlist_data["items"].append(item_data)
 
         # Save to file
+        logger.info(f"Attempting to save playlist to: {file_path.resolve()}")
         with open(file_path, "w") as f:
             json.dump(playlist_data, f, indent=2)
 
-        logger.info(f"Saved playlist to {filename}")
+        # Verify file was created
+        if file_path.exists():
+            logger.info(f"Saved playlist to {filename} (size: {file_path.stat().st_size} bytes)")
+        else:
+            logger.error(f"File {filename} was written but does not exist at {file_path.resolve()}")
+            raise Exception("Failed to verify saved playlist file")
 
         return {
             "status": "saved",
