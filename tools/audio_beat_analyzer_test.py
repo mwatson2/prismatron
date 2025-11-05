@@ -101,6 +101,7 @@ class BeatAnalyzerTester:
                 "timestamp": beat_event.timestamp,
                 "confidence": beat_event.confidence,
                 "is_downbeat": beat_event.is_downbeat,
+                "intensity": beat_event.intensity,
             }
         )
 
@@ -109,6 +110,7 @@ class BeatAnalyzerTester:
             logger.info(
                 f"Beat #{len(self.beat_events)}: "
                 f"time={beat_event.timestamp:.2f}s, "
+                f"intensity={beat_event.intensity:.2f}, "
                 f"confidence={beat_event.confidence:.3f}, "
                 f"downbeat={beat_event.is_downbeat}"
             )
@@ -202,8 +204,8 @@ class BeatAnalyzerTester:
         """
         logger.info("Generating visualization...")
 
-        # Create figure with subplots
-        fig, axes = plt.subplots(4, 1, figsize=(16, 12))
+        # Create figure with subplots (added 5th subplot for intensity)
+        fig, axes = plt.subplots(5, 1, figsize=(16, 14))
 
         # Time axis for audio
         time_axis = np.linspace(0, self.duration, len(self.audio_data))
@@ -215,15 +217,33 @@ class BeatAnalyzerTester:
         axes[0].grid(True, alpha=0.3)
         axes[0].set_xlim(0, self.duration)
 
-        # Add beat markers
+        # Add beat markers with intensity-based coloring
         if self.beat_events:
             beat_times = [b["timestamp"] for b in self.beat_events]
-            downbeat_times = [b["timestamp"] for b in self.beat_events if b["is_downbeat"]]
+            beat_intensities = [b["intensity"] for b in self.beat_events]
+            downbeat_mask = [b["is_downbeat"] for b in self.beat_events]
 
-            axes[0].vlines(beat_times, -1, 1, colors="red", alpha=0.6, linewidth=0.8, label="Beats")
-            if downbeat_times:
-                axes[0].vlines(downbeat_times, -1, 1, colors="green", alpha=0.8, linewidth=1.5, label="Downbeats")
-            axes[0].legend(loc="upper right")
+            # Create a colormap for intensity (low=yellow, high=red)
+            import matplotlib.cm as cm
+
+            # Plot regular beats with intensity-based color
+            for i, (time, intensity, is_downbeat) in enumerate(zip(beat_times, beat_intensities, downbeat_mask)):
+                if is_downbeat:
+                    # Downbeats in green with intensity-based alpha
+                    axes[0].vlines(time, -1, 1, colors="green", alpha=0.5 + intensity * 0.5, linewidth=2.0)
+                else:
+                    # Regular beats with intensity-based color (yellow to red)
+                    color = cm.YlOrRd(intensity)
+                    axes[0].vlines(time, -1, 1, colors=color, alpha=0.7, linewidth=1.0)
+
+            # Add legend
+            from matplotlib.lines import Line2D
+
+            legend_elements = [
+                Line2D([0], [0], color="red", linewidth=1.5, label="Beats (color = intensity)"),
+                Line2D([0], [0], color="green", linewidth=2.0, label="Downbeats"),
+            ]
+            axes[0].legend(handles=legend_elements, loc="upper right")
 
         # Plot 2: Zoomed waveform (first 10 seconds)
         zoom_duration = min(10.0, self.duration)
@@ -233,17 +253,25 @@ class BeatAnalyzerTester:
         axes[1].set_title(f"Audio Waveform - First {zoom_duration:.1f}s (Detail)")
         axes[1].grid(True, alpha=0.3)
 
-        # Add beat markers to zoom
+        # Add beat markers to zoom with intensity
         if self.beat_events:
-            zoom_beats = [b["timestamp"] for b in self.beat_events if b["timestamp"] <= zoom_duration]
-            zoom_downbeats = [
-                b["timestamp"] for b in self.beat_events if b["is_downbeat"] and b["timestamp"] <= zoom_duration
-            ]
+            import matplotlib.cm as cm
 
-            if zoom_beats:
-                axes[1].vlines(zoom_beats, -1, 1, colors="red", alpha=0.6, linewidth=1.2)
-            if zoom_downbeats:
-                axes[1].vlines(zoom_downbeats, -1, 1, colors="green", alpha=0.8, linewidth=2.0)
+            zoom_beats = [b for b in self.beat_events if b["timestamp"] <= zoom_duration]
+
+            for beat in zoom_beats:
+                if beat["is_downbeat"]:
+                    axes[1].vlines(
+                        beat["timestamp"],
+                        -1,
+                        1,
+                        colors="green",
+                        alpha=0.5 + beat["intensity"] * 0.5,
+                        linewidth=2.5,
+                    )
+                else:
+                    color = cm.YlOrRd(beat["intensity"])
+                    axes[1].vlines(beat["timestamp"], -1, 1, colors=color, alpha=0.8, linewidth=1.5)
 
         # Plot 3: BPM over time
         time_points, bpm_values = self.calculate_bpm_timeline()
@@ -269,21 +297,42 @@ class BeatAnalyzerTester:
             axes[2].set_ylabel("BPM")
             axes[2].set_title("Tempo (BPM) Over Time")
 
-        # Plot 4: RMS envelope with beat markers
+        # Plot 4: Beat intensity over time
+        if self.beat_events:
+            beat_times = [b["timestamp"] for b in self.beat_events]
+            beat_intensities = [b["intensity"] for b in self.beat_events]
+
+            # Create scatter plot with intensity-based colors
+            import matplotlib.cm as cm
+
+            colors = [cm.YlOrRd(intensity) for intensity in beat_intensities]
+            axes[3].scatter(beat_times, beat_intensities, c=colors, s=50, alpha=0.8, edgecolors="black", linewidth=0.5)
+            axes[3].plot(beat_times, beat_intensities, linewidth=1, color="gray", alpha=0.5, linestyle="--")
+            axes[3].set_ylabel("Beat Intensity")
+            axes[3].set_title("Beat Intensity Over Time")
+            axes[3].grid(True, alpha=0.3)
+            axes[3].set_xlim(0, self.duration)
+            axes[3].set_ylim(0, 1.1)
+        else:
+            axes[3].text(0.5, 0.5, "No beats detected", ha="center", va="center", transform=axes[3].transAxes)
+            axes[3].set_ylabel("Beat Intensity")
+            axes[3].set_title("Beat Intensity Over Time")
+
+        # Plot 5: RMS envelope with beat markers
         window_size = int(self.sample_rate * 0.05)  # 50ms windows
         rms_envelope = self._calculate_rms_envelope(self.audio_data, window_size)
         rms_time = np.linspace(0, self.duration, len(rms_envelope))
-        axes[3].plot(rms_time, rms_envelope, linewidth=1.5, color="orange")
-        axes[3].set_xlabel("Time (seconds)")
-        axes[3].set_ylabel("RMS Amplitude")
-        axes[3].set_title("RMS Envelope with Beat Markers")
-        axes[3].grid(True, alpha=0.3)
-        axes[3].set_xlim(0, self.duration)
+        axes[4].plot(rms_time, rms_envelope, linewidth=1.5, color="orange")
+        axes[4].set_xlabel("Time (seconds)")
+        axes[4].set_ylabel("RMS Amplitude")
+        axes[4].set_title("RMS Envelope with Beat Markers")
+        axes[4].grid(True, alpha=0.3)
+        axes[4].set_xlim(0, self.duration)
 
         # Add beat markers to RMS
         if self.beat_events:
             beat_times = [b["timestamp"] for b in self.beat_events]
-            axes[3].vlines(beat_times, 0, np.max(rms_envelope), colors="red", alpha=0.4, linewidth=0.8)
+            axes[4].vlines(beat_times, 0, np.max(rms_envelope), colors="red", alpha=0.4, linewidth=0.8)
 
         # Add statistics text
         stats_text = f"Beats detected: {len(self.beat_events)}"
@@ -292,6 +341,13 @@ class BeatAnalyzerTester:
             avg_interval = np.mean(intervals)
             avg_bpm = 60.0 / avg_interval if avg_interval > 0 else 0
             stats_text += f"  |  Average BPM: {avg_bpm:.1f}"
+
+            # Add intensity statistics
+            intensities = [b["intensity"] for b in self.beat_events]
+            avg_intensity = np.mean(intensities)
+            max_intensity = np.max(intensities)
+            min_intensity = np.min(intensities)
+            stats_text += f"  |  Intensity: avg={avg_intensity:.2f}, min={min_intensity:.2f}, max={max_intensity:.2f}"
 
         fig.text(0.5, 0.02, stats_text, ha="center", fontsize=11, bbox={"boxstyle": "round", "facecolor": "wheat"})
 
