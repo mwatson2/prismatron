@@ -221,3 +221,4 @@ experiments/
 # Root-level PNG and LOG files
 /*.png
 /*.log
+/*.wav
