@@ -275,6 +275,7 @@ class AudioBeatAnalyzer:
         self.total_frames_processed = 0
         self.total_beats_detected = 0
         self.last_status_log = 0.0
+        self.last_beat_audio_timestamp = 0.0  # Track last beat in audio time, not wall clock
 
         # Aubio doesn't use GPU - always CPU-based but very fast
         self.device = "cpu"  # Aubio is CPU-only but optimized
@@ -311,7 +312,6 @@ class AudioBeatAnalyzer:
                 self.aubio_tempo = aubio.tempo("specdiff", win_s, self.hop_size, self.capture_rate)
 
                 # Aubio beat tracking
-                self.last_beat_time = 0
                 self.beat_times = deque(maxlen=32)
 
                 logger.info("Aubio initialized successfully")
@@ -321,7 +321,6 @@ class AudioBeatAnalyzer:
 
         # Fallback to mock implementation
         self.aubio_tempo = MockAubio(sample_rate=self.capture_rate, hop_size=self.hop_size)
-        self.last_beat_time = 0
         self.beat_times = deque(maxlen=32)
         logger.warning("Using MockAubio for testing (Aubio unavailable)")
 
@@ -398,12 +397,14 @@ class AudioBeatAnalyzer:
             self.total_frames_processed += 1
 
             if beat_detected:
-                current_time = time.time()
+                # Calculate timestamp relative to audio start (in audio time, not wall clock)
+                audio_timestamp = (self.total_frames_processed * self.hop_size) / self.capture_rate
 
-                # Prevent duplicate detections too close together
-                if current_time - self.last_beat_time > 0.2:  # 200ms minimum
-                    self.last_beat_time = current_time
-                    self.beat_times.append(current_time)
+                # Prevent duplicate detections too close together (use audio time, not wall clock)
+                if audio_timestamp - self.last_beat_audio_timestamp > 0.2:  # 200ms minimum in audio time
+                    current_time = time.time()
+                    self.last_beat_audio_timestamp = audio_timestamp
+                    self.beat_times.append(audio_timestamp)
                     self.total_beats_detected += 1
 
                     # Calculate BPM from aubio and intervals
@@ -433,9 +434,6 @@ class AudioBeatAnalyzer:
                             current_bpm = aubio_bpm if aubio_bpm > 0 else 120.0
                     else:
                         current_bpm = aubio_bpm if aubio_bpm > 0 else 120.0
-
-                    # Calculate timestamp relative to audio start
-                    audio_timestamp = (self.total_frames_processed * self.hop_size) / self.capture_rate
 
                     # Log occasionally
                     if self.total_beats_detected <= 10 or np.random.random() < 0.1:
