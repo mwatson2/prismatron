@@ -143,6 +143,7 @@ export const WebSocketProvider = ({ children }) => {
           handleMessage(data)
         } catch (error) {
           console.error('Failed to parse WebSocket message:', error)
+          console.error('Raw message data:', event.data)
         }
       }
 
@@ -194,9 +195,22 @@ export const WebSocketProvider = ({ children }) => {
         break
 
       case 'playlist_updated':
+        console.log('📋 Playlist updated received:', {
+          itemCount: data.items?.length || 0,
+          currentIndex: data.current_index,
+          isPlaying: data.is_playing,
+          items: data.items?.map(item => ({ id: item.id, name: item.name, file_path: item.file_path }))
+        })
+
         setPlaylist(prev => {
           // Check if items actually changed (not just playback state)
           const itemsChanged = JSON.stringify(prev.items) !== JSON.stringify(data.items || [])
+
+          console.log('📋 Playlist state update:', {
+            itemsChanged,
+            prevItemCount: prev.items.length,
+            newItemCount: data.items?.length || 0
+          })
 
           // Mark as modified if we have a loaded file and items changed
           // BUT skip if we're in the process of loading a playlist
@@ -209,7 +223,7 @@ export const WebSocketProvider = ({ children }) => {
             setIsLoadingPlaylist(false)
           }
 
-          return {
+          const newState = {
             ...prev,
             items: data.items || [],
             current_index: data.current_index ?? prev.current_index,
@@ -217,6 +231,14 @@ export const WebSocketProvider = ({ children }) => {
             auto_repeat: data.auto_repeat ?? prev.auto_repeat,
             shuffle: data.shuffle ?? prev.shuffle
           }
+
+          console.log('📋 New playlist state:', {
+            itemCount: newState.items.length,
+            currentIndex: newState.current_index,
+            isPlaying: newState.is_playing
+          })
+
+          return newState
         })
 
         // Update current playlist file if provided in the message
@@ -257,7 +279,7 @@ export const WebSocketProvider = ({ children }) => {
         break
 
       default:
-        console.log('Unknown WebSocket message type:', data.type)
+        console.warn('⚠️ Unknown WebSocket message type:', data.type, data)
     }
   }, [playlist, settings])
 

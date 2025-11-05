@@ -6,7 +6,9 @@ import {
   PhotoIcon,
   PlusIcon,
   FolderIcon,
-  ArrowsUpDownIcon
+  ArrowsUpDownIcon,
+  PencilIcon,
+  TrashIcon
 } from '@heroicons/react/24/outline'
 
 const MediaPage = () => {
@@ -144,6 +146,75 @@ const MediaPage = () => {
     }
   }
 
+  const handleRenameFile = async (file) => {
+    const newName = window.prompt(`Rename "${file.name}" to:`, file.name)
+
+    if (!newName || newName === file.name) {
+      return
+    }
+
+    try {
+      const response = await fetch(`/api/media/${file.id}/rename`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          new_name: newName
+        })
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        console.log(`Renamed ${file.name} to ${data.new_name}`)
+        console.log(`Updated ${data.items_modified} items in ${data.affected_playlists} playlists`)
+
+        // Reload the file list
+        loadExistingFiles()
+      } else {
+        const error = await response.json()
+        console.error('Failed to rename file:', error)
+        alert(`Failed to rename file: ${error.detail || 'Unknown error'}`)
+      }
+    } catch (error) {
+      console.error('Failed to rename file:', error)
+      alert(`Failed to rename file: ${error.message}`)
+    }
+  }
+
+  const handleDeleteFile = async (file) => {
+    if (!window.confirm(
+      `Delete "${file.name}"?\n\nThis will remove the file and all references to it in playlists.\n\nThis action cannot be undone.`
+    )) {
+      return
+    }
+
+    try {
+      const response = await fetch(`/api/media/${file.id}`, {
+        method: 'DELETE'
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        console.log(`Deleted ${data.filename}`)
+        console.log(`Removed ${data.items_removed} items from ${data.affected_playlists} playlists`)
+
+        // Show success message
+        alert(`File deleted successfully!\n\nRemoved ${data.items_removed} items from ${data.affected_playlists} playlist(s).`)
+
+        // Reload the file list
+        loadExistingFiles()
+      } else {
+        const error = await response.json()
+        console.error('Failed to delete file:', error)
+        alert(`Failed to delete file: ${error.detail || 'Unknown error'}`)
+      }
+    } catch (error) {
+      console.error('Failed to delete file:', error)
+      alert(`Failed to delete file: ${error.message}`)
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -210,13 +281,32 @@ const MediaPage = () => {
                             </div>
                           </div>
 
-                          <button
-                            onClick={() => addExistingFileToPlaylist(file)}
-                            className="retro-button p-2 text-neon-orange hover:text-neon-yellow transition-colors"
-                            aria-label="Add to playlist"
-                          >
-                            <PlusIcon className="w-5 h-5" />
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleRenameFile(file)}
+                              className="retro-button p-2 text-neon-purple hover:text-neon-yellow transition-colors"
+                              aria-label="Rename file"
+                              title="Rename file"
+                            >
+                              <PencilIcon className="w-5 h-5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteFile(file)}
+                              className="retro-button p-2 text-red-500 hover:text-red-400 transition-colors"
+                              aria-label="Delete file"
+                              title="Delete file"
+                            >
+                              <TrashIcon className="w-5 h-5" />
+                            </button>
+                            <button
+                              onClick={() => addExistingFileToPlaylist(file)}
+                              className="retro-button p-2 text-neon-orange hover:text-neon-yellow transition-colors"
+                              aria-label="Add to playlist"
+                              title="Add to playlist"
+                            >
+                              <PlusIcon className="w-5 h-5" />
+                            </button>
+                          </div>
                         </div>
                       )
                     })

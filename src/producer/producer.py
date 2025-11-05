@@ -1553,21 +1553,46 @@ class ProducerProcess:
 
             # All playlist operations completed atomically
 
-            # If the current content needs to change (different index), reset loaded content tracking
+            # Check if the item at current index has changed (even if index number is same)
+            needs_reload = False
             if self._current_item_index != sync_state.current_index:
+                # Index changed
                 logger.info(
                     f"PLAYLIST INDEX SYNC: Producer index {self._current_item_index} -> playlist index {sync_state.current_index}"
                 )
-                # Clear stuck state tracking since we're advancing
+                needs_reload = True
+            elif self._current_item_index >= 0 and self._current_item:
+                # Index is same, but check if the item itself changed (e.g., rename, replace)
+                try:
+                    current_playlist_item = self._playlist.get_item(sync_state.current_index)
+                    if current_playlist_item and current_playlist_item.filepath != self._current_item.filepath:
+                        logger.info(
+                            f"PLAYLIST ITEM CHANGED at index {sync_state.current_index}: "
+                            f"{self._current_item.filepath} -> {current_playlist_item.filepath}"
+                        )
+                        needs_reload = True
+                except Exception as e:
+                    logger.debug(f"Could not check if item changed: {e}")
+
+            if needs_reload:
+                # Clear stuck state tracking since we're changing content
                 if hasattr(self, "_content_finished_time"):
                     delattr(self, "_content_finished_time")
 
-                # Mark that content needs to be reloaded to sync with new index
-                # Don't modify _current_source here - let producer thread handle cleanup to avoid race conditions
+                # Mark that content needs to be reloaded
+                # Also cleanup current source to cancel any in-progress setup
+                if self._current_source:
+                    logger.info("Cleaning up current content source due to playlist change")
+                    try:
+                        self._current_source.cleanup()
+                    except Exception as e:
+                        logger.warning(f"Error cleaning up content source: {e}")
+                    self._current_source = None
+
                 self._current_item = None  # Force content reload in _ensure_current_content
                 logger.debug("Set _current_item = None to force content reload (sync callback thread)")
             else:
-                # Even if staying on the same item, update the global timestamp offset
+                # Staying on the same item, update the global timestamp offset
                 # to account for new items added after the current position
                 self._update_global_timestamp_offset()
                 logger.debug("Updated global timestamp offset after playlist sync (same item)")

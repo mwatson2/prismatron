@@ -456,6 +456,178 @@ def manage_uploads_playlist(new_item: PlaylistItem) -> None:
             current_playlist_file = None
 
 
+def update_playlists_for_file_operation(
+    old_filename: str, new_filename: Optional[str] = None, operation: str = "rename"
+) -> Dict[str, Union[int, List[str]]]:
+    """
+    Update all playlists when a file is renamed or deleted.
+
+    Args:
+        old_filename: Original filename (e.g., "video.mp4")
+        new_filename: New filename for rename operations
+        operation: "rename" or "delete"
+
+    Returns:
+        Dict with update statistics and affected playlists
+    """
+    if operation not in ["rename", "delete"]:
+        logger.error(f"Invalid operation: {operation}")
+        return {"affected_playlists": 0, "items_modified": 0, "playlists": []}
+
+    if operation == "rename" and not new_filename:
+        logger.error("new_filename required for rename operation")
+        return {"affected_playlists": 0, "items_modified": 0, "playlists": []}
+
+    affected_playlists = []
+    total_items_modified = 0
+    current_playlist_affected = False
+
+    try:
+        # Iterate through all playlist files
+        if not PLAYLISTS_DIR.exists():
+            logger.warning(f"Playlists directory does not exist: {PLAYLISTS_DIR}")
+            return {"affected_playlists": 0, "items_modified": 0, "playlists": []}
+
+        for playlist_path in PLAYLISTS_DIR.iterdir():
+            if not playlist_path.is_file() or playlist_path.suffix != ".json":
+                continue
+
+            try:
+                # Load playlist
+                with open(playlist_path) as f:
+                    playlist_data = json.load(f)
+
+                # Track if this playlist was modified
+                playlist_modified = False
+                items_modified_in_playlist = 0
+
+                # Process items based on operation
+                if operation == "rename":
+                    # Update file_path and name for matching items
+                    for item in playlist_data.get("items", []):
+                        if item.get("type") in ["image", "video"] and item.get("file_path") == old_filename:
+                            old_name = item.get("name", old_filename)
+                            item["file_path"] = new_filename
+                            item["name"] = new_filename  # Update display name to match new filename
+                            items_modified_in_playlist += 1
+                            playlist_modified = True
+                            logger.info(
+                                f"Renamed file reference in playlist {playlist_path.name}: name={old_name} -> {new_filename}, file_path={old_filename} -> {new_filename}"
+                            )
+
+                elif operation == "delete":
+                    # Remove items with matching file_path
+                    original_count = len(playlist_data.get("items", []))
+                    playlist_data["items"] = [
+                        item
+                        for item in playlist_data.get("items", [])
+                        if not (item.get("type") in ["image", "video"] and item.get("file_path") == old_filename)
+                    ]
+                    items_removed = original_count - len(playlist_data["items"])
+
+                    if items_removed > 0:
+                        items_modified_in_playlist = items_removed
+                        playlist_modified = True
+
+                        # Update order indices
+                        for i, item in enumerate(playlist_data["items"]):
+                            item["order"] = i
+
+                        logger.info(
+                            f"Removed {items_removed} item(s) from playlist {playlist_path.name} referencing {old_filename}"
+                        )
+
+                # Save playlist if modified
+                if playlist_modified:
+                    playlist_data["modified_at"] = datetime.now().isoformat()
+                    with open(playlist_path, "w") as f:
+                        json.dump(playlist_data, f, indent=2)
+
+                    affected_playlists.append(playlist_path.name)
+                    total_items_modified += items_modified_in_playlist
+
+                    # Check if current playlist is affected
+                    global current_playlist_file
+                    if current_playlist_file == playlist_path.name:
+                        current_playlist_affected = True
+
+            except Exception as e:
+                logger.error(f"Failed to process playlist {playlist_path}: {e}")
+                continue
+
+        # Always check and sync with live playlist (not just when saved playlists are affected)
+        # Live playlist may contain unsaved items that reference the file
+        if playlist_sync_client and playlist_sync_client.connected:
+            try:
+                # Use global playlist_state which is kept in sync via callback
+                global playlist_state
+                if playlist_state and playlist_state.items:
+                    live_items_affected = 0
+
+                    if operation == "rename":
+                        # Update file_path and name in live playlist items
+                        for item in playlist_state.items:
+                            if item.type in ["image", "video"] and item.file_path:
+                                # Extract just the filename from the absolute path
+                                item_filename = Path(item.file_path).name
+                                if item_filename == old_filename:
+                                    # Update to new filename - keep directory part
+                                    new_path = Path(item.file_path).parent / new_filename
+                                    logger.info(
+                                        f"Updating live playlist item: name={item.name} -> {new_filename}, file_path={item.file_path} -> {new_path}"
+                                    )
+
+                                    # Remember position for re-adding
+                                    position = item.order
+
+                                    # Remove old item
+                                    playlist_sync_client.remove_item(item.id)
+
+                                    # Update both file_path AND name
+                                    item.file_path = str(new_path)
+                                    item.name = new_filename  # ← Update the display name too!
+
+                                    # Convert to sync item and add back at same position
+                                    sync_item = api_item_to_sync_item(item)
+                                    playlist_sync_client.add_item(sync_item, position=position)
+
+                                    live_items_affected += 1
+
+                    elif operation == "delete":
+                        # Remove items from live playlist
+                        items_to_remove = []
+                        for item in playlist_state.items:
+                            if item.type in ["image", "video"] and item.file_path:
+                                item_filename = Path(item.file_path).name
+                                if item_filename == old_filename:
+                                    items_to_remove.append(item.id)
+
+                        for item_id in items_to_remove:
+                            logger.info(f"Removing item {item_id} from live playlist")
+                            playlist_sync_client.remove_item(item_id)
+                            live_items_affected += 1
+
+                    if live_items_affected > 0:
+                        logger.info(f"Updated {live_items_affected} items in live playlist")
+
+            except Exception as e:
+                logger.error(f"Failed to sync {operation} operation with live playlist: {e}")
+
+        logger.info(
+            f"File {operation} operation complete: {total_items_modified} items in {len(affected_playlists)} playlists"
+        )
+
+        return {
+            "affected_playlists": len(affected_playlists),
+            "items_modified": total_items_modified,
+            "playlists": affected_playlists,
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to update playlists for file {operation}: {e}")
+        return {"affected_playlists": 0, "items_modified": 0, "playlists": [], "error": str(e)}
+
+
 class EffectPreset(BaseModel):
     """Effect preset model."""
 
@@ -847,6 +1019,10 @@ async def on_playlist_sync_update(sync_state: SyncPlaylistState) -> None:
         # Convert sync state to API state
         playlist_state = sync_state_to_api_state(sync_state)
 
+        logger.info(
+            f"Playlist sync update received: {len(playlist_state.items)} items, broadcasting to {len(manager.active_connections)} WebSocket clients"
+        )
+
         # Broadcast update to connected WebSocket clients
         await manager.broadcast(
             {
@@ -860,6 +1036,8 @@ async def on_playlist_sync_update(sync_state: SyncPlaylistState) -> None:
             }
         )
 
+        logger.debug("Playlist update broadcast complete")
+
     except Exception as e:
         logger.error(f"Error in async playlist sync update: {e}")
 
@@ -867,6 +1045,8 @@ async def on_playlist_sync_update(sync_state: SyncPlaylistState) -> None:
 def sync_playlist_update_handler(sync_state: SyncPlaylistState) -> None:
     """Sync wrapper for playlist update handler."""
     try:
+        logger.debug(f"Sync playlist update handler called with {len(sync_state.items)} items")
+
         # Create a task for the async function
         import asyncio
 
@@ -875,6 +1055,7 @@ def sync_playlist_update_handler(sync_state: SyncPlaylistState) -> None:
             loop = asyncio.get_running_loop()
             # If we get here, there's a running loop - schedule as task
             loop.create_task(on_playlist_sync_update(sync_state))
+            logger.debug("Scheduled playlist update on running event loop")
         except RuntimeError:
             # No running loop - we can run one
             try:
@@ -882,11 +1063,14 @@ def sync_playlist_update_handler(sync_state: SyncPlaylistState) -> None:
                 if loop.is_running():
                     # This shouldn't happen if get_running_loop() failed, but just in case
                     loop.create_task(on_playlist_sync_update(sync_state))
+                    logger.debug("Scheduled playlist update on existing event loop")
                 else:
                     loop.run_until_complete(on_playlist_sync_update(sync_state))
+                    logger.debug("Ran playlist update to completion")
             except RuntimeError:
                 # No event loop exists, create one
                 asyncio.run(on_playlist_sync_update(sync_state))
+                logger.debug("Created new event loop and ran playlist update")
     except Exception as e:
         logger.error(f"Error in playlist sync update handler: {e}")
 
@@ -2236,6 +2420,122 @@ async def add_existing_media_file_to_playlist(
         raise
     except Exception as e:
         logger.error(f"Failed to add existing media file to playlist: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+class RenameFileRequest(BaseModel):
+    """Request model for renaming a file."""
+
+    new_name: str = Field(..., description="New filename")
+
+
+@app.post("/api/media/{file_id}/rename")
+async def rename_media_file(file_id: str, request: RenameFileRequest):
+    """Rename a file in the media directory and update all playlists."""
+    try:
+        # Sanitize new name - remove path separators and dangerous characters
+        new_name = request.new_name.strip()
+        if not new_name:
+            raise HTTPException(status_code=400, detail="New filename cannot be empty")
+
+        # Remove path separators
+        new_name = new_name.replace("/", "").replace("\\", "")
+
+        # Find the file in media directory
+        old_file_path = None
+        for candidate in MEDIA_DIR.iterdir():
+            if candidate.is_file() and candidate.stem == file_id:
+                old_file_path = candidate
+                break
+
+        if not old_file_path:
+            raise HTTPException(status_code=404, detail="File not found in media directory")
+
+        old_filename = old_file_path.name
+        old_extension = old_file_path.suffix
+
+        # If new_name doesn't have extension, use the old one
+        if not Path(new_name).suffix:
+            new_name = new_name + old_extension
+        else:
+            # Validate that extension matches
+            new_extension = Path(new_name).suffix
+            if new_extension.lower() != old_extension.lower():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot change file extension from {old_extension} to {new_extension}",
+                )
+
+        # Check if destination already exists
+        new_file_path = MEDIA_DIR / new_name
+        if new_file_path.exists():
+            raise HTTPException(status_code=409, detail=f"File with name '{new_name}' already exists")
+
+        # Rename the physical file
+        old_file_path.rename(new_file_path)
+        logger.info(f"Renamed file: {old_file_path} -> {new_file_path}")
+
+        # Update all playlists
+        update_result = update_playlists_for_file_operation(old_filename, new_name, operation="rename")
+
+        return {
+            "status": "renamed",
+            "old_name": old_filename,
+            "new_name": new_name,
+            "affected_playlists": update_result["affected_playlists"],
+            "items_modified": update_result["items_modified"],
+            "playlists": update_result["playlists"],
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to rename media file: {e}")
+        # Try to rename back if possible
+        if "new_file_path" in locals() and new_file_path.exists() and "old_file_path" in locals():
+            try:
+                new_file_path.rename(old_file_path)
+                logger.info(f"Rolled back rename: {new_file_path} -> {old_file_path}")
+            except Exception as rollback_error:
+                logger.error(f"Failed to rollback rename: {rollback_error}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.delete("/api/media/{file_id}")
+async def delete_media_file(file_id: str):
+    """Delete a file from the media directory and remove from all playlists."""
+    try:
+        # Find the file in media directory
+        file_path = None
+        for candidate in MEDIA_DIR.iterdir():
+            if candidate.is_file() and candidate.stem == file_id:
+                file_path = candidate
+                break
+
+        if not file_path:
+            raise HTTPException(status_code=404, detail="File not found in media directory")
+
+        filename = file_path.name
+
+        # Update all playlists first (before deleting file)
+        update_result = update_playlists_for_file_operation(filename, operation="delete")
+
+        # Delete the physical file
+        file_path.unlink()
+        logger.info(f"Deleted file: {file_path}")
+
+        return {
+            "status": "deleted",
+            "filename": filename,
+            "affected_playlists": update_result["affected_playlists"],
+            "items_removed": update_result["items_modified"],
+            "playlists": update_result["playlists"],
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete media file: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
