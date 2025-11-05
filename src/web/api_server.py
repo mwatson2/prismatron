@@ -40,13 +40,13 @@ from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Try to import jtop for GPU usage monitoring on Jetson platforms
+# Import tegrastats monitor for system stats on Jetson platforms
 try:
-    from jtop import jtop
+    from src.utils.tegrastats import TegrastatsMonitor
 
-    JTOP_AVAILABLE = True
+    TEGRASTATS_AVAILABLE = True
 except ImportError:
-    JTOP_AVAILABLE = False
+    TEGRASTATS_AVAILABLE = False
 
 from src.const import FRAME_HEIGHT, FRAME_WIDTH
 from src.core.control_state import ControlState, ProducerState, RendererState
@@ -85,23 +85,20 @@ def get_gpu_temperature():
 
 
 def get_gpu_usage():
-    """Get GPU usage percentage using jtop."""
-    if not JTOP_AVAILABLE:
+    """Get GPU usage percentage using tegrastats."""
+    if not TEGRASTATS_AVAILABLE or tegrastats_monitor is None:
         return 0.0
 
     try:
-        with jtop() as jetson:
-            if jetson.ok():
-                # Access GPU usage via the correct path: gpu.status.load
-                return float(jetson.gpu["gpu"]["status"]["load"])
+        stats = tegrastats_monitor.get_latest_stats()
+        if stats:
+            return stats.gpu_usage
         return 0.0
     except Exception as e:
-        # Only warn once about jtop service issues to avoid log spam
-        if not hasattr(get_gpu_usage, "_jtop_warning_shown"):
-            logger.warning(f"Failed to read GPU usage: {e}")
-            if "jtop.service" in str(e):
-                logger.warning("Please run: sudo systemctl restart jtop.service")
-            get_gpu_usage._jtop_warning_shown = True
+        # Only warn once about tegrastats issues to avoid log spam
+        if not hasattr(get_gpu_usage, "_tegrastats_warning_shown"):
+            logger.warning(f"Failed to read GPU usage from tegrastats: {e}")
+            get_gpu_usage._tegrastats_warning_shown = True
         return 0.0
 
 
@@ -708,6 +705,7 @@ consumer_process: Optional[object] = None  # Will be set by main process
 producer_process: Optional[object] = None  # Will be set by main process
 diffusion_patterns_path: Optional[str] = None  # Will be set by main process
 network_manager: Optional[NetworkManager] = None  # Network management instance
+tegrastats_monitor: Optional[TegrastatsMonitor] = None  # System stats monitor for Jetson
 
 # Track currently loaded playlist file for real-time updates
 current_playlist_file: Optional[str] = None
@@ -1078,7 +1076,7 @@ def sync_playlist_update_handler(sync_state: SyncPlaylistState) -> None:
 @app.on_event("startup")
 async def startup_event():
     """Start background tasks on application startup."""
-    global preview_task, upload_cleanup_task, playlist_sync_client, network_manager
+    global preview_task, upload_cleanup_task, playlist_sync_client, network_manager, tegrastats_monitor
 
     # Initialize network manager
     try:
@@ -1086,6 +1084,15 @@ async def startup_event():
         logger.info("Network manager initialized")
     except Exception as e:
         logger.error(f"Failed to initialize network manager: {e}")
+
+    # Initialize tegrastats monitor
+    if TEGRASTATS_AVAILABLE:
+        try:
+            tegrastats_monitor = TegrastatsMonitor(interval_ms=500)
+            tegrastats_monitor.start()
+            logger.info("Tegrastats monitor initialized and started (500ms interval)")
+        except Exception as e:
+            logger.error(f"Failed to initialize tegrastats monitor: {e}")
 
     # Start playlist synchronization client
     playlist_sync_client = PlaylistSyncClient(client_name="web_interface")
@@ -1130,12 +1137,17 @@ async def shutdown_event():
     """Clean up background tasks on application shutdown."""
     import contextlib
 
-    global preview_task, upload_cleanup_task, playlist_sync_client
+    global preview_task, upload_cleanup_task, playlist_sync_client, tegrastats_monitor
 
     # Disconnect playlist sync client
     if playlist_sync_client:
         playlist_sync_client.disconnect()
         logger.info("Disconnected from playlist synchronization service")
+
+    # Stop tegrastats monitor
+    if tegrastats_monitor:
+        tegrastats_monitor.stop()
+        logger.info("Stopped tegrastats monitor")
 
     if preview_task:
         preview_task.cancel()
