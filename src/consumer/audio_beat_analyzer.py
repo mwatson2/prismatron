@@ -25,7 +25,8 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
-import sounddevice as sd
+
+from src.consumer.audio_capture import AudioCapture, AudioConfig
 
 # Audio processing imports
 try:
@@ -234,6 +235,7 @@ class AudioBeatAnalyzer:
         device: str = "auto",
         sample_rate: int = 22050,
         buffer_size: int = 1024,
+        audio_config: Optional[AudioConfig] = None,
     ):
         """
         Initialize audio beat analyzer.
@@ -244,18 +246,14 @@ class AudioBeatAnalyzer:
             device: Processing device ('auto', 'cuda', 'cpu')
             sample_rate: Audio sample rate
             buffer_size: Audio buffer size
+            audio_config: Optional AudioConfig for custom audio capture settings (file mode, etc)
         """
         self.beat_callback = beat_callback
         self.sample_rate = sample_rate  # Aubio can work with 44100Hz directly
         self.capture_rate = 44100  # USB device native rate
         self.buffer_size = buffer_size
         self.hop_size = 512  # Aubio hop size for processing (~11.6ms at 44.1kHz)
-        self.chunk_size = 2048  # Audio read chunk size (~46ms) - larger for better buffering
-
-        # Audio capture setup
-        self.usb_device_index = None
-
-        # Aubio processing - immediate frame-based processing (no buffering needed)
+        self.chunk_size = 1024  # Audio chunk size for capture (~23ms at 44.1kHz)
 
         # Processing components
         self.bpm_calculator = BPMCalculator()
@@ -263,7 +261,6 @@ class AudioBeatAnalyzer:
 
         # Threading
         self.running = False
-        self.audio_thread = None
         self.beat_thread = None
         self.beat_queue = queue.Queue(maxsize=100)
 
@@ -274,18 +271,24 @@ class AudioBeatAnalyzer:
         self.audio_state = AudioState()
         self.start_time = time.time()
 
-        # Audio overflow tracking
-        self.overflow_count = 0
-        self.last_overflow_log = 0
+        # Audio processing statistics
+        self.total_frames_processed = 0
+        self.total_beats_detected = 0
+        self.last_status_log = 0.0
 
         # Aubio doesn't use GPU - always CPU-based but very fast
         self.device = "cpu"  # Aubio is CPU-only but optimized
 
-        # Find USB audio device
-        self._find_usb_device()
-
         # Initialize Aubio
         self._initialize_aubio()
+
+        # Create AudioCapture instance with callback for audio processing
+        if audio_config is None:
+            # Default config for live microphone capture
+            audio_config = AudioConfig(
+                sample_rate=self.capture_rate, channels=1, chunk_size=self.chunk_size, device_name="USB Audio"
+            )
+        self.audio_capture = AudioCapture(audio_config, audio_callback=self._on_audio_chunk)
 
         # Log aubio availability
         if AUBIO_AVAILABLE:
@@ -295,24 +298,9 @@ class AudioBeatAnalyzer:
                 logger.info("Aubio available (version unknown)")
 
         logger.info(
-            f"AudioBeatAnalyzer initialized (aubio, hop_size={self.hop_size}, USB device={self.usb_device_index})"
+            f"AudioBeatAnalyzer initialized (aubio, hop_size={self.hop_size}, "
+            f"USB device={self.audio_capture.device_index})"
         )
-
-    def _find_usb_device(self):
-        """Find USB Audio Device for capture"""
-        try:
-            devices = sd.query_devices()
-            for i, device in enumerate(devices):
-                if "USB Audio" in device["name"] and device["max_input_channels"] > 0:
-                    self.usb_device_index = i
-                    logger.info(f"Found USB Audio Device at index {i}: {device['name']}")
-                    return True
-
-            logger.warning("USB Audio Device not found, will use default")
-            return False
-        except Exception as e:
-            logger.warning(f"Error finding USB device: {e}")
-            return False
 
     def _initialize_aubio(self):
         """Initialize Aubio with fallback to mock implementation"""
@@ -347,15 +335,14 @@ class AudioBeatAnalyzer:
         self.start_time = time.time()
         self.audio_state.is_active = True
 
-        # Start combined audio capture and processing thread with high priority
-        self.audio_thread = threading.Thread(target=self._audio_processing_worker, daemon=True)
-        self.audio_thread.start()
+        # Start audio capture using AudioCapture class
+        self.audio_capture.start_capture()
 
         # Start beat event processing thread
         self.beat_event_thread = threading.Thread(target=self._beat_worker, daemon=True)
         self.beat_event_thread.start()
 
-        logger.info("Audio beat analysis started with combined processing worker")
+        logger.info("Audio beat analysis started with AudioCapture")
 
     def stop_analysis(self):
         """Stop audio analysis and clean up resources"""
@@ -365,9 +352,10 @@ class AudioBeatAnalyzer:
         self.running = False
         self.audio_state.is_active = False
 
-        # Wait for threads to finish
-        if self.audio_thread and self.audio_thread.is_alive():
-            self.audio_thread.join(timeout=2.0)
+        # Stop audio capture
+        self.audio_capture.stop_capture()
+
+        # Wait for beat processing thread to finish
         if hasattr(self, "beat_event_thread") and self.beat_event_thread.is_alive():
             self.beat_event_thread.join(timeout=2.0)
 
@@ -377,362 +365,103 @@ class AudioBeatAnalyzer:
 
         logger.info("Audio beat analysis stopped")
 
-    def _audio_processing_worker(self):
-        """Combined audio capture and processing worker using blocking reads"""
-        logger.info("Combined audio processing worker started")
+    def _on_audio_chunk(self, audio_chunk: np.ndarray, timestamp: float):
+        """
+        Callback for processing audio chunks from AudioCapture.
 
-        # Set high thread priority for audio processing
-        try:
-            import os
+        Args:
+            audio_chunk: Audio data array
+            timestamp: System timestamp when chunk was captured
+        """
+        # Ensure audio chunk is 1D
+        if audio_chunk.ndim > 1:
+            audio_chunk = audio_chunk.flatten()
 
-            os.nice(-10)  # Higher priority (requires root on some systems)
-            logger.info("Set high priority for audio processing thread")
-        except (ImportError, OSError, PermissionError) as e:
-            logger.warning(f"Could not set high thread priority: {e}")
+        # Process audio in hop_size chunks
+        frames_to_process = len(audio_chunk) // self.hop_size
 
-        # Set device if USB found
-        device_param = None
-        if self.usb_device_index is not None:
-            device_param = self.usb_device_index
-            logger.info(f"Using USB Audio Device {self.usb_device_index} for capture")
+        for frame_idx in range(frames_to_process):
+            start_idx = frame_idx * self.hop_size
+            end_idx = start_idx + self.hop_size
+            audio_frame = audio_chunk[start_idx:end_idx].astype(np.float32)
 
-        # Status logging variables
-        last_status_log = 0.0
-        status_log_interval = 10.0  # Log status every 10 seconds
-        total_beats_detected = 0
-        total_frames_processed = 0
+            # Process with Aubio
+            beat_detected = False
+            if hasattr(self.aubio_tempo, "process_frame"):
+                # Mock aubio
+                beat_detected = self.aubio_tempo.process_frame(audio_frame)
+            else:
+                # Real aubio
+                beat = self.aubio_tempo(audio_frame)
+                beat_detected = bool(beat[0])
 
-        try:
-            with sd.InputStream(
-                samplerate=self.capture_rate,
-                channels=1,
-                dtype="float32",
-                blocksize=self.chunk_size,  # Use 2048 sample chunks (~46ms)
-                device=device_param,
-                latency="high",  # Use high latency mode for larger internal buffers
-            ) as stream:
-                logger.info(f"Audio stream opened at {self.capture_rate}Hz with {self.chunk_size} sample chunks")
+            self.total_frames_processed += 1
 
-                while self.running:
-                    try:
-                        # Read audio chunk (blocking - provides natural timing)
-                        audio_chunk, overflowed = stream.read(self.chunk_size)
-
-                        if overflowed:
-                            self.overflow_count += 1
-                            current_time = time.time()
-                            # Log overflow occasionally to avoid spam
-                            if current_time - self.last_overflow_log > 5.0:  # Every 5 seconds max
-                                logger.warning(f"Audio overflow #{self.overflow_count} - processing may be too slow")
-                                self.last_overflow_log = current_time
-
-                        # Flatten to 1D array
-                        audio_chunk = audio_chunk.flatten()
-
-                        # Process audio immediately in hop_size chunks
-                        frames_to_process = len(audio_chunk) // self.hop_size
-
-                        for frame_idx in range(frames_to_process):
-                            start_idx = frame_idx * self.hop_size
-                            end_idx = start_idx + self.hop_size
-                            audio_frame = audio_chunk[start_idx:end_idx].astype(np.float32)
-
-                            # Process with Aubio
-                            beat_detected = False
-                            if hasattr(self.aubio_tempo, "process_frame"):
-                                # Mock aubio
-                                beat_detected = self.aubio_tempo.process_frame(audio_frame)
-                            else:
-                                # Real aubio
-                                beat = self.aubio_tempo(audio_frame)
-                                beat_detected = bool(beat[0])
-
-                            total_frames_processed += 1
-
-                            if beat_detected:
-                                current_time = time.time()
-
-                                # Prevent duplicate detections too close together
-                                if current_time - self.last_beat_time > 0.2:  # 200ms minimum
-                                    self.last_beat_time = current_time
-                                    self.beat_times.append(current_time)
-                                    total_beats_detected += 1
-
-                                    # Calculate BPM from aubio and intervals
-                                    aubio_bpm = 120.0  # Default
-                                    confidence = 0.8
-
-                                    if hasattr(self.aubio_tempo, "get_bpm"):
-                                        aubio_bpm = self.aubio_tempo.get_bpm()
-                                        confidence = getattr(self.aubio_tempo, "get_confidence", lambda: 0.8)()
-                                    else:
-                                        # Real aubio
-                                        aubio_bpm = self.aubio_tempo.get_bpm()
-                                        confidence = self.aubio_tempo.get_confidence()
-
-                                    # Calculate from intervals as backup
-                                    if len(self.beat_times) >= 4:
-                                        intervals = np.diff(list(self.beat_times)[-4:])
-                                        valid_intervals = intervals[(intervals > 0.3) & (intervals < 1.5)]
-                                        if len(valid_intervals) > 0:
-                                            calculated_bpm = 60.0 / np.mean(valid_intervals)
-                                            # Use aubio BPM if reasonable, otherwise calculated
-                                            if aubio_bpm > 0 and 60 <= aubio_bpm <= 200:
-                                                current_bpm = aubio_bpm
-                                            else:
-                                                current_bpm = calculated_bpm
-                                        else:
-                                            current_bpm = aubio_bpm if aubio_bpm > 0 else 120.0
-                                    else:
-                                        current_bpm = aubio_bpm if aubio_bpm > 0 else 120.0
-
-                                    # Calculate timestamp relative to audio start
-                                    audio_timestamp = (total_frames_processed * self.hop_size) / self.capture_rate
-
-                                    # Log occasionally
-                                    if total_beats_detected <= 10 or np.random.random() < 0.1:
-                                        logger.info(
-                                            f"🎵 Aubio beat detected: BPM={current_bpm:.1f}, confidence={confidence:.3f}"
-                                        )
-
-                                    # Send to beat queue (simplified - assume regular beat, not downbeat)
-                                    try:
-                                        self.beat_queue.put_nowait(
-                                            (audio_timestamp, 0.1, current_time)
-                                        )  # Non-blocking put
-                                    except queue.Full:
-                                        # Drop beat event if queue is full to avoid blocking audio thread
-                                        logger.warning(
-                                            "Beat queue full - dropping beat event to maintain audio performance"
-                                        )
-
-                        # Periodic status logging
-                        current_time = time.time()
-                        if current_time - last_status_log >= status_log_interval:
-                            current_audio_rms = np.sqrt(np.mean(audio_chunk**2))
-
-                            logger.info(
-                                f"Audio processing status: {total_frames_processed} frames processed, "
-                                f"{total_beats_detected} beats detected, "
-                                f"audio RMS: {current_audio_rms:.6f}, "
-                                f"current BPM: {self.audio_state.current_bpm:.1f}"
-                            )
-                            last_status_log = current_time
-                            total_beats_detected = 0
-
-                        # No sleep needed - blocking read provides natural timing
-
-                    except Exception as e:
-                        if self.running:  # Only log if we're still supposed to be running
-                            logger.error(f"Audio processing error: {e}")
-                        # Brief sleep on error to prevent tight loop
-                        time.sleep(0.1)
-
-        except Exception as e:
-            logger.error(f"Failed to open audio stream: {e}")
-
-        logger.info("Combined audio processing worker stopped")
-
-    def _audio_capture_worker(self):
-        """Worker thread for audio capture using sounddevice blocking reads"""
-        logger.info("Audio capture worker started")
-
-        # Set device if USB found
-        device_param = None
-        if self.usb_device_index is not None:
-            device_param = self.usb_device_index
-            logger.info(f"Using USB Audio Device {self.usb_device_index} for capture")
-
-        try:
-            with sd.InputStream(
-                samplerate=self.capture_rate,
-                channels=1,
-                dtype="float32",
-                blocksize=self.hop_size * 8,  # 8x hop size for better buffering (4096 samples ~93ms)
-                device=device_param,
-                latency="high",  # Use high latency mode for larger internal buffers
-            ) as stream:
-                logger.info(f"Audio stream opened at {self.capture_rate}Hz")
-
-                while self.running:
-                    try:
-                        # Read audio chunk (blocking)
-                        audio_chunk, overflowed = stream.read(self.chunk_size)
-
-                        if overflowed:
-                            self.overflow_count += 1
-                            current_time = time.time()
-                            # Log overflow occasionally to avoid spam
-                            if current_time - self.last_overflow_log > 5.0:  # Every 5 seconds max
-                                logger.warning(f"Audio overflow #{self.overflow_count} - processing may be too slow")
-                                self.last_overflow_log = current_time
-
-                        # Flatten to 1D array
-                        audio_chunk = audio_chunk.flatten()
-
-                        # Add to buffer (no downsampling needed for Aubio)
-                        self.audio_buffer.extend(audio_chunk)
-
-                        # Log occasionally to show we're getting data
-                        if np.random.random() < 0.02:  # Log 2% of the time
-                            rms = np.sqrt(np.mean(audio_chunk**2))
-                            logger.debug(f"Audio: RMS={rms:.6f}, Buffer={len(self.audio_buffer)} samples")
-
-                    except Exception as e:
-                        if self.running:  # Only log if we're still supposed to be running
-                            logger.error(f"Audio capture error: {e}")
-                        time.sleep(0.1)
-
-        except Exception as e:
-            logger.error(f"Failed to open audio stream: {e}")
-
-        logger.info("Audio capture worker stopped")
-
-    def _beat_detection_worker(self):
-        """Worker thread for beat detection using Aubio frame-by-frame processing"""
-        logger.info("Aubio beat detection worker started")
-
-        # Wait for minimum audio buffer
-        while self.running and len(self.audio_buffer) < self.min_buffer_size:
-            time.sleep(0.01)
-
-        # Status logging variables
-        last_status_log = 0.0
-        status_log_interval = 10.0  # Log status every 10 seconds
-        total_beats_detected = 0
-        total_frames_processed = 0
-        processed_samples = 0
-
-        while self.running:
-            try:
-                # Process available audio in hop_size chunks
-                buffer_length = len(self.audio_buffer)
-                if buffer_length >= self.hop_size and self.aubio_tempo is not None:
-
-                    # Get available frames to process
-                    available_samples = buffer_length - processed_samples
-                    frames_to_process = available_samples // self.hop_size
-
-                    if frames_to_process > 0:
-                        # Get audio data for processing
-                        audio_list = list(self.audio_buffer)
-
-                        # Process each complete frame
-                        for frame_idx in range(frames_to_process):
-                            start_idx = processed_samples + (frame_idx * self.hop_size)
-                            end_idx = start_idx + self.hop_size
-
-                            if end_idx <= len(audio_list):
-                                audio_frame = np.array(audio_list[start_idx:end_idx], dtype=np.float32)
-
-                                # Process with Aubio
-                                beat_detected = False
-                                if hasattr(self.aubio_tempo, "process_frame"):
-                                    # Mock aubio
-                                    beat_detected = self.aubio_tempo.process_frame(audio_frame)
-                                else:
-                                    # Real aubio
-                                    beat = self.aubio_tempo(audio_frame)
-                                    beat_detected = bool(beat[0])
-
-                                total_frames_processed += 1
-
-                                if beat_detected:
-                                    current_time = time.time()
-
-                                    # Prevent duplicate detections too close together
-                                    if current_time - self.last_beat_time > 0.2:  # 200ms minimum
-                                        self.last_beat_time = current_time
-                                        self.beat_times.append(current_time)
-                                        total_beats_detected += 1
-
-                                        # Calculate BPM from aubio and intervals
-                                        aubio_bpm = 120.0  # Default
-                                        confidence = 0.8
-
-                                        if hasattr(self.aubio_tempo, "get_bpm"):
-                                            aubio_bpm = self.aubio_tempo.get_bpm()
-                                            confidence = getattr(self.aubio_tempo, "get_confidence", lambda: 0.8)()
-                                        else:
-                                            # Real aubio
-                                            aubio_bpm = self.aubio_tempo.get_bpm()
-                                            confidence = self.aubio_tempo.get_confidence()
-
-                                        # Calculate from intervals as backup
-                                        if len(self.beat_times) >= 4:
-                                            intervals = np.diff(list(self.beat_times)[-4:])
-                                            valid_intervals = intervals[(intervals > 0.3) & (intervals < 1.5)]
-                                            if len(valid_intervals) > 0:
-                                                calculated_bpm = 60.0 / np.mean(valid_intervals)
-                                                # Use aubio BPM if reasonable, otherwise calculated
-                                                if aubio_bpm > 0 and 60 <= aubio_bpm <= 200:
-                                                    current_bpm = aubio_bpm
-                                                else:
-                                                    current_bpm = calculated_bpm
-                                            else:
-                                                current_bpm = aubio_bpm if aubio_bpm > 0 else 120.0
-                                        else:
-                                            current_bpm = aubio_bpm if aubio_bpm > 0 else 120.0
-
-                                        # Calculate timestamp relative to audio start
-                                        audio_timestamp = start_idx / self.capture_rate
-
-                                        # Log occasionally
-                                        if total_beats_detected <= 10 or np.random.random() < 0.1:
-                                            logger.info(
-                                                f"🎵 Aubio beat detected: BPM={current_bpm:.1f}, confidence={confidence:.3f}"
-                                            )
-
-                                        # Send to beat queue (simplified - assume regular beat, not downbeat)
-                                        try:
-                                            self.beat_queue.put_nowait(
-                                                (audio_timestamp, 0.1, current_time)
-                                            )  # Non-blocking put
-                                        except queue.Full:
-                                            # Drop beat event if queue is full to avoid blocking audio thread
-                                            logger.warning(
-                                                "Beat queue full - dropping beat event to maintain audio performance"
-                                            )
-
-                        # Update processed samples
-                        processed_samples += frames_to_process * self.hop_size
-
-                        # Keep buffer from growing too large
-                        if processed_samples > self.capture_rate * 5:  # Keep last 5 seconds
-                            samples_to_remove = processed_samples - self.capture_rate * 2
-                            for _ in range(samples_to_remove):
-                                if len(self.audio_buffer) > 0:
-                                    self.audio_buffer.popleft()
-                            processed_samples = self.capture_rate * 2
-
-                # Periodic status logging
+            if beat_detected:
                 current_time = time.time()
-                if current_time - last_status_log >= status_log_interval:
-                    buffer_size = len(self.audio_buffer)
-                    current_audio_rms = 0.0
-                    if buffer_size > 0:
-                        recent_audio = list(self.audio_buffer)[-min(buffer_size, self.capture_rate) :]
-                        current_audio_rms = np.sqrt(np.mean(np.array(recent_audio) ** 2))
 
-                    logger.info(
-                        f"Aubio status: {total_frames_processed} frames processed, "
-                        f"{total_beats_detected} beats detected, "
-                        f"buffer: {buffer_size} samples, "
-                        f"audio RMS: {current_audio_rms:.6f}, "
-                        f"current BPM: {self.audio_state.current_bpm:.1f}"
-                    )
-                    last_status_log = current_time
-                    total_beats_detected = 0
+                # Prevent duplicate detections too close together
+                if current_time - self.last_beat_time > 0.2:  # 200ms minimum
+                    self.last_beat_time = current_time
+                    self.beat_times.append(current_time)
+                    self.total_beats_detected += 1
 
-                time.sleep(0.05)  # 20Hz processing to reduce CPU load and prevent overflows
+                    # Calculate BPM from aubio and intervals
+                    aubio_bpm = 120.0  # Default
+                    confidence = 0.8
 
-            except Exception as e:
-                logger.error(f"Aubio beat detection error: {e}", exc_info=True)
-                if not self.running:
-                    break
-                time.sleep(0.1)
+                    if hasattr(self.aubio_tempo, "get_bpm"):
+                        aubio_bpm = self.aubio_tempo.get_bpm()
+                        confidence = getattr(self.aubio_tempo, "get_confidence", lambda: 0.8)()
+                    else:
+                        # Real aubio
+                        aubio_bpm = self.aubio_tempo.get_bpm()
+                        confidence = self.aubio_tempo.get_confidence()
 
-        logger.info("Aubio beat detection worker stopped")
+                    # Calculate from intervals as backup
+                    if len(self.beat_times) >= 4:
+                        intervals = np.diff(list(self.beat_times)[-4:])
+                        valid_intervals = intervals[(intervals > 0.3) & (intervals < 1.5)]
+                        if len(valid_intervals) > 0:
+                            calculated_bpm = 60.0 / np.mean(valid_intervals)
+                            # Use aubio BPM if reasonable, otherwise calculated
+                            if aubio_bpm > 0 and 60 <= aubio_bpm <= 200:
+                                current_bpm = aubio_bpm
+                            else:
+                                current_bpm = calculated_bpm
+                        else:
+                            current_bpm = aubio_bpm if aubio_bpm > 0 else 120.0
+                    else:
+                        current_bpm = aubio_bpm if aubio_bpm > 0 else 120.0
+
+                    # Calculate timestamp relative to audio start
+                    audio_timestamp = (self.total_frames_processed * self.hop_size) / self.capture_rate
+
+                    # Log occasionally
+                    if self.total_beats_detected <= 10 or np.random.random() < 0.1:
+                        logger.info(f"🎵 Aubio beat detected: BPM={current_bpm:.1f}, confidence={confidence:.3f}")
+
+                    # Send to beat queue (simplified - assume regular beat, not downbeat)
+                    try:
+                        self.beat_queue.put_nowait((audio_timestamp, 0.1, current_time))  # Non-blocking put
+                    except queue.Full:
+                        # Drop beat event if queue is full to avoid blocking audio thread
+                        logger.warning("Beat queue full - dropping beat event to maintain audio performance")
+
+        # Periodic status logging
+        current_time = time.time()
+        status_log_interval = 10.0
+        if current_time - self.last_status_log >= status_log_interval:
+            current_audio_rms = np.sqrt(np.mean(audio_chunk * audio_chunk))
+
+            logger.info(
+                f"Audio processing status: {self.total_frames_processed} frames processed, "
+                f"{self.total_beats_detected} beats detected, "
+                f"audio RMS: {current_audio_rms:.6f}, "
+                f"current BPM: {self.audio_state.current_bpm:.1f}"
+            )
+            self.last_status_log = current_time
+            self.total_beats_detected = 0
 
     def _beat_worker(self):
         """Beat event processing worker thread"""
