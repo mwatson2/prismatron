@@ -297,26 +297,48 @@ class BeatAnalyzerTester:
             axes[2].set_ylabel("BPM")
             axes[2].set_title("Tempo (BPM) Over Time")
 
-        # Plot 4: Beat intensity over time
+        # Plot 4: Beat intensity and confidence over time
         if self.beat_events:
             beat_times = [b["timestamp"] for b in self.beat_events]
             beat_intensities = [b["intensity"] for b in self.beat_events]
+            beat_confidences = [b["confidence"] for b in self.beat_events]
 
-            # Create scatter plot with intensity-based colors
-            import matplotlib.cm as cm
+            # Plot intensity (red/orange)
+            axes[3].scatter(
+                beat_times,
+                beat_intensities,
+                c="red",
+                s=50,
+                alpha=0.7,
+                edgecolors="darkred",
+                linewidth=0.5,
+                label="Intensity (RMS energy)",
+            )
+            axes[3].plot(beat_times, beat_intensities, linewidth=1.5, color="red", alpha=0.4, linestyle="-")
 
-            colors = [cm.YlOrRd(intensity) for intensity in beat_intensities]
-            axes[3].scatter(beat_times, beat_intensities, c=colors, s=50, alpha=0.8, edgecolors="black", linewidth=0.5)
-            axes[3].plot(beat_times, beat_intensities, linewidth=1, color="gray", alpha=0.5, linestyle="--")
-            axes[3].set_ylabel("Beat Intensity")
-            axes[3].set_title("Beat Intensity Over Time")
+            # Plot confidence (blue)
+            axes[3].scatter(
+                beat_times,
+                beat_confidences,
+                c="blue",
+                s=50,
+                alpha=0.7,
+                edgecolors="darkblue",
+                linewidth=0.5,
+                label="Confidence (timing)",
+            )
+            axes[3].plot(beat_times, beat_confidences, linewidth=1.5, color="blue", alpha=0.4, linestyle="-")
+
+            axes[3].set_ylabel("Value (0.0 - 1.0)")
+            axes[3].set_title("Beat Intensity (energy) and Confidence (timing) Over Time")
             axes[3].grid(True, alpha=0.3)
             axes[3].set_xlim(0, self.duration)
             axes[3].set_ylim(0, 1.1)
+            axes[3].legend(loc="upper right")
         else:
             axes[3].text(0.5, 0.5, "No beats detected", ha="center", va="center", transform=axes[3].transAxes)
-            axes[3].set_ylabel("Beat Intensity")
-            axes[3].set_title("Beat Intensity Over Time")
+            axes[3].set_ylabel("Value (0.0 - 1.0)")
+            axes[3].set_title("Beat Intensity and Confidence Over Time")
 
         # Plot 5: RMS envelope with beat markers
         window_size = int(self.sample_rate * 0.05)  # 50ms windows
@@ -348,6 +370,12 @@ class BeatAnalyzerTester:
             max_intensity = np.max(intensities)
             min_intensity = np.min(intensities)
             stats_text += f"  |  Intensity: avg={avg_intensity:.2f}, min={min_intensity:.2f}, max={max_intensity:.2f}"
+
+            # Add confidence statistics
+            confidences = [b["confidence"] for b in self.beat_events]
+            avg_confidence = np.mean(confidences)
+            min_confidence = np.min(confidences)
+            stats_text += f"  |  Confidence: avg={avg_confidence:.2f}, min={min_confidence:.2f}"
 
         fig.text(0.5, 0.02, stats_text, ha="center", fontsize=11, bbox={"boxstyle": "round", "facecolor": "wheat"})
 

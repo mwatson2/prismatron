@@ -408,11 +408,18 @@ class AudioBeatAnalyzer:
                     self.beat_times.append(audio_timestamp)
                     self.total_beats_detected += 1
 
+                    # Calculate beat intensity from RMS of audio frame
+                    # RMS gives us the energy/strength of the beat
+                    beat_intensity = np.sqrt(np.mean(audio_frame**2))
+                    # Normalize to 0-1 range (typical RMS is 0-0.5 for normalized audio)
+                    beat_intensity = float(np.clip(beat_intensity * 2.0, 0.0, 1.0))
+
                     # Log beat detection timing (DEBUG level for latency tracking)
                     logger.debug(
                         f"Beat detected: audio_time={audio_timestamp:.3f}s, "
                         f"wall_time={current_time:.3f}, "
-                        f"detection_latency={detection_latency_ms:.1f}ms"
+                        f"detection_latency={detection_latency_ms:.1f}ms, "
+                        f"intensity={beat_intensity:.3f}"
                     )
 
                     # Calculate BPM from aubio and intervals
@@ -447,15 +454,18 @@ class AudioBeatAnalyzer:
                     if self.total_beats_detected <= 10 or np.random.random() < 0.1:
                         logger.info(f"🎵 Aubio beat detected: BPM={current_bpm:.1f}, confidence={confidence:.3f}")
 
-                    # Send to beat queue (simplified - assume regular beat, not downbeat)
+                    # Send to beat queue with intensity
                     try:
                         queue_time = time.time()
-                        self.beat_queue.put_nowait((audio_timestamp, 0.1, current_time))  # Non-blocking put
+                        self.beat_queue.put_nowait(
+                            (audio_timestamp, 0.1, current_time, beat_intensity)
+                        )  # Non-blocking put
                         queue_latency_ms = (queue_time - current_time) * 1000
                         logger.debug(
                             f"Beat queued: beat_count={self.total_beats_detected}, "
                             f"queue_depth={self.beat_queue.qsize()}, "
-                            f"queue_latency={queue_latency_ms:.2f}ms"
+                            f"queue_latency={queue_latency_ms:.2f}ms, "
+                            f"intensity={beat_intensity:.3f}"
                         )
                     except queue.Full:
                         # Drop beat event if queue is full to avoid blocking audio thread
@@ -484,10 +494,10 @@ class AudioBeatAnalyzer:
             try:
                 # Get beat data from queue
                 beat_data = self.beat_queue.get(timeout=0.1)
-                beat_timestamp, downbeat_prob, system_time = beat_data
+                beat_timestamp, downbeat_prob, system_time, intensity = beat_data
 
                 # Process beat event
-                self._process_beat_event(beat_timestamp, downbeat_prob, system_time)
+                self._process_beat_event(beat_timestamp, downbeat_prob, system_time, intensity)
 
             except queue.Empty:
                 continue
@@ -496,8 +506,16 @@ class AudioBeatAnalyzer:
 
         logger.info("Beat event processing thread stopped")
 
-    def _process_beat_event(self, beat_timestamp: float, downbeat_prob: float, system_time: float):
-        """Process a detected beat event from Aubio"""
+    def _process_beat_event(self, beat_timestamp: float, downbeat_prob: float, system_time: float, intensity: float):
+        """
+        Process a detected beat event from Aubio.
+
+        Args:
+            beat_timestamp: Beat time in audio timeline (seconds)
+            downbeat_prob: Probability of downbeat (>0.5 = downbeat)
+            system_time: Wall-clock time when beat was detected
+            intensity: Beat intensity from RMS energy (0.0-1.0)
+        """
         # Check if this is a new beat (avoid duplicates with tolerance)
         if abs(beat_timestamp - self.audio_state.last_beat_time) < 0.1:
             return
@@ -517,8 +535,8 @@ class AudioBeatAnalyzer:
         self.audio_state.current_bpm = bpm
         self.audio_state.confidence = confidence
 
-        # Analyze beat intensity (simplified for now)
-        intensity = self.intensity_analyzer.analyze_intensity(np.array([]), beat_timestamp)
+        # Use the RMS-based intensity passed from audio processing
+        # (intensity is already calculated from the audio frame that triggered the beat)
 
         # Create beat event
         beat_event = BeatEvent(
