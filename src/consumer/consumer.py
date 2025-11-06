@@ -351,6 +351,15 @@ class ConsumerProcess:
     def _on_beat_detected(self, beat_event: BeatEvent):
         """Handle detected beat events and update control state"""
         try:
+            callback_start_time = time.time()
+            detection_to_callback_latency_ms = (callback_start_time - beat_event.system_time) * 1000
+
+            # Log callback reception with latency
+            logger.debug(
+                f"Beat callback received: beat_count={beat_event.beat_count}, "
+                f"detection_to_callback_latency={detection_to_callback_latency_ms:.1f}ms"
+            )
+
             # Update control state with beat information
             self._control_state.update_status(
                 audio_enabled=self._audio_analysis_running,
@@ -364,6 +373,15 @@ class ConsumerProcess:
             # Update downbeat time if this is a downbeat
             if beat_event.is_downbeat:
                 self._control_state.update_status(last_downbeat_time=beat_event.timestamp)
+
+            # Log ControlState write completion
+            callback_end_time = time.time()
+            callback_duration_ms = (callback_end_time - callback_start_time) * 1000
+            logger.debug(
+                f"Beat data written to ControlState: BPM={beat_event.bpm:.1f}, "
+                f"intensity={beat_event.intensity:.2f}, "
+                f"callback_duration={callback_duration_ms:.2f}ms"
+            )
 
             beat_type = "DOWNBEAT" if beat_event.is_downbeat else "BEAT"
             logger.info(

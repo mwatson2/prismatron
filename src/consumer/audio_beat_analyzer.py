@@ -403,9 +403,17 @@ class AudioBeatAnalyzer:
                 # Prevent duplicate detections too close together (use audio time, not wall clock)
                 if audio_timestamp - self.last_beat_audio_timestamp > 0.2:  # 200ms minimum in audio time
                     current_time = time.time()
+                    detection_latency_ms = (current_time - self.start_time - audio_timestamp) * 1000
                     self.last_beat_audio_timestamp = audio_timestamp
                     self.beat_times.append(audio_timestamp)
                     self.total_beats_detected += 1
+
+                    # Log beat detection timing (DEBUG level for latency tracking)
+                    logger.debug(
+                        f"Beat detected: audio_time={audio_timestamp:.3f}s, "
+                        f"wall_time={current_time:.3f}, "
+                        f"detection_latency={detection_latency_ms:.1f}ms"
+                    )
 
                     # Calculate BPM from aubio and intervals
                     aubio_bpm = 120.0  # Default
@@ -441,7 +449,14 @@ class AudioBeatAnalyzer:
 
                     # Send to beat queue (simplified - assume regular beat, not downbeat)
                     try:
+                        queue_time = time.time()
                         self.beat_queue.put_nowait((audio_timestamp, 0.1, current_time))  # Non-blocking put
+                        queue_latency_ms = (queue_time - current_time) * 1000
+                        logger.debug(
+                            f"Beat queued: beat_count={self.total_beats_detected}, "
+                            f"queue_depth={self.beat_queue.qsize()}, "
+                            f"queue_latency={queue_latency_ms:.2f}ms"
+                        )
                     except queue.Full:
                         # Drop beat event if queue is full to avoid blocking audio thread
                         logger.warning("Beat queue full - dropping beat event to maintain audio performance")

@@ -109,6 +109,14 @@ class FrameRenderer:
         self.total_late_time = 0.0
         self.start_time = time.time()
 
+        # Beat effect statistics for periodic reporting
+        self.beat_boost_count = 0
+        self.beat_boost_sum = 0.0
+        self.beat_shift_count = 0
+        self.beat_shift_sum = 0.0
+        self.last_beat_stats_log = time.time()
+        self.beat_stats_log_interval = 30.0  # Log every 30 seconds
+
         # EWMA statistics for recent performance tracking
         self.ewma_alpha = 0.1  # EWMA smoothing factor
         self.ewma_fps = 0.0
@@ -227,6 +235,16 @@ class FrameRenderer:
             # Calculate time since the most recent beat
             t = audio_time - last_beat_time
 
+            # Log beat state age and phase (DEBUG level)
+            beat_state_age_ms = (current_time - self._audio_beat_analyzer.start_time - last_beat_time) * 1000
+            beat_phase = (t / beat_duration) if beat_duration > 0 else 0
+            logger.debug(
+                f"Beat state read: BPM={beat_state.current_bpm:.1f}, "
+                f"state_age={beat_state_age_ms:.1f}ms, "
+                f"beat_phase={beat_phase:.2f}, "
+                f"t={t:.3f}s"
+            )
+
             # If we're past one full beat interval, we need to find which beat we're in
             if t > beat_duration:
                 # Calculate how many beats have passed since last detected beat
@@ -249,6 +267,12 @@ class FrameRenderer:
                 dynamic_boost_factor = boost_intensity * beat_intensity_value * beat_confidence
                 boost = dynamic_boost_factor * math.sin(t * math.pi / boost_duration)
                 multiplier = 1.0 + boost
+
+                # Log boost calculation details (DEBUG level)
+                logger.debug(
+                    f"Boost calculation: t={t:.3f}s, boost_duration={boost_duration:.3f}s, "
+                    f"dynamic_factor={dynamic_boost_factor:.3f}, boost={boost:.3f}, multiplier={multiplier:.3f}"
+                )
 
                 if np.random.random() < 0.1:  # Log 10% of brightness boost events
                     logger.info(
@@ -473,6 +497,7 @@ class FrameRenderer:
 
             self.frames_rendered += 1
             self._update_ewma_statistics(frame_timestamp)
+            self._log_beat_statistics_periodic()
             return True
 
         except Exception as e:
@@ -497,12 +522,28 @@ class FrameRenderer:
             boosted_values = physical_led_values.astype(np.float32) * brightness_multiplier
             # Ensure values stay within valid range [0, 255]
             physical_led_values = np.clip(boosted_values, 0, 255).astype(np.uint8)
+
+            # Track boost statistics
+            self.beat_boost_count += 1
+            self.beat_boost_sum += brightness_multiplier
+
             # Log brightness boost application
             if np.random.random() < 0.2:  # Log 20% of boost applications
                 logger.info(f"🎵 Beat brightness boost applied: {brightness_multiplier:.3f}x")
 
         # Calculate position offset for audio-reactive position shifting
         position_offset = self._position_shifter.calculate_position_offset(time.time(), physical_led_values.shape[0])
+
+        # Track position shift statistics
+        if position_offset != 0:
+            self.beat_shift_count += 1
+            self.beat_shift_sum += abs(position_offset)
+
+            # Log position shift calculation (DEBUG level)
+            logger.debug(
+                f"Position offset calculated: {position_offset} LEDs "
+                f"(max_shift={self._position_shifter.max_shift_distance})"
+            )
 
         # Add rendering_index to metadata for PreviewSink
         enhanced_metadata = metadata.copy() if metadata else {}
@@ -665,6 +706,36 @@ class FrameRenderer:
 
         self.last_ewma_update = current_time
         self.last_frame_timestamp = frame_timestamp
+
+    def _log_beat_statistics_periodic(self) -> None:
+        """
+        Log beat effect statistics periodically (every 30 seconds).
+        Provides visibility into beat boost and position shift application rates.
+        """
+        current_time = time.time()
+        time_since_last_log = current_time - self.last_beat_stats_log
+
+        if time_since_last_log >= self.beat_stats_log_interval:
+            # Calculate statistics
+            boost_percentage = (self.beat_boost_count / max(1, self.frames_rendered)) * 100
+            avg_boost = self.beat_boost_sum / max(1, self.beat_boost_count)
+            shift_percentage = (self.beat_shift_count / max(1, self.frames_rendered)) * 100
+            avg_shift = self.beat_shift_sum / max(1, self.beat_shift_count)
+
+            logger.info(
+                f"🎵 Beat effects summary ({self.beat_stats_log_interval:.0f}s): "
+                f"{self.beat_boost_count}/{self.frames_rendered} frames boosted ({boost_percentage:.1f}%), "
+                f"avg_boost={avg_boost:.3f}x, "
+                f"{self.beat_shift_count} shifts ({shift_percentage:.1f}%), "
+                f"avg_shift={avg_shift:.1f} LEDs"
+            )
+
+            # Reset counters for next period
+            self.beat_boost_count = 0
+            self.beat_boost_sum = 0.0
+            self.beat_shift_count = 0
+            self.beat_shift_sum = 0.0
+            self.last_beat_stats_log = current_time
 
     def _update_output_fps(self, current_time: float, alpha: float = 0.1) -> None:
         """
