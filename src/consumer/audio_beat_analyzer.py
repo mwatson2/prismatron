@@ -97,6 +97,7 @@ class AudioState:
     downbeat_count: int = 0
     beats_per_measure: int = 4
     confidence: float = 0.0
+    beat_intensity: float = 0.0  # Last beat's RMS intensity (0.0-1.0)
 
 
 class MockAubio:
@@ -411,8 +412,9 @@ class AudioBeatAnalyzer:
                     # Calculate beat intensity from RMS of audio frame
                     # RMS gives us the energy/strength of the beat
                     beat_intensity = np.sqrt(np.mean(audio_frame**2))
-                    # Normalize to 0-1 range (typical RMS is 0-0.5 for normalized audio)
-                    beat_intensity = float(np.clip(beat_intensity * 2.0, 0.0, 1.0))
+                    # Normalize to 0-1 range with 5.0x scaling for better dynamic range
+                    # This gives: heavy bass ~0.5-1.0, light hi-hats ~0.1-0.3
+                    beat_intensity = float(np.clip(beat_intensity * 5.0, 0.0, 1.0))
 
                     # Log beat detection timing (DEBUG level for latency tracking)
                     logger.debug(
@@ -534,6 +536,7 @@ class AudioBeatAnalyzer:
         bpm, confidence = self.bpm_calculator.update_beat(beat_timestamp)
         self.audio_state.current_bpm = bpm
         self.audio_state.confidence = confidence
+        self.audio_state.beat_intensity = intensity  # Store intensity for renderer access
 
         # Use the RMS-based intensity passed from audio processing
         # (intensity is already calculated from the audio frame that triggered the beat)
