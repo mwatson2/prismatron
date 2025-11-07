@@ -117,8 +117,9 @@ class SystemStatus:
 
     # Beat brightness boost settings for audio reactive effects
     beat_brightness_enabled: bool = True
-    beat_brightness_intensity: float = 0.25  # 0.0 to 1.0 (0% to 100% boost)
+    beat_brightness_intensity: float = 2.5  # 0.0 to 5.0 (multiplier for beat boost)
     beat_brightness_duration: float = 0.25  # 0.1 to 1.0 (fraction of beat duration)
+    beat_confidence_threshold: float = 0.5  # 0.0 to 1.0 (minimum confidence to apply boost)
 
     # Optimization settings
     optimization_iterations: int = 5

@@ -560,6 +560,16 @@ class AudioBeatAnalyzer:
             f"Confidence={beat_event.confidence:.2f}"
         )
 
+        # Structured logging for timeline reconstruction
+        logger.info(
+            f"BEAT_DETECTED: wall_time={beat_event.system_time:.6f}, "
+            f"audio_ts={beat_event.timestamp:.6f}, "
+            f"intensity={beat_event.intensity:.4f}, "
+            f"confidence={beat_event.confidence:.3f}, "
+            f"bpm={beat_event.bpm:.1f}, "
+            f"is_downbeat={beat_event.is_downbeat}"
+        )
+
         # Call beat callback asynchronously to avoid blocking audio processing
         if self.beat_callback:
             try:

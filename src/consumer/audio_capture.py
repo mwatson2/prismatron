@@ -65,7 +65,13 @@ class AudioCapture:
         # Capture state
         self.is_capturing = False
         self.capture_thread: Optional[threading.Thread] = None
-        self.audio_queue = queue.Queue(maxsize=5000)  # Increased queue size
+
+        # Only create queue if no callback provided (queue-based consumption)
+        # When using callbacks, the queue is unnecessary and wastes memory
+        if audio_callback is None:
+            self.audio_queue = queue.Queue(maxsize=5000)
+        else:
+            self.audio_queue = None  # Callback mode - no queue needed
 
         # Thread pool for non-blocking callback execution
         self.callback_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="AudioCallback")
@@ -223,11 +229,12 @@ class AudioCapture:
             self.total_chunks_captured += 1
             chunk_timestamp = time.time()
 
-            # Add to queue (non-blocking)
-            try:
-                self.audio_queue.put_nowait((audio_chunk, chunk_timestamp))
-            except queue.Full:
-                logger.warning("Audio queue full - dropping chunk")
+            # Add to queue (non-blocking) - only if queue exists
+            if self.audio_queue is not None:
+                try:
+                    self.audio_queue.put_nowait((audio_chunk, chunk_timestamp))
+                except queue.Full:
+                    logger.warning("Audio queue full - dropping chunk")
 
             # Call audio callback asynchronously if provided
             if self.audio_callback:
@@ -320,6 +327,8 @@ class AudioCapture:
                 # Read and playback chunks
                 chunk_start_time = time.time()
                 chunks_played = 0
+                loop_count = 0
+                first_chunk_ever_logged = False  # Track first chunk across all loops
 
                 while self.is_capturing:
                     # Read chunk from file
@@ -327,10 +336,17 @@ class AudioCapture:
 
                     if not frames_data:
                         # End of file - loop back to beginning or stop
-                        logger.info("End of file reached")
+                        loop_count += 1
+                        loop_time = time.time()
+                        logger.info(f"End of file reached - looping (loop #{loop_count})")
+                        logger.info(
+                            f"AUDIO_LOOP: wall_time={loop_time:.6f}, loop_count={loop_count}, "
+                            f"file={self.config.file_path}"
+                        )
                         wav_file.rewind()
                         chunks_played = 0
                         chunk_start_time = time.time()
+                        # DON'T reset first_chunk_ever_logged - only log AUDIO_START once per session
                         continue
 
                     # Convert bytes to numpy array
@@ -361,11 +377,23 @@ class AudioCapture:
                     chunk_timestamp = time.time()
                     chunks_played += 1
 
-                    # Add to queue (non-blocking)
-                    try:
-                        self.audio_queue.put_nowait((audio_chunk, chunk_timestamp))
-                    except queue.Full:
-                        logger.warning("Audio queue full - dropping chunk")
+                    # Log first chunk for timeline alignment (only once, not per loop)
+                    if not first_chunk_ever_logged:
+                        first_chunk_ever_logged = True
+                        # Backdate by chunk duration - first sample started chunk_duration ago
+                        audio_start_time = chunk_timestamp - chunk_duration
+                        logger.info(
+                            f"AUDIO_START: wall_time={audio_start_time:.6f}, file={self.config.file_path}, "
+                            f"sample_rate={file_sample_rate}, chunk_size={self.config.chunk_size}, "
+                            f"chunk_duration_ms={chunk_duration*1000:.1f}"
+                        )
+
+                    # Add to queue (non-blocking) - only if queue exists
+                    if self.audio_queue is not None:
+                        try:
+                            self.audio_queue.put_nowait((audio_chunk, chunk_timestamp))
+                        except queue.Full:
+                            logger.warning("Audio queue full - dropping chunk")
 
                     # Call audio callback if provided
                     if self.audio_callback:
@@ -414,8 +442,12 @@ class AudioCapture:
             timeout: Timeout in seconds
 
         Returns:
-            Tuple of (audio_chunk, timestamp) or None if timeout
+            Tuple of (audio_chunk, timestamp) or None if timeout or queue disabled
         """
+        if self.audio_queue is None:
+            logger.warning("read_chunk called but queue is disabled (callback mode is active)")
+            return None
+
         try:
             return self.audio_queue.get(timeout=timeout)
         except queue.Empty:

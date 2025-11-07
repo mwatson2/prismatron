@@ -86,42 +86,63 @@ class VideoSource(ContentSource):
         Returns:
             True if setup successful, False otherwise
         """
+        logger.info(f"VideoSource.setup() START for {os.path.basename(self.filepath)}")
         setup_start_time = time.time()
 
         if not FFMPEG_AVAILABLE:
+            logger.error("FFmpeg not available - cannot setup video source")
             self.set_error("FFmpeg not available")
             return False
 
+        logger.debug(f"Checking if file exists: {self.filepath}")
         if not os.path.exists(self.filepath):
+            logger.error(f"Video file not found: {self.filepath}")
             self.set_error(f"Video file not found: {self.filepath}")
             return False
+        logger.debug(f"File exists: {self.filepath}")
 
         try:
             # Probe video file to get metadata
+            logger.debug(f"About to probe video metadata for {os.path.basename(self.filepath)}")
             probe_start = time.time()
-            if not self._probe_video_metadata():
-                return False
+            probe_result = self._probe_video_metadata()
             probe_duration = time.time() - probe_start
+            logger.debug(f"Probe completed in {probe_duration*1000:.1f}ms, result={probe_result}")
+
+            if not probe_result:
+                logger.error(f"Failed to probe video metadata for {os.path.basename(self.filepath)}")
+                return False
 
             # Detect hardware acceleration capabilities
+            logger.debug("About to detect hardware acceleration")
             hw_start = time.time()
             self._detect_hardware_acceleration()
             hw_duration = time.time() - hw_start
+            logger.debug(f"Hardware acceleration detection completed in {hw_duration*1000:.1f}ms")
 
             # Initialize frame queue
+            logger.debug("Initializing frame queue")
             self._frame_queue = queue.Queue(maxsize=10)  # Buffer up to 10 frames
 
             # Start FFmpeg process
+            logger.debug("About to start FFmpeg process")
             ffmpeg_start = time.time()
-            if not self._start_ffmpeg_process():
-                return False
+            ffmpeg_result = self._start_ffmpeg_process()
             ffmpeg_duration = time.time() - ffmpeg_start
+            logger.debug(f"FFmpeg process start completed in {ffmpeg_duration*1000:.1f}ms, result={ffmpeg_result}")
+
+            if not ffmpeg_result:
+                logger.error(f"Failed to start FFmpeg process for {os.path.basename(self.filepath)}")
+                return False
 
             # Start frame reader thread
+            logger.debug("About to start frame reader thread")
             self._start_frame_reader_thread()
+            logger.debug("Frame reader thread started")
 
             self.status = ContentStatus.READY
             total_setup_time = time.time() - setup_start_time
+            logger.info(f"VideoSource.setup() COMPLETED in {total_setup_time*1000:.1f}ms")
 
             logger.info(
                 f"🎬 Video source initialized: {os.path.basename(self.filepath)} in {total_setup_time*1000:.1f}ms"
@@ -137,6 +158,7 @@ class VideoSource(ContentSource):
             return True
 
         except Exception as e:
+            logger.error(f"Video setup failed with exception: {e}", exc_info=True)
             self.set_error(f"Video setup failed: {e}")
             return False
 
@@ -147,13 +169,15 @@ class VideoSource(ContentSource):
         Returns:
             True if successful, False otherwise
         """
+        logger.debug(f"_probe_video_metadata() START for {os.path.basename(self.filepath)}")
         start_time = time.time()
         try:
             # Use ffprobe to get video information
+            logger.debug(f"About to call ffmpeg.probe() on {self.filepath}")
             probe_start = time.time()
             probe = ffmpeg.probe(self.filepath)
             probe_time = time.time() - probe_start
-            logger.debug(f"ffprobe completed in {probe_time*1000:.1f}ms for {self.filepath}")
+            logger.debug(f"ffmpeg.probe() completed in {probe_time*1000:.1f}ms for {self.filepath}")
 
             # Find video stream
             video_stream = None
@@ -207,10 +231,11 @@ class VideoSource(ContentSource):
                 "bits_per_raw_sample": video_stream.get("bits_per_raw_sample"),
             }
 
+            logger.debug(f"_probe_video_metadata() COMPLETED successfully for {os.path.basename(self.filepath)}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to probe video metadata: {e}")
+            logger.error(f"Failed to probe video metadata: {e}", exc_info=True)
             self.set_error(f"Failed to probe video metadata: {e}")
             return False
 
@@ -279,8 +304,10 @@ class VideoSource(ContentSource):
         Returns:
             True if successful, False otherwise
         """
+        logger.debug(f"_start_ffmpeg_process() START for {os.path.basename(self.filepath)}")
         try:
             # Build FFmpeg command
+            logger.debug("Building FFmpeg input stream")
             input_stream = ffmpeg.input(self.filepath)
 
             # Apply hardware acceleration if available
@@ -307,6 +334,9 @@ class VideoSource(ContentSource):
                 input_stream = ffmpeg.input(self.filepath, hwaccel="nvdec")
 
             # Configure output: scale to exact dimensions and convert to RGB24
+            logger.debug(
+                f"Configuring FFmpeg output stream: {self._frame_width}x{self._frame_height} @ {self._frame_rate} fps"
+            )
             output_stream = ffmpeg.output(
                 input_stream,
                 "pipe:",
@@ -317,16 +347,22 @@ class VideoSource(ContentSource):
             )
 
             # Create process with error capture
+            logger.debug("About to call ffmpeg.run_async() - THIS MAY BLOCK IF FFMPEG HANGS")
             self._ffmpeg_process = ffmpeg.run_async(output_stream, pipe_stdout=True, pipe_stderr=True, quiet=False)
+            logger.debug("ffmpeg.run_async() returned successfully")
 
             logger.info(f"FFmpeg process started with PID: {self._ffmpeg_process.pid}")
 
             # Start stderr monitoring thread to capture FFmpeg errors
+            logger.debug("Starting stderr monitor thread")
             self._start_stderr_monitor()
+            logger.debug("stderr monitor thread started")
 
+            logger.debug(f"_start_ffmpeg_process() COMPLETED for {os.path.basename(self.filepath)}")
             return True
 
         except Exception as e:
+            logger.error(f"Failed to start FFmpeg process: {e}", exc_info=True)
             self.set_error(f"Failed to start FFmpeg process: {e}")
             return False
 

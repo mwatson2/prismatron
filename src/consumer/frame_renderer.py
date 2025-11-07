@@ -202,17 +202,20 @@ class FrameRenderer:
                 return 1.0
 
             # Get configurable parameters with fallbacks
-            boost_intensity = getattr(status, "beat_brightness_intensity", 0.25)
-            boost_duration_fraction = getattr(status, "beat_brightness_duration", 0.25)
+            boost_intensity = getattr(status, "beat_brightness_intensity", 2.5)  # Increased from 0.25 to 2.5
+            boost_duration_fraction = getattr(status, "beat_brightness_duration", 0.4)  # 400ms at 60 BPM
+            confidence_threshold = getattr(status, "beat_confidence_threshold", 0.5)  # Ignore weak beats
 
             # Clamp parameters to safe ranges (intensity can now go up to 5x)
             boost_intensity = max(0.0, min(5.0, boost_intensity))
             boost_duration_fraction = max(0.1, min(1.0, boost_duration_fraction))
+            confidence_threshold = max(0.0, min(1.0, confidence_threshold))
 
             # Log beat boost configuration once
             if not self._beat_boost_logged:
                 logger.info(
-                    f"🎵 Beat brightness boost enabled: intensity={boost_intensity:.2f}, duration={boost_duration_fraction:.2f}"
+                    f"🎵 Beat brightness boost enabled: intensity={boost_intensity:.2f}, "
+                    f"duration={boost_duration_fraction:.2f}, confidence_threshold={confidence_threshold:.2f}"
                 )
                 self._beat_boost_logged = True
 
@@ -262,22 +265,28 @@ class FrameRenderer:
                 beat_intensity_value = getattr(beat_state, "beat_intensity", 1.0)
                 beat_confidence = getattr(beat_state, "confidence", 1.0)
 
-                # Calculate dynamic boost: base_intensity * beat_intensity * confidence * sine_wave
-                # This gives us a boost that responds to how strong and confident the beat detection is
-                dynamic_boost_factor = boost_intensity * beat_intensity_value * beat_confidence
+                # Apply confidence threshold - ignore weak beats
+                if beat_confidence < confidence_threshold:
+                    logger.debug(
+                        f"Beat ignored: confidence {beat_confidence:.2f} < threshold {confidence_threshold:.2f}"
+                    )
+                    return 1.0
+
+                # Calculate dynamic boost with improved intensity scaling
+                # Use sqrt to expand the intensity range (0.1 -> 0.32, 0.4 -> 0.63)
+                intensity_scaled = math.sqrt(beat_intensity_value)
+                # Boost is: base * scaled_intensity * sine_wave (confidence already filtered)
+                dynamic_boost_factor = boost_intensity * intensity_scaled
                 boost = dynamic_boost_factor * math.sin(t * math.pi / boost_duration)
                 multiplier = 1.0 + boost
 
-                # Log boost calculation details (DEBUG level)
-                logger.debug(
-                    f"Boost calculation: t={t:.3f}s, boost_duration={boost_duration:.3f}s, "
-                    f"dynamic_factor={dynamic_boost_factor:.3f}, boost={boost:.3f}, multiplier={multiplier:.3f}"
+                # TEMPORARY: Log every boost calculation at INFO level for debugging
+                logger.info(
+                    f"BRIGHTNESS_BOOST: multiplier={multiplier:.3f}, t={t:.3f}s, "
+                    f"boost_intensity={boost_intensity:.2f}, intensity_raw={beat_intensity_value:.2f}, "
+                    f"intensity_scaled={intensity_scaled:.3f}, confidence={beat_confidence:.2f}, "
+                    f"dynamic_factor={dynamic_boost_factor:.3f}, boost={boost:.3f}"
                 )
-
-                if np.random.random() < 0.1:  # Log 10% of brightness boost events
-                    logger.info(
-                        f"🎵 Beat brightness boost: {multiplier:.3f}x (base={boost_intensity:.1f}, intensity={beat_intensity_value:.2f}, conf={beat_confidence:.2f}, boost={boost:.3f})"
-                    )
                 return multiplier
             else:
                 if np.random.random() < 0.01:  # Log 1% of non-boost events to reduce spam
@@ -517,6 +526,10 @@ class FrameRenderer:
 
         # Apply audio-reactive brightness boost if enabled
         brightness_multiplier = self._calculate_beat_brightness_boost(time.time())
+
+        # Structured logging for timeline reconstruction (log every frame's brightness)
+        logger.info(f"BRIGHTNESS_BOOST: wall_time={time.time():.6f}, multiplier={brightness_multiplier:.4f}")
+
         if brightness_multiplier > 1.01:  # Only apply if boost is meaningful (> 1%)
             # Apply brightness boost to all LED values
             boosted_values = physical_led_values.astype(np.float32) * brightness_multiplier

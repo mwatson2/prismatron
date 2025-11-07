@@ -24,6 +24,7 @@ from ..utils.frame_drop_rate_ewma import FrameDropRateEwma
 from ..utils.frame_timing import FrameTimingData, FrameTimingLogger
 from .adaptive_frame_dropper import AdaptiveFrameDropper
 from .audio_beat_analyzer import AudioBeatAnalyzer, BeatEvent
+from .audio_capture import AudioConfig
 from .frame_renderer import FrameRenderer
 from .led_buffer import LEDBuffer
 from .led_optimizer import LEDOptimizer
@@ -152,14 +153,34 @@ class ConsumerProcess:
 
         # Audio beat analyzer (always try to initialize for dynamic enable/disable)
         self._audio_beat_analyzer: Optional[AudioBeatAnalyzer] = None
-        self._enable_audio_reactive = enable_audio_reactive
+        # TEMPORARY: Force enable audio-reactive for file mode testing
+        self._enable_audio_reactive = True  # enable_audio_reactive
         self._audio_analysis_running = False
         self._audio_device = audio_device
 
+        # TEMPORARY: Configure for file mode testing with looped audio
+        # Create AudioConfig for file playback mode
+        audio_test_file = Path("/mnt/dev/prismatron/audio_capture_test.wav")
+        audio_config = AudioConfig(
+            sample_rate=44100,  # Will be overridden by file
+            channels=1,
+            chunk_size=1024,
+            file_path=str(audio_test_file) if audio_test_file.exists() else None,
+            playback_speed=1.0,  # 1.0 = realtime playback
+        )
+
         # Always try to initialize audio analyzer for potential runtime enabling
         try:
-            self._audio_beat_analyzer = AudioBeatAnalyzer(beat_callback=self._on_beat_detected, device=audio_device)
-            logger.info("Audio beat analyzer initialized (ready for dynamic enable/disable)")
+            self._audio_beat_analyzer = AudioBeatAnalyzer(
+                beat_callback=self._on_beat_detected, device=audio_device, audio_config=audio_config
+            )
+            if audio_config.file_path:
+                logger.info(
+                    f"Audio beat analyzer initialized in FILE MODE (testing): {audio_config.file_path}, "
+                    f"playback_speed={audio_config.playback_speed}x"
+                )
+            else:
+                logger.info("Audio beat analyzer initialized (ready for dynamic enable/disable)")
         except Exception as e:
             logger.warning(f"Audio beat analyzer unavailable: {e}")
             self._audio_beat_analyzer = None
@@ -427,6 +448,10 @@ class ConsumerProcess:
 
             # Set initial renderer state
             self._control_state.set_renderer_state(RendererState.STOPPED)
+
+            # TEMPORARY: Enable audio-reactive mode for file testing
+            self._control_state.update_status(audio_reactive_enabled=True)
+            logger.info("Audio-reactive mode ENABLED for file testing")
 
             # Initialize LED optimizer
             if not self._led_optimizer.initialize():
