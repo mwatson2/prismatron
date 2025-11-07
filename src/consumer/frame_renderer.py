@@ -528,7 +528,7 @@ class FrameRenderer:
         brightness_multiplier = self._calculate_beat_brightness_boost(time.time())
 
         # Structured logging for timeline reconstruction (log every frame's brightness)
-        logger.info(f"BRIGHTNESS_BOOST: wall_time={time.time():.6f}, multiplier={brightness_multiplier:.4f}")
+        logger.debug(f"BRIGHTNESS_BOOST: wall_time={time.time():.6f}, multiplier={brightness_multiplier:.4f}")
 
         if brightness_multiplier > 1.01:  # Only apply if boost is meaningful (> 1%)
             # Apply brightness boost to all LED values

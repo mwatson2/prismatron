@@ -405,7 +405,7 @@ class ConsumerProcess:
             )
 
             beat_type = "DOWNBEAT" if beat_event.is_downbeat else "BEAT"
-            logger.info(
+            logger.debug(
                 f"🎵 {beat_type} #{beat_event.beat_count}: BPM={beat_event.bpm:.1f}, "
                 f"Intensity={beat_event.intensity:.2f}, "
                 f"Confidence={beat_event.confidence:.2f}"
