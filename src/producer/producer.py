@@ -797,7 +797,7 @@ class ProducerProcess:
                     self._no_frame_logged = True
 
         except Exception as e:
-            logger.error(f"Error in playing state: {e}")
+            logger.error(f"Error in playing state: {e}", exc_info=True)
             self._control_state.set_error(f"Playback error: {e}")
 
     def _handle_stopped_state(self) -> None:
@@ -819,82 +819,98 @@ class ProducerProcess:
         Returns:
             True if content is available, False otherwise
         """
-        if self._current_source and self._current_source.status == ContentStatus.PLAYING:
-            return True
+        # Acquire lock to prevent sync callback from clearing content during setup
+        with self._sync_lock:
+            if self._current_source and self._current_source.status == ContentStatus.PLAYING:
+                return True
 
-        # Atomically get current playlist item and index to avoid race conditions
-        current_item, current_playlist_index = self._playlist.get_current_item_and_index()
-        if not current_item or current_playlist_index is None:
-            logger.debug("No current playlist item available")
-            return False
+            # Atomically get current playlist item and index to avoid race conditions
+            current_item, current_playlist_index = self._playlist.get_current_item_and_index()
+            if not current_item or current_playlist_index is None:
+                logger.debug("No current playlist item available")
+                return False
 
-        logger.debug(
-            f"_ensure_current_content called - playlist_index={current_playlist_index}, loaded_index={self._current_item_index}"
-        )
-
-        # Load content source if needed
-        if self._current_item != current_item:
-            # Clean up previous content
-            if self._current_source:
-                self._current_source.cleanup()
-
-            # Load new content
-            # Check if this is an effect (JSON config)
-            content_type = ContentSourceRegistry.detect_content_type(current_item.filepath)
-            if content_type == ContentType.EFFECT:
-                logger.info("Loading effect content from JSON config")
-                import json
-
-                try:
-                    config = json.loads(current_item.filepath)
-                    logger.info(f"Effect config: {config}")
-                except Exception as e:
-                    logger.error(f"Failed to parse effect config: {e}")
-            else:
-                logger.info(f"Loading content: {os.path.basename(current_item.filepath)}")
-
-            self._current_source = current_item.get_content_source()
-            self._current_item = current_item
-            self._current_item_index = current_playlist_index  # Store the index that was atomically read
-            self._is_first_frame_of_current_item = True  # Reset flag for new item
-            self._content_finished_processed = False  # Reset flag for new content
-
-            # Log the index update for debugging
             logger.debug(
-                f"Loaded content at index {self._current_item_index}: {os.path.basename(current_item.filepath)}"
+                f"_ensure_current_content called - playlist_index={current_playlist_index}, loaded_index={self._current_item_index}"
             )
 
-            # Calculate global timestamp offset for this item
-            self._update_global_timestamp_offset()
+            # Load content source if needed
+            if self._current_item != current_item:
+                # Clean up previous content
+                if self._current_source:
+                    self._current_source.cleanup()
 
-            if not self._current_source:
-                logger.error(f"Failed to create content source for type {content_type}: {current_item.filepath[:100]}")
-                return False
-            else:
-                logger.info(f"Created content source: {type(self._current_source).__name__}")
+                # Load new content
+                # Check if this is an effect (JSON config)
+                content_type = ContentSourceRegistry.detect_content_type(current_item.filepath)
+                if content_type == ContentType.EFFECT:
+                    logger.info("Loading effect content from JSON config")
+                    import json
 
-            # Setup content source
-            logger.info(f"Setting up content source {type(self._current_source).__name__}...")
-            if not self._current_source.setup():
-                logger.error(f"Failed to setup content: {current_item.filepath[:100]}")
-                return False
-            logger.info(f"Content source setup successful, status={self._current_source.status}")
+                    try:
+                        config = json.loads(current_item.filepath)
+                        logger.info(f"Effect config: {config}")
+                    except Exception as e:
+                        logger.error(f"Failed to parse effect config: {e}")
+                else:
+                    logger.info(f"Loading content: {os.path.basename(current_item.filepath)}")
 
-            # Update control state with current file
-            self._control_state.set_current_file(current_item.filepath)
+                self._current_source = current_item.get_content_source()
+                self._current_item = current_item
+                self._current_item_index = current_playlist_index  # Store the index that was atomically read
+                self._is_first_frame_of_current_item = True  # Reset flag for new item
+                self._content_finished_processed = False  # Reset flag for new content
 
-            # Adjust target FPS based on content
-            if hasattr(self._current_source, "content_info"):
-                content_fps = self._current_source.content_info.fps
-                if content_fps > 0:
-                    self._target_fps = min(content_fps, 60.0)  # Cap at 60 FPS
-                    self._frame_interval = 1.0 / self._target_fps
+                # Log the index update for debugging
+                logger.debug(
+                    f"Loaded content at index {self._current_item_index}: {os.path.basename(current_item.filepath)}"
+                )
 
-            if content_type == ContentType.EFFECT:
-                logger.info(f"Loaded effect content (fps: {self._target_fps})")
-            else:
-                logger.info(f"Loaded content: {current_item.filepath} (fps: {self._target_fps})")
-        return True
+                # Calculate global timestamp offset for this item
+                self._update_global_timestamp_offset()
+
+                if not self._current_source:
+                    logger.error(
+                        f"Failed to create content source for type {content_type}: {current_item.filepath[:100]}"
+                    )
+                    return False
+                else:
+                    logger.info(f"Created content source: {type(self._current_source).__name__}")
+
+                # Setup content source
+                logger.info(f"Setting up content source {type(self._current_source).__name__}...")
+                logger.debug(
+                    f"About to call setup() on {type(self._current_source).__name__} for {current_item.filepath}"
+                )
+
+                try:
+                    setup_success = self._current_source.setup()
+                    logger.debug(f"setup() returned: {setup_success}")
+
+                    if not setup_success:
+                        logger.error(f"Failed to setup content: {current_item.filepath[:100]}")
+                        return False
+
+                    logger.info(f"Content source setup successful, status={self._current_source.status}")
+                except Exception as setup_error:
+                    logger.error(f"Exception during content source setup: {setup_error}", exc_info=True)
+                    return False
+
+                # Update control state with current file
+                self._control_state.set_current_file(current_item.filepath)
+
+                # Adjust target FPS based on content
+                if hasattr(self._current_source, "content_info"):
+                    content_fps = self._current_source.content_info.fps
+                    if content_fps > 0:
+                        self._target_fps = min(content_fps, 60.0)  # Cap at 60 FPS
+                        self._frame_interval = 1.0 / self._target_fps
+
+                if content_type == ContentType.EFFECT:
+                    logger.info(f"Loaded effect content (fps: {self._target_fps})")
+                else:
+                    logger.info(f"Loaded content: {current_item.filepath} (fps: {self._target_fps})")
+            return True
 
     def _advance_to_next_content(self) -> None:
         """Advance to next content in playlist."""
@@ -1554,48 +1570,50 @@ class ProducerProcess:
             # All playlist operations completed atomically
 
             # Check if the item at current index has changed (even if index number is same)
-            needs_reload = False
-            if self._current_item_index != sync_state.current_index:
-                # Index changed
-                logger.info(
-                    f"PLAYLIST INDEX SYNC: Producer index {self._current_item_index} -> playlist index {sync_state.current_index}"
-                )
-                needs_reload = True
-            elif self._current_item_index >= 0 and self._current_item:
-                # Index is same, but check if the item itself changed (e.g., rename, replace)
-                try:
-                    current_playlist_item = self._playlist.get_item(sync_state.current_index)
-                    if current_playlist_item and current_playlist_item.filepath != self._current_item.filepath:
-                        logger.info(
-                            f"PLAYLIST ITEM CHANGED at index {sync_state.current_index}: "
-                            f"{self._current_item.filepath} -> {current_playlist_item.filepath}"
-                        )
-                        needs_reload = True
-                except Exception as e:
-                    logger.debug(f"Could not check if item changed: {e}")
-
-            if needs_reload:
-                # Clear stuck state tracking since we're changing content
-                if hasattr(self, "_content_finished_time"):
-                    delattr(self, "_content_finished_time")
-
-                # Mark that content needs to be reloaded
-                # Also cleanup current source to cancel any in-progress setup
-                if self._current_source:
-                    logger.info("Cleaning up current content source due to playlist change")
+            # Use lock to prevent race condition with _ensure_current_content
+            with self._sync_lock:
+                needs_reload = False
+                if self._current_item_index != sync_state.current_index:
+                    # Index changed
+                    logger.info(
+                        f"PLAYLIST INDEX SYNC: Producer index {self._current_item_index} -> playlist index {sync_state.current_index}"
+                    )
+                    needs_reload = True
+                elif self._current_item_index >= 0 and self._current_item:
+                    # Index is same, but check if the item itself changed (e.g., rename, replace)
                     try:
-                        self._current_source.cleanup()
+                        current_playlist_item = self._playlist.get_item(sync_state.current_index)
+                        if current_playlist_item and current_playlist_item.filepath != self._current_item.filepath:
+                            logger.info(
+                                f"PLAYLIST ITEM CHANGED at index {sync_state.current_index}: "
+                                f"{self._current_item.filepath} -> {current_playlist_item.filepath}"
+                            )
+                            needs_reload = True
                     except Exception as e:
-                        logger.warning(f"Error cleaning up content source: {e}")
-                    self._current_source = None
+                        logger.debug(f"Could not check if item changed: {e}")
 
-                self._current_item = None  # Force content reload in _ensure_current_content
-                logger.debug("Set _current_item = None to force content reload (sync callback thread)")
-            else:
-                # Staying on the same item, update the global timestamp offset
-                # to account for new items added after the current position
-                self._update_global_timestamp_offset()
-                logger.debug("Updated global timestamp offset after playlist sync (same item)")
+                if needs_reload:
+                    # Clear stuck state tracking since we're changing content
+                    if hasattr(self, "_content_finished_time"):
+                        delattr(self, "_content_finished_time")
+
+                    # Mark that content needs to be reloaded
+                    # Also cleanup current source to cancel any in-progress setup
+                    if self._current_source:
+                        logger.info("Cleaning up current content source due to playlist change")
+                        try:
+                            self._current_source.cleanup()
+                        except Exception as e:
+                            logger.warning(f"Error cleaning up content source: {e}")
+                        self._current_source = None
+
+                    self._current_item = None  # Force content reload in _ensure_current_content
+                    logger.debug("Set _current_item = None to force content reload (sync callback thread)")
+                else:
+                    # Staying on the same item, update the global timestamp offset
+                    # to account for new items added after the current position
+                    self._update_global_timestamp_offset()
+                    logger.debug("Updated global timestamp offset after playlist sync (same item)")
 
             # Update producer state based on sync state
             if sync_state.is_playing:
