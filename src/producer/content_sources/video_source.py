@@ -347,9 +347,9 @@ class VideoSource(ContentSource):
             )
 
             # Create process with error capture
-            logger.debug("About to call ffmpeg.run_async() - THIS MAY BLOCK IF FFMPEG HANGS")
+            logger.info(f"Starting FFmpeg process for {os.path.basename(self.filepath)} (this may take a moment)...")
             self._ffmpeg_process = ffmpeg.run_async(output_stream, pipe_stdout=True, pipe_stderr=True, quiet=False)
-            logger.debug("ffmpeg.run_async() returned successfully")
+            logger.info("FFmpeg process started successfully")
 
             logger.info(f"FFmpeg process started with PID: {self._ffmpeg_process.pid}")
 
@@ -448,13 +448,31 @@ class VideoSource(ContentSource):
                     pass
 
         except Exception as e:
-            logger.error(f"Frame reader error: {e}")
+            logger.error(f"Frame reader error for {os.path.basename(self.filepath)}: {e}", exc_info=True)
 
         finally:
             # Signal end of stream
+            logger.info(
+                f"Frame reader worker finished for {os.path.basename(self.filepath)} - "
+                f"read {frame_number} frames total"
+            )
+            # Try hard to deliver the end-of-stream signal (None)
+            # This is critical - without it, the producer will never know the video ended
             if self._frame_queue:
-                with contextlib.suppress(queue.Full):
-                    self._frame_queue.put(None, timeout=0.1)  # None signals end
+                for attempt in range(10):  # Try for up to 5 seconds
+                    try:
+                        self._frame_queue.put(None, timeout=0.5)
+                        logger.debug(f"End-of-stream signal (None) successfully queued after {attempt + 1} attempt(s)")
+                        break
+                    except queue.Full:
+                        if attempt == 9:
+                            logger.error(
+                                f"CRITICAL: Failed to queue end-of-stream signal after 10 attempts for {os.path.basename(self.filepath)} - "
+                                f"producer may not detect video end!"
+                            )
+                        else:
+                            logger.debug(f"Queue full on attempt {attempt + 1}, retrying...")
+                        continue
 
     def get_next_frame(self) -> Optional[FrameData]:
         """
@@ -480,7 +498,9 @@ class VideoSource(ContentSource):
             if frame_data is None:
                 # End of stream signal
                 self.status = ContentStatus.ENDED
-                logger.debug(f"Video source {os.path.basename(self.filepath)} status set to ENDED")
+                logger.info(
+                    f"Video source {os.path.basename(self.filepath)} has ENDED (received end-of-stream signal from frame reader)"
+                )
                 return None
 
             # Update current state
@@ -497,7 +517,60 @@ class VideoSource(ContentSource):
             return frame_data
 
         except queue.Empty:
-            # No frame available yet, return None
+            # No frame available yet - frame reader may be slow or blocked
+            # Check if processes are dead (fallback end-of-stream detection)
+            ffmpeg_exited = False
+            reader_dead = False
+
+            if self._ffmpeg_process:
+                poll_result = self._ffmpeg_process.poll()
+                ffmpeg_exited = poll_result is not None
+
+            if self._frame_reader_thread:
+                reader_dead = not self._frame_reader_thread.is_alive()
+
+            # If FFmpeg exited AND reader thread is dead AND queue is empty,
+            # the video has ended (even if we never got the None sentinel)
+            if ffmpeg_exited and reader_dead:
+                self.status = ContentStatus.ENDED
+                logger.info(
+                    f"Video source {os.path.basename(self.filepath)} has ENDED "
+                    f"(detected via process exit: FFmpeg returncode={poll_result}, reader thread dead, queue empty)"
+                )
+                return None
+
+            # Log occasionally to help debug stuck scenarios (rate limit to avoid spam)
+            if not hasattr(self, "_last_empty_queue_log_time"):
+                self._last_empty_queue_log_time = 0.0
+
+            current_time = time.time()
+            if current_time - self._last_empty_queue_log_time >= 2.0:  # Log every 2 seconds
+                # Gather diagnostic information
+                ffmpeg_running = "unknown"
+                ffmpeg_returncode = "N/A"
+                reader_alive = "unknown"
+                stderr_alive = "unknown"
+
+                if self._ffmpeg_process:
+                    poll_result = self._ffmpeg_process.poll()
+                    if poll_result is None:
+                        ffmpeg_running = "yes"
+                    else:
+                        ffmpeg_running = "NO"
+                        ffmpeg_returncode = poll_result
+
+                if self._frame_reader_thread:
+                    reader_alive = "yes" if self._frame_reader_thread.is_alive() else "NO"
+
+                if self._stderr_monitor_thread:
+                    stderr_alive = "yes" if self._stderr_monitor_thread.is_alive() else "NO"
+
+                logger.info(
+                    f"Frame queue empty for {os.path.basename(self.filepath)} - "
+                    f"frame {self._current_frame_number}, FFmpeg running: {ffmpeg_running} (returncode: {ffmpeg_returncode}), "
+                    f"frame_reader alive: {reader_alive}, stderr_monitor alive: {stderr_alive}"
+                )
+                self._last_empty_queue_log_time = current_time
             return None
 
     def get_duration(self) -> float:

@@ -752,6 +752,12 @@ class ProducerProcess:
             frame_data = self._current_source.get_next_frame()
 
             if frame_data is not None:
+                # Reset no-frame tracking since we got a frame
+                if hasattr(self, "_no_frame_start_time"):
+                    delattr(self, "_no_frame_start_time")
+                if hasattr(self, "_last_no_frame_warning"):
+                    delattr(self, "_last_no_frame_warning")
+
                 # Log first frame for debugging
                 if self._frames_produced == 0:
                     logger.debug(f"Got first frame from {self._current_item.filepath}")
@@ -791,10 +797,37 @@ class ProducerProcess:
 
                     # Content already processed, skip duplicate call
             else:
-                # No frame available yet (but not finished)
-                if not hasattr(self, "_no_frame_logged") or not self._no_frame_logged:
+                # No frame available yet (but not finished) - track how long we've been waiting
+                if not hasattr(self, "_no_frame_start_time"):
+                    self._no_frame_start_time = time.time()
                     logger.debug(f"No frame available from {self._current_item.filepath} (waiting...)")
-                    self._no_frame_logged = True
+                else:
+                    # Log at INFO level if we've been waiting too long
+                    wait_time = time.time() - self._no_frame_start_time
+                    if wait_time >= 2.0 and (
+                        not hasattr(self, "_last_no_frame_warning") or time.time() - self._last_no_frame_warning >= 5.0
+                    ):
+                        # Gather diagnostic info from video source if available
+                        diagnostics = ""
+                        if hasattr(self._current_source, "_ffmpeg_process") and self._current_source._ffmpeg_process:
+                            poll_result = self._current_source._ffmpeg_process.poll()
+                            ffmpeg_status = "running" if poll_result is None else f"exited({poll_result})"
+                            reader_status = (
+                                "alive"
+                                if (
+                                    hasattr(self._current_source, "_frame_reader_thread")
+                                    and self._current_source._frame_reader_thread
+                                    and self._current_source._frame_reader_thread.is_alive()
+                                )
+                                else "dead"
+                            )
+                            diagnostics = f", FFmpeg: {ffmpeg_status}, reader thread: {reader_status}"
+
+                        logger.info(
+                            f"No frames from {os.path.basename(self._current_item.filepath)} for {wait_time:.1f}s - "
+                            f"content source may be stalled (status: {self._current_source.status}{diagnostics})"
+                        )
+                        self._last_no_frame_warning = time.time()
 
         except Exception as e:
             logger.error(f"Error in playing state: {e}", exc_info=True)

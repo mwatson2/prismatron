@@ -280,8 +280,8 @@ class FrameRenderer:
                 boost = dynamic_boost_factor * math.sin(t * math.pi / boost_duration)
                 multiplier = 1.0 + boost
 
-                # TEMPORARY: Log every boost calculation at INFO level for debugging
-                logger.info(
+                # Log boost calculation at DEBUG level
+                logger.debug(
                     f"BRIGHTNESS_BOOST: multiplier={multiplier:.3f}, t={t:.3f}s, "
                     f"boost_intensity={boost_intensity:.2f}, intensity_raw={beat_intensity_value:.2f}, "
                     f"intensity_scaled={intensity_scaled:.3f}, confidence={beat_confidence:.2f}, "

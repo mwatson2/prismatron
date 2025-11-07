@@ -454,7 +454,7 @@ class AudioBeatAnalyzer:
 
                     # Log occasionally
                     if self.total_beats_detected <= 10 or np.random.random() < 0.1:
-                        logger.info(f"🎵 Aubio beat detected: BPM={current_bpm:.1f}, confidence={confidence:.3f}")
+                        logger.debug(f"🎵 Aubio beat detected: BPM={current_bpm:.1f}, confidence={confidence:.3f}")
 
                     # Send to beat queue with intensity
                     try:
