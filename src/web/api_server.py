@@ -2985,8 +2985,8 @@ async def get_audio_reactive_settings():
 
         # Beat brightness boost settings
         beat_brightness_enabled = True
-        beat_brightness_intensity = 2.5
-        beat_brightness_duration = 0.25
+        beat_brightness_intensity = 4.0
+        beat_brightness_duration = 0.4
         beat_confidence_threshold = 0.5
 
         if control_state:
@@ -2998,8 +2998,8 @@ async def get_audio_reactive_settings():
                     max_shift_distance = status.max_shift_distance
                     shift_direction = status.shift_direction
                     beat_brightness_enabled = getattr(status, "beat_brightness_enabled", True)
-                    beat_brightness_intensity = getattr(status, "beat_brightness_intensity", 2.5)
-                    beat_brightness_duration = getattr(status, "beat_brightness_duration", 0.25)
+                    beat_brightness_intensity = getattr(status, "beat_brightness_intensity", 4.0)
+                    beat_brightness_duration = getattr(status, "beat_brightness_duration", 0.4)
                     beat_confidence_threshold = getattr(status, "beat_confidence_threshold", 0.5)
             except Exception as e:
                 logger.warning(f"Failed to get audio reactive status: {e}")
@@ -3052,8 +3052,8 @@ class BeatBrightnessRequest(BaseModel):
     """Request model for beat brightness boost settings."""
 
     enabled: bool = Field(..., description="Whether beat brightness boost is enabled")
-    intensity: float = Field(2.5, ge=0.0, le=5.0, description="Brightness boost intensity multiplier (0.0-5.0)")
-    duration: float = Field(0.25, ge=0.1, le=1.0, description="Boost duration as fraction of beat (0.1-1.0)")
+    intensity: float = Field(4.0, ge=0.0, le=5.0, description="Brightness boost intensity multiplier (0.0-5.0)")
+    duration: float = Field(0.4, ge=0.1, le=1.0, description="Boost duration as fraction of beat (0.1-1.0)")
     confidence_threshold: float = Field(
         0.5, ge=0.0, le=1.0, description="Minimum beat confidence to apply boost (0.0-1.0)"
     )

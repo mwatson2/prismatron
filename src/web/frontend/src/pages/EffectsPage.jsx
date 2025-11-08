@@ -18,8 +18,9 @@ const EffectsPage = () => {
 
   // Beat brightness boost state
   const [beatBrightnessEnabled, setBeatBrightnessEnabled] = useState(true)
-  const [beatBrightnessIntensity, setBeatBrightnessIntensity] = useState(0.25)
-  const [beatBrightnessDuration, setBeatBrightnessDuration] = useState(0.25)
+  const [beatBrightnessIntensity, setBeatBrightnessIntensity] = useState(4.0)
+  const [beatBrightnessDuration, setBeatBrightnessDuration] = useState(0.4)
+  const [beatConfidenceThreshold, setBeatConfidenceThreshold] = useState(0.5)
 
   useEffect(() => {
     fetchEffects()
@@ -64,8 +65,9 @@ const EffectsPage = () => {
         setMaxShiftDistance(data.max_shift_distance || 3)
         setShiftDirection(data.shift_direction || 'alternating')
         setBeatBrightnessEnabled(data.beat_brightness_enabled !== undefined ? data.beat_brightness_enabled : true)
-        setBeatBrightnessIntensity(data.beat_brightness_intensity || 0.25)
-        setBeatBrightnessDuration(data.beat_brightness_duration || 0.25)
+        setBeatBrightnessIntensity(data.beat_brightness_intensity !== undefined ? data.beat_brightness_intensity : 4.0)
+        setBeatBrightnessDuration(data.beat_brightness_duration !== undefined ? data.beat_brightness_duration : 0.4)
+        setBeatConfidenceThreshold(data.beat_confidence_threshold !== undefined ? data.beat_confidence_threshold : 0.5)
       }
     } catch (error) {
       console.error('Failed to fetch audio reactive settings:', error)
@@ -131,6 +133,7 @@ const EffectsPage = () => {
         setBeatBrightnessEnabled(data.enabled)
         setBeatBrightnessIntensity(data.intensity)
         setBeatBrightnessDuration(data.duration)
+        setBeatConfidenceThreshold(data.confidence_threshold)
         console.log('Beat brightness settings updated')
       }
     } catch (error) {
@@ -354,7 +357,8 @@ const EffectsPage = () => {
                     onClick={() => updateBeatBrightness({
                       enabled: !beatBrightnessEnabled,
                       intensity: beatBrightnessIntensity,
-                      duration: beatBrightnessDuration
+                      duration: beatBrightnessDuration,
+                      confidence_threshold: beatConfidenceThreshold
                     })}
                     className={`w-full px-4 py-2 rounded-retro text-xs font-retro font-bold transition-all duration-200 ${
                       beatBrightnessEnabled
@@ -383,7 +387,8 @@ const EffectsPage = () => {
                       updateBeatBrightness({
                         enabled: beatBrightnessEnabled,
                         intensity: newIntensity,
-                        duration: beatBrightnessDuration
+                        duration: beatBrightnessDuration,
+                        confidence_threshold: beatConfidenceThreshold
                       })
                     }}
                     className="w-full h-2 bg-dark-700 rounded-lg appearance-none cursor-pointer slider-track"
@@ -411,7 +416,8 @@ const EffectsPage = () => {
                       updateBeatBrightness({
                         enabled: beatBrightnessEnabled,
                         intensity: beatBrightnessIntensity,
-                        duration: newDuration
+                        duration: newDuration,
+                        confidence_threshold: beatConfidenceThreshold
                       })
                     }}
                     className="w-full h-2 bg-dark-700 rounded-lg appearance-none cursor-pointer slider-track"
@@ -423,10 +429,40 @@ const EffectsPage = () => {
                 </div>
               </div>
 
+              {/* Confidence Threshold - Full Width Below */}
+              <div className="mt-4 space-y-2">
+                <label className="block text-xs text-metal-silver font-mono">
+                  BEAT CONFIDENCE THRESHOLD ({(beatConfidenceThreshold * 100).toFixed(0)}%)
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={beatConfidenceThreshold}
+                  onChange={(e) => {
+                    const newThreshold = parseFloat(e.target.value)
+                    setBeatConfidenceThreshold(newThreshold)
+                    updateBeatBrightness({
+                      enabled: beatBrightnessEnabled,
+                      intensity: beatBrightnessIntensity,
+                      duration: beatBrightnessDuration,
+                      confidence_threshold: newThreshold
+                    })
+                  }}
+                  className="w-full h-2 bg-dark-700 rounded-lg appearance-none cursor-pointer slider-track"
+                  disabled={!beatBrightnessEnabled}
+                />
+                <div className="text-xs text-metal-silver font-mono text-center">
+                  All Beats (0%) → {(beatConfidenceThreshold * 100).toFixed(0)}% → Strong Only (100%)
+                </div>
+              </div>
+
               <div className="mt-3 p-3 bg-dark-800 rounded-retro border border-neon-purple border-opacity-20">
                 <p className="text-xs text-metal-silver font-mono leading-relaxed">
                   <span className="text-neon-purple">INFO:</span> Beat brightness boost creates a pulsing effect that brightens the entire panel on each detected beat.
                   Effect strength (0-5x) is multiplied by beat intensity and confidence for dynamic response. Duration controls pulse length.
+                  Confidence threshold filters out weak beats - higher values (closer to 100%) only respond to strong, confident beats.
                 </p>
               </div>
             </div>
