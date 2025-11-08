@@ -249,7 +249,7 @@ class AudioCapture:
             if current_time - last_status_log[0] >= status_log_interval:
                 duration = current_time - self.start_time
                 rms = np.sqrt(np.mean(audio_chunk * audio_chunk))
-                logger.info(
+                logger.debug(
                     f"Audio capture status: {self.total_chunks_captured} chunks, "
                     f"{self.total_samples_captured} samples, "
                     f"{duration:.1f}s, "

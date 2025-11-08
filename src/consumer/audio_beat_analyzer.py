@@ -479,7 +479,7 @@ class AudioBeatAnalyzer:
         if current_time - self.last_status_log >= status_log_interval:
             current_audio_rms = np.sqrt(np.mean(audio_chunk * audio_chunk))
 
-            logger.info(
+            logger.debug(
                 f"Audio processing status: {self.total_frames_processed} frames processed, "
                 f"{self.total_beats_detected} beats detected, "
                 f"audio RMS: {current_audio_rms:.6f}, "
