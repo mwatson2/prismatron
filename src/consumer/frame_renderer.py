@@ -202,7 +202,7 @@ class FrameRenderer:
                 return 1.0
 
             # Get configurable parameters with fallbacks
-            boost_intensity = getattr(status, "beat_brightness_intensity", 2.5)  # Increased from 0.25 to 2.5
+            boost_intensity = getattr(status, "beat_brightness_intensity", 4.0)  # Strong brightness boost (max 5.0)
             boost_duration_fraction = getattr(status, "beat_brightness_duration", 0.4)  # 400ms at 60 BPM
             confidence_threshold = getattr(status, "beat_confidence_threshold", 0.5)  # Ignore weak beats
 
