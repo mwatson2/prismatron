@@ -1237,7 +1237,7 @@ manager = ConnectionManager()
 
 # Preview data broadcasting task
 async def preview_broadcast_task():
-    """Background task to broadcast preview data and system status at 5fps via WebSocket."""
+    """Background task to broadcast preview data and system status at 15fps via WebSocket."""
     while True:
         try:
             if manager.active_connections:
@@ -1526,8 +1526,8 @@ async def preview_broadcast_task():
         except Exception as e:
             logger.warning(f"Preview broadcast error: {e}")
 
-        # Wait for 200ms (5fps)
-        await asyncio.sleep(0.2)
+        # Wait for ~67ms (15fps)
+        await asyncio.sleep(0.0667)
 
 
 # API Routes
