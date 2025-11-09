@@ -22,9 +22,13 @@ class LedEffect(ABC):
     An effect instance is created when the effect starts and destroyed when it ends.
     Effects modify LED values in-place and signal completion via their return value.
 
+    IMPORTANT: All timing is based on the frame timeline (starting from zero),
+    NOT wall-clock time. Frame timestamps come from the video/content producer
+    and represent the presentation time of each frame.
+
     Lifecycle:
-    1. Effect is instantiated with start time and parameters
-    2. apply() is called once per frame with current LED values and timestamp
+    1. Effect is instantiated with start frame timestamp and parameters
+    2. apply() is called once per frame with current LED values and frame timestamp
     3. Effect modifies LED values in-place
     4. Effect returns True when it should be removed from the active effects list
 
@@ -38,7 +42,7 @@ class LedEffect(ABC):
         Initialize LED effect.
 
         Args:
-            start_time: Wall-clock time when effect starts (from time.time())
+            start_time: Frame timestamp when effect starts (from frame timeline, starts at 0)
             duration: Effect duration in seconds (None = infinite/manual control)
             **kwargs: Additional effect-specific parameters
         """
@@ -53,14 +57,14 @@ class LedEffect(ABC):
         logger.debug(f"Created {self.effect_name} effect at t={start_time:.3f}s, duration={duration}")
 
     @abstractmethod
-    def apply(self, led_values: np.ndarray, current_time: float) -> bool:
+    def apply(self, led_values: np.ndarray, frame_timestamp: float) -> bool:
         """
         Apply effect to LED values in-place.
 
         Args:
             led_values: LED values to modify, shape (led_count, 3) or (led_count,)
                        Values in range [0, 255] for uint8 or [0, 1] for float
-            current_time: Current wall-clock time (from time.time())
+            frame_timestamp: Current frame timestamp (from frame timeline, starts at 0)
 
         Returns:
             True if this is the last frame and effect should be removed, False to continue
@@ -69,24 +73,24 @@ class LedEffect(ABC):
             This method MUST modify led_values in-place. Do not return a new array.
         """
 
-    def get_elapsed_time(self, current_time: float) -> float:
+    def get_elapsed_time(self, frame_timestamp: float) -> float:
         """
         Get elapsed time since effect start.
 
         Args:
-            current_time: Current wall-clock time
+            frame_timestamp: Current frame timestamp
 
         Returns:
             Elapsed time in seconds
         """
-        return current_time - self.start_time
+        return frame_timestamp - self.start_time
 
-    def get_progress(self, current_time: float) -> float:
+    def get_progress(self, frame_timestamp: float) -> float:
         """
         Get effect progress as a fraction [0, 1].
 
         Args:
-            current_time: Current wall-clock time
+            frame_timestamp: Current frame timestamp
 
         Returns:
             Progress fraction (0=start, 1=end), or 0.0 if duration is None
@@ -94,15 +98,15 @@ class LedEffect(ABC):
         if self.duration is None or self.duration <= 0:
             return 0.0
 
-        elapsed = self.get_elapsed_time(current_time)
+        elapsed = self.get_elapsed_time(frame_timestamp)
         return min(1.0, elapsed / self.duration)
 
-    def is_complete(self, current_time: float) -> bool:
+    def is_complete(self, frame_timestamp: float) -> bool:
         """
         Check if effect has completed based on duration.
 
         Args:
-            current_time: Current wall-clock time
+            frame_timestamp: Current frame timestamp
 
         Returns:
             True if effect duration has elapsed, False otherwise
@@ -110,7 +114,7 @@ class LedEffect(ABC):
         if self.duration is None:
             return False
 
-        return self.get_elapsed_time(current_time) >= self.duration
+        return self.get_elapsed_time(frame_timestamp) >= self.duration
 
     def get_info(self) -> Dict[str, Any]:
         """
@@ -434,7 +438,7 @@ class LedEffectManager:
         self.active_effects.clear()
         logger.info(f"Cleared {count} active effects")
 
-    def apply_effects(self, led_values: np.ndarray, current_time: float) -> None:
+    def apply_effects(self, led_values: np.ndarray, frame_timestamp: float) -> None:
         """
         Apply all active effects to LED values.
 
@@ -442,7 +446,7 @@ class LedEffectManager:
 
         Args:
             led_values: LED values to modify in-place (led_count, 3)
-            current_time: Current wall-clock time
+            frame_timestamp: Current frame timestamp (from frame timeline, starts at 0)
         """
         if not self.active_effects:
             return
@@ -450,7 +454,7 @@ class LedEffectManager:
         # Apply each effect in sequence (use copy of list for safe removal)
         for effect in self.active_effects[:]:
             try:
-                is_complete = effect.apply(led_values, current_time)
+                is_complete = effect.apply(led_values, frame_timestamp)
                 self._effects_applied += 1
 
                 if is_complete:

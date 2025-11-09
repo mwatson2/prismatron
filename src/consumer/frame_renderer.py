@@ -171,8 +171,11 @@ class FrameRenderer:
         BeatBrightnessEffect class which creates effect instances per beat:
 
             from .led_effect import BeatBrightnessEffect
+
+            # When beat detected, create effect using beat timestamp from audio timeline
+            # (converted to frame timeline)
             effect = BeatBrightnessEffect(
-                start_time=current_time,
+                start_time=beat_frame_timestamp,  # Beat time on frame timeline
                 bpm=beat_state.current_bpm,
                 beat_intensity=beat_state.beat_intensity,
                 boost_intensity=4.0,
@@ -542,11 +545,13 @@ class FrameRenderer:
         physical_led_values = self._convert_spatial_to_physical(led_values)
 
         # Apply LED effects (templates, animations, etc.)
-        current_time = time.time()
-        self.effect_manager.apply_effects(physical_led_values, current_time)
+        # Use frame timestamp (not wall-clock time) for frame-timeline-based effects
+        frame_timestamp = self._current_frame_timestamp
+        self.effect_manager.apply_effects(physical_led_values, frame_timestamp)
 
-        # Apply audio-reactive brightness boost if enabled
-        brightness_multiplier = self._calculate_beat_brightness_boost(current_time)
+        # Apply audio-reactive brightness boost if enabled (legacy inline implementation)
+        # Note: Uses wall-clock time, not frame timestamp
+        brightness_multiplier = self._calculate_beat_brightness_boost(time.time())
 
         # Structured logging for timeline reconstruction (log every frame's brightness)
         logger.debug(f"BRIGHTNESS_BOOST: wall_time={time.time():.6f}, multiplier={brightness_multiplier:.4f}")
@@ -1089,8 +1094,11 @@ class FrameRenderer:
         Example:
             from .led_effect import TemplateEffect
             template = np.load('template_leds.npy')
+
+            # Use frame timestamp (from current frame being rendered)
+            # NOT wall-clock time!
             effect = TemplateEffect(
-                start_time=time.time(),
+                start_time=current_frame_timestamp,  # From frame timeline
                 template=template,
                 duration=2.0,  # Effect plays over 2 seconds
                 blend_mode='alpha',
