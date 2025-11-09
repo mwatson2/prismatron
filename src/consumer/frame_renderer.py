@@ -545,9 +545,12 @@ class FrameRenderer:
         physical_led_values = self._convert_spatial_to_physical(led_values)
 
         # Apply LED effects (templates, animations, etc.)
-        # Use frame timestamp (not wall-clock time) for frame-timeline-based effects
-        frame_timestamp = self._current_frame_timestamp
-        self.effect_manager.apply_effects(physical_led_values, frame_timestamp)
+        # Convert current wall-clock time to frame timeline position
+        # This accounts for late frames - we use the current position on frame timeline,
+        # not the frame's target timestamp
+        current_wall_clock = time.time()
+        frame_timeline_time = current_wall_clock - self.get_adjusted_wallclock_delta()
+        self.effect_manager.apply_effects(physical_led_values, frame_timeline_time)
 
         # Apply audio-reactive brightness boost if enabled (legacy inline implementation)
         # Note: Uses wall-clock time, not frame timestamp
