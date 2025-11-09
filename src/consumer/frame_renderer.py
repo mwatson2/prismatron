@@ -167,6 +167,19 @@ class FrameRenderer:
         """
         Calculate brightness boost based on beat timing for audio-reactive effects.
 
+        NOTE: This is the legacy inline implementation. Consider migrating to the new
+        BeatBrightnessEffect class which creates effect instances per beat:
+
+            from .led_effect import BeatBrightnessEffect
+            effect = BeatBrightnessEffect(
+                start_time=current_time,
+                bpm=beat_state.current_bpm,
+                beat_intensity=beat_state.beat_intensity,
+                boost_intensity=4.0,
+                duration_fraction=0.4
+            )
+            renderer.add_led_effect(effect)
+
         Implements a configurable sine wave brightness boost during a portion of each beat interval.
         Formula: 1.0 + intensity * sin(t * pi / (duration * d)) where:
         - t = time since beat start

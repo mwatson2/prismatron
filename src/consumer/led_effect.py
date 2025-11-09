@@ -282,6 +282,116 @@ class TemplateEffect(LedEffect):
         return info
 
 
+class BeatBrightnessEffect(LedEffect):
+    """
+    Audio-reactive beat brightness boost effect.
+
+    Applies a sine wave brightness boost for one beat. The effect is created
+    when a beat is detected and automatically expires after the boost duration.
+
+    Formula: multiplier = 1.0 + intensity * scaled_intensity * sin(t * pi / boost_duration)
+    where:
+    - t = time since beat start
+    - intensity = base boost intensity (0.0 to 5.0)
+    - scaled_intensity = sqrt(beat_intensity) for dynamic scaling
+    - boost_duration = duration_fraction * (60.0 / BPM)
+    """
+
+    def __init__(
+        self,
+        start_time: float,
+        bpm: float,
+        beat_intensity: float = 1.0,
+        boost_intensity: float = 4.0,
+        duration_fraction: float = 0.4,
+        **kwargs,
+    ):
+        """
+        Initialize beat brightness boost effect.
+
+        Args:
+            start_time: Wall-clock time when beat occurs
+            bpm: Current BPM (beats per minute)
+            beat_intensity: Beat intensity value from beat detection [0, 1]
+            boost_intensity: Base boost intensity multiplier [0, 5.0]
+            duration_fraction: Fraction of beat interval for boost [0.1, 1.0]
+            **kwargs: Additional parameters passed to base class
+        """
+        # Calculate beat duration and boost window
+        beat_duration = 60.0 / max(1.0, bpm)  # Prevent division by zero
+        boost_duration = duration_fraction * beat_duration
+
+        super().__init__(start_time=start_time, duration=boost_duration, **kwargs)
+
+        self.bpm = bpm
+        self.beat_intensity = beat_intensity
+        self.boost_intensity = boost_intensity
+        self.duration_fraction = duration_fraction
+        self.boost_duration = boost_duration
+
+        # Calculate scaled intensity using sqrt for better dynamic range
+        self.intensity_scaled = np.sqrt(beat_intensity)
+        self.dynamic_boost_factor = boost_intensity * self.intensity_scaled
+
+        logger.debug(
+            f"Created BeatBrightnessEffect: BPM={bpm:.1f}, "
+            f"beat_intensity={beat_intensity:.2f}, "
+            f"boost_duration={boost_duration*1000:.1f}ms, "
+            f"dynamic_factor={self.dynamic_boost_factor:.2f}"
+        )
+
+    def apply(self, led_values: np.ndarray, current_time: float) -> bool:
+        """
+        Apply beat brightness boost to LED values.
+
+        Args:
+            led_values: LED values to modify (led_count, 3) in range [0, 255]
+            current_time: Current wall-clock time
+
+        Returns:
+            True if boost window is complete
+        """
+        self.frame_count += 1
+
+        # Get elapsed time since beat
+        elapsed = self.get_elapsed_time(current_time)
+
+        # Check if boost window is complete
+        if elapsed >= self.boost_duration:
+            return True
+
+        # Calculate sine wave boost: sin(t * pi / boost_duration)
+        # This goes from 0 -> 1 -> 0 over the boost_duration
+        boost = self.dynamic_boost_factor * np.sin(elapsed * np.pi / self.boost_duration)
+        multiplier = 1.0 + boost
+
+        # Apply boost as brightness multiplier
+        # Clamp to [0, 255] for uint8, or [0, 1] for float
+        if led_values.dtype == np.uint8 or led_values.max() > 1.0:
+            # uint8 format [0, 255]
+            led_values[:] = np.clip(led_values * multiplier, 0, 255).astype(led_values.dtype)
+        else:
+            # float format [0, 1]
+            led_values[:] = np.clip(led_values * multiplier, 0, 1)
+
+        return False  # Continue effect
+
+    def get_info(self) -> Dict[str, Any]:
+        """Get beat brightness effect information."""
+        info = super().get_info()
+        info.update(
+            {
+                "bpm": self.bpm,
+                "beat_intensity": self.beat_intensity,
+                "boost_intensity": self.boost_intensity,
+                "duration_fraction": self.duration_fraction,
+                "boost_duration": self.boost_duration,
+                "dynamic_boost_factor": self.dynamic_boost_factor,
+            }
+        )
+        return info
+
+
 class LedEffectManager:
     """
     Manages a collection of active LED effects.

@@ -11,6 +11,7 @@ This module contains components for the consumer process:
 from .consumer import ConsumerProcess, ConsumerStats
 from .frame_renderer import FrameRenderer
 from .led_buffer import LEDBuffer
+from .led_effect import BeatBrightnessEffect, LedEffect, LedEffectManager, TemplateEffect
 from .led_optimizer import LEDOptimizer, OptimizationResult
 from .wled_client import TransmissionResult, WLEDClient, WLEDConfig
 
@@ -24,4 +25,8 @@ __all__ = [
     "WLEDClient",
     "WLEDConfig",
     "TransmissionResult",
+    "LedEffect",
+    "TemplateEffect",
+    "BeatBrightnessEffect",
+    "LedEffectManager",
 ]
