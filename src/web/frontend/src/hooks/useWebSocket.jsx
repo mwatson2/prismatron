@@ -131,6 +131,11 @@ export const WebSocketProvider = ({ children }) => {
     try {
       const ws = new WebSocket(wsUrl)
 
+      // State for handling multi-part messages with binary fields
+      let pendingMessage = null
+      let pendingBinaryFields = []
+      let receivedBinaryData = []
+
       ws.onopen = () => {
         console.log('WebSocket connected')
         setIsConnected(true)
@@ -139,11 +144,70 @@ export const WebSocketProvider = ({ children }) => {
 
       ws.onmessage = (event) => {
         try {
-          const data = JSON.parse(event.data)
-          handleMessage(data)
+          // Check if this is a binary message
+          if (event.data instanceof ArrayBuffer || event.data instanceof Blob) {
+            // Binary message - must be part of a multi-part message
+            if (!pendingMessage) {
+              console.error('Received binary WebSocket message without pending JSON message')
+              return
+            }
+
+            // Convert Blob to ArrayBuffer if needed
+            if (event.data instanceof Blob) {
+              const reader = new FileReader()
+              reader.onload = () => {
+                receivedBinaryData.push(new Uint8Array(reader.result))
+                processPendingMessage()
+              }
+              reader.readAsArrayBuffer(event.data)
+            } else {
+              // Already ArrayBuffer
+              receivedBinaryData.push(new Uint8Array(event.data))
+              processPendingMessage()
+            }
+          } else {
+            // Text message - parse as JSON
+            const data = JSON.parse(event.data)
+
+            // Check if this message expects binary data to follow
+            if (data._binary_fields && Array.isArray(data._binary_fields) && data._binary_fields.length > 0) {
+              // Store message and wait for binary data
+              pendingMessage = data
+              pendingBinaryFields = [...data._binary_fields]
+              receivedBinaryData = []
+            } else {
+              // Regular JSON message - handle immediately
+              handleMessage(data)
+            }
+          }
         } catch (error) {
           console.error('Failed to parse WebSocket message:', error)
           console.error('Raw message data:', event.data)
+        }
+      }
+
+      // Helper to process pending message once all binary data is received
+      const processPendingMessage = () => {
+        if (!pendingMessage) return
+
+        // Check if we have all expected binary fields
+        if (receivedBinaryData.length === pendingBinaryFields.length) {
+          // Augment message with binary data as Uint8Array
+          pendingBinaryFields.forEach((fieldName, index) => {
+            pendingMessage[fieldName] = receivedBinaryData[index]
+          })
+
+          // Clean up internal fields
+          delete pendingMessage._binary_fields
+          delete pendingMessage._binary_sizes
+
+          // Handle the complete message
+          handleMessage(pendingMessage)
+
+          // Reset pending state
+          pendingMessage = null
+          pendingBinaryFields = []
+          receivedBinaryData = []
         }
       }
 

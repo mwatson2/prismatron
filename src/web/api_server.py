@@ -1200,15 +1200,29 @@ class ConnectionManager:
             self.active_connections.remove(websocket)
         logger.info(f"WebSocket disconnected: {len(self.active_connections)} total connections")
 
-    async def broadcast(self, message: dict):
-        """Broadcast message to all connected clients."""
+    async def broadcast(self, message: dict, binary_data: Optional[List[bytes]] = None):
+        """
+        Broadcast message to all connected clients.
+
+        Args:
+            message: JSON message dict. If it contains _binary_fields, those fields
+                    will be sent as subsequent binary WebSocket messages.
+            binary_data: Optional list of binary data buffers to send after the JSON message.
+                        Should correspond to fields listed in message['_binary_fields'].
+        """
         if not self.active_connections:
             return
 
         disconnected = []
         for connection in self.active_connections:
             try:
+                # Send JSON message first
                 await connection.send_json(message)
+
+                # Send binary data if provided
+                if binary_data:
+                    for data in binary_data:
+                        await connection.send_bytes(data)
             except Exception as e:
                 logger.warning(f"Failed to send WebSocket message: {e}")
                 disconnected.append(connection)
@@ -1391,19 +1405,14 @@ async def preview_broadcast_task():
                                 led_data = os.read(shm_fd, led_count * 3)
 
                                 if len(led_data) == led_count * 3:
-                                    # Convert to list of [r, g, b] arrays with brightness factor for preview
-                                    frame_data = []
+                                    # Apply brightness factor to raw bytes for preview
                                     brightness_factor = 0.5  # Reduce saturation due to overlapping LEDs
-                                    for i in range(0, len(led_data), 3):
-                                        r, g, b = led_data[i], led_data[i + 1], led_data[i + 2]
-                                        # Apply brightness factor to reduce saturation
-                                        r = int(r * brightness_factor)
-                                        g = int(g * brightness_factor)
-                                        b = int(b * brightness_factor)
-                                        frame_data.append([r, g, b])
+                                    led_data_array = bytearray(led_data)
+                                    for i in range(len(led_data_array)):
+                                        led_data_array[i] = int(led_data_array[i] * brightness_factor)
+                                    frame_data_binary = bytes(led_data_array)
 
                                     preview_data["has_frame"] = True
-                                    preview_data["frame_data"] = frame_data
                                     preview_data["total_leds"] = led_count
                                     preview_data["frame_counter"] = frame_counter
                                     # Handle potential invalid rendering_index values
@@ -1414,7 +1423,11 @@ async def preview_broadcast_task():
                                     preview_data["playback_position"] = (
                                         shm_playback_position if shm_playback_position >= 0 else 0.0
                                     )
-                                    # Removed spammy playback position log
+                                    # Mark that frame_data will follow as binary
+                                    preview_data["_binary_fields"] = ["frame_data"]
+                                    preview_data["_binary_sizes"] = [len(frame_data_binary)]
+                                    # Store binary data for later broadcast
+                                    preview_data["_frame_data_binary"] = frame_data_binary
 
                                     # Debug: Compare rendering_index from different sources (reduced frequency)
                                     if hasattr(preview_broadcast_task, "_last_debug_time"):
@@ -1480,23 +1493,35 @@ async def preview_broadcast_task():
                 if not preview_data["has_frame"]:
                     logger.debug("WebSocket using fallback rainbow test pattern - no shared memory data available")
                     preview_data["has_frame"] = True
-                    preview_colors = []
                     brightness_factor = 0.5  # Reduce saturation due to overlapping LEDs
                     # Use the actual LED count for test pattern
                     test_led_count = get_actual_led_count()
+
+                    # Generate rainbow pattern as raw RGB bytes
+                    test_pattern = bytearray(test_led_count * 3)
                     for i in range(test_led_count):
                         # Simple rainbow pattern
                         hue = (i / test_led_count) * 360  # Full rainbow across all LEDs
                         r = int(255 * max(0, min(1, abs((hue / 60) % 6 - 3) - 1)) * brightness_factor)
                         g = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 2))) * brightness_factor)
                         b = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 4))) * brightness_factor)
-                        preview_colors.append([r, g, b])
-                    preview_data["frame_data"] = preview_colors
+                        test_pattern[i * 3] = r
+                        test_pattern[i * 3 + 1] = g
+                        test_pattern[i * 3 + 2] = b
+
                     preview_data["total_leds"] = test_led_count
                     preview_data["shm_rendering_index"] = -1  # No shared memory data
+                    preview_data["_binary_fields"] = ["frame_data"]
+                    preview_data["_binary_sizes"] = [len(test_pattern)]
+                    preview_data["_frame_data_binary"] = bytes(test_pattern)
+
+                # Extract binary data and remove internal field before broadcast
+                binary_data = None
+                if "_frame_data_binary" in preview_data:
+                    binary_data = [preview_data.pop("_frame_data_binary")]
 
                 # Broadcast preview data to all connected clients
-                await manager.broadcast(preview_data)
+                await manager.broadcast(preview_data, binary_data=binary_data)
 
         except Exception as e:
             logger.warning(f"Preview broadcast error: {e}")

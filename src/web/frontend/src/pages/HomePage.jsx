@@ -147,10 +147,14 @@ const HomePage = () => {
 
       // Determine LED color and skip dark LEDs
       if (previewData?.has_frame && previewData?.frame_data) {
-        let colorData = previewData.frame_data[i]
+        const frameData = previewData.frame_data  // Uint8Array with flat RGB data
 
-        if (colorData && Array.isArray(colorData) && colorData.length >= 3) {
-          const [r, g, b] = colorData
+        // Access RGB values from flat array (i*3, i*3+1, i*3+2)
+        const offset = i * 3
+        if (offset + 2 < frameData.length) {
+          const r = frameData[offset]
+          const g = frameData[offset + 1]
+          const b = frameData[offset + 2]
 
           // Skip completely dark LEDs to avoid unnecessary computation
           if (r === 0 && g === 0 && b === 0) {
