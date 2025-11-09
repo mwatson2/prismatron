@@ -1075,11 +1075,11 @@ class FrameRenderer:
 
         Example:
             from .led_effect import TemplateEffect
-            template = np.load('template.npy')
+            template = np.load('template_leds.npy')
             effect = TemplateEffect(
                 start_time=time.time(),
                 template=template,
-                fps=30.0,
+                duration=2.0,  # Effect plays over 2 seconds
                 blend_mode='alpha',
                 intensity=0.8
             )

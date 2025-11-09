@@ -134,14 +134,17 @@ class TemplateEffect(LedEffect):
 
     Template is an array of shape (frames, led_count) containing LED values
     for each frame of the animation. The effect progresses through frames
-    and applies them as alpha blends or direct replacements.
+    based on elapsed time, making it independent of input frame rate.
+
+    The template frames are distributed evenly across the specified duration.
+    On each apply() call, the frame closest in time to the current moment is selected.
     """
 
     def __init__(
         self,
         start_time: float,
         template: np.ndarray,
-        fps: float = 30.0,
+        duration: float,
         blend_mode: str = "alpha",
         intensity: float = 1.0,
         loop: bool = False,
@@ -153,37 +156,39 @@ class TemplateEffect(LedEffect):
         Args:
             start_time: Wall-clock time when effect starts
             template: LED pattern array, shape (frames, led_count)
-            fps: Playback frame rate (frames per second)
+            duration: Effect duration in seconds (template will span this duration)
             blend_mode: How to apply template ("alpha", "add", "multiply", "replace")
             intensity: Effect intensity/opacity [0, 1]
             loop: Whether to loop the template when it reaches the end
             **kwargs: Additional parameters passed to base class
         """
-        # Calculate duration from template length and FPS
-        num_frames = template.shape[0]
-        duration = num_frames / fps if not loop else None
+        # Set duration (None if looping infinitely)
+        effect_duration = None if loop else duration
 
-        super().__init__(start_time=start_time, duration=duration, **kwargs)
+        super().__init__(start_time=start_time, duration=effect_duration, **kwargs)
 
         self.template = template.astype(np.float32)
-        self.fps = fps
+        self.template_duration = duration  # Duration for one complete template playback
         self.blend_mode = blend_mode
         self.intensity = intensity
         self.loop = loop
-        self.num_frames = num_frames
+        self.num_frames = template.shape[0]
 
         # Validate template shape
         if self.template.ndim != 2:
             raise ValueError(f"Template must be 2D (frames, leds), got shape {self.template.shape}")
 
         logger.info(
-            f"Created TemplateEffect: {num_frames} frames @ {fps}fps, "
+            f"Created TemplateEffect: {self.num_frames} frames over {duration:.2f}s, "
             f"blend={blend_mode}, intensity={intensity:.2f}, loop={loop}"
         )
 
     def apply(self, led_values: np.ndarray, current_time: float) -> bool:
         """
         Apply template effect to LED values.
+
+        Selects the template frame closest in time based on the elapsed time
+        and template duration. This makes the effect independent of input frame rate.
 
         Args:
             led_values: LED values to modify (led_count, 3) in range [0, 255]
@@ -194,17 +199,28 @@ class TemplateEffect(LedEffect):
         """
         self.frame_count += 1
 
-        # Calculate which template frame to use based on elapsed time
+        # Calculate elapsed time since effect start
         elapsed = self.get_elapsed_time(current_time)
-        frame_idx = int(elapsed * self.fps)
 
-        # Handle looping and completion
-        if frame_idx >= self.num_frames:
-            if self.loop:
-                frame_idx = frame_idx % self.num_frames
-            else:
-                # Effect complete
-                return True
+        # Handle looping: wrap elapsed time to [0, template_duration)
+        if self.loop:
+            elapsed = elapsed % self.template_duration
+
+        # Check if effect is complete (only for non-looping effects)
+        if not self.loop and elapsed >= self.template_duration:
+            return True
+
+        # Map elapsed time to template frame index
+        # Frames are distributed evenly across template_duration
+        # progress goes from 0.0 to 1.0 over the duration
+        progress = min(1.0, elapsed / self.template_duration)
+
+        # Calculate frame index (round to nearest frame)
+        # Use (num_frames - 1) to ensure last frame is reached at progress=1.0
+        frame_idx = int(round(progress * (self.num_frames - 1)))
+
+        # Clamp to valid range [0, num_frames-1]
+        frame_idx = max(0, min(self.num_frames - 1, frame_idx))
 
         # Get template frame for this LED position
         template_frame = self.template[frame_idx]  # Shape: (led_count,)
@@ -257,7 +273,7 @@ class TemplateEffect(LedEffect):
         info.update(
             {
                 "num_frames": self.num_frames,
-                "fps": self.fps,
+                "template_duration": self.template_duration,
                 "blend_mode": self.blend_mode,
                 "intensity": self.intensity,
                 "loop": self.loop,
