@@ -25,10 +25,13 @@ class NetworkManager:
 
     CONFIG_FILE = "/etc/prismatron/network-config.json"
     AP_CONNECTION_NAME = "prismatron-ap"  # Consistent connection name for AP mode
+    ETHERNET_CLIENT_NAME = "prismatron-ethernet-client"  # Ethernet connection for client mode
+    BRIDGE_NAME = "prismatron-bridge"  # Bridge connection for AP mode
 
     def __init__(self):
         self.config = self._load_config()
         self.interface = self._detect_wifi_interface()
+        self.ethernet_interface = self._detect_ethernet_interface()
 
     def _detect_wifi_interface(self) -> str:
         """Detect the WiFi interface name."""
@@ -61,6 +64,38 @@ class NetworkManager:
         except Exception as e:
             logger.warning(f"Failed to detect WiFi interface: {e}, using fallback wlP1p1s0")
             return "wlP1p1s0"
+
+    def _detect_ethernet_interface(self) -> str:
+        """Detect the Ethernet interface name."""
+        try:
+            result = subprocess.run(
+                ["nmcli", "--terse", "--fields", "DEVICE,TYPE", "device", "status"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            for line in result.stdout.strip().split("\n"):
+                if line:
+                    device, device_type = line.split(":")
+                    if device_type == "ethernet":
+                        logger.info(f"Detected Ethernet interface: {device}")
+                        return device
+
+            # Fallback to common names
+            for interface in ["enP8p1s0", "eth0", "enp0s1"]:
+                try:
+                    subprocess.run(["nmcli", "device", "show", interface], capture_output=True, check=True)
+                    logger.info(f"Found Ethernet interface: {interface}")
+                    return interface
+                except subprocess.CalledProcessError:
+                    continue
+
+            raise NetworkManagerError("No Ethernet interface found")
+
+        except Exception as e:
+            logger.warning(f"Failed to detect Ethernet interface: {e}, using fallback enP8p1s0")
+            return "enP8p1s0"
 
     def _load_config(self) -> NetworkConfig:
         """Load network preferences from file."""
@@ -135,6 +170,134 @@ class NetworkManager:
         except Exception as e:
             logger.warning(f"Failed to restart avahi-daemon: {e}")
             # Don't raise - avahi restart is not critical for network operation
+
+    async def _enable_ip_forwarding(self) -> None:
+        """Enable IP forwarding for routing between WiFi and Ethernet."""
+        try:
+            logger.info("Enabling IP forwarding for WiFi-Ethernet routing")
+            await self._run_command(["sudo", "sysctl", "-w", "net.ipv4.ip_forward=1"], try_sudo=False)
+            logger.debug("IP forwarding enabled")
+        except Exception as e:
+            logger.warning(f"Failed to enable IP forwarding: {e}")
+
+    async def _configure_ethernet_client_mode(self) -> None:
+        """Configure Ethernet with DHCP server for WiFi client mode."""
+        try:
+            logger.info(f"Configuring Ethernet ({self.ethernet_interface}) for client mode with DHCP server")
+
+            # Check if connection exists
+            check_result = await self._run_command(
+                ["nmcli", "connection", "show", self.ETHERNET_CLIENT_NAME], check=False
+            )
+
+            if check_result.returncode == 0:
+                # Connection exists, just activate it
+                logger.info("Ethernet client mode connection exists, activating...")
+                await self._run_command(["nmcli", "connection", "up", self.ETHERNET_CLIENT_NAME], try_sudo=True)
+            else:
+                # Create new connection with shared IPv4 (provides DHCP)
+                logger.info("Creating new Ethernet client mode connection...")
+                cmd = [
+                    "nmcli",
+                    "connection",
+                    "add",
+                    "type",
+                    "ethernet",
+                    "ifname",
+                    self.ethernet_interface,
+                    "con-name",
+                    self.ETHERNET_CLIENT_NAME,
+                    "ipv4.method",
+                    "shared",  # This enables DHCP server
+                    "ipv4.addresses",
+                    "192.168.100.1/24",
+                    "connection.autoconnect",
+                    "yes",
+                ]
+                await self._run_command(cmd, try_sudo=True)
+                logger.info("Ethernet configured for client mode with DHCP at 192.168.100.1/24")
+
+            # Enable IP forwarding so WiFi clients can reach Ethernet devices
+            await self._enable_ip_forwarding()
+
+        except Exception as e:
+            logger.error(f"Failed to configure Ethernet for client mode: {e}")
+            raise NetworkManagerError(f"Ethernet client mode configuration failed: {e}") from e
+
+    async def _configure_ethernet_ap_mode(self, ap_subnet_ip: str) -> None:
+        """Configure Ethernet to share the same subnet as WiFi AP.
+
+        Since most WiFi drivers don't support true bridging, we configure Ethernet
+        on the same subnet as the AP and enable routing between them.
+
+        Args:
+            ap_subnet_ip: IP address from AP config (e.g., "192.168.4.1")
+        """
+        try:
+            logger.info(f"Configuring Ethernet ({self.ethernet_interface}) for AP mode on same subnet")
+
+            # Use a different IP in the same subnet for Ethernet (e.g., 192.168.4.2)
+            # Parse the AP IP and increment it
+            ip_parts = ap_subnet_ip.split(".")
+            ethernet_ip = f"{ip_parts[0]}.{ip_parts[1]}.{ip_parts[2]}.{int(ip_parts[3]) + 1}"
+
+            ethernet_ap_name = f"{self.ETHERNET_CLIENT_NAME}-ap"
+
+            # Check if connection exists
+            check_result = await self._run_command(["nmcli", "connection", "show", ethernet_ap_name], check=False)
+
+            if check_result.returncode == 0:
+                # Connection exists, just activate it
+                logger.info("Ethernet AP mode connection exists, activating...")
+                await self._run_command(["nmcli", "connection", "up", ethernet_ap_name], try_sudo=True)
+            else:
+                # Create new connection on same subnet as AP
+                logger.info(f"Creating Ethernet AP mode connection at {ethernet_ip}/24...")
+                cmd = [
+                    "nmcli",
+                    "connection",
+                    "add",
+                    "type",
+                    "ethernet",
+                    "ifname",
+                    self.ethernet_interface,
+                    "con-name",
+                    ethernet_ap_name,
+                    "ipv4.method",
+                    "shared",  # Provides DHCP server
+                    "ipv4.addresses",
+                    f"{ethernet_ip}/24",
+                    "connection.autoconnect",
+                    "no",  # Only activate when in AP mode
+                ]
+                await self._run_command(cmd, try_sudo=True)
+                logger.info(f"Ethernet configured for AP mode at {ethernet_ip}/24")
+
+            # Enable IP forwarding for routing between WiFi and Ethernet
+            await self._enable_ip_forwarding()
+
+        except Exception as e:
+            logger.error(f"Failed to configure Ethernet for AP mode: {e}")
+            raise NetworkManagerError(f"Ethernet AP mode configuration failed: {e}") from e
+
+    async def _disable_ethernet_client_mode(self) -> None:
+        """Disable Ethernet client mode connection."""
+        try:
+            logger.info("Disabling Ethernet client mode")
+            await self._run_command(
+                ["nmcli", "connection", "down", self.ETHERNET_CLIENT_NAME], check=False, try_sudo=True
+            )
+        except Exception as e:
+            logger.warning(f"Failed to disable Ethernet client mode: {e}")
+
+    async def _disable_ethernet_ap_mode(self) -> None:
+        """Disable Ethernet AP mode connection."""
+        try:
+            logger.info("Disabling Ethernet AP mode")
+            ethernet_ap_name = f"{self.ETHERNET_CLIENT_NAME}-ap"
+            await self._run_command(["nmcli", "connection", "down", ethernet_ap_name], check=False, try_sudo=True)
+        except Exception as e:
+            logger.warning(f"Failed to disable Ethernet AP mode: {e}")
 
     async def get_status(self) -> NetworkStatus:
         """Get current network status."""
@@ -339,6 +502,13 @@ class NetworkManager:
             self.config.client_config = ClientConfig(ssid=ssid, password=password)
             self._save_config()
 
+            # Configure Ethernet for client mode (with DHCP server for WLED)
+            try:
+                await self._configure_ethernet_client_mode()
+            except Exception as e:
+                logger.warning(f"Failed to configure Ethernet for client mode: {e}")
+                # Don't fail the WiFi connection if Ethernet setup fails
+
             # Restart avahi to update .local address advertising on new network
             await self._restart_avahi()
 
@@ -352,6 +522,10 @@ class NetworkManager:
     async def disconnect(self) -> bool:
         """Disconnect from current network."""
         try:
+            # Disable Ethernet connections first
+            await self._disable_ethernet_client_mode()
+            await self._disable_ethernet_ap_mode()
+
             # Get current connection
             result = await self._run_command(
                 ["nmcli", "--terse", "--fields", "NAME", "connection", "show", "--active"], check=False
@@ -451,6 +625,13 @@ class NetworkManager:
             # Activate the connection
             await self._run_command(["nmcli", "connection", "up", self.AP_CONNECTION_NAME], try_sudo=True)
 
+            # Configure Ethernet for AP mode (same subnet as WiFi AP for WLED access)
+            try:
+                await self._configure_ethernet_ap_mode(ap_config.ip_address)
+            except Exception as e:
+                logger.warning(f"Failed to configure Ethernet for AP mode: {e}")
+                # Don't fail AP mode if Ethernet setup fails
+
             # Save preferences (AP config might have been updated)
             self._save_config()
 
@@ -467,6 +648,9 @@ class NetworkManager:
     async def disable_ap_mode(self) -> bool:
         """Disable WiFi access point mode and remove autoconnect."""
         try:
+            # Disable Ethernet AP mode first
+            await self._disable_ethernet_ap_mode()
+
             # Disconnect AP connection
             await self._run_command(
                 ["nmcli", "connection", "down", self.AP_CONNECTION_NAME], check=False, try_sudo=True
