@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 
 from .audio_reactive_position_shifter import AudioReactivePositionShifter
+from .led_effect import LedEffectManager
 from .test_sink import TestSink
 from .wled_sink import WLEDSink
 
@@ -154,6 +155,9 @@ class FrameRenderer:
 
         # Beat boost logging state
         self._beat_boost_logged = False
+
+        # LED effects manager
+        self.effect_manager = LedEffectManager()
 
         logger.info(
             f"FrameRenderer initialized: delay={first_frame_delay_ms}ms, " f"tolerance=±{timing_tolerance_ms}ms"
@@ -524,8 +528,12 @@ class FrameRenderer:
         # Convert from spatial to physical order before sending to sinks
         physical_led_values = self._convert_spatial_to_physical(led_values)
 
+        # Apply LED effects (templates, animations, etc.)
+        current_time = time.time()
+        self.effect_manager.apply_effects(physical_led_values, current_time)
+
         # Apply audio-reactive brightness boost if enabled
-        brightness_multiplier = self._calculate_beat_brightness_boost(time.time())
+        brightness_multiplier = self._calculate_beat_brightness_boost(current_time)
 
         # Structured logging for timeline reconstruction (log every frame's brightness)
         logger.debug(f"BRIGHTNESS_BOOST: wall_time={time.time():.6f}, multiplier={brightness_multiplier:.4f}")
@@ -866,6 +874,8 @@ class FrameRenderer:
             # Legacy compatibility
             "wled_enabled": self.enable_wled,
             "test_sink_enabled": self.enable_test_sink,
+            # LED effects
+            "led_effects": self.effect_manager.get_stats(),
             # Timing distribution
             **timing_error_stats,
         }
@@ -1055,3 +1065,36 @@ class FrameRenderer:
             adjusted_delta += current_pause_duration
 
         return adjusted_delta
+
+    def add_led_effect(self, effect) -> None:
+        """
+        Add a new LED effect to the active effects list.
+
+        Args:
+            effect: LedEffect instance to add
+
+        Example:
+            from .led_effect import TemplateEffect
+            template = np.load('template.npy')
+            effect = TemplateEffect(
+                start_time=time.time(),
+                template=template,
+                fps=30.0,
+                blend_mode='alpha',
+                intensity=0.8
+            )
+            renderer.add_led_effect(effect)
+        """
+        self.effect_manager.add_effect(effect)
+
+    def clear_led_effects(self) -> None:
+        """Remove all active LED effects."""
+        self.effect_manager.clear_effects()
+
+    def get_active_effects_count(self) -> int:
+        """Get the number of active LED effects."""
+        return self.effect_manager.get_active_count()
+
+    def get_led_effects_stats(self) -> Dict[str, Any]:
+        """Get LED effects statistics."""
+        return self.effect_manager.get_stats()
