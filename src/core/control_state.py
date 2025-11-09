@@ -122,7 +122,7 @@ class SystemStatus:
     beat_confidence_threshold: float = 0.5  # 0.0 to 1.0 (minimum confidence to apply boost)
 
     # Optimization settings
-    optimization_iterations: int = 5
+    optimization_iterations: int = 10
 
     # Buffer monitoring for state transitions
     led_buffer_frames: int = 0

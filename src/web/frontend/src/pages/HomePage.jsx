@@ -21,7 +21,7 @@ const HomePage = () => {
   }
   const [ledPositions, setLedPositions] = useState(null)
   const [previewBrightness, setPreviewBrightness] = useState(0.8)
-  const [optimizationIterations, setOptimizationIterations] = useState(5)
+  const [optimizationIterations, setOptimizationIterations] = useState(10)
   const canvasRef = useRef(null)
   const ledStampRRef = useRef(null)
   const ledStampGRef = useRef(null)

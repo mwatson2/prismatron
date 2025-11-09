@@ -119,6 +119,7 @@ class ConsumerProcess:
         enable_position_shifting: bool = False,
         max_shift_distance: int = 3,
         shift_direction: str = "alternating",
+        optimization_iterations: int = 10,
     ):
         """
         Initialize consumer process.
@@ -139,9 +140,11 @@ class ConsumerProcess:
             enable_position_shifting: Enable audio-reactive LED position shifting effects
             max_shift_distance: Maximum LED positions to shift on beats (3-4 typical)
             shift_direction: Position shift direction ("left", "right", "alternating")
+            optimization_iterations: Number of optimization iterations for LED calculations (0-20, 0 = pseudo inverse only)
         """
         self.buffer_name = buffer_name
         self.control_name = control_name
+        self.optimization_iterations = optimization_iterations
 
         # Initialize components
         self._frame_consumer = FrameConsumer(buffer_name)
@@ -149,6 +152,7 @@ class ConsumerProcess:
         self._led_optimizer = LEDOptimizer(
             diffusion_patterns_path=diffusion_patterns_path,
             enable_batch_mode=enable_batch_mode,
+            optimization_iterations=optimization_iterations,
         )
 
         # Audio beat analyzer (always try to initialize for dynamic enable/disable)

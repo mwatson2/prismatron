@@ -380,6 +380,7 @@ class ProcessManager:
                         enable_adaptive_frame_dropping=self.config.get("enable_adaptive_frame_dropping", True),
                         enable_audio_reactive=self.config.get("enable_audio_reactive", False),
                         audio_device=self.config.get("audio_device"),
+                        optimization_iterations=self.config.get("optimization_iterations", 10),
                     )
 
                     # Initialize consumer (WLED connection not required for startup)

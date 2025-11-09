@@ -14,6 +14,7 @@
   "adaptive_dropping": false,
   "audio_reactive": false,
   "audio_device": null,
+  "optimization_iterations": 10,
   "video_conversion": {
     "enabled": true,
     "max_concurrent_jobs": 1,
@@ -52,6 +53,7 @@
     "adaptive_dropping": "Enable adaptive frame dropping for LED buffer management",
     "audio_reactive": "Enable audio reactive effects",
     "audio_device": "Audio device index or name for beat detection (null for default)",
+    "optimization_iterations": "Number of optimization iterations for LED calculations (0-20, 0 = pseudo inverse only)",
     "video_conversion": "Automatic video conversion settings for hardware decoder compatibility"
   }
 }

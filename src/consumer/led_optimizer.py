@@ -82,6 +82,7 @@ class LEDOptimizer:
         use_mixed_tensor: bool = False,
         enable_performance_timing: bool = True,
         enable_batch_mode: bool = False,
+        optimization_iterations: int = 10,
     ):
         """
         Initialize LED optimizer using standardized frame optimizer.
@@ -91,6 +92,7 @@ class LEDOptimizer:
             use_mixed_tensor: Deprecated parameter - always uses mixed tensor format
             enable_performance_timing: If True, enable detailed performance timing
             enable_batch_mode: Whether to enable batch processing mode
+            optimization_iterations: Number of optimization iterations for LED calculations (0-20, 0 = pseudo inverse only)
         """
         if diffusion_patterns_path is None:
             raise ValueError("diffusion_patterns_path must be provided - no default fallback")
@@ -102,7 +104,7 @@ class LEDOptimizer:
         self.timing = PerformanceTiming("LEDOptimizer", enable_gpu_timing=True) if enable_performance_timing else None
 
         # Optimization parameters for gradient descent
-        self.max_iterations = 10
+        self.max_iterations = optimization_iterations
         self.convergence_threshold = 1e-3
         self.step_size_scaling = 0.9
 
