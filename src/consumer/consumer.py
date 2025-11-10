@@ -1962,8 +1962,8 @@ class ConsumerProcess:
             template_path: Path to template file
             interval: Time between effects in seconds
             duration: Effect duration in seconds
-            blend_mode: Blend mode ("add", "alpha", "multiply", "replace")
-            intensity: Effect intensity [0, 1]
+            blend_mode: Blend mode ("add", "alpha", "multiply", "replace", "boost")
+            intensity: Effect intensity [0, 1+]
         """
         if self._frame_renderer:
             self._frame_renderer.enable_template_effect_testing(

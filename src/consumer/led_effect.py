@@ -112,8 +112,8 @@ class TemplateEffectFactory:
             template_path: Path to template file (.npy format)
             start_time: Frame timestamp when effect starts
             duration: Effect duration in seconds
-            blend_mode: How to apply template ("alpha", "add", "multiply", "replace")
-            intensity: Effect intensity/opacity [0, 1]
+            blend_mode: How to apply template ("alpha", "add", "multiply", "replace", "boost")
+            intensity: Effect intensity/opacity [0, 1+]
             loop: Whether to loop the template when it reaches the end
             **kwargs: Additional parameters passed to TemplateEffect
 
@@ -300,8 +300,13 @@ class TemplateEffect(LedEffect):
             start_time: Wall-clock time when effect starts
             template: LED pattern array, shape (frames, led_count)
             duration: Effect duration in seconds (template will span this duration)
-            blend_mode: How to apply template ("alpha", "add", "multiply", "replace")
-            intensity: Effect intensity/opacity [0, 1]
+            blend_mode: How to apply template:
+                - "alpha": led = led * (1 - a) + template * a
+                - "add": led = led + template * a
+                - "multiply": led = led * (template/255 * a)
+                - "replace": led = template * a
+                - "boost": led = led * (1 + a * template/255)
+            intensity: Effect intensity/opacity parameter 'a' [0, 1+]
             loop: Whether to loop the template when it reaches the end
             **kwargs: Additional parameters passed to base class
         """
@@ -397,6 +402,14 @@ class TemplateEffect(LedEffect):
             elif self.blend_mode == "replace":
                 # Direct replacement: led = template * intensity
                 led_values[:] = template_rgb * self.intensity
+
+            elif self.blend_mode == "boost":
+                # Boost blend: led = led * (1 + intensity * template_normalized)
+                # Where template_normalized is template / 255.0
+                # This boosts the LED value proportionally to the template value
+                # intensity parameter 'a' controls the boost strength
+                template_normalized = template_rgb / 255.0
+                led_values[:] = np.clip(led_values * (1.0 + self.intensity * template_normalized), 0, 255)
 
             else:
                 logger.warning(f"Unknown blend mode: {self.blend_mode}, using alpha")
