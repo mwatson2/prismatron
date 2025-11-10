@@ -120,7 +120,8 @@ class FrameRenderer:
 
         # EWMA statistics for recent performance tracking
         self.ewma_alpha = 0.1  # EWMA smoothing factor
-        self.ewma_fps = 0.0
+        self.ewma_frame_interval = 0.0  # EWMA of inter-frame interval (seconds)
+        self.ewma_fps = 0.0  # Derived from ewma_frame_interval
         self.ewma_late_fraction = 0.0
         self.ewma_dropped_fraction = 0.0
         self.last_ewma_update = 0.0
@@ -128,7 +129,8 @@ class FrameRenderer:
         self.large_timestamp_gap_threshold = 2.0  # Log gaps larger than 2 seconds
 
         # Output FPS tracking (frames sent to sinks per second)
-        self.output_fps_ewma = 0.0
+        self.output_fps_interval_ewma = 0.0  # EWMA of inter-frame interval for output FPS
+        self.output_fps_ewma = 0.0  # Derived from output_fps_interval_ewma
         self._last_sink_call_time = 0.0  # Track sink call completion time for FPS calculation
 
         # Timing distribution tracking
@@ -808,13 +810,17 @@ class FrameRenderer:
         # Calculate instantaneous values based on wall-clock render timing
         if self.last_ewma_update > 0:
             wall_clock_interval = current_time - self.last_ewma_update
-            instant_fps = 1.0 / wall_clock_interval if wall_clock_interval > 0 else 0.0
 
-            # Update EWMA FPS based on actual render timing
-            if self.ewma_fps == 0.0:
-                self.ewma_fps = instant_fps
+            # Update EWMA of frame interval, then derive FPS
+            if self.ewma_frame_interval == 0.0:
+                self.ewma_frame_interval = wall_clock_interval
             else:
-                self.ewma_fps = (1 - self.ewma_alpha) * self.ewma_fps + self.ewma_alpha * instant_fps
+                self.ewma_frame_interval = (
+                    1 - self.ewma_alpha
+                ) * self.ewma_frame_interval + self.ewma_alpha * wall_clock_interval
+
+            # Derive FPS from EWMA of interval
+            self.ewma_fps = 1.0 / self.ewma_frame_interval if self.ewma_frame_interval > 0 else 0.0
 
         # Update EWMA fractions
         late_fraction = self.late_frames / max(1, self.frames_rendered)
@@ -869,19 +875,24 @@ class FrameRenderer:
         Update output FPS tracking based on wall-clock time between sink calls.
         This measures the actual rate at which frames are rendered to sinks.
 
+        Uses EWMA of inter-frame intervals, then derives FPS as the reciprocal.
+
         Args:
             current_time: Time when sink calls completed (from time.time())
             alpha: EWMA smoothing factor
         """
-        # Calculate FPS based on the time since the PREVIOUS sink call completed
+        # Calculate interval since the PREVIOUS sink call completed
         if hasattr(self, "_last_sink_call_time") and self._last_sink_call_time > 0:
             time_diff = current_time - self._last_sink_call_time
             if time_diff > 0:
-                current_fps = 1.0 / time_diff
-                if not hasattr(self, "output_fps_ewma"):
-                    self.output_fps_ewma = current_fps
+                # Update EWMA of inter-frame interval
+                if not hasattr(self, "output_fps_interval_ewma") or self.output_fps_interval_ewma == 0.0:
+                    self.output_fps_interval_ewma = time_diff
                 else:
-                    self.output_fps_ewma = (1 - alpha) * self.output_fps_ewma + alpha * current_fps
+                    self.output_fps_interval_ewma = (1 - alpha) * self.output_fps_interval_ewma + alpha * time_diff
+
+                # Derive FPS from EWMA of interval
+                self.output_fps_ewma = 1.0 / self.output_fps_interval_ewma if self.output_fps_interval_ewma > 0 else 0.0
 
         # Store this time as the start of the next interval
         self._last_sink_call_time = current_time
@@ -889,6 +900,8 @@ class FrameRenderer:
         # Initialize if needed
         if not hasattr(self, "output_fps_ewma"):
             self.output_fps_ewma = 0.0
+        if not hasattr(self, "output_fps_interval_ewma"):
+            self.output_fps_interval_ewma = 0.0
 
     def get_output_fps(self) -> float:
         """Get the current output FPS (frames sent to sinks per second)."""
@@ -1003,6 +1016,7 @@ class FrameRenderer:
         self.start_time = time.time()
 
         # Reset EWMA statistics
+        self.ewma_frame_interval = 0.0
         self.ewma_fps = 0.0
         self.ewma_late_fraction = 0.0
         self.ewma_dropped_fraction = 0.0
@@ -1010,6 +1024,7 @@ class FrameRenderer:
         self.last_frame_timestamp = 0.0
 
         # Reset output FPS tracking
+        self.output_fps_interval_ewma = 0.0
         self.output_fps_ewma = 0.0
         self._last_sink_call_time = 0.0
 
