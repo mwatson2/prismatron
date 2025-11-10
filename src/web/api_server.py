@@ -664,6 +664,9 @@ class SystemStatus(BaseModel):
     dropped_frames_percentage: float = Field(0.0, description="Percentage of frames dropped early")
     late_frame_percentage: float = Field(0.0, description="Percentage of late frames")
 
+    # Optimization settings
+    optimization_iterations: int = Field(10, description="Number of LED optimization iterations")
+
 
 # Network Management Models
 class WiFiConnectRequest(BaseModel):
@@ -1238,10 +1241,28 @@ manager = ConnectionManager()
 # Preview data broadcasting task
 async def preview_broadcast_task():
     """Background task to broadcast preview data and system status at 30fps via WebSocket."""
+    # Initialize psutil CPU percent (first call is blocking to establish baseline)
+    psutil.cpu_percent(interval=None)
+
+    # Track broadcast performance
+    broadcast_count = 0
+    last_perf_log = time.time()
+    total_broadcast_time = 0.0
+    total_shm_read_time = 0.0
+    total_status_time = 0.0
+    total_websocket_time = 0.0
+
+    # EWMA smoothing for flickering metrics (alpha=0.3 for responsive but smooth)
+    ewma_cpu_percent = None
+    ewma_cpu_temp = None
+    ewma_gpu_temp = None
+
     while True:
         try:
             if manager.active_connections:
-                current_time = time.time()
+                loop_start_time = time.time()
+                current_time = loop_start_time
+                status_start = loop_start_time
 
                 # Get LED panel connection status and new metrics from ControlState (IPC)
                 led_panel_connected = False
@@ -1296,8 +1317,8 @@ async def preview_broadcast_task():
 
                 # Get real system resource usage
                 try:
-                    # CPU usage (non-blocking, use cached value or 0.1s interval)
-                    cpu_percent = psutil.cpu_percent(interval=0.1)
+                    # CPU usage (non-blocking, returns value since last call)
+                    cpu_percent = psutil.cpu_percent(interval=None)
 
                     # Memory usage
                     mem_info = psutil.virtual_memory()
@@ -1313,17 +1334,41 @@ async def preview_broadcast_task():
                     mem_used_gb = 0.0
                     uptime = current_time
 
-                # Get temperature and usage readings
-                cpu_temp = get_cpu_temperature()
-                gpu_temp = get_gpu_temperature()
-                gpu_usage = get_gpu_usage()
+                # Get temperature and usage readings with EWMA smoothing
+                cpu_temp_raw = get_cpu_temperature()
+                gpu_temp_raw = get_gpu_temperature()
+                gpu_usage = get_gpu_usage()  # Already smoothed by tegrastats (500ms interval)
 
-                # Get rendering_index and renderer state from control state
+                # Apply EWMA smoothing (alpha=0.2 for smooth display with minimal flicker)
+                alpha = 0.2
+                if ewma_cpu_percent is None:
+                    ewma_cpu_percent = cpu_percent
+                else:
+                    ewma_cpu_percent = alpha * cpu_percent + (1 - alpha) * ewma_cpu_percent
+
+                if ewma_cpu_temp is None:
+                    ewma_cpu_temp = cpu_temp_raw
+                else:
+                    ewma_cpu_temp = alpha * cpu_temp_raw + (1 - alpha) * ewma_cpu_temp
+
+                if ewma_gpu_temp is None:
+                    ewma_gpu_temp = gpu_temp_raw
+                else:
+                    ewma_gpu_temp = alpha * gpu_temp_raw + (1 - alpha) * ewma_gpu_temp
+
+                # Use smoothed values
+                cpu_percent = ewma_cpu_percent
+                cpu_temp = ewma_cpu_temp
+                gpu_temp = ewma_gpu_temp
+
+                # Get rendering_index, renderer state, and optimization_iterations from control state
                 rendering_index_for_status = -1
                 renderer_state_value = "STOPPED"  # Default fallback
+                optimization_iterations_value = 10  # Default fallback
                 if control_state:
                     system_status_for_index = control_state.get_status_dict()
                     rendering_index_for_status = system_status_for_index.get("rendering_index", -1)
+                    optimization_iterations_value = system_status_for_index.get("optimization_iterations", 10)
 
                     # Get renderer state
                     status_obj = control_state.get_status()
@@ -1357,10 +1402,16 @@ async def preview_broadcast_task():
                     "renderer_output_fps": renderer_output_fps,
                     "dropped_frames_percentage": dropped_frames_percentage,
                     "late_frame_percentage": late_frame_percentage,
+                    "optimization_iterations": optimization_iterations_value,
                     "timestamp": current_time,
                 }
 
+                # Time: status collection complete
+                status_end = time.time()
+                total_status_time += status_end - status_start
+
                 # Get preview data (same logic as /api/preview endpoint)
+                shm_start = time.time()
                 preview_data = {
                     "type": "preview_data",
                     "timestamp": current_time,
@@ -1486,8 +1537,9 @@ async def preview_broadcast_task():
                 except Exception:
                     pass  # Failed to access preview shared memory
 
-                # Broadcast system status with updated statistics
-                await manager.broadcast(status_data)
+                # Time: shared memory read complete
+                shm_end = time.time()
+                total_shm_read_time += shm_end - shm_start
 
                 # Fallback to test pattern if no real data available
                 if not preview_data["has_frame"]:
@@ -1520,14 +1572,62 @@ async def preview_broadcast_task():
                 if "_frame_data_binary" in preview_data:
                     binary_data = [preview_data.pop("_frame_data_binary")]
 
-                # Broadcast preview data to all connected clients
+                    # Log binary data size once
+                    if not hasattr(preview_broadcast_task, "_logged_sizes"):
+                        led_data_size = len(binary_data[0]) if binary_data else 0
+                        logger.info(
+                            f"📦 LED binary data size: {led_data_size} bytes, {len(manager.active_connections)} WebSocket client(s)"
+                        )
+                        preview_broadcast_task._logged_sizes = True
+
+                # Combine both messages into a single WebSocket broadcast to reduce overhead
+                websocket_start = time.time()
+                await manager.broadcast(status_data)
                 await manager.broadcast(preview_data, binary_data=binary_data)
+
+                # Time: WebSocket broadcasts complete
+                websocket_end = time.time()
+                total_websocket_time += websocket_end - websocket_start
+
+                # Track broadcast performance
+                loop_end_time = websocket_end
+                broadcast_duration = loop_end_time - loop_start_time
+                total_broadcast_time += broadcast_duration
+                broadcast_count += 1
+
+                # Log performance every 5 seconds
+                if loop_end_time - last_perf_log > 5.0:
+                    if broadcast_count > 0:
+                        avg_broadcast_time = total_broadcast_time / broadcast_count * 1000
+                        avg_status_time = total_status_time / broadcast_count * 1000
+                        avg_shm_time = total_shm_read_time / broadcast_count * 1000
+                        avg_websocket_time = total_websocket_time / broadcast_count * 1000
+                        actual_fps = broadcast_count / 5.0
+                        logger.info(
+                            f"📡 WebSocket broadcast performance: {avg_broadcast_time:.2f}ms total "
+                            f"(status: {avg_status_time:.2f}ms, shm: {avg_shm_time:.2f}ms, ws: {avg_websocket_time:.2f}ms), "
+                            f"{broadcast_count} broadcasts in 5s ({actual_fps:.1f} fps, target 30fps)"
+                        )
+                    broadcast_count = 0
+                    last_perf_log = loop_end_time
+                    total_broadcast_time = 0.0
+                    total_status_time = 0.0
+                    total_shm_read_time = 0.0
+                    total_websocket_time = 0.0
 
         except Exception as e:
             logger.warning(f"Preview broadcast error: {e}")
 
-        # Wait for ~33ms (30fps)
-        await asyncio.sleep(0.0333)
+        # Adaptive sleep to maintain 30fps (33.33ms target cycle time)
+        # Only sleep for the remaining time after work is done
+        if manager.active_connections:
+            cycle_time = time.time() - loop_start_time
+            target_cycle_time = 0.0333  # 33.33ms for 30fps
+            sleep_time = max(0.001, target_cycle_time - cycle_time)  # Minimum 1ms sleep
+            await asyncio.sleep(sleep_time)
+        else:
+            # No connections, just sleep the full interval
+            await asyncio.sleep(0.0333)
 
 
 # API Routes
@@ -1731,12 +1831,14 @@ async def get_system_status():
     except Exception:
         pass  # Use default frame_rate if shared memory not available
 
-    # Get rendering_index and renderer state from control state to show currently rendered item
+    # Get rendering_index, renderer state, and optimization_iterations from control state
     rendering_index = -1
     renderer_state_value = "STOPPED"  # Default fallback
+    optimization_iterations = 10  # Default fallback
     if control_state:
         system_status_dict = control_state.get_status_dict()
         rendering_index = system_status_dict.get("rendering_index", -1)
+        optimization_iterations = system_status_dict.get("optimization_iterations", 10)
 
         # Get renderer state
         status_obj = control_state.get_status()
@@ -1768,6 +1870,7 @@ async def get_system_status():
         renderer_output_fps=renderer_output_fps,
         dropped_frames_percentage=dropped_frames_percentage,
         late_frame_percentage=late_frame_percentage,
+        optimization_iterations=optimization_iterations,
     )
 
 

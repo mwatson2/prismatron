@@ -21,7 +21,11 @@ const HomePage = () => {
   }
   const [ledPositions, setLedPositions] = useState(null)
   const [previewBrightness, setPreviewBrightness] = useState(0.8)
-  const [optimizationIterations, setOptimizationIterations] = useState(10)
+  const [optimizationIterations, setOptimizationIterations] = useState(null)
+  const [previewFps, setPreviewFps] = useState(0)
+  const lastRenderTimeRef = useRef(null)
+  const ewmaIntervalRef = useRef(null)
+  const renderStatsRef = useRef({ ewmaRenderDuration: null, renderCount: 0, lastLogTime: null })
   const canvasRef = useRef(null)
   const ledStampRRef = useRef(null)
   const ledStampGRef = useRef(null)
@@ -57,6 +61,14 @@ const HomePage = () => {
     }
   }, [status?.rendering_index])
 
+  // Initialize optimization iterations from system status
+  useEffect(() => {
+    if (status?.optimization_iterations !== undefined && optimizationIterations === null) {
+      setOptimizationIterations(status.optimization_iterations);
+      console.log(`Initialized optimization iterations slider: ${status.optimization_iterations}`);
+    }
+  }, [status?.optimization_iterations, optimizationIterations])
+
   // System status is now received via WebSocket, no need for HTTP polling
 
   // Fetch LED positions and create stamps once on component mount
@@ -81,9 +93,9 @@ const HomePage = () => {
 
   // Create pre-rendered LED stamps for fast rendering with proper Gaussian shape
   const createLEDStamps = () => {
-    // LED stamp dimensions
+    // LED stamp dimensions - restored to original size for better visual quality
     const ledRadius = 9
-    const ledSize = ledRadius * 2.5 * 2 // Extended for Gaussian falloff
+    const ledSize = ledRadius * 2.5 * 2 // Restored to 2.5 for better appearance
     const centerX = ledSize / 2
     const centerY = ledSize / 2
 
@@ -118,11 +130,32 @@ const HomePage = () => {
 
     const renderStartTime = performance.now()
 
+    // Calculate preview FPS using EWMA of inter-render intervals
+    if (lastRenderTimeRef.current !== null) {
+      const interval = renderStartTime - lastRenderTimeRef.current
+
+      // Use EWMA with alpha=0.1 for smooth FPS display
+      if (ewmaIntervalRef.current === null) {
+        ewmaIntervalRef.current = interval
+      } else {
+        ewmaIntervalRef.current = 0.1 * interval + 0.9 * ewmaIntervalRef.current
+      }
+
+      // Calculate FPS as reciprocal of interval (convert ms to seconds)
+      const fps = 1000 / ewmaIntervalRef.current
+      setPreviewFps(fps)
+    }
+    lastRenderTimeRef.current = renderStartTime
+
     const canvas = canvasRef.current
     const ctx = canvas.getContext('2d')
     const stampR = ledStampRRef.current
     const stampG = ledStampGRef.current
     const stampB = ledStampBRef.current
+
+    // Reset composite operation before clearing to ensure proper clear
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.globalAlpha = 1.0
 
     // Clear canvas with black background
     ctx.fillStyle = '#000000'
@@ -137,7 +170,7 @@ const HomePage = () => {
     // Use additive blending to properly composite RGB stamps
     ctx.globalCompositeOperation = 'lighter'
 
-    // Draw each LED using RGB stamps with alpha blending
+    // Draw each LED using RGB stamps without save/restore overhead
     ledPositions.positions.forEach((position, i) => {
       const [x, y] = position
 
@@ -156,8 +189,8 @@ const HomePage = () => {
           const g = frameData[offset + 1]
           const b = frameData[offset + 2]
 
-          // Skip completely dark LEDs to avoid unnecessary computation
-          if (r === 0 && g === 0 && b === 0) {
+          // Skip very dim LEDs to avoid unnecessary computation (threshold: < 3)
+          if (r < 3 && g < 3 && b < 3) {
             return
           }
 
@@ -169,26 +202,20 @@ const HomePage = () => {
           const stampX = canvasX - stampR.width / 2
           const stampY = canvasY - stampR.height / 2
 
-          // Draw each color channel with appropriate alpha
+          // Draw each color channel with appropriate alpha (no save/restore)
           if (alphaR > 0) {
-            ctx.save()
             ctx.globalAlpha = alphaR
             ctx.drawImage(stampR, stampX, stampY)
-            ctx.restore()
           }
 
           if (alphaG > 0) {
-            ctx.save()
             ctx.globalAlpha = alphaG
             ctx.drawImage(stampG, stampX, stampY)
-            ctx.restore()
           }
 
           if (alphaB > 0) {
-            ctx.save()
             ctx.globalAlpha = alphaB
             ctx.drawImage(stampB, stampX, stampY)
-            ctx.restore()
           }
         }
       } else {
@@ -197,12 +224,10 @@ const HomePage = () => {
         const stampY = canvasY - stampR.height / 2
         const dimAlpha = 0.1
 
-        ctx.save()
         ctx.globalAlpha = dimAlpha
         ctx.drawImage(stampR, stampX, stampY)
         ctx.drawImage(stampG, stampX, stampY)
         ctx.drawImage(stampB, stampX, stampY)
-        ctx.restore()
       }
     })
 
@@ -211,11 +236,42 @@ const HomePage = () => {
 
     const renderEndTime = performance.now()
     const renderDuration = renderEndTime - renderStartTime
-    console.debug(`LED render time: ${renderDuration.toFixed(2)}ms (${ledPositions.positions.length} LEDs)`)
+
+    // Track render durations with EWMA for logging
+    const stats = renderStatsRef.current
+    if (stats.ewmaRenderDuration === null) {
+      stats.ewmaRenderDuration = renderDuration
+      stats.renderCount = 0
+      stats.lastLogTime = renderEndTime
+    } else {
+      stats.ewmaRenderDuration = 0.1 * renderDuration + 0.9 * stats.ewmaRenderDuration
+      stats.renderCount++
+    }
+
+    // Log average render time every 5 seconds
+    if (renderEndTime - stats.lastLogTime > 5000) {
+      console.log(`🎨 LED render performance: ${stats.ewmaRenderDuration.toFixed(2)}ms average, ${ledPositions.positions.length} LEDs, ${stats.renderCount} frames in last 5s`)
+      stats.renderCount = 0
+      stats.lastLogTime = renderEndTime
+    }
   }
 
   // Redraw LEDs when data changes
   useEffect(() => {
+    // Track how often this effect runs
+    if (!useEffect.lastLogTime) {
+      useEffect.lastLogTime = performance.now()
+      useEffect.callCount = 0
+    } else {
+      useEffect.callCount++
+      const now = performance.now()
+      if (now - useEffect.lastLogTime > 5000) {
+        console.log(`🔄 useEffect triggered ${useEffect.callCount} times in last 5s (should be ~150 for 30fps)`)
+        useEffect.callCount = 0
+        useEffect.lastLogTime = now
+      }
+    }
+
     drawLEDs()
   }, [ledPositions, previewData, previewBrightness])
 
@@ -503,42 +559,58 @@ const HomePage = () => {
         </div>
       )}
 
-      {/* Preview Brightness Control */}
+      {/* Preview Settings / Status */}
       <div className="retro-container">
-        <h3 className="text-sm font-retro text-neon-purple mb-3">PREVIEW BRIGHTNESS</h3>
-        <div className="space-y-3">
-          <div className="flex items-center gap-4">
-            <span className="text-xs text-metal-silver font-mono w-8">0%</span>
-            <div className="flex-1 relative">
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={previewBrightness}
-                onChange={(e) => setPreviewBrightness(parseFloat(e.target.value))}
-                className="w-full h-2 bg-dark-700 rounded-retro appearance-none cursor-pointer slider"
-                style={{
-                  background: `linear-gradient(to right,
-                    #333 0%,
-                    #333 ${previewBrightness * 100}%,
-                    #1a1a1a ${previewBrightness * 100}%,
-                    #1a1a1a 100%)`
-                }}
-              />
-              <div
-                className="absolute top-0 h-2 bg-gradient-to-r from-neon-purple to-neon-cyan rounded-retro pointer-events-none"
-                style={{ width: `${previewBrightness * 100}%` }}
-              />
+        <h3 className="text-sm font-retro text-neon-purple mb-3">PREVIEW SETTINGS / STATUS</h3>
+        <div className="space-y-4">
+          {/* Brightness Control */}
+          <div>
+            <h4 className="text-xs font-retro text-metal-silver mb-2">BRIGHTNESS</h4>
+            <div className="space-y-3">
+              <div className="flex items-center gap-4">
+                <span className="text-xs text-metal-silver font-mono w-8">0%</span>
+                <div className="flex-1 relative">
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={previewBrightness}
+                    onChange={(e) => setPreviewBrightness(parseFloat(e.target.value))}
+                    className="w-full h-2 bg-dark-700 rounded-retro appearance-none cursor-pointer slider"
+                    style={{
+                      background: `linear-gradient(to right,
+                        #333 0%,
+                        #333 ${previewBrightness * 100}%,
+                        #1a1a1a ${previewBrightness * 100}%,
+                        #1a1a1a 100%)`
+                    }}
+                  />
+                  <div
+                    className="absolute top-0 h-2 bg-gradient-to-r from-neon-purple to-neon-cyan rounded-retro pointer-events-none"
+                    style={{ width: `${previewBrightness * 100}%` }}
+                  />
+                </div>
+                <span className="text-xs text-metal-silver font-mono w-12">100%</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-metal-silver font-mono">
+                  Reduces LED saturation for clearer preview
+                </span>
+                <span className="text-sm text-neon-cyan font-mono">
+                  {Math.round(previewBrightness * 100)}%
+                </span>
+              </div>
             </div>
-            <span className="text-xs text-metal-silver font-mono w-12">100%</span>
           </div>
-          <div className="flex justify-between items-center">
+
+          {/* Preview Frame Rate */}
+          <div className="flex justify-between items-center pt-2 border-t border-dark-700">
             <span className="text-xs text-metal-silver font-mono">
-              Reduces LED saturation for clearer preview
+              Preview Frame Rate
             </span>
-            <span className="text-sm text-neon-cyan font-mono">
-              {Math.round(previewBrightness * 100)}%
+            <span className="text-sm text-neon-purple font-mono">
+              {previewFps > 0 ? `${previewFps.toFixed(1)} FPS` : 'N/A'}
             </span>
           </div>
         </div>

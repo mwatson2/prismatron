@@ -332,7 +332,20 @@ export const WebSocketProvider = ({ children }) => {
         break
 
       case 'preview_data':
-        // Removed spammy playback position log
+        // Track how often preview data arrives
+        if (!handleMessage.previewLastLogTime) {
+          handleMessage.previewLastLogTime = performance.now()
+          handleMessage.previewCount = 0
+        } else {
+          handleMessage.previewCount++
+          const now = performance.now()
+          if (now - handleMessage.previewLastLogTime > 5000) {
+            console.log(`📡 WebSocket preview_data received ${handleMessage.previewCount} times in last 5s (should be ~150 for 30fps)`)
+            handleMessage.previewCount = 0
+            handleMessage.previewLastLogTime = now
+          }
+        }
+
         setPreviewData(data)
         break
 
