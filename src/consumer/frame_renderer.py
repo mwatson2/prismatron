@@ -164,7 +164,7 @@ class FrameRenderer:
         self._test_template_path = "templates/ring_800x480_leds.npy"
         self._test_template_interval = 2.0  # Create effect every 2 seconds
         self._test_template_duration = 1.0  # Effect duration in seconds
-        self._test_template_blend_mode = "add"  # Blend mode for testing
+        self._test_template_blend_mode = "boost"  # Blend mode for testing
         self._test_template_intensity = 1.0  # Effect intensity
         self._last_template_effect_time = 0.0  # Last time effect was created
 
