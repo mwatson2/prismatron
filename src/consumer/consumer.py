@@ -27,6 +27,7 @@ from .audio_beat_analyzer import AudioBeatAnalyzer, BeatEvent
 from .audio_capture import AudioConfig
 from .frame_renderer import FrameRenderer
 from .led_buffer import LEDBuffer
+from .led_effect import TemplateEffectFactory
 from .led_optimizer import LEDOptimizer
 from .led_transition_processor import LEDTransitionProcessor
 from .preview_sink import PreviewSink, PreviewSinkConfig
@@ -460,6 +461,16 @@ class ConsumerProcess:
             # Now that LED optimizer is loaded, get the actual LED count
             actual_led_count = self._led_optimizer._actual_led_count
             logger.info(f"Using LED count from pattern: {actual_led_count}")
+
+            # Pre-load template effects for zero-latency effect creation
+            template_files = [
+                "templates/ring_800x480_leds.npy",
+                "templates/test_ring.npy",
+            ]
+            try:
+                TemplateEffectFactory.preload_templates(template_files)
+            except Exception as e:
+                logger.warning(f"Failed to preload some templates: {e}")
 
             # Create LED buffer with actual LED count - increased to 20 for video startup latency
             self._led_buffer = LEDBuffer(led_count=actual_led_count, buffer_size=20)
@@ -1933,6 +1944,38 @@ class ConsumerProcess:
             Dictionary with process statistics
         """
         return self.get_stats()
+
+    def enable_template_effect_testing(
+        self,
+        enabled: bool = True,
+        template_path: str = "templates/ring_800x480_leds.npy",
+        interval: float = 2.0,
+        duration: float = 1.0,
+        blend_mode: str = "add",
+        intensity: float = 1.0,
+    ) -> None:
+        """
+        Enable or disable periodic template effect testing.
+
+        Args:
+            enabled: Whether to enable template effect testing
+            template_path: Path to template file
+            interval: Time between effects in seconds
+            duration: Effect duration in seconds
+            blend_mode: Blend mode ("add", "alpha", "multiply", "replace")
+            intensity: Effect intensity [0, 1]
+        """
+        if self._frame_renderer:
+            self._frame_renderer.enable_template_effect_testing(
+                enabled=enabled,
+                template_path=template_path,
+                interval=interval,
+                duration=duration,
+                blend_mode=blend_mode,
+                intensity=intensity,
+            )
+        else:
+            logger.warning("Frame renderer not initialized, cannot enable template effect testing")
 
     def set_test_renderer_enabled(self, enabled: bool) -> bool:
         """

@@ -159,6 +159,15 @@ class FrameRenderer:
         # LED effects manager
         self.effect_manager = LedEffectManager()
 
+        # Template effect testing configuration - ENABLED BY DEFAULT
+        self._test_template_effects = True  # Enable/disable template effect testing
+        self._test_template_path = "templates/ring_800x480_leds.npy"
+        self._test_template_interval = 2.0  # Create effect every 2 seconds
+        self._test_template_duration = 1.0  # Effect duration in seconds
+        self._test_template_blend_mode = "add"  # Blend mode for testing
+        self._test_template_intensity = 1.0  # Effect intensity
+        self._last_template_effect_time = 0.0  # Last time effect was created
+
         logger.info(
             f"FrameRenderer initialized: delay={first_frame_delay_ms}ms, " f"tolerance=±{timing_tolerance_ms}ms"
         )
@@ -533,6 +542,78 @@ class FrameRenderer:
             logger.error(f"Error rendering frame: {e}")
             return False
 
+    def _create_periodic_template_effect(self, frame_timeline_time: float) -> None:
+        """
+        Create template effects periodically for testing (if enabled).
+
+        Args:
+            frame_timeline_time: Current time on the frame timeline
+        """
+        if not self._test_template_effects:
+            return
+
+        # Check if it's time to create a new effect
+        time_since_last_effect = frame_timeline_time - self._last_template_effect_time
+
+        if time_since_last_effect >= self._test_template_interval:
+            # Import here to avoid circular dependency
+            from .led_effect import TemplateEffectFactory
+
+            try:
+                # Create new template effect using cached template
+                effect = TemplateEffectFactory.create_effect(
+                    template_path=self._test_template_path,
+                    start_time=frame_timeline_time,
+                    duration=self._test_template_duration,
+                    blend_mode=self._test_template_blend_mode,
+                    intensity=self._test_template_intensity,
+                    loop=False,
+                )
+                self.effect_manager.add_effect(effect)
+                self._last_template_effect_time = frame_timeline_time
+
+                logger.info(
+                    f"Created periodic template effect: {self._test_template_path}, "
+                    f"duration={self._test_template_duration}s, blend={self._test_template_blend_mode}, "
+                    f"intensity={self._test_template_intensity}"
+                )
+            except Exception as e:
+                logger.error(f"Failed to create periodic template effect: {e}")
+
+    def enable_template_effect_testing(
+        self,
+        enabled: bool = True,
+        template_path: str = "templates/ring_800x480_leds.npy",
+        interval: float = 2.0,
+        duration: float = 1.0,
+        blend_mode: str = "add",
+        intensity: float = 1.0,
+    ) -> None:
+        """
+        Enable or disable periodic template effect testing.
+
+        Args:
+            enabled: Whether to enable template effect testing
+            template_path: Path to template file
+            interval: Time between effects in seconds
+            duration: Effect duration in seconds
+            blend_mode: Blend mode ("add", "alpha", "multiply", "replace")
+            intensity: Effect intensity [0, 1]
+        """
+        self._test_template_effects = enabled
+        self._test_template_path = template_path
+        self._test_template_interval = interval
+        self._test_template_duration = duration
+        self._test_template_blend_mode = blend_mode
+        self._test_template_intensity = intensity
+        self._last_template_effect_time = 0.0
+
+        logger.info(
+            f"Template effect testing {'enabled' if enabled else 'disabled'}: "
+            f"path={template_path}, interval={interval}s, duration={duration}s, "
+            f"blend={blend_mode}, intensity={intensity}"
+        )
+
     def _send_to_outputs(self, led_values: np.ndarray, metadata: Optional[Dict[str, Any]] = None) -> None:
         """
         Send LED values to all enabled output sinks.
@@ -541,16 +622,20 @@ class FrameRenderer:
             led_values: LED RGB values in spatial order, shape (led_count, 3)
             metadata: Optional frame metadata
         """
-        # Convert from spatial to physical order before sending to sinks
-        physical_led_values = self._convert_spatial_to_physical(led_values)
-
-        # Apply LED effects (templates, animations, etc.)
-        # Convert current wall-clock time to frame timeline position
-        # This accounts for late frames - we use the current position on frame timeline,
-        # not the frame's target timestamp
+        # Apply LED effects (templates, animations, etc.) in SPATIAL order
+        # Templates are created using spatial LED positions, so apply them before
+        # converting to physical order
         current_wall_clock = time.time()
         frame_timeline_time = current_wall_clock - self.get_adjusted_wallclock_delta()
-        self.effect_manager.apply_effects(physical_led_values, frame_timeline_time)
+
+        # Create periodic template effects for testing (if enabled)
+        self._create_periodic_template_effect(frame_timeline_time)
+
+        # Apply all active effects to spatial LED values
+        self.effect_manager.apply_effects(led_values, frame_timeline_time)
+
+        # Convert from spatial to physical order after applying effects
+        physical_led_values = self._convert_spatial_to_physical(led_values)
 
         # Apply audio-reactive brightness boost if enabled (legacy inline implementation)
         # Note: Uses wall-clock time, not frame timestamp

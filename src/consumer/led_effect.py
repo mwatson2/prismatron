@@ -15,6 +15,145 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+class TemplateEffectFactory:
+    """
+    Factory for creating TemplateEffect instances with cached template data.
+
+    Loads template files once and reuses them across multiple effect instances,
+    avoiding repeated file I/O operations (e.g., on every beat).
+    """
+
+    _template_cache: Dict[str, np.ndarray] = {}
+
+    @classmethod
+    def preload_templates(cls, template_paths: list[str]) -> None:
+        """
+        Pre-load templates into cache during initialization.
+
+        This should be called during system startup, before any effects are triggered,
+        to ensure zero file I/O during render time.
+
+        Args:
+            template_paths: List of template file paths to pre-load
+        """
+        logger.info(f"Pre-loading {len(template_paths)} templates...")
+
+        for path in template_paths:
+            try:
+                cls.load_template(path)
+            except Exception as e:
+                logger.error(f"Failed to pre-load template {path}: {e}")
+                # Continue loading other templates even if one fails
+
+        cache_info = cls.get_cache_info()
+        logger.info(
+            f"Pre-loaded {cache_info['cached_templates']} templates, "
+            f"total memory: {cache_info['total_memory_bytes'] / 1024 / 1024:.2f} MB"
+        )
+
+    @classmethod
+    def load_template(cls, template_path: str) -> np.ndarray:
+        """
+        Load template from file, using cache if available.
+
+        Args:
+            template_path: Path to template file (.npy format)
+
+        Returns:
+            Template array of shape (frames, led_count)
+
+        Raises:
+            FileNotFoundError: If template file doesn't exist
+            ValueError: If template format is invalid
+        """
+        # Check cache first
+        if template_path in cls._template_cache:
+            logger.debug(f"Using cached template: {template_path}")
+            return cls._template_cache[template_path]
+
+        # Load template from file
+        logger.info(f"Loading template from file: {template_path}")
+
+        try:
+            template = np.load(template_path)
+
+            # Validate template shape
+            if template.ndim != 2:
+                raise ValueError(f"Template must be 2D (frames, leds), got shape {template.shape}")
+
+            # Cache the template
+            cls._template_cache[template_path] = template
+            logger.info(f"Cached template: {template_path}, shape={template.shape}")
+
+            return template
+
+        except FileNotFoundError:
+            logger.error(f"Template file not found: {template_path}")
+            raise
+        except Exception as e:
+            logger.error(f"Error loading template {template_path}: {e}")
+            raise
+
+    @classmethod
+    def create_effect(
+        cls,
+        template_path: str,
+        start_time: float,
+        duration: float,
+        blend_mode: str = "alpha",
+        intensity: float = 1.0,
+        loop: bool = False,
+        **kwargs,
+    ) -> "TemplateEffect":
+        """
+        Create a TemplateEffect instance using cached template data.
+
+        Args:
+            template_path: Path to template file (.npy format)
+            start_time: Frame timestamp when effect starts
+            duration: Effect duration in seconds
+            blend_mode: How to apply template ("alpha", "add", "multiply", "replace")
+            intensity: Effect intensity/opacity [0, 1]
+            loop: Whether to loop the template when it reaches the end
+            **kwargs: Additional parameters passed to TemplateEffect
+
+        Returns:
+            New TemplateEffect instance with cached template
+        """
+        template = cls.load_template(template_path)
+
+        return TemplateEffect(
+            start_time=start_time,
+            template=template,
+            duration=duration,
+            blend_mode=blend_mode,
+            intensity=intensity,
+            loop=loop,
+            **kwargs,
+        )
+
+    @classmethod
+    def clear_cache(cls) -> None:
+        """Clear all cached templates to free memory."""
+        count = len(cls._template_cache)
+        cls._template_cache.clear()
+        logger.info(f"Cleared {count} cached templates")
+
+    @classmethod
+    def get_cache_info(cls) -> Dict[str, Any]:
+        """
+        Get information about cached templates.
+
+        Returns:
+            Dictionary with cache statistics
+        """
+        return {
+            "cached_templates": len(cls._template_cache),
+            "template_paths": list(cls._template_cache.keys()),
+            "total_memory_bytes": sum(template.nbytes for template in cls._template_cache.values()),
+        }
+
+
 class LedEffect(ABC):
     """
     Base class for LED effects.
