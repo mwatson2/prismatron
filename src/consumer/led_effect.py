@@ -103,6 +103,7 @@ class TemplateEffectFactory:
         blend_mode: str = "alpha",
         intensity: float = 1.0,
         loop: bool = False,
+        add_multiplier: float = 0.4,
         **kwargs,
     ) -> "TemplateEffect":
         """
@@ -112,9 +113,10 @@ class TemplateEffectFactory:
             template_path: Path to template file (.npy format)
             start_time: Frame timestamp when effect starts
             duration: Effect duration in seconds
-            blend_mode: How to apply template ("alpha", "add", "multiply", "replace", "boost")
+            blend_mode: How to apply template ("alpha", "add", "multiply", "replace", "boost", "addboost")
             intensity: Effect intensity/opacity [0, 1+]
             loop: Whether to loop the template when it reaches the end
+            add_multiplier: Multiplier for additive component in 'addboost' mode [0, 1+]
             **kwargs: Additional parameters passed to TemplateEffect
 
         Returns:
@@ -129,6 +131,7 @@ class TemplateEffectFactory:
             blend_mode=blend_mode,
             intensity=intensity,
             loop=loop,
+            add_multiplier=add_multiplier,
             **kwargs,
         )
 
@@ -291,6 +294,7 @@ class TemplateEffect(LedEffect):
         blend_mode: str = "alpha",
         intensity: float = 1.0,
         loop: bool = False,
+        add_multiplier: float = 0.4,
         **kwargs,
     ):
         """
@@ -306,8 +310,10 @@ class TemplateEffect(LedEffect):
                 - "multiply": led = led * (template/255 * a)
                 - "replace": led = template * a
                 - "boost": led = led * (1 + a * template/255)
+                - "addboost": led = led * (1 + a * template/255) + template * add_multiplier
             intensity: Effect intensity/opacity parameter 'a' [0, 1+]
             loop: Whether to loop the template when it reaches the end
+            add_multiplier: Multiplier for additive component in 'addboost' mode [0, 1+]
             **kwargs: Additional parameters passed to base class
         """
         # Set duration (None if looping infinitely)
@@ -320,6 +326,7 @@ class TemplateEffect(LedEffect):
         self.blend_mode = blend_mode
         self.intensity = intensity
         self.loop = loop
+        self.add_multiplier = add_multiplier
         self.num_frames = template.shape[0]
 
         # Validate template shape
@@ -410,6 +417,14 @@ class TemplateEffect(LedEffect):
                 # intensity parameter 'a' controls the boost strength
                 template_normalized = template_rgb / 255.0
                 led_values[:] = np.clip(led_values * (1.0 + self.intensity * template_normalized), 0, 255)
+
+            elif self.blend_mode == "addboost":
+                # Combined boost and add blend:
+                # First apply boost: led = led * (1 + intensity * template_normalized)
+                # Then apply add: led = led + template * add_multiplier
+                template_normalized = template_rgb / 255.0
+                boosted = led_values * (1.0 + self.intensity * template_normalized)
+                led_values[:] = np.clip(boosted + template_rgb * self.add_multiplier, 0, 255)
 
             else:
                 logger.warning(f"Unknown blend mode: {self.blend_mode}, using alpha")
