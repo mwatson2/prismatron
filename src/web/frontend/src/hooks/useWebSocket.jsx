@@ -336,6 +336,7 @@ export const WebSocketProvider = ({ children }) => {
         if (!handleMessage.previewLastLogTime) {
           handleMessage.previewLastLogTime = performance.now()
           handleMessage.previewCount = 0
+          handleMessage.lastFrameCounter = -1
         } else {
           handleMessage.previewCount++
           const now = performance.now()
@@ -346,7 +347,12 @@ export const WebSocketProvider = ({ children }) => {
           }
         }
 
-        setPreviewData(data)
+        // Only update previewData if frame_counter has changed to prevent unnecessary re-renders
+        // This prevents React useEffect from triggering on every WebSocket message
+        if (data.frame_counter !== handleMessage.lastFrameCounter) {
+          handleMessage.lastFrameCounter = data.frame_counter
+          setPreviewData(data)
+        }
         break
 
       case 'conversion_update':

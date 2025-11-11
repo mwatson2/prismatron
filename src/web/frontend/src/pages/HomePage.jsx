@@ -124,6 +124,17 @@ const HomePage = () => {
     ledStampBRef.current = createColorStamp(0, 0, 255)  // Pure blue
   }
 
+  // Convert linear light value to sRGB for display
+  // LED values from backend are in linear space, but canvas expects sRGB
+  const linearToSrgb = (linear) => {
+    // Piecewise sRGB transfer function
+    // For values <= 0.0031308: sRGB = linear * 12.92
+    // For values > 0.0031308: sRGB = 1.055 * linear^(1/2.4) - 0.055
+    return linear <= 0.0031308
+      ? linear * 12.92
+      : 1.055 * Math.pow(linear, 1.0 / 2.4) - 0.055
+  }
+
   // Fast canvas-based LED rendering using pre-rendered RGB stamps
   const drawLEDs = () => {
     if (!canvasRef.current || !ledPositions || !ledStampRRef.current || !ledStampGRef.current || !ledStampBRef.current) return
@@ -194,10 +205,20 @@ const HomePage = () => {
             return
           }
 
-          // Apply brightness factor and normalize to [0,1] for alpha
-          const alphaR = (r * previewBrightness) / 255
-          const alphaG = (g * previewBrightness) / 255
-          const alphaB = (b * previewBrightness) / 255
+          // Convert from linear light space to sRGB for display
+          // Backend sends linear values (0-255), we need sRGB for correct display
+          const rLinear = r / 255.0
+          const gLinear = g / 255.0
+          const bLinear = b / 255.0
+
+          const rSrgb = linearToSrgb(rLinear)
+          const gSrgb = linearToSrgb(gLinear)
+          const bSrgb = linearToSrgb(bLinear)
+
+          // Apply brightness factor for preview (values now in [0,1] sRGB space)
+          const alphaR = rSrgb * previewBrightness
+          const alphaG = gSrgb * previewBrightness
+          const alphaB = bSrgb * previewBrightness
 
           const stampX = canvasX - stampR.width / 2
           const stampY = canvasY - stampR.height / 2
