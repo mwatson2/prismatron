@@ -92,6 +92,7 @@ class AudioState:
     is_active: bool = False
     current_bpm: float = 120.0
     last_beat_time: float = 0.0
+    last_beat_wallclock_time: float = 0.0  # Wall-clock time of last beat for effects
     last_downbeat_time: float = 0.0
     beat_count: int = 0
     downbeat_count: int = 0
@@ -525,6 +526,7 @@ class AudioBeatAnalyzer:
         # Update beat count
         self.audio_state.beat_count += 1
         self.audio_state.last_beat_time = beat_timestamp
+        self.audio_state.last_beat_wallclock_time = system_time  # Store wall-clock time for effects
 
         # For Aubio, we simplified downbeat detection (downbeat_prob < 0.5 = regular beat)
         is_downbeat = downbeat_prob > 0.5

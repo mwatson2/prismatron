@@ -37,6 +37,10 @@ from .wled_sink import WLEDSink, WLEDSinkConfig
 
 logger = logging.getLogger(__name__)
 
+# Audio capture configuration - switch between test file and live microphone
+USE_AUDIO_TEST_FILE = True  # Set to False for live microphone capture
+AUDIO_TEST_FILE_PATH = "audio_capture_test.wav"  # Path to test audio file
+
 
 @dataclass
 class ConsumerStats:
@@ -163,24 +167,35 @@ class ConsumerProcess:
         self._audio_analysis_running = False
         self._audio_device = audio_device
 
-        # Create AudioConfig for microphone capture
-        audio_config = AudioConfig(
-            sample_rate=44100,
-            channels=1,
-            chunk_size=1024,
-            device_name="USB Audio",  # Will search for USB Audio device
-            file_path=None,  # Live microphone mode
-        )
+        # Create AudioConfig - test file or live microphone based on constant
+        if USE_AUDIO_TEST_FILE:
+            audio_config = AudioConfig(
+                sample_rate=44100,
+                channels=1,
+                chunk_size=1024,
+                file_path=AUDIO_TEST_FILE_PATH,  # Test file mode
+                playback_speed=1.0,  # Real-time playback
+            )
+        else:
+            audio_config = AudioConfig(
+                sample_rate=44100,
+                channels=1,
+                chunk_size=1024,
+                device_name="USB Audio",  # Will search for USB Audio device
+                file_path=None,  # Live microphone mode
+            )
 
         # Always try to initialize audio analyzer for potential runtime enabling
         try:
             self._audio_beat_analyzer = AudioBeatAnalyzer(
                 beat_callback=self._on_beat_detected, device=audio_device, audio_config=audio_config
             )
-            logger.info(
-                f"Audio beat analyzer initialized (LIVE MODE): device={audio_config.device_name}, "
-                f"sample_rate={audio_config.sample_rate}Hz"
+            mode_str = (
+                f"FILE MODE: {AUDIO_TEST_FILE_PATH}"
+                if USE_AUDIO_TEST_FILE
+                else f"LIVE MODE: device={audio_config.device_name}"
             )
+            logger.info(f"Audio beat analyzer initialized ({mode_str}), " f"sample_rate={audio_config.sample_rate}Hz")
         except Exception as e:
             logger.warning(f"Audio beat analyzer unavailable: {e}")
             self._audio_beat_analyzer = None

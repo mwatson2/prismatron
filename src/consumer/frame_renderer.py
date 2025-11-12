@@ -111,12 +111,14 @@ class FrameRenderer:
         self.start_time = time.time()
 
         # Beat effect statistics for periodic reporting
-        self.beat_boost_count = 0
-        self.beat_boost_sum = 0.0
         self.beat_shift_count = 0
         self.beat_shift_sum = 0.0
         self.last_beat_stats_log = time.time()
         self.beat_stats_log_interval = 30.0  # Log every 30 seconds
+
+        # Beat detection state for creating brightness boost effects
+        self._last_beat_time_processed = -1.0  # Track last beat we created an effect for
+        self._beat_boost_logged = False
 
         # EWMA statistics for recent performance tracking
         self.ewma_alpha = 0.1  # EWMA smoothing factor
@@ -155,9 +157,6 @@ class FrameRenderer:
         # Track if we need to adjust timeline for a new playlist item
         self._pending_timeline_adjustment = False
 
-        # Beat boost logging state
-        self._beat_boost_logged = False
-
         # LED effects manager
         self.effect_manager = LedEffectManager()
 
@@ -174,8 +173,115 @@ class FrameRenderer:
             f"FrameRenderer initialized: delay={first_frame_delay_ms}ms, " f"tolerance=±{timing_tolerance_ms}ms"
         )
 
+    def _check_and_create_beat_brightness_effect(self, frame_timeline_time: float) -> None:
+        """
+        Check for new beats and create BeatBrightnessEffect instances.
+
+        This method replaces the legacy inline brightness boost calculation.
+        It monitors beat state and creates effect instances when new beats are detected.
+
+        Args:
+            frame_timeline_time: Current time on the frame timeline (from get_adjusted_wallclock_delta)
+        """
+        # Check if audio reactive effects are enabled
+        if not self._control_state or not self._audio_beat_analyzer:
+            return
+
+        try:
+            # Get current control state to check if audio reactive is enabled
+            status = self._control_state.get_status()
+            if not status:
+                return
+
+            if not status.audio_reactive_enabled:
+                return
+
+            if not status.audio_enabled:
+                return
+
+            # Check if beat brightness boost is specifically enabled
+            if not status.beat_brightness_enabled:
+                return
+
+            # Get configurable parameters with fallbacks
+            boost_intensity = getattr(status, "beat_brightness_intensity", 4.0)
+            boost_duration_fraction = getattr(status, "beat_brightness_duration", 0.4)
+            confidence_threshold = getattr(status, "beat_confidence_threshold", 0.5)
+
+            # Clamp parameters to safe ranges
+            boost_intensity = max(0.0, min(5.0, boost_intensity))
+            boost_duration_fraction = max(0.1, min(1.0, boost_duration_fraction))
+            confidence_threshold = max(0.0, min(1.0, confidence_threshold))
+
+            # Log beat boost configuration once
+            if not self._beat_boost_logged:
+                logger.info(
+                    f"🎵 Beat brightness boost enabled: intensity={boost_intensity:.2f}, "
+                    f"duration={boost_duration_fraction:.2f}, confidence_threshold={confidence_threshold:.2f}"
+                )
+                self._beat_boost_logged = True
+
+            # Get audio beat state
+            beat_state = self._audio_beat_analyzer.get_current_state()
+            if not beat_state or not beat_state.is_active:
+                return
+
+            if beat_state.current_bpm <= 0:
+                return
+
+            # Get the most recent beat time from beat_state (wall-clock time)
+            last_beat_wallclock_time = getattr(beat_state, "last_beat_wallclock_time", 0.0)
+
+            # Check if this is a new beat we haven't processed yet
+            if last_beat_wallclock_time <= self._last_beat_time_processed:
+                return  # Already created an effect for this beat
+
+            # Get beat intensity and confidence
+            beat_intensity_value = getattr(beat_state, "beat_intensity", 1.0)
+            beat_confidence = getattr(beat_state, "confidence", 1.0)
+
+            # Apply confidence threshold - ignore weak beats
+            if beat_confidence < confidence_threshold:
+                logger.debug(f"Beat ignored: confidence {beat_confidence:.2f} < threshold {confidence_threshold:.2f}")
+                self._last_beat_time_processed = last_beat_wallclock_time
+                return
+
+            # Convert beat wall-clock time to frame timeline
+            # Wall-clock to frame timeline: wallclock_time - get_adjusted_wallclock_delta()
+            beat_frame_timeline_time = last_beat_wallclock_time - self.get_adjusted_wallclock_delta()
+
+            # Import here to avoid circular dependency
+            from .led_effect import BeatBrightnessEffect
+
+            # Create new beat brightness effect
+            effect = BeatBrightnessEffect(
+                start_time=beat_frame_timeline_time,
+                bpm=beat_state.current_bpm,
+                beat_intensity=beat_intensity_value,
+                boost_intensity=boost_intensity,
+                duration_fraction=boost_duration_fraction,
+            )
+
+            self.effect_manager.add_effect(effect)
+            self._last_beat_time_processed = last_beat_wallclock_time
+
+            logger.info(
+                f"🎵 Created BeatBrightnessEffect: BPM={beat_state.current_bpm:.1f}, "
+                f"intensity={beat_intensity_value:.2f}, confidence={beat_confidence:.2f}, "
+                f"frame_time={beat_frame_timeline_time:.3f}"
+            )
+
+        except Exception as e:
+            logger.warning(f"Error checking for beat brightness effects: {e}")
+
     def _calculate_beat_brightness_boost(self, current_time: float) -> float:
         """
+        DEPRECATED: Legacy inline brightness boost implementation.
+
+        This method is no longer used. Beat brightness boost is now handled by
+        the BeatBrightnessEffect class through the LED effects framework.
+        See _check_and_create_beat_brightness_effect() for the new implementation.
+
         Calculate brightness boost based on beat timing for audio-reactive effects.
 
         NOTE: This is the legacy inline implementation. Consider migrating to the new
@@ -630,35 +736,17 @@ class FrameRenderer:
         current_wall_clock = time.time()
         frame_timeline_time = current_wall_clock - self.get_adjusted_wallclock_delta()
 
+        # Check for new beats and create brightness boost effects
+        self._check_and_create_beat_brightness_effect(frame_timeline_time)
+
         # Create periodic template effects for testing (if enabled)
         self._create_periodic_template_effect(frame_timeline_time)
 
-        # Apply all active effects to spatial LED values
+        # Apply all active effects to spatial LED values (including beat brightness boost)
         self.effect_manager.apply_effects(led_values, frame_timeline_time)
 
         # Convert from spatial to physical order after applying effects
         physical_led_values = self._convert_spatial_to_physical(led_values)
-
-        # Apply audio-reactive brightness boost if enabled (legacy inline implementation)
-        # Note: Uses wall-clock time, not frame timestamp
-        brightness_multiplier = self._calculate_beat_brightness_boost(time.time())
-
-        # Structured logging for timeline reconstruction (log every frame's brightness)
-        logger.debug(f"BRIGHTNESS_BOOST: wall_time={time.time():.6f}, multiplier={brightness_multiplier:.4f}")
-
-        if brightness_multiplier > 1.01:  # Only apply if boost is meaningful (> 1%)
-            # Apply brightness boost to all LED values
-            boosted_values = physical_led_values.astype(np.float32) * brightness_multiplier
-            # Ensure values stay within valid range [0, 255]
-            physical_led_values = np.clip(boosted_values, 0, 255).astype(np.uint8)
-
-            # Track boost statistics
-            self.beat_boost_count += 1
-            self.beat_boost_sum += brightness_multiplier
-
-            # Log brightness boost application
-            if np.random.random() < 0.2:  # Log 20% of boost applications
-                logger.info(f"🎵 Beat brightness boost applied: {brightness_multiplier:.3f}x")
 
         # Calculate position offset for audio-reactive position shifting
         position_offset = self._position_shifter.calculate_position_offset(time.time(), physical_led_values.shape[0])
@@ -843,29 +931,23 @@ class FrameRenderer:
     def _log_beat_statistics_periodic(self) -> None:
         """
         Log beat effect statistics periodically (every 30 seconds).
-        Provides visibility into beat boost and position shift application rates.
+        Provides visibility into position shift application rates.
         """
         current_time = time.time()
         time_since_last_log = current_time - self.last_beat_stats_log
 
         if time_since_last_log >= self.beat_stats_log_interval:
             # Calculate statistics
-            boost_percentage = (self.beat_boost_count / max(1, self.frames_rendered)) * 100
-            avg_boost = self.beat_boost_sum / max(1, self.beat_boost_count)
             shift_percentage = (self.beat_shift_count / max(1, self.frames_rendered)) * 100
-            avg_shift = self.beat_shift_sum / max(1, self.beat_shift_count)
+            avg_shift = self.beat_shift_sum / max(1, self.beat_shift_count) if self.beat_shift_count > 0 else 0.0
 
             logger.info(
                 f"🎵 Beat effects summary ({self.beat_stats_log_interval:.0f}s): "
-                f"{self.beat_boost_count}/{self.frames_rendered} frames boosted ({boost_percentage:.1f}%), "
-                f"avg_boost={avg_boost:.3f}x, "
                 f"{self.beat_shift_count} shifts ({shift_percentage:.1f}%), "
                 f"avg_shift={avg_shift:.1f} LEDs"
             )
 
             # Reset counters for next period
-            self.beat_boost_count = 0
-            self.beat_boost_sum = 0.0
             self.beat_shift_count = 0
             self.beat_shift_sum = 0.0
             self.last_beat_stats_log = current_time
