@@ -141,6 +141,7 @@ class LEDOptimizer:
         self._led_positions: Optional[np.ndarray] = None
         self._matrix_loaded = False
         self._actual_led_count = 0  # Will be set from pattern file
+        self._pattern_color_space = "srgb"  # Color space of diffusion patterns (srgb or linear)
 
         # Statistics
         self._optimization_count = 0
@@ -183,6 +184,60 @@ class LEDOptimizer:
         logger.info(f"GPU Memory: {device_info['memory_info']['free_mb']:.0f}MB free")
 
         return device_info
+
+    def _srgb_to_linear(self, srgb_frame: np.ndarray) -> np.ndarray:
+        """
+        Convert sRGB frame to linear light space.
+
+        Uses the standard sRGB transfer function:
+        - For values <= 0.04045: linear = srgb / 12.92
+        - For values > 0.04045: linear = ((srgb + 0.055) / 1.055) ^ 2.4
+
+        Args:
+            srgb_frame: Frame in sRGB space, shape (H, W, 3), range [0, 255]
+
+        Returns:
+            Frame in linear light space, shape (H, W, 3), range [0, 255]
+        """
+        # Normalize to [0, 1]
+        srgb_normalized = srgb_frame.astype(np.float32) / 255.0
+
+        # Apply sRGB inverse gamma correction
+        linear_normalized = np.where(
+            srgb_normalized <= 0.04045,
+            srgb_normalized / 12.92,
+            np.power((srgb_normalized + 0.055) / 1.055, 2.4),
+        )
+
+        # Scale back to [0, 255]
+        linear_frame = (linear_normalized * 255.0).astype(np.float32)
+
+        return linear_frame
+
+    def _srgb_to_linear_batch(self, srgb_frames: cp.ndarray) -> cp.ndarray:
+        """
+        Convert batch of sRGB frames to linear light space (GPU version).
+
+        Args:
+            srgb_frames: Frames in sRGB space on GPU, shape (batch, 3, H, W) or (batch, H, W, 3), range [0, 255]
+
+        Returns:
+            Frames in linear light space on GPU, shape same as input, range [0, 255]
+        """
+        # Normalize to [0, 1]
+        srgb_normalized = srgb_frames.astype(cp.float32) / 255.0
+
+        # Apply sRGB inverse gamma correction
+        linear_normalized = cp.where(
+            srgb_normalized <= 0.04045,
+            srgb_normalized / 12.92,
+            cp.power((srgb_normalized + 0.055) / 1.055, 2.4),
+        )
+
+        # Scale back to [0, 255]
+        linear_frames = (linear_normalized * 255.0).astype(cp.uint8)
+
+        return linear_frames
 
     def initialize(self) -> bool:
         """
@@ -650,6 +705,15 @@ class LEDOptimizer:
             self._led_spatial_mapping = self._led_spatial_mapping.item()
         self._led_positions = data.get("led_positions", None)
 
+        # Load color space information from metadata
+        metadata = data.get("metadata", {})
+        if hasattr(metadata, "item"):
+            metadata = metadata.item()
+        self._pattern_color_space = metadata.get("color_space", "srgb")
+        logger.info(f"Pattern color space: {self._pattern_color_space}")
+        if self._pattern_color_space == "linear":
+            logger.info("  Input frames will be converted from sRGB to linear for optimization")
+
         if self._diffusion_matrix is not None:
             self._actual_led_count = self._diffusion_matrix.led_count
             # Validate matrix dimensions
@@ -658,10 +722,7 @@ class LEDOptimizer:
                 logger.error(f"Matrix pixel dimension mismatch: {self._diffusion_matrix.pixels} != {expected_pixels}")
                 return False
         else:
-            # Get LED count from metadata when using DIA format
-            metadata = data.get("metadata", {})
-            if hasattr(metadata, "item"):
-                metadata = metadata.item()
+            # Get LED count from metadata when using DIA format (metadata already loaded above)
             if "led_count" not in metadata:
                 logger.error("Pattern file is missing required 'led_count' metadata")
                 return False
@@ -818,6 +879,10 @@ class LEDOptimizer:
             # Validate input
             if target_frame.shape != (FRAME_HEIGHT, FRAME_WIDTH, 3):
                 raise ValueError(f"Target frame shape {target_frame.shape} != {(FRAME_HEIGHT, FRAME_WIDTH, 3)}")
+
+            # Convert target frame from sRGB to linear if patterns are in linear space
+            if self._pattern_color_space == "linear":
+                target_frame = self._srgb_to_linear(target_frame)
 
             # Load ATA inverse if not already available
             if not self._has_ata_inverse:
@@ -979,6 +1044,10 @@ class LEDOptimizer:
 
             if self._batch_symmetric_ata_matrix is None:
                 raise RuntimeError("Batch symmetric ATA matrix not available - LED count must be multiple of 16")
+
+            # Convert target frames from sRGB to linear if patterns are in linear space
+            if self._pattern_color_space == "linear":
+                target_frames = self._srgb_to_linear_batch(target_frames)
 
             # Load ATA inverse if not already available
             if not self._has_ata_inverse:

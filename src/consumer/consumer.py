@@ -121,9 +121,6 @@ class ConsumerProcess:
         enable_audio_reactive: bool = False,
         audio_device: str = "auto",
         enable_batch_mode: bool = False,
-        enable_position_shifting: bool = False,
-        max_shift_distance: int = 3,
-        shift_direction: str = "alternating",
         optimization_iterations: int = 10,
     ):
         """
@@ -142,9 +139,6 @@ class ConsumerProcess:
             enable_audio_reactive: Enable audio-reactive effects with beat detection
             audio_device: Audio device selection ('auto', 'cuda', 'cpu')
             enable_batch_mode: Enable batch processing (8 frames at once) for improved performance
-            enable_position_shifting: Enable audio-reactive LED position shifting effects
-            max_shift_distance: Maximum LED positions to shift on beats (3-4 typical)
-            shift_direction: Position shift direction ("left", "right", "alternating")
             optimization_iterations: Number of optimization iterations for LED calculations (0-20, 0 = pseudo inverse only)
         """
         self.buffer_name = buffer_name
@@ -229,11 +223,6 @@ class ConsumerProcess:
             self._adaptive_frame_dropper = None
             logger.info("Adaptive frame dropping disabled")
 
-        # Position shifting configuration - set before frame renderer creation
-        self.enable_position_shifting = enable_position_shifting
-        self.max_shift_distance = max_shift_distance
-        self.shift_direction = shift_direction
-
         # Create frame renderer with LED ordering from pattern file if available
         from ..utils.pattern_loader import create_frame_renderer_with_pattern
 
@@ -243,9 +232,6 @@ class ConsumerProcess:
             timing_tolerance_ms=5.0,
             control_state=self._control_state,
             audio_beat_analyzer=self._audio_beat_analyzer,
-            enable_position_shifting=self.enable_position_shifting,
-            max_shift_distance=self.max_shift_distance,
-            shift_direction=self.shift_direction,
         )
         logger.info(f"Frame renderer created with LED ordering from {diffusion_patterns_path}")
 

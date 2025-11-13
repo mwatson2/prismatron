@@ -58,9 +58,6 @@ def create_frame_renderer_with_pattern(
     late_frame_log_threshold_ms: float = 50.0,
     control_state=None,
     audio_beat_analyzer=None,
-    enable_position_shifting: bool = False,
-    max_shift_distance: int = 3,
-    shift_direction: str = "alternating",
 ):
     """
     Create a frame renderer with LED ordering loaded from a pattern file.
@@ -72,9 +69,6 @@ def create_frame_renderer_with_pattern(
         late_frame_log_threshold_ms: Log late frames above this threshold
         control_state: ControlState instance for audio reactive settings
         audio_beat_analyzer: AudioBeatAnalyzer instance for beat state access
-        enable_position_shifting: Enable audio-reactive position shifting effects
-        max_shift_distance: Maximum LED positions to shift (3-4 typical)
-        shift_direction: Shift direction ("left", "right", "alternating")
 
     Returns:
         FrameRenderer instance configured with LED ordering from pattern
@@ -100,9 +94,6 @@ def create_frame_renderer_with_pattern(
         late_frame_log_threshold_ms=late_frame_log_threshold_ms,
         control_state=control_state,
         audio_beat_analyzer=audio_beat_analyzer,
-        enable_position_shifting=enable_position_shifting,
-        max_shift_distance=max_shift_distance,
-        shift_direction=shift_direction,
     )
 
     if led_ordering is not None:

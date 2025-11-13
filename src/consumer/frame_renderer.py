@@ -14,7 +14,6 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from .audio_reactive_position_shifter import AudioReactivePositionShifter
 from .led_effect import LedEffectManager
 from .test_sink import TestSink
 from .wled_sink import WLEDSink
@@ -42,9 +41,6 @@ class FrameRenderer:
         late_frame_log_threshold_ms: float = 50.0,
         control_state=None,
         audio_beat_analyzer=None,
-        enable_position_shifting: bool = False,
-        max_shift_distance: int = 3,
-        shift_direction: str = "alternating",
     ):
         """
         Initialize frame renderer.
@@ -56,9 +52,6 @@ class FrameRenderer:
             led_ordering: Array mapping spatial indices to physical LED IDs
             control_state: ControlState instance for audio reactive settings
             audio_beat_analyzer: AudioBeatAnalyzer instance for beat state access
-            enable_position_shifting: Enable audio-reactive position shifting effects
-            max_shift_distance: Maximum LED positions to shift (3-4 typical)
-            shift_direction: Shift direction ("left", "right", "alternating")
         """
         self.first_frame_delay = first_frame_delay_ms / 1000.0
         self.timing_tolerance = timing_tolerance_ms / 1000.0
@@ -70,15 +63,6 @@ class FrameRenderer:
         # Audio reactive components
         self._control_state = control_state
         self._audio_beat_analyzer = audio_beat_analyzer
-
-        # Position shifter for audio-reactive effects
-        self._position_shifter = AudioReactivePositionShifter(
-            max_shift_distance=max_shift_distance,
-            shift_direction=shift_direction,
-            control_state=control_state,
-            audio_beat_analyzer=audio_beat_analyzer,
-            enabled=enable_position_shifting,
-        )
 
         # Timing state
         self.wallclock_delta = None  # Established from first frame
@@ -109,12 +93,6 @@ class FrameRenderer:
         self.total_wait_time = 0.0
         self.total_late_time = 0.0
         self.start_time = time.time()
-
-        # Beat effect statistics for periodic reporting
-        self.beat_shift_count = 0
-        self.beat_shift_sum = 0.0
-        self.last_beat_stats_log = time.time()
-        self.beat_stats_log_interval = 30.0  # Log every 30 seconds
 
         # Beat detection state for creating brightness boost effects
         self._last_beat_time_processed = -1.0  # Track last beat we created an effect for
@@ -643,7 +621,6 @@ class FrameRenderer:
 
             self.frames_rendered += 1
             self._update_ewma_statistics(frame_timestamp)
-            self._log_beat_statistics_periodic()
             return True
 
         except Exception as e:
@@ -748,20 +725,6 @@ class FrameRenderer:
         # Convert from spatial to physical order after applying effects
         physical_led_values = self._convert_spatial_to_physical(led_values)
 
-        # Calculate position offset for audio-reactive position shifting
-        position_offset = self._position_shifter.calculate_position_offset(time.time(), physical_led_values.shape[0])
-
-        # Track position shift statistics
-        if position_offset != 0:
-            self.beat_shift_count += 1
-            self.beat_shift_sum += abs(position_offset)
-
-            # Log position shift calculation (DEBUG level)
-            logger.debug(
-                f"Position offset calculated: {position_offset} LEDs "
-                f"(max_shift={self._position_shifter.max_shift_distance})"
-            )
-
         # Add rendering_index to metadata for PreviewSink
         enhanced_metadata = metadata.copy() if metadata else {}
         if metadata and "playlist_item_index" in metadata:
@@ -827,7 +790,7 @@ class FrameRenderer:
                 # Try different sink interfaces
                 if hasattr(sink, "send_led_data"):
                     # WLED-style sink
-                    result = sink.send_led_data(physical_led_values, position_offset)
+                    result = sink.send_led_data(physical_led_values)
                     if hasattr(result, "success") and not result.success:
                         if not sink_info["failing"]:
                             logger.warning(f"{name} transmission failed: {result.errors}")
@@ -838,7 +801,7 @@ class FrameRenderer:
                     # Renderer-style sink
                     if hasattr(sink, "is_running") and not sink.is_running:
                         continue  # Skip if sink is not running
-                    # Try to call with metadata (for preview sink), fall back to older signatures if it fails
+                    # Try to call with metadata (for preview sink), fall back to older signature if it fails
                     try:
                         # First try with metadata (preview sink needs this for playback position)
                         sink.render_led_values(physical_led_values.astype(np.uint8), enhanced_metadata)
@@ -847,13 +810,9 @@ class FrameRenderer:
                                 f"Called PreviewSink with metadata containing playback_position={enhanced_metadata['playback_position']:.3f}"
                             )
                     except TypeError as e:
-                        logger.debug(f"Sink {name} doesn't accept metadata parameter, trying older signatures: {e}")
-                        try:
-                            # Fall back to signature with position_offset
-                            sink.render_led_values(physical_led_values.astype(np.uint8), position_offset)
-                        except TypeError:
-                            # Fall back to old signature without position_offset (for compatibility)
-                            sink.render_led_values(physical_led_values.astype(np.uint8))
+                        logger.debug(f"Sink {name} doesn't accept metadata parameter, trying basic signature: {e}")
+                        # Fall back to old signature without metadata (for compatibility)
+                        sink.render_led_values(physical_led_values.astype(np.uint8))
                 else:
                     logger.warning(f"Sink {name} has no compatible interface")
 
@@ -927,30 +886,6 @@ class FrameRenderer:
 
         self.last_ewma_update = current_time
         self.last_frame_timestamp = frame_timestamp
-
-    def _log_beat_statistics_periodic(self) -> None:
-        """
-        Log beat effect statistics periodically (every 30 seconds).
-        Provides visibility into position shift application rates.
-        """
-        current_time = time.time()
-        time_since_last_log = current_time - self.last_beat_stats_log
-
-        if time_since_last_log >= self.beat_stats_log_interval:
-            # Calculate statistics
-            shift_percentage = (self.beat_shift_count / max(1, self.frames_rendered)) * 100
-            avg_shift = self.beat_shift_sum / max(1, self.beat_shift_count) if self.beat_shift_count > 0 else 0.0
-
-            logger.info(
-                f"🎵 Beat effects summary ({self.beat_stats_log_interval:.0f}s): "
-                f"{self.beat_shift_count} shifts ({shift_percentage:.1f}%), "
-                f"avg_shift={avg_shift:.1f} LEDs"
-            )
-
-            # Reset counters for next period
-            self.beat_shift_count = 0
-            self.beat_shift_sum = 0.0
-            self.last_beat_stats_log = current_time
 
     def _update_output_fps(self, current_time: float, alpha: float = 0.1) -> None:
         """

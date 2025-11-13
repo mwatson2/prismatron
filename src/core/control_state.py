@@ -110,11 +110,6 @@ class SystemStatus:
     # Audio reactive effects control
     audio_reactive_enabled: bool = False
 
-    # Position shifting settings for audio reactive effects
-    position_shifting_enabled: bool = False
-    max_shift_distance: int = 3
-    shift_direction: str = "alternating"
-
     # Beat brightness boost settings for audio reactive effects
     beat_brightness_enabled: bool = True
     beat_brightness_intensity: float = 2.5  # 0.0 to 5.0 (multiplier for beat boost)

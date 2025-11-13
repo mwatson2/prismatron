@@ -111,6 +111,64 @@ class DiffusionPatternVisualizer:
         # Setup routes
         self._setup_routes()
 
+    def _linear_to_srgb(self, linear_values: np.ndarray) -> np.ndarray:
+        """
+        Convert linear light values to sRGB space for display.
+
+        Uses the standard sRGB transfer function:
+        - For values <= 0.0031308: srgb = linear * 12.92
+        - For values > 0.0031308: srgb = 1.055 * linear^(1/2.4) - 0.055
+
+        Args:
+            linear_values: Array of linear light values in range [0, 1]
+
+        Returns:
+            Array of sRGB values in range [0, 1]
+        """
+        # Apply sRGB gamma correction
+        srgb = np.where(
+            linear_values <= 0.0031308,
+            linear_values * 12.92,
+            1.055 * np.power(linear_values, 1.0 / 2.4) - 0.055,
+        )
+        return srgb
+
+    def _convert_pattern_for_display(self, pattern: np.ndarray) -> np.ndarray:
+        """
+        Convert pattern data to display format, handling color space conversion.
+
+        If patterns are in linear color space, converts to sRGB for proper display.
+        Otherwise returns pattern as-is.
+
+        Args:
+            pattern: Pattern array (any shape) with values in [0, 1] or [0, 255]
+
+        Returns:
+            Pattern array ready for display
+        """
+        # Check if patterns are in linear color space
+        color_space = self.metadata.get("color_space", "srgb")
+
+        if color_space == "linear":
+            # Need to convert from linear to sRGB for display
+            # First normalize to [0, 1] range
+            if self.mixed_tensor.dtype == cp.uint8:
+                normalized = pattern.astype(np.float32) / 255.0
+            else:
+                normalized = pattern
+
+            # Convert linear → sRGB
+            srgb = self._linear_to_srgb(normalized)
+
+            # Scale back to [0, 255] if original was uint8
+            if self.mixed_tensor.dtype == cp.uint8:
+                return (srgb * 255.0).astype(np.float32)
+            else:
+                return srgb
+        else:
+            # Already in sRGB space, no conversion needed
+            return pattern
+
     def _add_block_borders(self, image_array: np.ndarray, block_size: int = 64) -> np.ndarray:
         """Add a green border around the entire 64x64 LED diffusion pattern.
 
@@ -195,6 +253,12 @@ class DiffusionPatternVisualizer:
 
             # Load metadata
             self.metadata = data["metadata"].item() if "metadata" in data else {}
+
+            # Log color space information
+            color_space = self.metadata.get("color_space", "srgb")
+            logger.info(f"Pattern color space: {color_space}")
+            if color_space == "linear":
+                logger.info("  Linear patterns will be converted to sRGB for display")
 
             # Load LED positions and spatial mapping
             self.led_positions = data.get("led_positions", None)
@@ -962,23 +1026,26 @@ class DiffusionPatternVisualizer:
             if not PIL_AVAILABLE:
                 return ""
 
+            # Convert pattern for display (handles linear → sRGB conversion if needed)
+            display_pattern = self._convert_pattern_for_display(pattern)
+
             # Normalize pattern to 0-255 based on data type
-            if len(pattern.shape) == 3:
+            if len(display_pattern.shape) == 3:
                 # RGB pattern
                 if self.mixed_tensor.dtype == cp.uint8:
-                    # Data is already in [0,255] range
-                    normalized = np.clip(pattern, 0, 255).astype(np.uint8)
+                    # Data is already in [0,255] range (or converted to float32)
+                    normalized = np.clip(display_pattern, 0, 255).astype(np.uint8)
                 else:
                     # Data is in [0,1] range, scale to [0,255]
-                    normalized = np.clip(pattern * 255, 0, 255).astype(np.uint8)
+                    normalized = np.clip(display_pattern * 255, 0, 255).astype(np.uint8)
             else:
                 # Single channel - convert to RGB
                 if self.mixed_tensor.dtype == cp.uint8:
-                    # Data is already in [0,255] range
-                    normalized = np.clip(pattern, 0, 255).astype(np.uint8)
+                    # Data is already in [0,255] range (or converted to float32)
+                    normalized = np.clip(display_pattern, 0, 255).astype(np.uint8)
                 else:
                     # Data is in [0,1] range, scale to [0,255]
-                    normalized = np.clip(pattern * 255, 0, 255).astype(np.uint8)
+                    normalized = np.clip(display_pattern * 255, 0, 255).astype(np.uint8)
                 normalized = np.stack([normalized] * 3, axis=-1)
 
             # Add green borders around 64x64 blocks
@@ -1007,13 +1074,16 @@ class DiffusionPatternVisualizer:
             if not PIL_AVAILABLE:
                 return ""
 
+            # Convert pattern for display (handles linear → sRGB conversion if needed)
+            display_pattern = self._convert_pattern_for_display(pattern)
+
             # Normalize to 0-255 based on data type
             if self.mixed_tensor.dtype == cp.uint8:
-                # Data is already in [0,255] range
-                normalized = np.clip(pattern, 0, 255).astype(np.uint8)
+                # Data is already in [0,255] range (or converted to float32)
+                normalized = np.clip(display_pattern, 0, 255).astype(np.uint8)
             else:
                 # Data is in [0,1] range, scale to [0,255]
-                normalized = np.clip(pattern * 255, 0, 255).astype(np.uint8)
+                normalized = np.clip(display_pattern * 255, 0, 255).astype(np.uint8)
 
             # Add green borders around 64x64 blocks
             normalized_with_borders = self._add_block_borders(normalized, block_size=64)
@@ -1038,13 +1108,16 @@ class DiffusionPatternVisualizer:
             if not PIL_AVAILABLE:
                 return ""
 
+            # Convert pattern for display (handles linear → sRGB conversion if needed)
+            display_pattern = self._convert_pattern_for_display(pattern)
+
             # Normalize to 0-255 based on data type
             if self.mixed_tensor.dtype == cp.uint8:
-                # Data is already in [0,255] range
-                normalized = np.clip(pattern, 0, 255).astype(np.uint8)
+                # Data is already in [0,255] range (or converted to float32)
+                normalized = np.clip(display_pattern, 0, 255).astype(np.uint8)
             else:
                 # Data is in [0,1] range, scale to [0,255]
-                normalized = np.clip(pattern * 255, 0, 255).astype(np.uint8)
+                normalized = np.clip(display_pattern * 255, 0, 255).astype(np.uint8)
 
             # Convert grayscale to RGB for border drawing
             normalized_rgb = np.stack([normalized] * 3, axis=-1)

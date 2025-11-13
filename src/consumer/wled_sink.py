@@ -436,15 +436,13 @@ class WLEDSink:
             logger.warning(f"UDP connectivity test failed: {e}")
             return False
 
-    def send_led_data(self, led_data: Union[bytes, np.ndarray], position_offset: int = 0) -> TransmissionResult:
+    def send_led_data(self, led_data: Union[bytes, np.ndarray]) -> TransmissionResult:
         """
-        Send LED data to WLED controller with optional position offset.
+        Send LED data to WLED controller.
 
         Args:
             led_data: RGB data for all LEDs - either bytes (led_count * 3)
                      or numpy array (led_count, 3)
-            position_offset: LED position offset for audio-reactive effects
-                           (positive = right shift, negative = left shift, with wraparound)
 
         Returns:
             TransmissionResult with transmission metrics
@@ -479,9 +477,6 @@ class WLEDSink:
                     transmission_time=time.time() - start_time,
                     errors=[error_msg],
                 )
-            # Apply position offset if specified
-            if position_offset != 0:
-                led_data = self._apply_position_offset(led_data, position_offset)
             led_data_bytes = np.clip(led_data, 0, 255).astype(np.uint8).flatten().tobytes()
         else:
             if len(led_data) != self.config.led_count * 3:
@@ -494,13 +489,7 @@ class WLEDSink:
                     transmission_time=time.time() - start_time,
                     errors=[error_msg],
                 )
-            # Apply position offset if specified (convert to numpy first for easier manipulation)
-            if position_offset != 0:
-                led_data_array = np.frombuffer(led_data, dtype=np.uint8).reshape((self.config.led_count, 3))
-                led_data_array = self._apply_position_offset(led_data_array, position_offset)
-                led_data_bytes = led_data_array.flatten().tobytes()
-            else:
-                led_data_bytes = led_data
+            led_data_bytes = led_data
 
         # Flow control - enforce minimum frame interval
         current_time = time.time()
@@ -970,35 +959,6 @@ class WLEDSink:
             self._stop_keepalive_thread()
 
         logger.info(f"WLED keepalive {'enabled' if enabled else 'disabled'}")
-
-    def _apply_position_offset(self, led_data: np.ndarray, offset: int) -> np.ndarray:
-        """
-        Apply position offset to LED data with wraparound.
-
-        Args:
-            led_data: LED data array (led_count, 3)
-            offset: Position offset (positive = right shift, negative = left shift)
-
-        Returns:
-            LED data with position offset applied
-        """
-        if offset == 0:
-            return led_data
-
-        led_count = led_data.shape[0]
-
-        # Normalize offset to be within bounds
-        offset = offset % led_count
-
-        if offset == 0:
-            return led_data
-
-        # Apply wraparound shift
-        # For right shift (positive offset): take last 'offset' elements and move to front
-        # For left shift (negative offset): take first 'abs(offset)' elements and move to back
-        shifted_data = np.roll(led_data, offset, axis=0)
-
-        return shifted_data
 
     def __enter__(self):
         """Context manager entry."""

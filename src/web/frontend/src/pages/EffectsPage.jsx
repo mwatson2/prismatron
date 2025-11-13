@@ -11,9 +11,6 @@ const EffectsPage = () => {
 
   // Audio reactive state
   const [audioReactiveEnabled, setAudioReactiveEnabled] = useState(false)
-  const [positionShiftingEnabled, setPositionShiftingEnabled] = useState(false)
-  const [maxShiftDistance, setMaxShiftDistance] = useState(3)
-  const [shiftDirection, setShiftDirection] = useState('alternating')
   const [audioReactiveLoading, setAudioReactiveLoading] = useState(false)
 
   // Beat brightness boost state
@@ -61,9 +58,6 @@ const EffectsPage = () => {
       if (response.ok) {
         const data = await response.json()
         setAudioReactiveEnabled(data.enabled || false)
-        setPositionShiftingEnabled(data.position_shifting_enabled || false)
-        setMaxShiftDistance(data.max_shift_distance || 3)
-        setShiftDirection(data.shift_direction || 'alternating')
         setBeatBrightnessEnabled(data.beat_brightness_enabled !== undefined ? data.beat_brightness_enabled : true)
         setBeatBrightnessIntensity(data.beat_brightness_intensity !== undefined ? data.beat_brightness_intensity : 4.0)
         setBeatBrightnessDuration(data.beat_brightness_duration !== undefined ? data.beat_brightness_duration : 0.4)
@@ -96,27 +90,6 @@ const EffectsPage = () => {
     }
   }
 
-  const updatePositionShifting = async (settings) => {
-    try {
-      const response = await fetch('/api/settings/position-shifting', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(settings)
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        setPositionShiftingEnabled(data.enabled)
-        setMaxShiftDistance(data.max_shift_distance)
-        setShiftDirection(data.shift_direction)
-        console.log('Position shifting settings updated')
-      }
-    } catch (error) {
-      console.error('Failed to update position shifting settings:', error)
-    }
-  }
 
   const updateBeatBrightness = async (settings) => {
     try {
@@ -260,89 +233,6 @@ const EffectsPage = () => {
               {audioReactiveLoading ? 'UPDATING...' : audioReactiveEnabled ? 'ENABLED' : 'DISABLED'}
             </button>
           </div>
-
-          {/* Position Shifting Controls - Only show when audio reactive is enabled */}
-          {audioReactiveEnabled && (
-            <div className="pl-4 border-l-2 border-neon-cyan border-opacity-30">
-              <h4 className="text-sm font-retro text-neon-orange mb-3">LED POSITION SHIFTING</h4>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Enable Position Shifting */}
-                <div className="space-y-2">
-                  <label className="block text-xs text-metal-silver font-mono">ENABLE SHIFTING</label>
-                  <button
-                    onClick={() => updatePositionShifting({
-                      enabled: !positionShiftingEnabled,
-                      max_shift_distance: maxShiftDistance,
-                      shift_direction: shiftDirection
-                    })}
-                    className={`w-full px-4 py-2 rounded-retro text-xs font-retro font-bold transition-all duration-200 ${
-                      positionShiftingEnabled
-                        ? 'bg-neon-yellow bg-opacity-20 text-neon-yellow border border-neon-yellow border-opacity-50'
-                        : 'bg-dark-700 text-metal-silver border border-metal-silver border-opacity-30 hover:text-neon-yellow hover:border-neon-yellow hover:border-opacity-50'
-                    }`}
-                  >
-                    {positionShiftingEnabled ? 'ON' : 'OFF'}
-                  </button>
-                </div>
-
-                {/* Max Shift Distance */}
-                <div className="space-y-2">
-                  <label className="block text-xs text-metal-silver font-mono">MAX SHIFT DISTANCE</label>
-                  <select
-                    value={maxShiftDistance}
-                    onChange={(e) => {
-                      const newDistance = parseInt(e.target.value)
-                      setMaxShiftDistance(newDistance)
-                      updatePositionShifting({
-                        enabled: positionShiftingEnabled,
-                        max_shift_distance: newDistance,
-                        shift_direction: shiftDirection
-                      })
-                    }}
-                    className="retro-input w-full text-xs"
-                    disabled={!positionShiftingEnabled}
-                  >
-                    <option value={1}>1 Position</option>
-                    <option value={2}>2 Positions</option>
-                    <option value={3}>3 Positions</option>
-                    <option value={4}>4 Positions</option>
-                    <option value={5}>5 Positions</option>
-                  </select>
-                </div>
-
-                {/* Shift Direction */}
-                <div className="space-y-2">
-                  <label className="block text-xs text-metal-silver font-mono">SHIFT DIRECTION</label>
-                  <select
-                    value={shiftDirection}
-                    onChange={(e) => {
-                      const newDirection = e.target.value
-                      setShiftDirection(newDirection)
-                      updatePositionShifting({
-                        enabled: positionShiftingEnabled,
-                        max_shift_distance: maxShiftDistance,
-                        shift_direction: newDirection
-                      })
-                    }}
-                    className="retro-input w-full text-xs"
-                    disabled={!positionShiftingEnabled}
-                  >
-                    <option value="left">Left</option>
-                    <option value="right">Right</option>
-                    <option value="alternating">Alternating</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="mt-3 p-3 bg-dark-800 rounded-retro border border-neon-purple border-opacity-20">
-                <p className="text-xs text-metal-silver font-mono leading-relaxed">
-                  <span className="text-neon-purple">INFO:</span> Position shifting creates dynamic effects by moving LED mappings in response to beat detection.
-                  Higher distances create more dramatic shifts but may affect content recognition.
-                </p>
-              </div>
-            </div>
-          )}
 
           {/* Beat Brightness Controls - Only show when audio reactive is enabled */}
           {audioReactiveEnabled && (

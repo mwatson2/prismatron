@@ -3107,9 +3107,6 @@ async def get_audio_reactive_settings():
     try:
         # Get current settings from control state
         audio_reactive_enabled = False
-        position_shifting_enabled = False
-        max_shift_distance = 3
-        shift_direction = "alternating"
 
         # Beat brightness boost settings
         beat_brightness_enabled = True
@@ -3122,9 +3119,6 @@ async def get_audio_reactive_settings():
                 status = control_state.get_status()
                 if status:
                     audio_reactive_enabled = status.audio_reactive_enabled
-                    position_shifting_enabled = status.position_shifting_enabled
-                    max_shift_distance = status.max_shift_distance
-                    shift_direction = status.shift_direction
                     beat_brightness_enabled = getattr(status, "beat_brightness_enabled", True)
                     beat_brightness_intensity = getattr(status, "beat_brightness_intensity", 4.0)
                     beat_brightness_duration = getattr(status, "beat_brightness_duration", 0.4)
@@ -3134,9 +3128,6 @@ async def get_audio_reactive_settings():
 
         return {
             "enabled": audio_reactive_enabled,
-            "position_shifting_enabled": position_shifting_enabled,
-            "max_shift_distance": max_shift_distance,
-            "shift_direction": shift_direction,
             "beat_brightness_enabled": beat_brightness_enabled,
             "beat_brightness_intensity": beat_brightness_intensity,
             "beat_brightness_duration": beat_brightness_duration,
@@ -3168,14 +3159,6 @@ async def set_audio_reactive_enabled(request: AudioReactiveRequest):
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-class PositionShiftingRequest(BaseModel):
-    """Request model for position shifting settings."""
-
-    enabled: bool = Field(..., description="Whether position shifting is enabled")
-    max_shift_distance: int = Field(3, ge=1, le=10, description="Maximum shift distance (1-10)")
-    shift_direction: str = Field("alternating", description="Shift direction: left, right, alternating")
-
-
 class BeatBrightnessRequest(BaseModel):
     """Request model for beat brightness boost settings."""
 
@@ -3185,51 +3168,6 @@ class BeatBrightnessRequest(BaseModel):
     confidence_threshold: float = Field(
         0.5, ge=0.0, le=1.0, description="Minimum beat confidence to apply boost (0.0-1.0)"
     )
-
-
-@app.post("/api/settings/position-shifting")
-async def set_position_shifting_settings(request: PositionShiftingRequest):
-    """Set position shifting settings."""
-    try:
-        # Validate shift direction
-        valid_directions = ["left", "right", "alternating"]
-        if request.shift_direction not in valid_directions:
-            raise HTTPException(
-                status_code=400, detail=f"Invalid shift direction. Must be one of: {', '.join(valid_directions)}"
-            )
-
-        # Update in control state if available
-        if control_state:
-            control_state.update_status(
-                position_shifting_enabled=request.enabled,
-                max_shift_distance=request.max_shift_distance,
-                shift_direction=request.shift_direction,
-            )
-            logger.info(
-                f"Updated position shifting: enabled={request.enabled}, distance={request.max_shift_distance}, direction={request.shift_direction}"
-            )
-        else:
-            logger.warning("Control state not available - position shifting settings not updated")
-
-        await manager.broadcast(
-            {
-                "type": "position_shifting_changed",
-                "enabled": request.enabled,
-                "max_shift_distance": request.max_shift_distance,
-                "shift_direction": request.shift_direction,
-            }
-        )
-
-        return {
-            "enabled": request.enabled,
-            "max_shift_distance": request.max_shift_distance,
-            "shift_direction": request.shift_direction,
-            "status": "updated",
-        }
-
-    except Exception as e:
-        logger.error(f"Failed to set position shifting settings: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/api/settings/beat-brightness")

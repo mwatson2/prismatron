@@ -374,9 +374,6 @@ class ProcessManager:
                         diffusion_patterns_path=self.config.get("diffusion_patterns_path"),
                         timing_log_path=self.config.get("timing_log_path"),
                         enable_batch_mode=self.config.get("enable_batch_mode", False),
-                        enable_position_shifting=self.config.get("enable_position_shifting", False),
-                        max_shift_distance=self.config.get("max_shift_distance", 3),
-                        shift_direction=self.config.get("shift_direction", "alternating"),
                         enable_adaptive_frame_dropping=self.config.get("enable_adaptive_frame_dropping", True),
                         enable_audio_reactive=self.config.get("enable_audio_reactive", False),
                         audio_device=self.config.get("audio_device"),
@@ -904,25 +901,6 @@ def main():
             help="Enable batch processing (8 frames at once) for improved performance",
         )
 
-    parser.add_argument(
-        "--position-shifting",
-        action="store_true",
-        default=file_config.get("position_shifting", False),
-        help="Enable audio-reactive LED position shifting effects",
-    )
-    parser.add_argument(
-        "--max-shift-distance",
-        type=int,
-        default=file_config.get("max_shift_distance", 3),
-        help="Maximum LED positions to shift on beats (default: 3)",
-    )
-    parser.add_argument(
-        "--shift-direction",
-        default=file_config.get("shift_direction", "alternating"),
-        choices=["left", "right", "alternating"],
-        help="Position shift direction (default: alternating)",
-    )
-
     # Handle adaptive-dropping with config file default
     adaptive_dropping_default = file_config.get("adaptive_dropping", False)
     if adaptive_dropping_default:
@@ -1006,9 +984,6 @@ def main():
         "led_count": led_count,  # Add LED count to config
         "timing_log_path": args.timing_log,
         "enable_batch_mode": args.batch_mode,
-        "enable_position_shifting": args.position_shifting,
-        "max_shift_distance": args.max_shift_distance,
-        "shift_direction": args.shift_direction,
         "enable_adaptive_frame_dropping": not args.no_adaptive_dropping,  # Invert the flag
         "enable_audio_reactive": args.audio_reactive,
         "audio_device": args.audio_device,
