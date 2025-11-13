@@ -29,7 +29,6 @@ from .frame_renderer import FrameRenderer
 from .led_buffer import LEDBuffer
 from .led_effect import TemplateEffectFactory
 from .led_optimizer import LEDOptimizer
-from .led_transition_processor import LEDTransitionProcessor
 from .preview_sink import PreviewSink, PreviewSinkConfig
 from .test_sink import TestSink, TestSinkConfig
 from .transition_processor import TransitionProcessor
@@ -313,8 +312,7 @@ class ConsumerProcess:
         # Transition processor for playlist item transitions
         self._transition_processor = TransitionProcessor()
 
-        # LED transition processor for LED-based transitions
-        self._led_transition_processor = LEDTransitionProcessor()
+        # Note: LED transitions now handled by LED effect framework in renderer thread
 
         # Thread health monitoring
         self._renderer_thread_heartbeat = 0.0
@@ -923,6 +921,9 @@ class ConsumerProcess:
                 if should_update_rendering_index:
                     logger.info(f"RENDERER: Starting to render playlist item {playlist_item_index}")
 
+                    # Create LED transition effects for this playlist item
+                    self._create_led_transition_effects_for_item(timestamp, metadata)
+
                 # Debug logging for high FPS investigation
                 frame_count = self._stats.frames_processed
                 if frame_count % 100 == 0:  # Log every 100th frame
@@ -1019,6 +1020,86 @@ class ConsumerProcess:
 
         # Clear heartbeat to signal thread death
         self._renderer_thread_heartbeat = 0.0
+
+    def _create_led_transition_effects_for_item(self, frame_timestamp: float, metadata: Dict[str, Any]) -> None:
+        """
+        Create LED transition effects when starting a new playlist item.
+
+        Called from renderer thread when first frame of item is detected.
+        Creates both transition-in and transition-out effects at once.
+
+        Args:
+            frame_timestamp: Frame timestamp from the item timeline
+            metadata: Frame metadata containing transition configuration
+        """
+        try:
+            from .led_effect_transitions import FadeInEffect, FadeOutEffect, RandomInEffect, RandomOutEffect
+
+            item_duration = metadata.get("item_duration", 0.0)
+            if item_duration <= 0:
+                logger.debug("Item duration not available, skipping LED transition effect creation")
+                return
+
+            # Create transition-in effect if configured
+            transition_in_type = metadata.get("transition_in_type", "none")
+            if transition_in_type != "none":
+                in_duration = metadata.get("transition_in_duration", 1.0)
+
+                if transition_in_type == "led_fade":
+                    effect = FadeInEffect(
+                        start_time=frame_timestamp, duration=in_duration, curve="linear", min_brightness=0.0
+                    )
+                    self._frame_renderer.add_led_effect(effect)
+                    logger.info(
+                        f"✨ Created LED fade-in effect at t={frame_timestamp:.3f}s, duration={in_duration:.2f}s"
+                    )
+
+                elif transition_in_type == "led_random":
+                    effect = RandomInEffect(
+                        start_time=frame_timestamp, duration=in_duration, leds_per_frame=10, fade_tail=True, seed=42
+                    )
+                    self._frame_renderer.add_led_effect(effect)
+                    logger.info(
+                        f"✨ Created LED random-in effect at t={frame_timestamp:.3f}s, duration={in_duration:.2f}s"
+                    )
+
+                else:
+                    logger.debug(f"Transition-in type '{transition_in_type}' is not an LED transition, skipping")
+
+            # Create transition-out effect if configured
+            transition_out_type = metadata.get("transition_out_type", "none")
+            if transition_out_type != "none":
+                out_duration = metadata.get("transition_out_duration", 1.0)
+                # Calculate when fade-out should start (on frame timeline)
+                fadeout_start_time = frame_timestamp + item_duration - out_duration
+
+                if transition_out_type == "led_fade":
+                    effect = FadeOutEffect(
+                        start_time=fadeout_start_time, duration=out_duration, curve="linear", min_brightness=0.0
+                    )
+                    self._frame_renderer.add_led_effect(effect)
+                    logger.info(
+                        f"✨ Created LED fade-out effect at t={fadeout_start_time:.3f}s, duration={out_duration:.2f}s"
+                    )
+
+                elif transition_out_type == "led_random":
+                    effect = RandomOutEffect(
+                        start_time=fadeout_start_time,
+                        duration=out_duration,
+                        leds_per_frame=10,
+                        fade_tail=True,
+                        seed=43,  # Different seed for out transition
+                    )
+                    self._frame_renderer.add_led_effect(effect)
+                    logger.info(
+                        f"✨ Created LED random-out effect at t={fadeout_start_time:.3f}s, duration={out_duration:.2f}s"
+                    )
+
+                else:
+                    logger.debug(f"Transition-out type '{transition_out_type}' is not an LED transition, skipping")
+
+        except Exception as e:
+            logger.error(f"Failed to create LED transition effects: {e}", exc_info=True)
 
     def _thread_monitor_loop(self) -> None:
         """Monitor thread health and log warnings if threads appear stuck or dead."""
@@ -1429,25 +1510,14 @@ class ConsumerProcess:
             if not result.converged:
                 self._stats.optimization_errors += 1
 
-            # Apply LED transitions to optimized LED values (on GPU)
-            led_transition_start = time.time()
+            # Convert LED values to uint8 for LED buffer
+            # Note: LED transitions now applied by LED effect framework in renderer thread
             if isinstance(result.led_values, cp.ndarray):
-                # LED values are on GPU, apply LED transitions
-                led_values_gpu = self._led_transition_processor.process_led_values(result.led_values, metadata_dict)
-                # Convert to CPU for LED buffer
-                led_values_uint8 = cp.asnumpy(led_values_gpu).astype(np.uint8)
+                # LED values are on GPU, convert to CPU for LED buffer
+                led_values_uint8 = cp.asnumpy(result.led_values).astype(np.uint8)
             else:
-                # LED values already on CPU, convert to GPU for LED transitions then back
-                led_values_gpu = cp.asarray(result.led_values)
-                led_values_with_transitions = self._led_transition_processor.process_led_values(
-                    led_values_gpu, metadata_dict
-                )
-                led_values_uint8 = cp.asnumpy(led_values_with_transitions).astype(np.uint8)
-            led_transition_time = time.time() - led_transition_start
-
-            # Mark LED transition completion time for timing data
-            if timing_data:
-                timing_data.mark_led_transition_complete()
+                # LED values already on CPU
+                led_values_uint8 = result.led_values.astype(np.uint8)
 
             # Check if LED values have non-zero content for logging
             if led_values_uint8.max() > 0:
@@ -1498,7 +1568,7 @@ class ConsumerProcess:
             self._stats.frames_processed += 1
             self._stats.total_processing_time += total_time
             self._stats.total_optimization_time += optimization_time
-            self._stats.total_led_transition_time += led_transition_time
+            # Note: LED transition time tracking removed - transitions now handled by effect framework
             self._stats.last_frame_time = start_time
 
             # Update optimization FPS (independent of rendering)
@@ -1679,9 +1749,6 @@ class ConsumerProcess:
                 batch_frames_gpu, max_iterations=iterations, debug=False
             )
 
-            # Track LED transition time for batch
-            batch_led_transition_time = 0.0
-
             # Write each result to LED buffer
             success_count = 0
             for frame_idx in range(len(self._frame_batch)):
@@ -1691,20 +1758,11 @@ class ConsumerProcess:
                 # Extract LED values for this frame
                 frame_led_values = batch_result.led_values[frame_idx]  # (3, led_count)
 
-                # Apply LED transitions to this frame's LED values (GPU processing)
+                # Convert to (led_count, 3) format and CPU for LED buffer
+                # Note: LED transitions now applied by LED effect framework in renderer thread
                 metadata = self._batch_metadata[frame_idx]
-                frame_led_values_transposed = (
-                    frame_led_values.T
-                )  # Convert to (led_count, 3) for LED transition processor
-
-                led_transition_start = time.time()
-                frame_led_values_with_transitions = self._led_transition_processor.process_led_values(
-                    frame_led_values_transposed, metadata
-                )
-                batch_led_transition_time += time.time() - led_transition_start
-
-                # Convert to CPU for LED buffer
-                frame_led_values_cpu = cp.asnumpy(frame_led_values_with_transitions).astype(np.uint8)  # (led_count, 3)
+                frame_led_values_transposed = frame_led_values.T  # (led_count, 3)
+                frame_led_values_cpu = cp.asnumpy(frame_led_values_transposed).astype(np.uint8)
 
                 timestamp = metadata.get("timestamp", time.time())
 
@@ -1762,12 +1820,7 @@ class ConsumerProcess:
                 # Update consumer statistics in ControlState for IPC with web server
                 self._update_consumer_statistics_in_control_state()
 
-            # Update LED transition statistics
-            self._stats.total_led_transition_time += batch_led_transition_time
-
-            logger.debug(
-                f"Batch processing completed: {success_count}/{len(self._frame_batch)} frames successful, LED transitions took {batch_led_transition_time:.3f}s"
-            )
+            logger.debug(f"Batch processing completed: {success_count}/{len(self._frame_batch)} frames successful")
             return success_count > 0
 
         except Exception as e:
@@ -1929,7 +1982,6 @@ class ConsumerProcess:
             "test_renderer_enabled": self.enable_test_renderer,
             "test_renderer_stats": (self._test_renderer.get_statistics() if self._test_renderer else None),
             "led_buffer_stats": self._led_buffer.get_buffer_stats(),
-            "led_transition_stats": self._led_transition_processor.get_statistics(),
             "renderer_stats": self._frame_renderer.get_renderer_stats(),
             "adaptive_frame_dropper_enabled": self.enable_adaptive_frame_dropping,
             "adaptive_frame_dropper_stats": (
