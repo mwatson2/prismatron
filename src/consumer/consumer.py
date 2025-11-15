@@ -464,7 +464,6 @@ class ConsumerProcess:
             # Pre-load template effects for zero-latency effect creation
             template_files = [
                 "templates/ring_800x480_leds.npy",
-                "templates/test_ring.npy",
             ]
             try:
                 TemplateEffectFactory.preload_templates(template_files)
