@@ -556,7 +556,7 @@ class AudioBeatAnalyzer:
 
         # Log beat event
         beat_type = "DOWNBEAT" if beat_event.is_downbeat else "BEAT"
-        logger.debug(
+        logger.info(
             f"🎵 {beat_type} #{beat_event.beat_count}: BPM={beat_event.bpm:.1f}, "
             f"Intensity={beat_event.intensity:.2f}, "
             f"Confidence={beat_event.confidence:.2f}"

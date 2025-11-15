@@ -22,6 +22,7 @@ export const WebSocketProvider = ({ children }) => {
   const [isLoadingPlaylist, setIsLoadingPlaylist] = useState(false)
   const [isPageVisible, setIsPageVisible] = useState(!document.hidden)
   const [conversionUpdate, setConversionUpdate] = useState(null)
+  const [audioReactiveTriggersChanged, setAudioReactiveTriggersChanged] = useState(null)
 
   // Use refs to avoid stale closures in callbacks
   const currentPlaylistFileRef = useRef(currentPlaylistFile)
@@ -361,6 +362,13 @@ export const WebSocketProvider = ({ children }) => {
         setConversionUpdate(data)
         break
 
+      case 'audio_reactive_triggers_changed':
+        // Audio reactive trigger configuration changed
+        console.log('Audio reactive triggers changed:', data)
+        // Notify components that care (AudioReactivePanel can listen for this)
+        setAudioReactiveTriggersChanged(data)
+        break
+
       default:
         console.warn('⚠️ Unknown WebSocket message type:', data.type, data)
     }
@@ -399,6 +407,7 @@ export const WebSocketProvider = ({ children }) => {
     currentPlaylistFile,
     playlistModified,
     conversionUpdate,
+    audioReactiveTriggersChanged,
     sendMessage,
     // Convenience methods for common operations
     updatePlaylist: (newPlaylist) => setPlaylist(newPlaylist),

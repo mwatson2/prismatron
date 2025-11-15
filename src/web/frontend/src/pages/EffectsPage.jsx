@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { PlusIcon, AdjustmentsHorizontalIcon, SpeakerWaveIcon } from '@heroicons/react/24/outline'
+import { PlusIcon, AdjustmentsHorizontalIcon } from '@heroicons/react/24/outline'
+import AudioReactivePanel from '../components/AudioReactivePanel'
 
 const EffectsPage = () => {
   const [effects, setEffects] = useState([])
@@ -9,20 +10,9 @@ const EffectsPage = () => {
   const [showConfig, setShowConfig] = useState(null)
   const [customConfig, setCustomConfig] = useState({})
 
-  // Audio reactive state
-  const [audioReactiveEnabled, setAudioReactiveEnabled] = useState(false)
-  const [audioReactiveLoading, setAudioReactiveLoading] = useState(false)
-
-  // Beat brightness boost state
-  const [beatBrightnessEnabled, setBeatBrightnessEnabled] = useState(true)
-  const [beatBrightnessIntensity, setBeatBrightnessIntensity] = useState(4.0)
-  const [beatBrightnessDuration, setBeatBrightnessDuration] = useState(0.4)
-  const [beatConfidenceThreshold, setBeatConfidenceThreshold] = useState(0.5)
-
   useEffect(() => {
     fetchEffects()
     fetchSystemFonts()
-    fetchAudioReactiveSettings()
   }, [])
 
   const fetchEffects = async () => {
@@ -49,68 +39,6 @@ const EffectsPage = () => {
       }
     } catch (error) {
       console.error('Failed to fetch system fonts:', error)
-    }
-  }
-
-  const fetchAudioReactiveSettings = async () => {
-    try {
-      const response = await fetch('/api/settings/audio-reactive')
-      if (response.ok) {
-        const data = await response.json()
-        setAudioReactiveEnabled(data.enabled || false)
-        setBeatBrightnessEnabled(data.beat_brightness_enabled !== undefined ? data.beat_brightness_enabled : true)
-        setBeatBrightnessIntensity(data.beat_brightness_intensity !== undefined ? data.beat_brightness_intensity : 4.0)
-        setBeatBrightnessDuration(data.beat_brightness_duration !== undefined ? data.beat_brightness_duration : 0.4)
-        setBeatConfidenceThreshold(data.beat_confidence_threshold !== undefined ? data.beat_confidence_threshold : 0.5)
-      }
-    } catch (error) {
-      console.error('Failed to fetch audio reactive settings:', error)
-    }
-  }
-
-  const updateAudioReactiveEnabled = async (enabled) => {
-    setAudioReactiveLoading(true)
-    try {
-      const response = await fetch('/api/settings/audio-reactive', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ enabled })
-      })
-
-      if (response.ok) {
-        setAudioReactiveEnabled(enabled)
-        console.log(`Audio reactive effects ${enabled ? 'enabled' : 'disabled'}`)
-      }
-    } catch (error) {
-      console.error('Failed to update audio reactive setting:', error)
-    } finally {
-      setAudioReactiveLoading(false)
-    }
-  }
-
-
-  const updateBeatBrightness = async (settings) => {
-    try {
-      const response = await fetch('/api/settings/beat-brightness', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(settings)
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        setBeatBrightnessEnabled(data.enabled)
-        setBeatBrightnessIntensity(data.intensity)
-        setBeatBrightnessDuration(data.duration)
-        setBeatConfidenceThreshold(data.confidence_threshold)
-        console.log('Beat brightness settings updated')
-      }
-    } catch (error) {
-      console.error('Failed to update beat brightness settings:', error)
     }
   }
 
@@ -205,160 +133,8 @@ const EffectsPage = () => {
         </div>
       </div>
 
-      {/* Audio Reactive Effects */}
-      <div className="retro-container">
-        <h3 className="text-lg font-retro text-neon-pink mb-4 flex items-center">
-          <SpeakerWaveIcon className="w-6 h-6 mr-2" />
-          AUDIO REACTIVE EFFECTS
-        </h3>
-
-        {/* Master Enable/Disable */}
-        <div className="mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h4 className="text-base font-retro text-neon-cyan">AUDIO REACTIVE MODE</h4>
-              <p className="text-xs text-metal-silver font-mono">
-                Enable real-time beat detection and audio-reactive effects
-              </p>
-            </div>
-            <button
-              onClick={() => updateAudioReactiveEnabled(!audioReactiveEnabled)}
-              disabled={audioReactiveLoading}
-              className={`px-6 py-2 rounded-retro text-sm font-retro font-bold transition-all duration-200 ${
-                audioReactiveEnabled
-                  ? 'bg-neon-green bg-opacity-20 text-neon-green border border-neon-green border-opacity-50'
-                  : 'bg-dark-700 text-metal-silver border border-metal-silver border-opacity-30 hover:text-neon-green hover:border-neon-green hover:border-opacity-50'
-              } ${audioReactiveLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-              {audioReactiveLoading ? 'UPDATING...' : audioReactiveEnabled ? 'ENABLED' : 'DISABLED'}
-            </button>
-          </div>
-
-          {/* Beat Brightness Controls - Only show when audio reactive is enabled */}
-          {audioReactiveEnabled && (
-            <div className="pl-4 border-l-2 border-neon-cyan border-opacity-30 mt-4">
-              <h4 className="text-sm font-retro text-neon-orange mb-3">BEAT BRIGHTNESS BOOST</h4>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Enable Beat Brightness */}
-                <div className="space-y-2">
-                  <label className="block text-xs text-metal-silver font-mono">ENABLE BOOST</label>
-                  <button
-                    onClick={() => updateBeatBrightness({
-                      enabled: !beatBrightnessEnabled,
-                      intensity: beatBrightnessIntensity,
-                      duration: beatBrightnessDuration,
-                      confidence_threshold: beatConfidenceThreshold
-                    })}
-                    className={`w-full px-4 py-2 rounded-retro text-xs font-retro font-bold transition-all duration-200 ${
-                      beatBrightnessEnabled
-                        ? 'bg-neon-yellow bg-opacity-20 text-neon-yellow border border-neon-yellow border-opacity-50'
-                        : 'bg-dark-700 text-metal-silver border border-metal-silver border-opacity-30 hover:text-neon-yellow hover:border-neon-yellow hover:border-opacity-50'
-                    }`}
-                  >
-                    {beatBrightnessEnabled ? 'ON' : 'OFF'}
-                  </button>
-                </div>
-
-                {/* Brightness Intensity */}
-                <div className="space-y-2">
-                  <label className="block text-xs text-metal-silver font-mono">
-                    EFFECT STRENGTH ({beatBrightnessIntensity.toFixed(1)}x)
-                  </label>
-                  <input
-                    type="range"
-                    min="0"
-                    max="5"
-                    step="0.1"
-                    value={beatBrightnessIntensity}
-                    onChange={(e) => {
-                      const newIntensity = parseFloat(e.target.value)
-                      setBeatBrightnessIntensity(newIntensity)
-                      updateBeatBrightness({
-                        enabled: beatBrightnessEnabled,
-                        intensity: newIntensity,
-                        duration: beatBrightnessDuration,
-                        confidence_threshold: beatConfidenceThreshold
-                      })
-                    }}
-                    className="w-full h-2 bg-dark-700 rounded-lg appearance-none cursor-pointer slider-track"
-                    disabled={!beatBrightnessEnabled}
-                  />
-                  <div className="text-xs text-metal-silver font-mono text-center">
-                    0x → {beatBrightnessIntensity.toFixed(1)}x → 5x
-                  </div>
-                </div>
-
-                {/* Beat Duration */}
-                <div className="space-y-2">
-                  <label className="block text-xs text-metal-silver font-mono">
-                    DURATION ({Math.round(beatBrightnessDuration * 100)}% of beat)
-                  </label>
-                  <input
-                    type="range"
-                    min="0.1"
-                    max="1.0"
-                    step="0.05"
-                    value={beatBrightnessDuration}
-                    onChange={(e) => {
-                      const newDuration = parseFloat(e.target.value)
-                      setBeatBrightnessDuration(newDuration)
-                      updateBeatBrightness({
-                        enabled: beatBrightnessEnabled,
-                        intensity: beatBrightnessIntensity,
-                        duration: newDuration,
-                        confidence_threshold: beatConfidenceThreshold
-                      })
-                    }}
-                    className="w-full h-2 bg-dark-700 rounded-lg appearance-none cursor-pointer slider-track"
-                    disabled={!beatBrightnessEnabled}
-                  />
-                  <div className="text-xs text-metal-silver font-mono text-center">
-                    Quick → {Math.round(beatBrightnessDuration * 100)}% → Full Beat
-                  </div>
-                </div>
-              </div>
-
-              {/* Confidence Threshold - Full Width Below */}
-              <div className="mt-4 space-y-2">
-                <label className="block text-xs text-metal-silver font-mono">
-                  BEAT CONFIDENCE THRESHOLD ({(beatConfidenceThreshold * 100).toFixed(0)}%)
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={beatConfidenceThreshold}
-                  onChange={(e) => {
-                    const newThreshold = parseFloat(e.target.value)
-                    setBeatConfidenceThreshold(newThreshold)
-                    updateBeatBrightness({
-                      enabled: beatBrightnessEnabled,
-                      intensity: beatBrightnessIntensity,
-                      duration: beatBrightnessDuration,
-                      confidence_threshold: newThreshold
-                    })
-                  }}
-                  className="w-full h-2 bg-dark-700 rounded-lg appearance-none cursor-pointer slider-track"
-                  disabled={!beatBrightnessEnabled}
-                />
-                <div className="text-xs text-metal-silver font-mono text-center">
-                  All Beats (0%) → {(beatConfidenceThreshold * 100).toFixed(0)}% → Strong Only (100%)
-                </div>
-              </div>
-
-              <div className="mt-3 p-3 bg-dark-800 rounded-retro border border-neon-purple border-opacity-20">
-                <p className="text-xs text-metal-silver font-mono leading-relaxed">
-                  <span className="text-neon-purple">INFO:</span> Beat brightness boost creates a pulsing effect that brightens the entire panel on each detected beat.
-                  Effect strength (0-5x) is multiplied by beat intensity and confidence for dynamic response. Duration controls pulse length.
-                  Confidence threshold filters out weak beats - higher values (closer to 100%) only respond to strong, confident beats.
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+      {/* Audio Reactive Effects - New Trigger Framework */}
+      <AudioReactivePanel />
 
       {/* Effects Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

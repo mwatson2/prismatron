@@ -19,7 +19,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import psutil
@@ -3209,6 +3209,127 @@ async def set_beat_brightness_settings(request: BeatBrightnessRequest):
 
     except Exception as e:
         logger.error(f"Failed to set beat brightness settings: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# ========================================================================================
+# Audio Reactive Trigger Configuration (New Framework)
+# ========================================================================================
+
+
+class TriggerConfig(BaseModel):
+    """Configuration for a trigger."""
+
+    type: str = Field(..., description="Trigger type (beat, test)")
+    params: Dict[str, Any] = Field(default_factory=dict, description="Trigger parameters")
+
+
+class EffectConfig(BaseModel):
+    """Configuration for an effect."""
+
+    class_name: str = Field(..., alias="class", description="Effect class name")
+    params: Dict[str, Any] = Field(default_factory=dict, description="Effect parameters")
+
+    class Config:
+        populate_by_name = True
+
+
+class TriggerEffectRule(BaseModel):
+    """A trigger->effect rule."""
+
+    id: str = Field(..., description="Unique rule ID")
+    trigger: TriggerConfig = Field(..., description="Trigger configuration")
+    effect: EffectConfig = Field(..., description="Effect configuration")
+
+
+class AudioReactiveTriggersRequest(BaseModel):
+    """Request model for audio reactive trigger configuration."""
+
+    enabled: bool = Field(..., description="Whether audio reactive effects are enabled")
+    test_interval: float = Field(2.0, ge=0.1, le=60.0, description="Test trigger interval in seconds")
+    rules: List[TriggerEffectRule] = Field(default_factory=list, description="List of trigger->effect rules")
+
+
+@app.get("/api/settings/audio-reactive-triggers")
+async def get_audio_reactive_triggers():
+    """Get current audio reactive trigger configuration."""
+    try:
+        # Get current settings from control state
+        audio_reactive_enabled = False
+        test_interval = 2.0
+        rules = []
+
+        if control_state:
+            try:
+                status = control_state.get_status()
+                if status:
+                    audio_reactive_enabled = status.audio_reactive_enabled
+
+                # Get trigger configuration from control state
+                # For now, return empty rules - will be populated by migration or user configuration
+                trigger_config = getattr(status, "audio_reactive_trigger_config", None) if status else None
+                if trigger_config:
+                    test_interval = trigger_config.get("test_interval", 2.0)
+                    rules = trigger_config.get("rules", [])
+            except Exception as e:
+                logger.warning(f"Failed to get audio reactive trigger config: {e}")
+
+        return {"enabled": audio_reactive_enabled, "test_interval": test_interval, "rules": rules}
+
+    except Exception as e:
+        logger.error(f"Failed to get audio reactive trigger configuration: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/settings/audio-reactive-triggers")
+async def set_audio_reactive_triggers(request: AudioReactiveTriggersRequest):
+    """Set audio reactive trigger configuration."""
+    try:
+        # Convert rules to dict format for storage
+        rules_dict = [
+            {
+                "id": rule.id,
+                "trigger": {"type": rule.trigger.type, "params": rule.trigger.params},
+                "effect": {"class": rule.effect.class_name, "params": rule.effect.params},
+            }
+            for rule in request.rules
+        ]
+
+        # Update in control state if available
+        if control_state:
+            # Update master enable
+            control_state.update_status(audio_reactive_enabled=request.enabled)
+
+            # Store trigger configuration
+            trigger_config = {"test_interval": request.test_interval, "rules": rules_dict}
+
+            control_state.update_status(audio_reactive_trigger_config=trigger_config)
+
+            logger.info(
+                f"Updated audio reactive triggers: enabled={request.enabled}, "
+                f"test_interval={request.test_interval}, rules={len(rules_dict)}"
+            )
+        else:
+            logger.warning("Control state not available - trigger configuration not updated")
+
+        await manager.broadcast(
+            {
+                "type": "audio_reactive_triggers_changed",
+                "enabled": request.enabled,
+                "test_interval": request.test_interval,
+                "rule_count": len(rules_dict),
+            }
+        )
+
+        return {
+            "enabled": request.enabled,
+            "test_interval": request.test_interval,
+            "rules": rules_dict,
+            "status": "updated",
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to set audio reactive trigger configuration: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

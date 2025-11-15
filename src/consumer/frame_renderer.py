@@ -397,33 +397,92 @@ class FrameRenderer:
         """
         Initialize trigger configuration from ControlState.
 
-        This creates triggers based on existing audio-reactive settings to maintain
-        backward compatibility. Later, this will be replaced by explicit trigger
-        configuration from the UI.
+        Loads trigger configuration from the new audio_reactive_trigger_config in ControlState.
+        Falls back to legacy configuration for backward compatibility.
         """
         triggers = []
+        test_interval = 2.0
 
-        # Add test trigger if template effects are enabled
-        if self._test_template_effects:
-            triggers.append(
-                EffectTriggerConfig(
-                    trigger_type="test",
-                    effect_class="TemplateEffect",
-                    effect_params={
-                        "template_path": self._test_template_path,
-                        "duration": self._test_template_duration,
-                        "blend_mode": self._test_template_blend_mode,
-                        "intensity": self._test_template_intensity,
-                    },
-                )
-            )
+        logger.info(f"Initializing triggers from control state (control_state={self._control_state is not None})")
 
-        # Add beat trigger if we have control state and beat brightness is enabled
         if self._control_state:
             try:
                 status = self._control_state.get_status()
-                if status and status.audio_reactive_enabled and status.beat_brightness_enabled:
-                    # Get beat brightness parameters
+                if not status:
+                    logger.warning("No control state status available")
+                    # Create default trigger even without control state
+                    triggers.append(
+                        EffectTriggerConfig(
+                            trigger_type="beat",
+                            effect_class="BeatBrightnessEffect",
+                            effect_params={
+                                "boost_intensity": 4.0,
+                                "duration_fraction": 0.4,
+                            },
+                            confidence_min=0.5,
+                            intensity_min=None,
+                            bpm_min=None,
+                            bpm_max=None,
+                        )
+                    )
+                    logger.info("Created default beat trigger (no control state)")
+                    self.trigger_manager.set_triggers(triggers)
+                    self.trigger_manager.set_test_interval(test_interval)
+                    return
+
+                # Try to load from new trigger configuration
+                trigger_config = getattr(status, "audio_reactive_trigger_config", None)
+                if trigger_config:
+                    # Load from new configuration
+                    test_interval = trigger_config.get("test_interval", 2.0)
+                    rules = trigger_config.get("rules", [])
+
+                    for rule in rules:
+                        try:
+                            # Extract trigger and effect configuration
+                            trigger = rule.get("trigger", {})
+                            effect = rule.get("effect", {})
+
+                            # Create EffectTriggerConfig from rule
+                            trigger_config_obj = EffectTriggerConfig(
+                                trigger_type=trigger.get("type", "beat"),
+                                effect_class=effect.get("class", "BeatBrightnessEffect"),
+                                effect_params=effect.get("params", {}),
+                                # Beat trigger conditions
+                                confidence_min=trigger.get("params", {}).get("confidence_min"),
+                                intensity_min=trigger.get("params", {}).get("intensity_min"),
+                                bpm_min=trigger.get("params", {}).get("bpm_min"),
+                                bpm_max=trigger.get("params", {}).get("bpm_max"),
+                            )
+                            triggers.append(trigger_config_obj)
+
+                        except Exception as e:
+                            logger.error(f"Failed to parse trigger rule: {e}, rule={rule}")
+                            continue
+
+                    logger.info(f"Loaded {len(triggers)} triggers from new configuration")
+
+                else:
+                    # Fall back to legacy configuration for backward compatibility
+                    logger.info("No new trigger configuration found, using legacy configuration")
+
+                    # Add test trigger if template effects are enabled (legacy)
+                    if self._test_template_effects:
+                        triggers.append(
+                            EffectTriggerConfig(
+                                trigger_type="test",
+                                effect_class="TemplateEffect",
+                                effect_params={
+                                    "template_path": self._test_template_path,
+                                    "duration": self._test_template_duration,
+                                    "blend_mode": self._test_template_blend_mode,
+                                    "intensity": self._test_template_intensity,
+                                },
+                            )
+                        )
+
+                    # Add beat trigger - always create default even if not explicitly enabled
+                    # This allows testing before UI configuration is set
                     boost_intensity = getattr(status, "beat_brightness_intensity", 4.0)
                     boost_duration_fraction = getattr(status, "beat_brightness_duration", 0.4)
                     confidence_threshold = getattr(status, "beat_confidence_threshold", 0.5)
@@ -437,23 +496,29 @@ class FrameRenderer:
                                 "duration_fraction": boost_duration_fraction,
                             },
                             confidence_min=confidence_threshold,
-                            intensity_min=None,  # Not used in original implementation
+                            intensity_min=None,
                             bpm_min=None,
                             bpm_max=None,
                         )
                     )
 
                     logger.info(
-                        f"Auto-configured beat trigger from ControlState: "
+                        f"Auto-configured beat trigger (legacy/default): "
                         f"boost_intensity={boost_intensity:.2f}, "
                         f"confidence_min={confidence_threshold:.2f}"
                     )
+
+                    test_interval = self._test_template_interval
+
             except Exception as e:
-                logger.warning(f"Failed to auto-configure beat trigger from ControlState: {e}")
+                logger.warning(f"Failed to load trigger configuration: {e}", exc_info=True)
+        else:
+            logger.warning("No control state available - cannot load triggers")
 
         # Set triggers in manager
+        logger.info(f"Setting {len(triggers)} triggers in trigger manager")
         self.trigger_manager.set_triggers(triggers)
-        self.trigger_manager.set_test_interval(self._test_template_interval)
+        self.trigger_manager.set_test_interval(test_interval)
 
     def _check_and_create_beat_brightness_effect(self, frame_timeline_time: float) -> None:
         """
@@ -465,8 +530,20 @@ class FrameRenderer:
         Args:
             frame_timeline_time: Current time on the frame timeline (from get_adjusted_wallclock_delta)
         """
+        # DEBUG: Log once that method is being called
+        if not hasattr(self, "_logged_beat_check_called"):
+            self._logged_beat_check_called = True
+            logger.info("_check_and_create_beat_brightness_effect is being called")
+
         # Check if audio reactive effects are enabled
         if not self._control_state or not self._audio_beat_analyzer:
+            # Log once to help debug
+            if not hasattr(self, "_logged_no_audio_components"):
+                self._logged_no_audio_components = True
+                logger.info(
+                    f"Beat detection not active: control_state={self._control_state is not None}, "
+                    f"audio_analyzer={self._audio_beat_analyzer is not None}"
+                )
             return
 
         try:
@@ -476,18 +553,38 @@ class FrameRenderer:
                 return
 
             if not status.audio_reactive_enabled:
+                # Log once
+                if not hasattr(self, "_logged_audio_reactive_disabled"):
+                    self._logged_audio_reactive_disabled = True
+                    logger.info("Beat detection: audio_reactive_enabled=False")
                 return
 
             if not status.audio_enabled:
+                # Log once
+                if not hasattr(self, "_logged_audio_not_enabled"):
+                    self._logged_audio_not_enabled = True
+                    logger.info("Beat detection: audio_enabled=False (analyzer not running)")
                 return
 
             # Get audio beat state
             beat_state = self._audio_beat_analyzer.get_current_state()
             if not beat_state or not beat_state.is_active:
+                # Log once
+                if not hasattr(self, "_logged_beat_state_inactive"):
+                    self._logged_beat_state_inactive = True
+                    logger.info(f"Beat detection: beat_state inactive (state={beat_state})")
                 return
 
             if beat_state.current_bpm <= 0:
+                # Log once per session
+                if not hasattr(self, "_logged_no_bpm"):
+                    self._logged_no_bpm = True
+                    logger.info("Beat detection: No BPM detected yet")
                 return
+
+            # Clear the "no BPM" flag so we can log again if BPM drops to 0
+            if hasattr(self, "_logged_no_bpm"):
+                delattr(self, "_logged_no_bpm")
 
             # Get the most recent beat time from beat_state (wall-clock time)
             last_beat_wallclock_time = getattr(beat_state, "last_beat_wallclock_time", 0.0)

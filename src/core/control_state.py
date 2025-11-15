@@ -110,7 +110,10 @@ class SystemStatus:
     # Audio reactive effects control
     audio_reactive_enabled: bool = False
 
-    # Beat brightness boost settings for audio reactive effects
+    # Audio reactive trigger configuration (new framework)
+    audio_reactive_trigger_config: dict = None  # Dictionary with test_interval and rules list
+
+    # Beat brightness boost settings for audio reactive effects (legacy)
     beat_brightness_enabled: bool = True
     beat_brightness_intensity: float = 2.5  # 0.0 to 5.0 (multiplier for beat boost)
     beat_brightness_duration: float = 0.25  # 0.1 to 1.0 (fraction of beat duration)
