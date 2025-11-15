@@ -21,7 +21,7 @@ export const TRIGGER_TYPES = {
         type: 'slider',
         min: 0,
         max: 1,
-        step: 0.05,
+        step: 0.01,
         default: null,
         optional: true,
         description: 'Minimum beat confidence (0-100%)'
@@ -32,7 +32,7 @@ export const TRIGGER_TYPES = {
         type: 'slider',
         min: 0,
         max: 1,
-        step: 0.1,
+        step: 0.01,
         default: null,
         optional: true,
         description: 'Minimum beat intensity'

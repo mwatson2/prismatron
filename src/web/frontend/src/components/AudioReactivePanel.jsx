@@ -29,6 +29,9 @@ const AudioReactivePanel = () => {
   // Saved indicator state
   const [showSaved, setShowSaved] = useState(false)
 
+  // Debug: log render state
+  console.log('AudioReactivePanel render - showSaved:', showSaved, 'audioConfigSaved:', audioConfigSaved)
+
   // Initial fetch on mount
   useEffect(() => {
     fetchAudioReactiveSettings()
@@ -45,15 +48,9 @@ const AudioReactivePanel = () => {
   // Listen for save notifications from WebSocket
   useEffect(() => {
     if (audioConfigSaved) {
-      console.log('Audio config saved notification received')
+      console.log('Audio config saved notification received, timestamp:', audioConfigSaved)
       setShowSaved(true)
-
-      // Hide after 3 seconds
-      const timer = setTimeout(() => {
-        setShowSaved(false)
-      }, 3000)
-
-      return () => clearTimeout(timer)
+      console.log('showSaved state set to true')
     }
   }, [audioConfigSaved])
 
@@ -85,6 +82,9 @@ const AudioReactivePanel = () => {
   }
 
   const updateServerConfig = async (updates) => {
+    // Clear saved notification when making changes
+    setShowSaved(false)
+
     const config = {
       enabled: audioReactiveEnabled,
       test_interval: testTriggerInterval,
@@ -496,7 +496,9 @@ const ParameterInput = ({ param, value, onChange }) => {
   const displayValue = value !== null && value !== undefined ? value : param.default
 
   if (param.type === 'slider') {
-    const percentage = param.max <= 1 ? (displayValue * 100).toFixed(0) + '%' : displayValue.toFixed(1) + 'x'
+    // For optional sliders with null values, use middle of range for display
+    const actualValue = displayValue !== null && displayValue !== undefined ? displayValue : (param.min + param.max) / 2
+    const percentage = param.max <= 1 ? (actualValue * 100).toFixed(0) + '%' : actualValue.toFixed(1) + 'x'
 
     return (
       <div className="space-y-1">
@@ -508,7 +510,7 @@ const ParameterInput = ({ param, value, onChange }) => {
           min={param.min}
           max={param.max}
           step={param.step}
-          value={displayValue}
+          value={actualValue}
           onChange={(e) => onChange(parseFloat(e.target.value))}
           className="w-full h-2 bg-dark-700 rounded-lg appearance-none cursor-pointer slider-track"
         />

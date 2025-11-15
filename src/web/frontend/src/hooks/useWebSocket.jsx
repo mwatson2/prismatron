@@ -337,14 +337,14 @@ export const WebSocketProvider = ({ children }) => {
         // Track how often preview data arrives
         if (!handleMessage.previewLastLogTime) {
           handleMessage.previewLastLogTime = performance.now()
-          handleMessage.previewCount = 0
+          handleMessage.previewCount = 1  // Count the first message
           handleMessage.lastFrameCounter = -1
         } else {
           handleMessage.previewCount++
           const now = performance.now()
-          if (now - handleMessage.previewLastLogTime > 5000) {
+          if (now - handleMessage.previewLastLogTime >= 5000) {
             console.log(`📡 WebSocket preview_data received ${handleMessage.previewCount} times in last 5s (should be ~150 for 30fps)`)
-            handleMessage.previewCount = 0
+            handleMessage.previewCount = 1  // Reset to 1 to count the current message in the new window
             handleMessage.previewLastLogTime = now
           }
         }
@@ -373,7 +373,8 @@ export const WebSocketProvider = ({ children }) => {
       case 'audio_config_saved':
         // Audio config was saved to disk
         console.log('Audio config saved:', data)
-        setAudioConfigSaved(data)
+        // Use timestamp to ensure state change is detected
+        setAudioConfigSaved(data.timestamp || Date.now())
         break
 
       default:
