@@ -282,6 +282,12 @@ class ConsumerProcess:
         # Track late frame dropping suspension for new items
         self._suspend_late_frame_drops = False
 
+        # Track consecutive late frame drops for diagnostic logging
+        self._consecutive_late_drops = 0
+        self._last_late_drop_time = 0.0
+        self._first_late_drop_lateness = 0.0
+        self._late_drop_cascade_threshold = 3  # Log diagnostics after 3 consecutive late drops
+
         # Track renderer state for pause/resume handling
         self._last_renderer_state = None
 
@@ -1328,15 +1334,53 @@ class ConsumerProcess:
                         self._timing_logger.log_frame(timing_data)
                         # Log early-dropped frame to timing data
 
-                    # Enhanced logging for late frame drops
+                    # Enhanced logging for late frame drops with cascade detection
                     current_time = time.time()
                     if self._frame_renderer.is_initialized():
                         target_wallclock = timestamp + self._frame_renderer.get_adjusted_wallclock_delta()
                         lateness_ms = (current_time - target_wallclock) * 1000
                         mode_info = f"batch_size={len(self._frame_batch)}" if self.enable_batch_mode else "single"
+
+                        # Track consecutive late drops
+                        time_since_last_drop = (
+                            current_time - self._last_late_drop_time if self._last_late_drop_time > 0 else 0
+                        )
+
+                        # Reset cascade if we haven't dropped in a while (>1 second gap)
+                        if time_since_last_drop > 1.0:
+                            self._consecutive_late_drops = 0
+
+                        # First drop in a potential cascade
+                        if self._consecutive_late_drops == 0:
+                            self._first_late_drop_lateness = lateness_ms
+
+                        self._consecutive_late_drops += 1
+                        self._last_late_drop_time = current_time
+
+                        # Log basic drop info
                         logger.info(
                             f"⏰ FRAME DROPPED (late): Frame {timing_data.frame_index if timing_data else 'unknown'} - {lateness_ms:.1f}ms late, {mode_info}, drop_rate: {self.pre_optimization_drop_rate_ewma.get_rate_percentage():.1f}%"
                         )
+
+                        # Enhanced diagnostic logging when we detect a cascade
+                        if self._consecutive_late_drops >= self._late_drop_cascade_threshold:
+                            lateness_growth = lateness_ms - self._first_late_drop_lateness
+                            logger.warning(
+                                f"🔥 FRAME DROP CASCADE DETECTED: {self._consecutive_late_drops} consecutive drops, "
+                                f"lateness grew by {lateness_growth:.1f}ms (from {self._first_late_drop_lateness:.1f}ms to {lateness_ms:.1f}ms)"
+                            )
+
+                            # Log diagnostic information about what might be consuming CPU
+                            led_buffer_depth = (
+                                self._led_buffer.get_buffer_stats()["current_count"] if self._led_buffer else 0
+                            )
+                            logger.warning(
+                                f"🔍 CASCADE DIAGNOSTICS: "
+                                f"LED buffer depth: {led_buffer_depth}, "
+                                f"batch mode: {self.enable_batch_mode}, "
+                                f"frames in batch: {len(self._frame_batch)}, "
+                                f"time since last drop: {time_since_last_drop*1000:.1f}ms"
+                            )
                     else:
                         logger.info(
                             f"⏰ FRAME DROPPED (uninitialized): Frame {timing_data.frame_index if timing_data else 'unknown'} - renderer not ready, drop_rate: {self.pre_optimization_drop_rate_ewma.get_rate_percentage():.1f}%"
@@ -1347,6 +1391,12 @@ class ConsumerProcess:
                 # Frame is not late and we were suspending drops - we've caught up
                 self._suspend_late_frame_drops = False
                 logger.warning("⏰ Caught up with timeline - resuming normal late frame dropping")
+
+            # Reset cascade counter when we successfully process a non-late frame
+            if not frame_is_late and self._consecutive_late_drops > 0:
+                logger.info(f"✅ Cascade ended after {self._consecutive_late_drops} drops")
+                self._consecutive_late_drops = 0
+                self._first_late_drop_lateness = 0.0
 
             # Validate frame shape
             if frame_array.shape != (FRAME_HEIGHT, FRAME_WIDTH, FRAME_CHANNELS):
