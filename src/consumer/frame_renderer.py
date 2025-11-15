@@ -9,8 +9,9 @@ to multiple targets (WLED, test renderer).
 import logging
 import math
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -19,6 +20,241 @@ from .test_sink import TestSink
 from .wled_sink import WLEDSink
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class EffectTriggerConfig:
+    """
+    Configuration for an effect trigger.
+
+    A trigger defines:
+    1. When to fire (beat detection, periodic test, etc.)
+    2. What conditions must be met (thresholds, BPM ranges)
+    3. Which effect to create and with what parameters
+    """
+
+    trigger_type: str  # "beat" or "test"
+    effect_class: str  # Name of effect class from led_effect module
+    effect_params: Dict[str, Any] = field(default_factory=dict)
+
+    # Beat trigger conditions (all must be satisfied)
+    confidence_min: Optional[float] = None
+    intensity_min: Optional[float] = None
+    bpm_min: Optional[float] = None
+    bpm_max: Optional[float] = None
+
+    # Test trigger timing (global interval set at manager level)
+
+    def __post_init__(self):
+        """Validate configuration."""
+        if self.trigger_type not in ("beat", "test"):
+            raise ValueError(f"Invalid trigger_type: {self.trigger_type}")
+
+        # Validate beat trigger has at least one condition
+        if self.trigger_type == "beat":
+            has_condition = any(
+                [
+                    self.confidence_min is not None,
+                    self.intensity_min is not None,
+                    self.bpm_min is not None,
+                    self.bpm_max is not None,
+                ]
+            )
+            if not has_condition:
+                logger.warning("Beat trigger has no conditions - will match all beats")
+
+
+class EffectTriggerManager:
+    """
+    Manages effect triggers and creates effect instances based on configured rules.
+
+    Evaluates triggers in order and creates effects using first-match semantics.
+    Supports beat triggers (audio-reactive) and test triggers (periodic testing).
+    """
+
+    def __init__(self, effect_manager: LedEffectManager):
+        """
+        Initialize trigger manager.
+
+        Args:
+            effect_manager: LedEffectManager instance to add created effects to
+        """
+        self.effect_manager = effect_manager
+        self.triggers: List[EffectTriggerConfig] = []
+
+        # Test trigger state
+        self.test_trigger_interval = 2.0  # Global interval for test triggers (seconds)
+        self._last_test_trigger_time = -float("inf")  # Allow first trigger to fire immediately
+
+        # Beat trigger state
+        self._last_beat_time_processed = -1.0  # Track last beat we created an effect for
+
+        logger.info("EffectTriggerManager initialized")
+
+    def set_triggers(self, triggers: List[EffectTriggerConfig]) -> None:
+        """
+        Set trigger configuration.
+
+        Args:
+            triggers: List of trigger configurations
+        """
+        self.triggers = triggers
+        logger.info(f"Configured {len(triggers)} effect triggers")
+        for i, trigger in enumerate(triggers):
+            logger.info(
+                f"  Trigger {i}: type={trigger.trigger_type}, "
+                f"effect={trigger.effect_class}, params={trigger.effect_params}"
+            )
+
+    def set_test_interval(self, interval: float) -> None:
+        """Set global test trigger interval."""
+        self.test_trigger_interval = interval
+        logger.info(f"Test trigger interval set to {interval}s")
+
+    def evaluate_beat_triggers(
+        self, frame_timeline_time: float, beat_state: Any, last_beat_wallclock_time: float, wallclock_delta: float
+    ) -> None:
+        """
+        Evaluate beat triggers and create effects for new beats.
+
+        Args:
+            frame_timeline_time: Current time on frame timeline
+            beat_state: AudioBeatState from beat analyzer
+            last_beat_wallclock_time: Wall-clock time of last beat
+            wallclock_delta: Delta between wall-clock and frame timeline
+        """
+        # Check if this is a new beat we haven't processed yet
+        if last_beat_wallclock_time <= self._last_beat_time_processed:
+            return  # Already processed this beat
+
+        # Convert beat wall-clock time to frame timeline
+        beat_frame_timeline_time = last_beat_wallclock_time - wallclock_delta
+
+        # Get beat properties
+        beat_intensity = getattr(beat_state, "beat_intensity", 1.0)
+        beat_confidence = getattr(beat_state, "confidence", 1.0)
+        current_bpm = beat_state.current_bpm
+
+        # Evaluate triggers in order (first match wins)
+        for trigger in self.triggers:
+            if trigger.trigger_type != "beat":
+                continue
+
+            # Check all conditions (all must be satisfied)
+            if trigger.confidence_min is not None and beat_confidence < trigger.confidence_min:
+                continue
+
+            if trigger.intensity_min is not None and beat_intensity < trigger.intensity_min:
+                continue
+
+            if trigger.bpm_min is not None and current_bpm < trigger.bpm_min:
+                continue
+
+            if trigger.bpm_max is not None and current_bpm > trigger.bpm_max:
+                continue
+
+            # All conditions met - create effect
+            try:
+                effect = self._create_effect(
+                    trigger=trigger,
+                    start_time=beat_frame_timeline_time,
+                    bpm=current_bpm,
+                    beat_intensity=beat_intensity,
+                    beat_confidence=beat_confidence,
+                )
+
+                self.effect_manager.add_effect(effect)
+
+                logger.info(
+                    f"🎵 Beat trigger matched: {trigger.effect_class}, "
+                    f"BPM={current_bpm:.1f}, intensity={beat_intensity:.2f}, "
+                    f"confidence={beat_confidence:.2f}"
+                )
+
+                # First match - mark beat as processed and stop
+                self._last_beat_time_processed = last_beat_wallclock_time
+                return
+
+            except Exception as e:
+                logger.error(f"Failed to create effect from beat trigger: {e}")
+                continue
+
+        # No trigger matched - mark beat as processed anyway
+        self._last_beat_time_processed = last_beat_wallclock_time
+
+    def evaluate_test_triggers(self, frame_timeline_time: float) -> None:
+        """
+        Evaluate test triggers and create periodic effects.
+
+        Args:
+            frame_timeline_time: Current time on frame timeline
+        """
+        # Check if it's time to create a test effect
+        time_since_last = frame_timeline_time - self._last_test_trigger_time
+
+        if time_since_last < self.test_trigger_interval:
+            return
+
+        # Evaluate test triggers in order (first match wins)
+        for trigger in self.triggers:
+            if trigger.trigger_type != "test":
+                continue
+
+            # Test triggers have no conditions - just create effect
+            try:
+                effect = self._create_effect(trigger=trigger, start_time=frame_timeline_time)
+
+                self.effect_manager.add_effect(effect)
+
+                logger.info(f"🧪 Test trigger fired: {trigger.effect_class}, " f"params={trigger.effect_params}")
+
+                # Update last trigger time and stop (first match)
+                self._last_test_trigger_time = frame_timeline_time
+                return
+
+            except Exception as e:
+                logger.error(f"Failed to create effect from test trigger: {e}")
+                continue
+
+    def _create_effect(self, trigger: EffectTriggerConfig, start_time: float, **extra_params):
+        """
+        Create an effect instance from trigger configuration.
+
+        Args:
+            trigger: Trigger configuration
+            start_time: Effect start time on frame timeline
+            **extra_params: Additional parameters (BPM, beat_intensity, etc.)
+
+        Returns:
+            Effect instance
+        """
+        # Import led_effect module to get effect classes
+        from . import led_effect
+
+        # Merge trigger params with extra params (extra params override)
+        params = {**trigger.effect_params, **extra_params}
+
+        # Special handling for TemplateEffect - use factory for caching
+        if trigger.effect_class == "TemplateEffect":
+            # Extract template_path from params
+            template_path = params.pop("template_path", None)
+            if template_path is None:
+                raise ValueError("TemplateEffect requires 'template_path' parameter")
+
+            # Create using factory (with caching)
+            effect = led_effect.TemplateEffectFactory.create_effect(
+                template_path=template_path, start_time=start_time, **params
+            )
+        else:
+            # Get effect class for other effect types
+            effect_class = getattr(led_effect, trigger.effect_class, None)
+            if effect_class is None:
+                raise ValueError(f"Unknown effect class: {trigger.effect_class}")
+
+            # Create effect instance directly
+            effect = effect_class(start_time=start_time, **params)
+
+        return effect
 
 
 class FrameRenderer:
@@ -138,6 +374,9 @@ class FrameRenderer:
         # LED effects manager
         self.effect_manager = LedEffectManager()
 
+        # Effect trigger manager (new framework)
+        self.trigger_manager = EffectTriggerManager(self.effect_manager)
+
         # Template effect testing configuration - ENABLED BY DEFAULT
         self._test_template_effects = True  # Enable/disable template effect testing
         self._test_template_path = "templates/ring_800x480_leds.npy"
@@ -147,16 +386,81 @@ class FrameRenderer:
         self._test_template_intensity = 2.0  # Effect intensity
         self._last_template_effect_time = 0.0  # Last time effect was created
 
+        # Initialize triggers from control state (if available)
+        self._initialize_triggers_from_control_state()
+
         logger.info(
             f"FrameRenderer initialized: delay={first_frame_delay_ms}ms, " f"tolerance=±{timing_tolerance_ms}ms"
         )
 
+    def _initialize_triggers_from_control_state(self) -> None:
+        """
+        Initialize trigger configuration from ControlState.
+
+        This creates triggers based on existing audio-reactive settings to maintain
+        backward compatibility. Later, this will be replaced by explicit trigger
+        configuration from the UI.
+        """
+        triggers = []
+
+        # Add test trigger if template effects are enabled
+        if self._test_template_effects:
+            triggers.append(
+                EffectTriggerConfig(
+                    trigger_type="test",
+                    effect_class="TemplateEffect",
+                    effect_params={
+                        "template_path": self._test_template_path,
+                        "duration": self._test_template_duration,
+                        "blend_mode": self._test_template_blend_mode,
+                        "intensity": self._test_template_intensity,
+                    },
+                )
+            )
+
+        # Add beat trigger if we have control state and beat brightness is enabled
+        if self._control_state:
+            try:
+                status = self._control_state.get_status()
+                if status and status.audio_reactive_enabled and status.beat_brightness_enabled:
+                    # Get beat brightness parameters
+                    boost_intensity = getattr(status, "beat_brightness_intensity", 4.0)
+                    boost_duration_fraction = getattr(status, "beat_brightness_duration", 0.4)
+                    confidence_threshold = getattr(status, "beat_confidence_threshold", 0.5)
+
+                    triggers.append(
+                        EffectTriggerConfig(
+                            trigger_type="beat",
+                            effect_class="BeatBrightnessEffect",
+                            effect_params={
+                                "boost_intensity": boost_intensity,
+                                "duration_fraction": boost_duration_fraction,
+                            },
+                            confidence_min=confidence_threshold,
+                            intensity_min=None,  # Not used in original implementation
+                            bpm_min=None,
+                            bpm_max=None,
+                        )
+                    )
+
+                    logger.info(
+                        f"Auto-configured beat trigger from ControlState: "
+                        f"boost_intensity={boost_intensity:.2f}, "
+                        f"confidence_min={confidence_threshold:.2f}"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to auto-configure beat trigger from ControlState: {e}")
+
+        # Set triggers in manager
+        self.trigger_manager.set_triggers(triggers)
+        self.trigger_manager.set_test_interval(self._test_template_interval)
+
     def _check_and_create_beat_brightness_effect(self, frame_timeline_time: float) -> None:
         """
-        Check for new beats and create BeatBrightnessEffect instances.
+        Check for new beats and create effects using trigger manager.
 
-        This method replaces the legacy inline brightness boost calculation.
-        It monitors beat state and creates effect instances when new beats are detected.
+        This method uses the new trigger framework to evaluate beat conditions
+        and create effects based on configured triggers.
 
         Args:
             frame_timeline_time: Current time on the frame timeline (from get_adjusted_wallclock_delta)
@@ -177,28 +481,6 @@ class FrameRenderer:
             if not status.audio_enabled:
                 return
 
-            # Check if beat brightness boost is specifically enabled
-            if not status.beat_brightness_enabled:
-                return
-
-            # Get configurable parameters with fallbacks
-            boost_intensity = getattr(status, "beat_brightness_intensity", 4.0)
-            boost_duration_fraction = getattr(status, "beat_brightness_duration", 0.4)
-            confidence_threshold = getattr(status, "beat_confidence_threshold", 0.5)
-
-            # Clamp parameters to safe ranges
-            boost_intensity = max(0.0, min(5.0, boost_intensity))
-            boost_duration_fraction = max(0.1, min(1.0, boost_duration_fraction))
-            confidence_threshold = max(0.0, min(1.0, confidence_threshold))
-
-            # Log beat boost configuration once
-            if not self._beat_boost_logged:
-                logger.info(
-                    f"🎵 Beat brightness boost enabled: intensity={boost_intensity:.2f}, "
-                    f"duration={boost_duration_fraction:.2f}, confidence_threshold={confidence_threshold:.2f}"
-                )
-                self._beat_boost_logged = True
-
             # Get audio beat state
             beat_state = self._audio_beat_analyzer.get_current_state()
             if not beat_state or not beat_state.is_active:
@@ -210,43 +492,12 @@ class FrameRenderer:
             # Get the most recent beat time from beat_state (wall-clock time)
             last_beat_wallclock_time = getattr(beat_state, "last_beat_wallclock_time", 0.0)
 
-            # Check if this is a new beat we haven't processed yet
-            if last_beat_wallclock_time <= self._last_beat_time_processed:
-                return  # Already created an effect for this beat
-
-            # Get beat intensity and confidence
-            beat_intensity_value = getattr(beat_state, "beat_intensity", 1.0)
-            beat_confidence = getattr(beat_state, "confidence", 1.0)
-
-            # Apply confidence threshold - ignore weak beats
-            if beat_confidence < confidence_threshold:
-                logger.debug(f"Beat ignored: confidence {beat_confidence:.2f} < threshold {confidence_threshold:.2f}")
-                self._last_beat_time_processed = last_beat_wallclock_time
-                return
-
-            # Convert beat wall-clock time to frame timeline
-            # Wall-clock to frame timeline: wallclock_time - get_adjusted_wallclock_delta()
-            beat_frame_timeline_time = last_beat_wallclock_time - self.get_adjusted_wallclock_delta()
-
-            # Import here to avoid circular dependency
-            from .led_effect import BeatBrightnessEffect
-
-            # Create new beat brightness effect
-            effect = BeatBrightnessEffect(
-                start_time=beat_frame_timeline_time,
-                bpm=beat_state.current_bpm,
-                beat_intensity=beat_intensity_value,
-                boost_intensity=boost_intensity,
-                duration_fraction=boost_duration_fraction,
-            )
-
-            self.effect_manager.add_effect(effect)
-            self._last_beat_time_processed = last_beat_wallclock_time
-
-            logger.info(
-                f"🎵 Created BeatBrightnessEffect: BPM={beat_state.current_bpm:.1f}, "
-                f"intensity={beat_intensity_value:.2f}, confidence={beat_confidence:.2f}, "
-                f"frame_time={beat_frame_timeline_time:.3f}"
+            # Use trigger manager to evaluate beat triggers
+            self.trigger_manager.evaluate_beat_triggers(
+                frame_timeline_time=frame_timeline_time,
+                beat_state=beat_state,
+                last_beat_wallclock_time=last_beat_wallclock_time,
+                wallclock_delta=self.get_adjusted_wallclock_delta(),
             )
 
         except Exception as e:
@@ -629,7 +880,7 @@ class FrameRenderer:
 
     def _create_periodic_template_effect(self, frame_timeline_time: float) -> None:
         """
-        Create template effects periodically for testing (if enabled).
+        Create template effects periodically using trigger manager.
 
         Args:
             frame_timeline_time: Current time on the frame timeline
@@ -637,33 +888,11 @@ class FrameRenderer:
         if not self._test_template_effects:
             return
 
-        # Check if it's time to create a new effect
-        time_since_last_effect = frame_timeline_time - self._last_template_effect_time
-
-        if time_since_last_effect >= self._test_template_interval:
-            # Import here to avoid circular dependency
-            from .led_effect import TemplateEffectFactory
-
-            try:
-                # Create new template effect using cached template
-                effect = TemplateEffectFactory.create_effect(
-                    template_path=self._test_template_path,
-                    start_time=frame_timeline_time,
-                    duration=self._test_template_duration,
-                    blend_mode=self._test_template_blend_mode,
-                    intensity=self._test_template_intensity,
-                    loop=False,
-                )
-                self.effect_manager.add_effect(effect)
-                self._last_template_effect_time = frame_timeline_time
-
-                logger.info(
-                    f"Created periodic template effect: {self._test_template_path}, "
-                    f"duration={self._test_template_duration}s, blend={self._test_template_blend_mode}, "
-                    f"intensity={self._test_template_intensity}"
-                )
-            except Exception as e:
-                logger.error(f"Failed to create periodic template effect: {e}")
+        # Use trigger manager to evaluate test triggers
+        try:
+            self.trigger_manager.evaluate_test_triggers(frame_timeline_time)
+        except Exception as e:
+            logger.error(f"Failed to evaluate test triggers: {e}")
 
     def enable_template_effect_testing(
         self,
@@ -691,7 +920,9 @@ class FrameRenderer:
         self._test_template_duration = duration
         self._test_template_blend_mode = blend_mode
         self._test_template_intensity = intensity
-        self._last_template_effect_time = 0.0
+
+        # Update trigger manager configuration
+        self._initialize_triggers_from_control_state()
 
         logger.info(
             f"Template effect testing {'enabled' if enabled else 'disabled'}: "
