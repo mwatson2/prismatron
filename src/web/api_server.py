@@ -194,6 +194,30 @@ def generate_random_led_transition() -> TransitionConfig:
     return TransitionConfig(type=transition_type, parameters={"duration": 1.0})  # 1 second duration as requested
 
 
+def load_audio_config() -> Optional[Dict]:
+    """Load audio reactive configuration from disk."""
+    if AUDIO_CONFIG_FILE.exists():
+        try:
+            with open(AUDIO_CONFIG_FILE) as f:
+                config = json.load(f)
+                logger.info(f"Loaded audio config: {len(config.get('rules', []))} rules")
+                return config
+        except Exception as e:
+            logger.error(f"Failed to load audio config: {e}")
+            return None
+    return None
+
+
+def save_audio_config(config: Dict) -> None:
+    """Save audio reactive configuration to disk."""
+    try:
+        with open(AUDIO_CONFIG_FILE, "w") as f:
+            json.dump(config, f, indent=2)
+        logger.info(f"Saved audio config: {len(config.get('rules', []))} rules")
+    except Exception as e:
+        logger.error(f"Failed to save audio config: {e}")
+
+
 def load_uploads_playlist() -> Dict:
     """Load the uploads playlist from disk, or create a new one if it doesn't exist."""
     uploads_playlist_path = PLAYLISTS_DIR / UPLOADS_PLAYLIST_NAME
@@ -713,6 +737,10 @@ tegrastats_monitor: Optional[TegrastatsMonitor] = None  # System stats monitor f
 # Track currently loaded playlist file for real-time updates
 current_playlist_file: Optional[str] = None
 
+# Audio config auto-save state
+audio_config_save_timer: Optional[asyncio.Task] = None
+audio_config_pending: Optional[Dict] = None
+
 # Playlist synchronization client
 playlist_sync_client: Optional[PlaylistSyncClient] = None
 
@@ -725,6 +753,7 @@ UPLOAD_DIR = Path("uploads")
 MEDIA_DIR = Path("media")
 THUMBNAILS_DIR = Path("thumbnails")
 PLAYLISTS_DIR = Path("playlists")
+AUDIO_CONFIG_FILE = Path("audio_config.json")
 
 # Ensure directories exist
 for dir_path in [UPLOAD_DIR, MEDIA_DIR, THUMBNAILS_DIR, PLAYLISTS_DIR]:
@@ -1080,6 +1109,15 @@ def sync_playlist_update_handler(sync_state: SyncPlaylistState) -> None:
 async def startup_event():
     """Start background tasks on application startup."""
     global preview_task, upload_cleanup_task, playlist_sync_client, network_manager, tegrastats_monitor
+
+    # Load audio config from disk and apply to control state
+    saved_config = load_audio_config()
+    if saved_config and control_state:
+        try:
+            control_state.update_status(audio_reactive_trigger_config=saved_config)
+            logger.info(f"Loaded audio config from disk: {len(saved_config.get('rules', []))} rules")
+        except Exception as e:
+            logger.error(f"Failed to apply saved audio config to control state: {e}")
 
     # Initialize network manager
     try:
@@ -3250,6 +3288,28 @@ class AudioReactiveTriggersRequest(BaseModel):
     rules: List[TriggerEffectRule] = Field(default_factory=list, description="List of trigger->effect rules")
 
 
+async def schedule_audio_config_save(config: Dict) -> None:
+    """Schedule audio config save with 5-second debounce."""
+    global audio_config_save_timer, audio_config_pending
+
+    # Store the pending config
+    audio_config_pending = config
+
+    # Cancel existing timer if any
+    if audio_config_save_timer and not audio_config_save_timer.done():
+        audio_config_save_timer.cancel()
+
+    # Schedule new save in 5 seconds
+    async def save_after_delay():
+        await asyncio.sleep(5)
+        if audio_config_pending:
+            save_audio_config(audio_config_pending)
+            # Broadcast save notification to UI
+            await manager.broadcast({"type": "audio_config_saved", "timestamp": time.time()})
+
+    audio_config_save_timer = asyncio.create_task(save_after_delay())
+
+
 @app.get("/api/settings/audio-reactive-triggers")
 async def get_audio_reactive_triggers():
     """Get current audio reactive trigger configuration."""
@@ -3266,11 +3326,16 @@ async def get_audio_reactive_triggers():
                     audio_reactive_enabled = status.audio_reactive_enabled
 
                 # Get trigger configuration from control state
-                # For now, return empty rules - will be populated by migration or user configuration
                 trigger_config = getattr(status, "audio_reactive_trigger_config", None) if status else None
                 if trigger_config:
                     test_interval = trigger_config.get("test_interval", 2.0)
                     rules = trigger_config.get("rules", [])
+                else:
+                    # Try loading from disk if not in control state
+                    saved_config = load_audio_config()
+                    if saved_config:
+                        test_interval = saved_config.get("test_interval", 2.0)
+                        rules = saved_config.get("rules", [])
             except Exception as e:
                 logger.warning(f"Failed to get audio reactive trigger config: {e}")
 
@@ -3311,6 +3376,10 @@ async def set_audio_reactive_triggers(request: AudioReactiveTriggersRequest):
             )
         else:
             logger.warning("Control state not available - trigger configuration not updated")
+
+        # Schedule auto-save to disk (5-second debounce)
+        config_to_save = {"enabled": request.enabled, "test_interval": request.test_interval, "rules": rules_dict}
+        await schedule_audio_config_save(config_to_save)
 
         await manager.broadcast(
             {

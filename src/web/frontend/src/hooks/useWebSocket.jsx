@@ -23,6 +23,7 @@ export const WebSocketProvider = ({ children }) => {
   const [isPageVisible, setIsPageVisible] = useState(!document.hidden)
   const [conversionUpdate, setConversionUpdate] = useState(null)
   const [audioReactiveTriggersChanged, setAudioReactiveTriggersChanged] = useState(null)
+  const [audioConfigSaved, setAudioConfigSaved] = useState(null)
 
   // Use refs to avoid stale closures in callbacks
   const currentPlaylistFileRef = useRef(currentPlaylistFile)
@@ -369,6 +370,12 @@ export const WebSocketProvider = ({ children }) => {
         setAudioReactiveTriggersChanged(data)
         break
 
+      case 'audio_config_saved':
+        // Audio config was saved to disk
+        console.log('Audio config saved:', data)
+        setAudioConfigSaved(data)
+        break
+
       default:
         console.warn('⚠️ Unknown WebSocket message type:', data.type, data)
     }
@@ -408,6 +415,7 @@ export const WebSocketProvider = ({ children }) => {
     playlistModified,
     conversionUpdate,
     audioReactiveTriggersChanged,
+    audioConfigSaved,
     sendMessage,
     // Convenience methods for common operations
     updatePlaylist: (newPlaylist) => setPlaylist(newPlaylist),

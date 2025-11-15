@@ -14,7 +14,7 @@ import {
 
 const AudioReactivePanel = () => {
   // WebSocket for real-time updates
-  const { audioReactiveTriggersChanged } = useWebSocket()
+  const { audioReactiveTriggersChanged, audioConfigSaved } = useWebSocket()
 
   // Master enable/disable
   const [audioReactiveEnabled, setAudioReactiveEnabled] = useState(false)
@@ -25,6 +25,9 @@ const AudioReactivePanel = () => {
 
   // Trigger rules
   const [triggerRules, setTriggerRules] = useState([])
+
+  // Saved indicator state
+  const [showSaved, setShowSaved] = useState(false)
 
   // Initial fetch on mount
   useEffect(() => {
@@ -38,6 +41,21 @@ const AudioReactivePanel = () => {
       fetchAudioReactiveSettings()
     }
   }, [audioReactiveTriggersChanged])
+
+  // Listen for save notifications from WebSocket
+  useEffect(() => {
+    if (audioConfigSaved) {
+      console.log('Audio config saved notification received')
+      setShowSaved(true)
+
+      // Hide after 3 seconds
+      const timer = setTimeout(() => {
+        setShowSaved(false)
+      }, 3000)
+
+      return () => clearTimeout(timer)
+    }
+  }, [audioConfigSaved])
 
   const fetchAudioReactiveSettings = async () => {
     try {
@@ -204,9 +222,16 @@ const AudioReactivePanel = () => {
 
   return (
     <div className="retro-container">
-      <h3 className="text-lg font-retro text-neon-pink mb-4 flex items-center">
-        <SpeakerWaveIcon className="w-6 h-6 mr-2" />
-        AUDIO REACTIVE EFFECTS
+      <h3 className="text-lg font-retro text-neon-pink mb-4 flex items-center justify-between">
+        <div className="flex items-center">
+          <SpeakerWaveIcon className="w-6 h-6 mr-2" />
+          AUDIO REACTIVE EFFECTS
+        </div>
+        {showSaved && (
+          <span className="text-sm font-mono text-neon-green px-3 py-1 bg-dark-800 rounded-retro border border-neon-green border-opacity-50 animate-pulse">
+            ✓ SAVED
+          </span>
+        )}
       </h3>
 
       {/* Master Enable/Disable */}
