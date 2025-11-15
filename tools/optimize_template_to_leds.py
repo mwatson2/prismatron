@@ -117,9 +117,12 @@ def optimize_template_to_leds(
             3,
         ), f"Frame shape {frame_rgb.shape} != expected ({FRAME_HEIGHT}, {FRAME_WIDTH}, 3)"
 
+        # Convert to uint8 explicitly
+        frame_uint8 = frame_rgb.astype(np.uint8)
+
         # Optimize frame
         result = optimizer.optimize_frame(
-            target_frame=frame_rgb.astype(np.uint8),
+            target_frame=frame_uint8,
             max_iterations=max_iterations,
             debug=False,
         )

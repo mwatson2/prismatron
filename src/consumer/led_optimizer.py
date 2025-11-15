@@ -209,8 +209,8 @@ class LEDOptimizer:
             np.power((srgb_normalized + 0.055) / 1.055, 2.4),
         )
 
-        # Scale back to [0, 255]
-        linear_frame = (linear_normalized * 255.0).astype(np.float32)
+        # Scale back to [0, 255] and convert to uint8
+        linear_frame = (linear_normalized * 255.0).astype(np.uint8)
 
         return linear_frame
 
