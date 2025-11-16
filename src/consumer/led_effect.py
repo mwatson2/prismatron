@@ -104,6 +104,7 @@ class TemplateEffectFactory:
         intensity: float = 1.0,
         loop: bool = False,
         add_multiplier: float = 0.4,
+        color_thieving: bool = False,
         **kwargs,
     ) -> "TemplateEffect":
         """
@@ -117,6 +118,7 @@ class TemplateEffectFactory:
             intensity: Effect intensity/opacity [0, 1+]
             loop: Whether to loop the template when it reaches the end
             add_multiplier: Multiplier for additive component in 'addboost' mode [0, 1+]
+            color_thieving: Whether to extract color from input LEDs using first template frame
             **kwargs: Additional parameters passed to TemplateEffect
 
         Returns:
@@ -132,6 +134,7 @@ class TemplateEffectFactory:
             intensity=intensity,
             loop=loop,
             add_multiplier=add_multiplier,
+            color_thieving=color_thieving,
             **kwargs,
         )
 
@@ -295,6 +298,7 @@ class TemplateEffect(LedEffect):
         intensity: float = 1.0,
         loop: bool = False,
         add_multiplier: float = 0.4,
+        color_thieving: bool = False,
         **kwargs,
     ):
         """
@@ -314,6 +318,7 @@ class TemplateEffect(LedEffect):
             intensity: Effect intensity/opacity parameter 'a' [0, 1+]
             loop: Whether to loop the template when it reaches the end
             add_multiplier: Multiplier for additive component in 'addboost' mode [0, 1+]
+            color_thieving: Whether to extract color from input LEDs using first template frame
             **kwargs: Additional parameters passed to base class
         """
         # Set duration (None if looping infinitely)
@@ -327,7 +332,11 @@ class TemplateEffect(LedEffect):
         self.intensity = intensity
         self.loop = loop
         self.add_multiplier = add_multiplier
+        self.color_thieving = color_thieving
         self.num_frames = template.shape[0]
+
+        # Color thieving state
+        self.thieved_color = None  # Will be set on first frame if color_thieving is enabled
 
         # Validate template shape
         if self.template.ndim != 2:
@@ -335,7 +344,7 @@ class TemplateEffect(LedEffect):
 
         logger.info(
             f"Created TemplateEffect: {self.num_frames} frames over {duration:.2f}s, "
-            f"blend={blend_mode}, intensity={intensity:.2f}, loop={loop}"
+            f"blend={blend_mode}, intensity={intensity:.2f}, loop={loop}, color_thieving={color_thieving}"
         )
 
     def apply(self, led_values: np.ndarray, current_time: float) -> bool:
@@ -385,6 +394,56 @@ class TemplateEffect(LedEffect):
             logger.error(f"Template LED count {template_frame.shape[0]} != frame LED count {led_values.shape[0]}")
             return True  # Remove effect on error
 
+        # Color thieving: extract weighted average color from first frame
+        if self.color_thieving and self.thieved_color is None and led_values.ndim == 2 and led_values.shape[1] == 3:
+            # Use first template frame as weights
+            first_frame = self.template[0]  # Shape: (led_count,)
+
+            # Calculate weighted average RGB color
+            # weights shape: (led_count,), led_values shape: (led_count, 3)
+            total_weight = np.sum(first_frame)
+            if total_weight > 0:
+                # Weighted average for each RGB channel
+                weighted_rgb = np.sum(led_values * first_frame[:, np.newaxis], axis=0) / total_weight
+
+                # Convert RGB to XYZ colorspace
+                # Using sRGB to XYZ conversion matrix (D65 illuminant)
+                rgb_normalized = weighted_rgb / 255.0
+                xyz_matrix = np.array(
+                    [
+                        [0.4124564, 0.3575761, 0.1804375],
+                        [0.2126729, 0.7151522, 0.0721750],
+                        [0.0193339, 0.1191920, 0.9503041],
+                    ]
+                )
+                xyz = xyz_matrix @ rgb_normalized
+
+                # Clamp Y (luminance) to 1.0
+                xyz[1] = min(xyz[1], 1.0)
+
+                # Convert XYZ back to RGB
+                xyz_to_rgb_matrix = np.array(
+                    [
+                        [3.2404542, -1.5371385, -0.4985314],
+                        [-0.9692660, 1.8760108, 0.0415560],
+                        [0.0556434, -0.2040259, 1.0572252],
+                    ]
+                )
+                rgb_normalized_clamped = xyz_to_rgb_matrix @ xyz
+
+                # Clamp to valid RGB range and convert back to [0, 255]
+                rgb_normalized_clamped = np.clip(rgb_normalized_clamped, 0.0, 1.0)
+                self.thieved_color = rgb_normalized_clamped * 255.0
+
+                logger.info(
+                    f"Color thieving: extracted color RGB=({self.thieved_color[0]:.1f}, "
+                    f"{self.thieved_color[1]:.1f}, {self.thieved_color[2]:.1f})"
+                )
+            else:
+                # No weight in first frame, use white
+                self.thieved_color = np.array([255.0, 255.0, 255.0])
+                logger.warning("Color thieving: first template frame has zero weight, using white")
+
         # Apply effect based on blend mode
         # Template is single-channel, broadcast to RGB if needed
         if led_values.ndim == 2 and led_values.shape[1] == 3:
@@ -398,7 +457,13 @@ class TemplateEffect(LedEffect):
 
             elif self.blend_mode == "add":
                 # Additive blend: led = led + template * intensity
-                led_values[:] = np.clip(led_values + template_rgb * self.intensity, 0, 255)
+                # With color thieving: led = led + template * intensity * color
+                if self.color_thieving and self.thieved_color is not None:
+                    # Multiply template by thieved color (broadcast across LEDs)
+                    colored_template = template_rgb * self.thieved_color[np.newaxis, :] / 255.0
+                    led_values[:] = np.clip(led_values + colored_template * self.intensity, 0, 255)
+                else:
+                    led_values[:] = np.clip(led_values + template_rgb * self.intensity, 0, 255)
 
             elif self.blend_mode == "multiply":
                 # Multiplicative blend: led = led * (template * intensity)
@@ -422,9 +487,16 @@ class TemplateEffect(LedEffect):
                 # Combined boost and add blend:
                 # First apply boost: led = led * (1 + intensity * template_normalized)
                 # Then apply add: led = led + template * add_multiplier
+                # With color thieving: add component uses thieved color
                 template_normalized = template_rgb / 255.0
                 boosted = led_values * (1.0 + self.intensity * template_normalized)
-                led_values[:] = np.clip(boosted + template_rgb * self.add_multiplier, 0, 255)
+
+                if self.color_thieving and self.thieved_color is not None:
+                    # Multiply template by thieved color for additive component
+                    colored_template = template_rgb * self.thieved_color[np.newaxis, :] / 255.0
+                    led_values[:] = np.clip(boosted + colored_template * self.add_multiplier, 0, 255)
+                else:
+                    led_values[:] = np.clip(boosted + template_rgb * self.add_multiplier, 0, 255)
 
             else:
                 logger.warning(f"Unknown blend mode: {self.blend_mode}, using alpha")
@@ -448,6 +520,8 @@ class TemplateEffect(LedEffect):
                 "blend_mode": self.blend_mode,
                 "intensity": self.intensity,
                 "loop": self.loop,
+                "color_thieving": self.color_thieving,
+                "thieved_color": self.thieved_color.tolist() if self.thieved_color is not None else None,
             }
         )
         return info

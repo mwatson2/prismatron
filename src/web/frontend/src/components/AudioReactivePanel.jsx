@@ -588,6 +588,27 @@ const ParameterInput = ({ param, value, onChange }) => {
     )
   }
 
+  if (param.type === 'checkbox') {
+    const isChecked = displayValue === true || displayValue === 'true'
+
+    return (
+      <div className="space-y-1">
+        <label className="flex items-center gap-2 text-xs text-metal-silver font-mono cursor-pointer">
+          <input
+            type="checkbox"
+            checked={isChecked}
+            onChange={(e) => onChange(e.target.checked)}
+            className="w-4 h-4 rounded border-2 border-metal-silver bg-dark-700 checked:bg-neon-cyan checked:border-neon-cyan focus:ring-2 focus:ring-neon-cyan focus:ring-opacity-50"
+          />
+          <span>{param.label}</span>
+        </label>
+        {param.description && (
+          <p className="text-xs text-metal-silver font-mono opacity-70 ml-6">{param.description}</p>
+        )}
+      </div>
+    )
+  }
+
   return null
 }
 

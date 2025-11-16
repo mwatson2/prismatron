@@ -148,6 +148,13 @@ export const EFFECT_TYPES = {
         default: 0.4,
         description: 'Beat intensity multiplier for additive component (for addboost mode)',
         showIf: { blend_mode: 'addboost' }
+      },
+      {
+        key: 'color_thieving',
+        label: 'Color Thieving',
+        type: 'checkbox',
+        default: false,
+        description: 'Extract color from input LEDs and apply to template (for add/addboost modes)'
       }
     ]
   }
