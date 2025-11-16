@@ -424,6 +424,7 @@ class ProducerProcess:
         self._current_item_index: int = -1  # Track the index of the currently loaded content
         self._is_first_frame_of_current_item = True  # Track first frame of each playlist item
         self._content_finished_processed = False  # Prevent multiple next_item() calls for same content
+        self._waiting_for_sync_response = False  # Prevent loading content while waiting for sync service
 
         # Threading and timing
         self._producer_thread: Optional[threading.Thread] = None
@@ -739,9 +740,9 @@ class ProducerProcess:
         try:
             # Ensure we have current content
             if not self._ensure_current_content():
-                # No content available, switch to stopped
-                logger.warning("PRODUCER PLAYING: No current content available, switching to STOPPED")
-                self._control_state.set_producer_state(ProducerState.STOPPED)
+                # No content available, wait for playlist sync to provide next content
+                # Don't switch to stopped - we're waiting for the next item
+                time.sleep(0.1)  # Prevent busy loop while waiting for sync service
                 return
 
             # Producer should output frames as fast as possible
@@ -768,34 +769,41 @@ class ProducerProcess:
                     self._last_frame_time = current_time
 
             elif self._current_source.is_finished():
-                # Content finished, accumulate actual duration and advance to next
-                if self._last_frame_duration is not None:
-                    self._accumulated_duration += self._last_frame_duration
-                    logger.debug(
-                        f"Item completed - accumulated {self._last_frame_duration:.3f}s, total now {self._accumulated_duration:.3f}s"
-                    )
-                    self._last_frame_duration = None  # Reset for next item
-
-                current_item_name = os.path.basename(self._current_item.filepath) if self._current_item else "unknown"
-                content_type = (
-                    self._current_item._detected_type.value
-                    if self._current_item and self._current_item._detected_type
-                    else "unknown"
-                )
-                logger.info(f"Content finished: {current_item_name} (type: {content_type})")
-
                 # Prevent duplicate next_item() calls for the same content
                 if not self._content_finished_processed:
+                    # Content finished, accumulate actual duration and advance to next
+                    if self._last_frame_duration is not None:
+                        self._accumulated_duration += self._last_frame_duration
+                        logger.debug(
+                            f"Item completed - accumulated {self._last_frame_duration:.3f}s, total now {self._accumulated_duration:.3f}s"
+                        )
+                        self._last_frame_duration = None  # Reset for next item
+
+                    current_item_name = (
+                        os.path.basename(self._current_item.filepath) if self._current_item else "unknown"
+                    )
+                    content_type = (
+                        self._current_item._detected_type.value
+                        if self._current_item and self._current_item._detected_type
+                        else "unknown"
+                    )
+                    logger.info(f"Content finished: {current_item_name} (type: {content_type})")
+
                     self._content_finished_processed = True
                     self._content_finished_time = time.time()  # Track when we first detected finish
                     logger.debug(f"Advancing to next content after {current_item_name} finished")
-                    self._advance_to_next_content()
-                else:
-                    # Log more details about the stuck state
-                    stuck_duration = time.time() - getattr(self, "_content_finished_time", time.time())
-                    current_playlist_index = self._playlist.get_current_index()
 
-                    # Content already processed, skip duplicate call
+                    # Set flag to prevent race condition with sync callback
+                    self._waiting_for_sync_response = True
+                    self._advance_to_next_content()
+
+                    # Clean up current source immediately to prevent busy loop
+                    # The sync service will trigger reload of next content via _on_playlist_sync_update
+                    if self._current_source:
+                        self._current_source.cleanup()
+                        self._current_source = None
+                        self._current_item = None
+                        logger.debug("Cleaned up finished content source, waiting for sync service response")
             else:
                 # No frame available yet (but not finished) - track how long we've been waiting
                 if not hasattr(self, "_no_frame_start_time"):
@@ -856,6 +864,12 @@ class ProducerProcess:
         with self._sync_lock:
             if self._current_source and self._current_source.status == ContentStatus.PLAYING:
                 return True
+
+            # Don't try to load content if we're waiting for sync service to respond
+            # This prevents race condition where we load stale content before sync update arrives
+            if self._waiting_for_sync_response:
+                logger.debug("Waiting for sync service response before loading content")
+                return False
 
             # Atomically get current playlist item and index to avoid race conditions
             current_item, current_playlist_index = self._playlist.get_current_item_and_index()
@@ -1605,6 +1619,11 @@ class ProducerProcess:
             # Check if the item at current index has changed (even if index number is same)
             # Use lock to prevent race condition with _ensure_current_content
             with self._sync_lock:
+                # Clear the waiting flag now that we've received the sync response
+                if self._waiting_for_sync_response:
+                    logger.debug("Sync response received, clearing wait flag")
+                    self._waiting_for_sync_response = False
+
                 needs_reload = False
                 if self._current_item_index != sync_state.current_index:
                     # Index changed

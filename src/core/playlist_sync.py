@@ -483,7 +483,11 @@ class PlaylistSyncService:
         if self.playlist_state.items:
             old_index = self.playlist_state.current_index
             self.playlist_state.current_index = (self.playlist_state.current_index + 1) % len(self.playlist_state.items)
-            logger.debug(f"Next item: {old_index} -> {self.playlist_state.current_index} (client: {message.client_id})")
+            logger.info(
+                f"SYNC SERVICE: Next item requested by {message.client_id}: {old_index} -> {self.playlist_state.current_index} (total items: {len(self.playlist_state.items)})"
+            )
+        else:
+            logger.warning(f"SYNC SERVICE: Next item requested by {message.client_id} but playlist is empty")
 
     def _handle_previous(self, message: PlaylistMessage):
         """Handle previous item message."""
@@ -531,6 +535,10 @@ class PlaylistSyncService:
         state_message = PlaylistMessage(type="full_state", data=self.playlist_state.to_dict(), client_id="server")
 
         logger.debug(f"Broadcasting to {len(self.clients)} clients (exclude: {exclude_client})")
+        logger.info(
+            f"SYNC SERVICE: Broadcasting playlist update - index={self.playlist_state.current_index}, playing={self.playlist_state.is_playing}, clients={len(self.clients)}"
+        )
+
         clients_to_remove = []
         for client_id in list(self.clients.keys()):
             if exclude_client == client_id:
@@ -692,8 +700,8 @@ class PlaylistSyncClient:
         try:
             if message.type == "full_state" and message.data and self.on_playlist_update:
                 playlist_state = PlaylistState.from_dict(message.data)
-                logger.debug(
-                    f"Client '{self.client_name}' received full_state: index={playlist_state.current_index}, playing={playlist_state.is_playing}"
+                logger.info(
+                    f"SYNC CLIENT '{self.client_name}': Received full_state - index={playlist_state.current_index}, playing={playlist_state.is_playing}, items={len(playlist_state.items)}"
                 )
                 self.on_playlist_update(playlist_state)
             else:
@@ -713,7 +721,12 @@ class PlaylistSyncClient:
             # Add newline delimiter for proper message framing
             message_data = (message_json + "\n").encode("utf-8")
             self.socket.send(message_data)
-            logger.debug(f"Client '{self.client_name}' sent message: {message.type}")
+
+            # Log next/previous at INFO level for debugging
+            if message.type in ["next", "previous"]:
+                logger.info(f"SYNC CLIENT '{self.client_name}': Sent {message.type} message to server")
+            else:
+                logger.debug(f"Client '{self.client_name}' sent message: {message.type}")
             return True
 
         except Exception as e:
