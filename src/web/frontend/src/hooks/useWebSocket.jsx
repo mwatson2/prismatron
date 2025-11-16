@@ -349,6 +349,11 @@ export const WebSocketProvider = ({ children }) => {
           }
         }
 
+        // Extract system_status if embedded in preview_data (server sends combined message)
+        if (data.system_status) {
+          setSystemStatus(data.system_status)
+        }
+
         // Only update previewData if frame_counter has changed to prevent unnecessary re-renders
         // This prevents React useEffect from triggering on every WebSocket message
         if (data.frame_counter !== handleMessage.lastFrameCounter) {

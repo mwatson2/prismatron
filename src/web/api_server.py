@@ -1618,9 +1618,12 @@ async def preview_broadcast_task():
                         )
                         preview_broadcast_task._logged_sizes = True
 
-                # Combine both messages into a single WebSocket broadcast to reduce overhead
+                # Merge status_data into preview_data to send as a single broadcast
+                # This prevents race conditions where binary data arrives before/mixed with the wrong JSON message
+                preview_data["system_status"] = status_data
+
+                # Single WebSocket broadcast (JSON + binary)
                 websocket_start = time.time()
-                await manager.broadcast(status_data)
                 await manager.broadcast(preview_data, binary_data=binary_data)
 
                 # Time: WebSocket broadcasts complete
