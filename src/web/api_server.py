@@ -1494,12 +1494,8 @@ async def preview_broadcast_task():
                                 led_data = os.read(shm_fd, led_count * 3)
 
                                 if len(led_data) == led_count * 3:
-                                    # Apply brightness factor to raw bytes for preview
-                                    brightness_factor = 0.5  # Reduce saturation due to overlapping LEDs
-                                    led_data_array = bytearray(led_data)
-                                    for i in range(len(led_data_array)):
-                                        led_data_array[i] = int(led_data_array[i] * brightness_factor)
-                                    frame_data_binary = bytes(led_data_array)
+                                    # Use raw LED data without brightness scaling
+                                    frame_data_binary = bytes(led_data)
 
                                     preview_data["has_frame"] = True
                                     preview_data["total_leds"] = led_count
@@ -1583,7 +1579,6 @@ async def preview_broadcast_task():
                 if not preview_data["has_frame"]:
                     logger.debug("WebSocket using fallback rainbow test pattern - no shared memory data available")
                     preview_data["has_frame"] = True
-                    brightness_factor = 0.5  # Reduce saturation due to overlapping LEDs
                     # Use the actual LED count for test pattern
                     test_led_count = get_actual_led_count()
 
@@ -1592,9 +1587,9 @@ async def preview_broadcast_task():
                     for i in range(test_led_count):
                         # Simple rainbow pattern
                         hue = (i / test_led_count) * 360  # Full rainbow across all LEDs
-                        r = int(255 * max(0, min(1, abs((hue / 60) % 6 - 3) - 1)) * brightness_factor)
-                        g = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 2))) * brightness_factor)
-                        b = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 4))) * brightness_factor)
+                        r = int(255 * max(0, min(1, abs((hue / 60) % 6 - 3) - 1)))
+                        g = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 2))))
+                        b = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 4))))
                         test_pattern[i * 3] = r
                         test_pattern[i * 3 + 1] = g
                         test_pattern[i * 3 + 2] = b
@@ -3784,15 +3779,10 @@ async def get_led_preview():
                         led_data = os.read(shm_fd, led_count * 3)
 
                         if len(led_data) == led_count * 3:
-                            # Convert to list of [r, g, b] arrays with brightness factor for preview
+                            # Convert to list of [r, g, b] arrays without brightness scaling
                             frame_data = []
-                            brightness_factor = 0.5  # Reduce saturation due to overlapping LEDs
                             for i in range(0, len(led_data), 3):
                                 r, g, b = led_data[i], led_data[i + 1], led_data[i + 2]
-                                # Apply brightness factor to reduce saturation
-                                r = int(r * brightness_factor)
-                                g = int(g * brightness_factor)
-                                b = int(b * brightness_factor)
                                 frame_data.append([r, g, b])
 
                             preview_data["has_frame"] = True
@@ -3831,15 +3821,14 @@ async def get_led_preview():
             logger.debug("Using fallback rainbow test pattern - no shared memory data available")
             preview_data["has_frame"] = True
             preview_colors = []
-            brightness_factor = 0.5  # Reduce saturation due to overlapping LEDs
             # Use the actual LED count for test pattern
             test_led_count = get_actual_led_count()
             for i in range(test_led_count):
                 # Simple rainbow pattern
                 hue = (i / test_led_count) * 360  # Full rainbow across all LEDs
-                r = int(255 * max(0, min(1, abs((hue / 60) % 6 - 3) - 1)) * brightness_factor)
-                g = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 2))) * brightness_factor)
-                b = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 4))) * brightness_factor)
+                r = int(255 * max(0, min(1, abs((hue / 60) % 6 - 3) - 1)))
+                g = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 2))))
+                b = int(255 * max(0, min(1, 2 - abs((hue / 60) % 6 - 4))))
                 preview_colors.append([r, g, b])
             preview_data["frame_data"] = preview_colors
             preview_data["total_leds"] = test_led_count

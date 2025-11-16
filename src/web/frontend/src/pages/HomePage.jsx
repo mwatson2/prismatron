@@ -93,9 +93,9 @@ const HomePage = () => {
 
   // Create pre-rendered LED stamps for fast rendering with proper Gaussian shape
   const createLEDStamps = () => {
-    // LED stamp dimensions - restored to original size for better visual quality
-    const ledRadius = 9
-    const ledSize = ledRadius * 2.5 * 2 // Restored to 2.5 for better appearance
+    // LED stamp dimensions - balanced size with controlled falloff to prevent saturation from overlaps
+    const ledRadius = 7.5  // Sweet spot between visibility and overlap saturation
+    const ledSize = ledRadius * 2.2 * 2  // Moderate halo size
     const centerX = ledSize / 2
     const centerY = ledSize / 2
 
@@ -105,12 +105,12 @@ const HomePage = () => {
       canvas.width = canvas.height = ledSize
       const ctx = canvas.getContext('2d')
 
-      // Create radial gradient with Gaussian-like falloff
-      const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, ledRadius * 2.5)
+      // Create radial gradient with controlled Gaussian-like falloff to reduce overlap saturation
+      const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, ledRadius * 2.0)
       gradient.addColorStop(0, `rgba(${red}, ${green}, ${blue}, 1.0)`)     // Center: full intensity
-      gradient.addColorStop(0.32, `rgba(${red}, ${green}, ${blue}, 0.8)`)  // ~1 sigma: 80%
-      gradient.addColorStop(0.6, `rgba(${red}, ${green}, ${blue}, 0.4)`)   // ~2 sigma: 40%
-      gradient.addColorStop(0.85, `rgba(${red}, ${green}, ${blue}, 0.1)`)  // ~2.5 sigma: 10%
+      gradient.addColorStop(0.28, `rgba(${red}, ${green}, ${blue}, 0.7)`)  // ~1 sigma: 70%
+      gradient.addColorStop(0.55, `rgba(${red}, ${green}, ${blue}, 0.3)`)  // ~1.7 sigma: 30%
+      gradient.addColorStop(0.8, `rgba(${red}, ${green}, ${blue}, 0.08)`)  // ~2.3 sigma: 8%
       gradient.addColorStop(1, `rgba(${red}, ${green}, ${blue}, 0)`)       // Edge: transparent
 
       ctx.fillStyle = gradient
@@ -206,7 +206,7 @@ const HomePage = () => {
           }
 
           // Convert from linear light space to sRGB for display
-          // Backend sends linear values (0-255), we need sRGB for correct display
+          // Backend sends raw linear values (0-255)
           const rLinear = r / 255.0
           const gLinear = g / 255.0
           const bLinear = b / 255.0
