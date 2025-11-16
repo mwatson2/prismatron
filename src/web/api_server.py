@@ -3283,12 +3283,29 @@ class TriggerEffectRule(BaseModel):
     effect: EffectConfig = Field(..., description="Effect configuration")
 
 
+class CarouselRuleSet(BaseModel):
+    """A named set of rules for carousel rotation."""
+
+    id: str = Field(..., description="Unique rule set ID")
+    name: str = Field(..., description="Display name for this rule set")
+    rules: List[TriggerEffectRule] = Field(default_factory=list, description="Rules in this set")
+
+
 class AudioReactiveTriggersRequest(BaseModel):
     """Request model for audio reactive trigger configuration."""
 
     enabled: bool = Field(..., description="Whether audio reactive effects are enabled")
     test_interval: float = Field(2.0, ge=0.1, le=60.0, description="Test trigger interval in seconds")
-    rules: List[TriggerEffectRule] = Field(default_factory=list, description="List of trigger->effect rules")
+
+    # Common rules (always active, checked first)
+    common_rules: List[TriggerEffectRule] = Field(default_factory=list, description="Common rules (always active)")
+
+    # Carousel rule sets (fallback, rotates every N beats)
+    carousel_rule_sets: List[CarouselRuleSet] = Field(default_factory=list, description="Carousel rule sets (rotates)")
+    carousel_beat_interval: int = Field(4, ge=1, le=100, description="Number of beats between carousel rotations")
+
+    # Deprecated: old flat rules list for backward compatibility
+    rules: Optional[List[TriggerEffectRule]] = Field(default=None, description="Deprecated: use common_rules instead")
 
 
 async def schedule_audio_config_save(config: Dict) -> None:
@@ -3320,7 +3337,9 @@ async def get_audio_reactive_triggers():
         # Get current settings from control state
         audio_reactive_enabled = False
         test_interval = 2.0
-        rules = []
+        common_rules = []
+        carousel_rule_sets = []
+        carousel_beat_interval = 4
 
         if control_state:
             try:
@@ -3332,17 +3351,35 @@ async def get_audio_reactive_triggers():
                 trigger_config = getattr(status, "audio_reactive_trigger_config", None) if status else None
                 if trigger_config:
                     test_interval = trigger_config.get("test_interval", 2.0)
-                    rules = trigger_config.get("rules", [])
+                    common_rules = trigger_config.get("common_rules", [])
+                    carousel_rule_sets = trigger_config.get("carousel_rule_sets", [])
+                    carousel_beat_interval = trigger_config.get("carousel_beat_interval", 4)
+
+                    # Backward compatibility: convert old flat rules list to common_rules
+                    if not common_rules and not carousel_rule_sets and "rules" in trigger_config:
+                        common_rules = trigger_config.get("rules", [])
                 else:
                     # Try loading from disk if not in control state
                     saved_config = load_audio_config()
                     if saved_config:
                         test_interval = saved_config.get("test_interval", 2.0)
-                        rules = saved_config.get("rules", [])
+                        common_rules = saved_config.get("common_rules", [])
+                        carousel_rule_sets = saved_config.get("carousel_rule_sets", [])
+                        carousel_beat_interval = saved_config.get("carousel_beat_interval", 4)
+
+                        # Backward compatibility
+                        if not common_rules and not carousel_rule_sets and "rules" in saved_config:
+                            common_rules = saved_config.get("rules", [])
             except Exception as e:
                 logger.warning(f"Failed to get audio reactive trigger config: {e}")
 
-        return {"enabled": audio_reactive_enabled, "test_interval": test_interval, "rules": rules}
+        return {
+            "enabled": audio_reactive_enabled,
+            "test_interval": test_interval,
+            "common_rules": common_rules,
+            "carousel_rule_sets": carousel_rule_sets,
+            "carousel_beat_interval": carousel_beat_interval,
+        }
 
     except Exception as e:
         logger.error(f"Failed to get audio reactive trigger configuration: {e}")
@@ -3353,15 +3390,44 @@ async def get_audio_reactive_triggers():
 async def set_audio_reactive_triggers(request: AudioReactiveTriggersRequest):
     """Set audio reactive trigger configuration."""
     try:
-        # Convert rules to dict format for storage
-        rules_dict = [
+        # Convert common rules to dict format for storage
+        common_rules_dict = [
             {
                 "id": rule.id,
                 "trigger": {"type": rule.trigger.type, "params": rule.trigger.params},
                 "effect": {"class": rule.effect.class_name, "params": rule.effect.params},
             }
-            for rule in request.rules
+            for rule in request.common_rules
         ]
+
+        # Convert carousel rule sets to dict format for storage
+        carousel_rule_sets_dict = [
+            {
+                "id": rule_set.id,
+                "name": rule_set.name,
+                "rules": [
+                    {
+                        "id": rule.id,
+                        "trigger": {"type": rule.trigger.type, "params": rule.trigger.params},
+                        "effect": {"class": rule.effect.class_name, "params": rule.effect.params},
+                    }
+                    for rule in rule_set.rules
+                ],
+            }
+            for rule_set in request.carousel_rule_sets
+        ]
+
+        # Backward compatibility: handle old 'rules' field
+        if request.rules is not None and not common_rules_dict and not carousel_rule_sets_dict:
+            # Convert old flat rules to common_rules
+            common_rules_dict = [
+                {
+                    "id": rule.id,
+                    "trigger": {"type": rule.trigger.type, "params": rule.trigger.params},
+                    "effect": {"class": rule.effect.class_name, "params": rule.effect.params},
+                }
+                for rule in request.rules
+            ]
 
         # Update in control state if available
         if control_state:
@@ -3369,19 +3435,37 @@ async def set_audio_reactive_triggers(request: AudioReactiveTriggersRequest):
             control_state.update_status(audio_reactive_enabled=request.enabled)
 
             # Store trigger configuration
-            trigger_config = {"test_interval": request.test_interval, "rules": rules_dict}
+            trigger_config = {
+                "test_interval": request.test_interval,
+                "common_rules": common_rules_dict,
+                "carousel_rule_sets": carousel_rule_sets_dict,
+                "carousel_beat_interval": request.carousel_beat_interval,
+            }
 
             control_state.update_status(audio_reactive_trigger_config=trigger_config)
 
+            # Count total rules for logging
+            total_rules = len(common_rules_dict) + sum(len(rs["rules"]) for rs in carousel_rule_sets_dict)
+
             logger.info(
                 f"Updated audio reactive triggers: enabled={request.enabled}, "
-                f"test_interval={request.test_interval}, rules={len(rules_dict)}"
+                f"test_interval={request.test_interval}, "
+                f"common_rules={len(common_rules_dict)}, "
+                f"carousel_sets={len(carousel_rule_sets_dict)}, "
+                f"carousel_interval={request.carousel_beat_interval} beats, "
+                f"total_rules={total_rules}"
             )
         else:
             logger.warning("Control state not available - trigger configuration not updated")
 
         # Schedule auto-save to disk (5-second debounce)
-        config_to_save = {"enabled": request.enabled, "test_interval": request.test_interval, "rules": rules_dict}
+        config_to_save = {
+            "enabled": request.enabled,
+            "test_interval": request.test_interval,
+            "common_rules": common_rules_dict,
+            "carousel_rule_sets": carousel_rule_sets_dict,
+            "carousel_beat_interval": request.carousel_beat_interval,
+        }
         await schedule_audio_config_save(config_to_save)
 
         await manager.broadcast(
@@ -3389,14 +3473,17 @@ async def set_audio_reactive_triggers(request: AudioReactiveTriggersRequest):
                 "type": "audio_reactive_triggers_changed",
                 "enabled": request.enabled,
                 "test_interval": request.test_interval,
-                "rule_count": len(rules_dict),
+                "common_rule_count": len(common_rules_dict),
+                "carousel_set_count": len(carousel_rule_sets_dict),
             }
         )
 
         return {
             "enabled": request.enabled,
             "test_interval": request.test_interval,
-            "rules": rules_dict,
+            "common_rules": common_rules_dict,
+            "carousel_rule_sets": carousel_rule_sets_dict,
+            "carousel_beat_interval": request.carousel_beat_interval,
             "status": "updated",
         }
 

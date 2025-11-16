@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { PlusIcon, AdjustmentsHorizontalIcon } from '@heroicons/react/24/outline'
-import AudioReactivePanel from '../components/AudioReactivePanel'
+import AudioReactivePanel from '../components/AudioReactivePanel_NEW'
 
 const EffectsPage = () => {
   const [effects, setEffects] = useState([])

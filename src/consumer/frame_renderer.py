@@ -69,7 +69,8 @@ class EffectTriggerManager:
     """
     Manages effect triggers and creates effect instances based on configured rules.
 
-    Evaluates triggers in order and creates effects using first-match semantics.
+    Evaluates common rules first (always active), then carousel rule sets (rotating).
+    Uses first-match semantics within each rule list.
     Supports beat triggers (audio-reactive) and test triggers (periodic testing).
     """
 
@@ -81,7 +82,15 @@ class EffectTriggerManager:
             effect_manager: LedEffectManager instance to add created effects to
         """
         self.effect_manager = effect_manager
-        self.triggers: List[EffectTriggerConfig] = []
+
+        # Common rules (always active, checked first)
+        self.common_triggers: List[EffectTriggerConfig] = []
+
+        # Carousel rule sets (rotates every N beats)
+        self.carousel_rule_sets: List[List[EffectTriggerConfig]] = []
+        self.carousel_beat_interval = 4  # Number of beats between carousel rotations
+        self.carousel_current_index = 0  # Current active carousel rule set index
+        self.carousel_beat_count = 0  # Beat counter for carousel rotation
 
         # Test trigger state
         self.test_trigger_interval = 2.0  # Global interval for test triggers (seconds)
@@ -90,22 +99,46 @@ class EffectTriggerManager:
         # Beat trigger state
         self._last_beat_time_processed = -1.0  # Track last beat we created an effect for
 
-        logger.info("EffectTriggerManager initialized")
+        logger.info("EffectTriggerManager initialized with common + carousel structure")
 
     def set_triggers(self, triggers: List[EffectTriggerConfig]) -> None:
         """
-        Set trigger configuration.
+        Set trigger configuration (backward compatibility - converts to common rules).
 
         Args:
             triggers: List of trigger configurations
         """
-        self.triggers = triggers
-        logger.info(f"Configured {len(triggers)} effect triggers")
-        for i, trigger in enumerate(triggers):
-            logger.info(
-                f"  Trigger {i}: type={trigger.trigger_type}, "
-                f"effect={trigger.effect_class}, params={trigger.effect_params}"
-            )
+        self.common_triggers = triggers
+        self.carousel_rule_sets = []
+        logger.info(f"[Backward Compatibility] Configured {len(triggers)} effect triggers as common rules")
+
+    def set_common_and_carousel_triggers(
+        self,
+        common_triggers: List[EffectTriggerConfig],
+        carousel_rule_sets: List[List[EffectTriggerConfig]],
+        carousel_beat_interval: int = 4,
+    ) -> None:
+        """
+        Set common rules and carousel rule sets.
+
+        Args:
+            common_triggers: Common rules (always active, checked first)
+            carousel_rule_sets: List of carousel rule sets (each set is a list of triggers)
+            carousel_beat_interval: Number of beats between carousel rotations
+        """
+        self.common_triggers = common_triggers
+        self.carousel_rule_sets = carousel_rule_sets
+        self.carousel_beat_interval = carousel_beat_interval
+        self.carousel_current_index = 0
+        self.carousel_beat_count = 0
+
+        total_carousel_rules = sum(len(rule_set) for rule_set in carousel_rule_sets)
+        logger.info(
+            f"Configured audio reactive triggers: "
+            f"{len(common_triggers)} common rules, "
+            f"{len(carousel_rule_sets)} carousel sets ({total_carousel_rules} total carousel rules), "
+            f"carousel interval={carousel_beat_interval} beats"
+        )
 
     def set_test_interval(self, interval: float) -> None:
         """Set global test trigger interval."""
@@ -117,6 +150,9 @@ class EffectTriggerManager:
     ) -> None:
         """
         Evaluate beat triggers and create effects for new beats.
+
+        Checks common rules first (always active), then carousel rules (rotating).
+        Uses first-match semantics - stops after first matching rule.
 
         Args:
             frame_timeline_time: Current time on frame timeline
@@ -136,52 +172,104 @@ class EffectTriggerManager:
         beat_confidence = getattr(beat_state, "confidence", 1.0)
         current_bpm = beat_state.current_bpm
 
-        # Evaluate triggers in order (first match wins)
-        for trigger in self.triggers:
+        # === STEP 1: Check common rules first (always active) ===
+        for trigger in self.common_triggers:
             if trigger.trigger_type != "beat":
                 continue
 
-            # Check all conditions (all must be satisfied)
-            if trigger.confidence_min is not None and beat_confidence < trigger.confidence_min:
-                continue
-
-            if trigger.intensity_min is not None and beat_intensity < trigger.intensity_min:
-                continue
-
-            if trigger.bpm_min is not None and current_bpm < trigger.bpm_min:
-                continue
-
-            if trigger.bpm_max is not None and current_bpm > trigger.bpm_max:
-                continue
-
-            # All conditions met - create effect
-            try:
-                effect = self._create_effect(
-                    trigger=trigger,
-                    start_time=beat_frame_timeline_time,
-                    bpm=current_bpm,
-                    beat_intensity=beat_intensity,
-                    beat_confidence=beat_confidence,
-                )
-
-                self.effect_manager.add_effect(effect)
-
-                logger.info(
-                    f"🎵 Beat trigger matched: {trigger.effect_class}, "
-                    f"BPM={current_bpm:.1f}, intensity={beat_intensity:.2f}, "
-                    f"confidence={beat_confidence:.2f}"
-                )
-
-                # First match - mark beat as processed and stop
+            if self._check_beat_conditions(
+                trigger, beat_intensity, beat_confidence, current_bpm
+            ) and self._create_and_add_beat_effect(
+                trigger, beat_frame_timeline_time, current_bpm, beat_intensity, beat_confidence, "COMMON"
+            ):
+                # Effect created successfully - mark beat as processed and stop
                 self._last_beat_time_processed = last_beat_wallclock_time
+                self.carousel_beat_count += 1
+                self._check_carousel_rotation()
                 return
 
-            except Exception as e:
-                logger.error(f"Failed to create effect from beat trigger: {e}")
-                continue
+        # === STEP 2: Check carousel rules (fallback, rotating) ===
+        if self.carousel_rule_sets and len(self.carousel_rule_sets) > 0:
+            # Get current active carousel rule set
+            current_rule_set = self.carousel_rule_sets[self.carousel_current_index]
+
+            for trigger in current_rule_set:
+                if trigger.trigger_type != "beat":
+                    continue
+
+                carousel_name = f"CAROUSEL[{self.carousel_current_index}]"
+                if self._check_beat_conditions(
+                    trigger, beat_intensity, beat_confidence, current_bpm
+                ) and self._create_and_add_beat_effect(
+                    trigger, beat_frame_timeline_time, current_bpm, beat_intensity, beat_confidence, carousel_name
+                ):
+                    # Effect created successfully - mark beat as processed and stop
+                    self._last_beat_time_processed = last_beat_wallclock_time
+                    self.carousel_beat_count += 1
+                    self._check_carousel_rotation()
+                    return
 
         # No trigger matched - mark beat as processed anyway
         self._last_beat_time_processed = last_beat_wallclock_time
+        self.carousel_beat_count += 1
+        self._check_carousel_rotation()
+
+    def _check_beat_conditions(
+        self, trigger: EffectTriggerConfig, beat_intensity: float, beat_confidence: float, current_bpm: float
+    ) -> bool:
+        """Check if beat trigger conditions are met."""
+        if trigger.confidence_min is not None and beat_confidence < trigger.confidence_min:
+            return False
+        if trigger.intensity_min is not None and beat_intensity < trigger.intensity_min:
+            return False
+        if trigger.bpm_min is not None and current_bpm < trigger.bpm_min:
+            return False
+        return not (trigger.bpm_max is not None and current_bpm > trigger.bpm_max)
+
+    def _create_and_add_beat_effect(
+        self,
+        trigger: EffectTriggerConfig,
+        beat_frame_timeline_time: float,
+        current_bpm: float,
+        beat_intensity: float,
+        beat_confidence: float,
+        source_label: str,
+    ) -> bool:
+        """Create and add beat effect. Returns True if successful, False otherwise."""
+        try:
+            effect = self._create_effect(
+                trigger=trigger,
+                start_time=beat_frame_timeline_time,
+                bpm=current_bpm,
+                beat_intensity=beat_intensity,
+                beat_confidence=beat_confidence,
+            )
+
+            self.effect_manager.add_effect(effect)
+
+            logger.info(
+                f"🎵 Beat trigger matched ({source_label}): {trigger.effect_class}, "
+                f"BPM={current_bpm:.1f}, intensity={beat_intensity:.2f}, "
+                f"confidence={beat_confidence:.2f}"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to create effect from beat trigger: {e}")
+            return False
+
+    def _check_carousel_rotation(self) -> None:
+        """Check if it's time to rotate to next carousel rule set."""
+        if not self.carousel_rule_sets or len(self.carousel_rule_sets) == 0:
+            return
+
+        if self.carousel_beat_count >= self.carousel_beat_interval:
+            # Rotate to next rule set
+            self.carousel_current_index = (self.carousel_current_index + 1) % len(self.carousel_rule_sets)
+            self.carousel_beat_count = 0
+            logger.info(
+                f"🔄 Carousel rotated to rule set {self.carousel_current_index} / {len(self.carousel_rule_sets) - 1}"
+            )
 
     def evaluate_test_triggers(self, frame_timeline_time: float) -> None:
         """
@@ -468,8 +556,73 @@ class FrameRenderer:
                 if trigger_config:
                     # Load from new configuration
                     test_interval = trigger_config.get("test_interval", 2.0)
-                    rules = trigger_config.get("rules", [])
 
+                    # Check if we have new common + carousel structure
+                    if "common_rules" in trigger_config or "carousel_rule_sets" in trigger_config:
+                        # New structure: common rules + carousel rule sets
+                        common_rules_data = trigger_config.get("common_rules", [])
+                        carousel_sets_data = trigger_config.get("carousel_rule_sets", [])
+                        carousel_beat_interval = trigger_config.get("carousel_beat_interval", 4)
+
+                        # Parse common rules
+                        common_triggers = []
+                        for rule in common_rules_data:
+                            try:
+                                trigger = rule.get("trigger", {})
+                                effect = rule.get("effect", {})
+
+                                trigger_config_obj = EffectTriggerConfig(
+                                    trigger_type=trigger.get("type", "beat"),
+                                    effect_class=effect.get("class", "BeatBrightnessEffect"),
+                                    effect_params=effect.get("params", {}),
+                                    confidence_min=trigger.get("params", {}).get("confidence_min"),
+                                    intensity_min=trigger.get("params", {}).get("intensity_min"),
+                                    bpm_min=trigger.get("params", {}).get("bpm_min"),
+                                    bpm_max=trigger.get("params", {}).get("bpm_max"),
+                                )
+                                common_triggers.append(trigger_config_obj)
+                            except Exception as e:
+                                logger.error(f"Failed to parse common rule: {e}")
+                                continue
+
+                        # Parse carousel rule sets
+                        carousel_rule_sets = []
+                        for rule_set_data in carousel_sets_data:
+                            rule_set = []
+                            for rule in rule_set_data.get("rules", []):
+                                try:
+                                    trigger = rule.get("trigger", {})
+                                    effect = rule.get("effect", {})
+
+                                    trigger_config_obj = EffectTriggerConfig(
+                                        trigger_type=trigger.get("type", "beat"),
+                                        effect_class=effect.get("class", "TemplateEffect"),
+                                        effect_params=effect.get("params", {}),
+                                        confidence_min=trigger.get("params", {}).get("confidence_min"),
+                                        intensity_min=trigger.get("params", {}).get("intensity_min"),
+                                        bpm_min=trigger.get("params", {}).get("bpm_min"),
+                                        bpm_max=trigger.get("params", {}).get("bpm_max"),
+                                    )
+                                    rule_set.append(trigger_config_obj)
+                                except Exception as e:
+                                    logger.error(f"Failed to parse carousel rule: {e}")
+                                    continue
+
+                            if rule_set:  # Only add non-empty rule sets
+                                carousel_rule_sets.append(rule_set)
+
+                        # Use new common + carousel API
+                        self.trigger_manager.set_common_and_carousel_triggers(
+                            common_triggers, carousel_rule_sets, carousel_beat_interval
+                        )
+                        self.trigger_manager.set_test_interval(test_interval)
+                        logger.info(
+                            f"Loaded {len(common_triggers)} common rules, {len(carousel_rule_sets)} carousel sets"
+                        )
+                        return
+
+                    # Backward compatibility: old flat rules list
+                    rules = trigger_config.get("rules", [])
                     for rule in rules:
                         try:
                             # Extract trigger and effect configuration
@@ -493,7 +646,7 @@ class FrameRenderer:
                             logger.error(f"Failed to parse trigger rule: {e}, rule={rule}")
                             continue
 
-                    logger.info(f"Loaded {len(triggers)} triggers from new configuration")
+                    logger.info(f"[Backward Compatibility] Loaded {len(triggers)} triggers from flat rules list")
 
                 else:
                     # Fall back to legacy configuration for backward compatibility
