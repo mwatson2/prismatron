@@ -6,6 +6,7 @@ Handles wallclock timing establishment, late/early frame logic, and output
 to multiple targets (WLED, test renderer).
 """
 
+import json
 import logging
 import math
 import time
@@ -386,6 +387,9 @@ class FrameRenderer:
         self._test_template_intensity = 2.0  # Effect intensity
         self._last_template_effect_time = 0.0  # Last time effect was created
 
+        # Track last known trigger configuration hash to detect changes
+        self._last_trigger_config_hash = None
+
         # Initialize triggers from control state (if available)
         self._initialize_triggers_from_control_state()
 
@@ -519,6 +523,50 @@ class FrameRenderer:
         logger.info(f"Setting {len(triggers)} triggers in trigger manager")
         self.trigger_manager.set_triggers(triggers)
         self.trigger_manager.set_test_interval(test_interval)
+
+        # Update configuration hash to track changes
+        if self._control_state:
+            status = self._control_state.get_status()
+            if status:
+                trigger_config = getattr(status, "audio_reactive_trigger_config", None)
+                if trigger_config:
+                    # Use JSON string hash for comparison
+                    self._last_trigger_config_hash = hash(json.dumps(trigger_config, sort_keys=True))
+                else:
+                    self._last_trigger_config_hash = None
+
+    def _check_for_trigger_config_updates(self) -> None:
+        """
+        Check if the trigger configuration has changed and reload if needed.
+
+        This allows the renderer to pick up configuration changes from the UI
+        without requiring a restart.
+        """
+        if not self._control_state:
+            return
+
+        try:
+            status = self._control_state.get_status()
+            if not status:
+                return
+
+            trigger_config = getattr(status, "audio_reactive_trigger_config", None)
+
+            # Calculate current config hash
+            current_hash = None
+            if trigger_config:
+                current_hash = hash(json.dumps(trigger_config, sort_keys=True))
+
+            # Check if configuration has changed
+            if current_hash != self._last_trigger_config_hash:
+                logger.info(
+                    f"Trigger configuration changed, reloading "
+                    f"(old_hash={self._last_trigger_config_hash}, new_hash={current_hash})"
+                )
+                self._initialize_triggers_from_control_state()
+
+        except Exception as e:
+            logger.warning(f"Failed to check for trigger config updates: {e}")
 
     def _check_and_create_beat_brightness_effect(self, frame_timeline_time: float) -> None:
         """
@@ -1040,6 +1088,11 @@ class FrameRenderer:
         # converting to physical order
         current_wall_clock = time.time()
         frame_timeline_time = current_wall_clock - self.get_adjusted_wallclock_delta()
+
+        # Check for trigger configuration updates (from UI changes)
+        # Only check every ~100 frames to avoid overhead
+        if self.frames_rendered % 100 == 0:
+            self._check_for_trigger_config_updates()
 
         # Check for new beats and create brightness boost effects
         self._check_and_create_beat_brightness_effect(frame_timeline_time)
