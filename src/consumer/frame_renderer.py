@@ -242,6 +242,35 @@ class EffectTriggerManager:
             if template_path is None:
                 raise ValueError("TemplateEffect requires 'template_path' parameter")
 
+            # For beat-triggered template effects, multiply intensity multipliers by beat_intensity
+            # Check if this is a beat trigger by looking for beat_intensity in extra_params
+            beat_intensity = extra_params.get("beat_intensity")
+
+            if beat_intensity is not None:
+                # Beat-triggered effect: convert multipliers to final values
+                if "intensity_multiplier" in params:
+                    # Convert intensity_multiplier to final intensity value
+                    intensity_multiplier = params.pop("intensity_multiplier")
+                    params["intensity"] = intensity_multiplier * beat_intensity
+                    logger.debug(
+                        f"TemplateEffect: intensity_multiplier={intensity_multiplier:.2f} * beat_intensity={beat_intensity:.2f} = {params['intensity']:.2f}"
+                    )
+
+                if "add_multiplier_factor" in params:
+                    # Convert add_multiplier_factor to final add_multiplier value
+                    add_multiplier_factor = params.pop("add_multiplier_factor")
+                    params["add_multiplier"] = add_multiplier_factor * beat_intensity
+                    logger.debug(
+                        f"TemplateEffect: add_multiplier_factor={add_multiplier_factor:.2f} * beat_intensity={beat_intensity:.2f} = {params['add_multiplier']:.2f}"
+                    )
+            else:
+                # Test trigger or other: use intensity/add_multiplier directly
+                # Convert multiplier names to standard names if present (for consistency)
+                if "intensity_multiplier" in params:
+                    params["intensity"] = params.pop("intensity_multiplier")
+                if "add_multiplier_factor" in params:
+                    params["add_multiplier"] = params.pop("add_multiplier_factor")
+
             # Create using factory (with caching)
             effect = led_effect.TemplateEffectFactory.create_effect(
                 template_path=template_path, start_time=start_time, **params
@@ -480,7 +509,8 @@ class FrameRenderer:
                                     "template_path": self._test_template_path,
                                     "duration": self._test_template_duration,
                                     "blend_mode": self._test_template_blend_mode,
-                                    "intensity": self._test_template_intensity,
+                                    "intensity": self._test_template_intensity,  # For test triggers, use intensity directly (no beat)
+                                    "add_multiplier": 0.4,  # For test triggers, use add_multiplier directly
                                 },
                             )
                         )

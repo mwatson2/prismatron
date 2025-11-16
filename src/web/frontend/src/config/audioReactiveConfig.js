@@ -129,24 +129,24 @@ export const EFFECT_TYPES = {
         description: 'How to blend template with base LED values'
       },
       {
-        key: 'intensity',
-        label: 'Intensity',
+        key: 'intensity_multiplier',
+        label: 'Intensity Multiplier',
         type: 'slider',
         min: 0,
         max: 5,
         step: 0.1,
         default: 2.0,
-        description: 'Effect intensity/opacity'
+        description: 'Beat intensity multiplier for effect strength (multiplied by beat intensity)'
       },
       {
-        key: 'add_multiplier',
+        key: 'add_multiplier_factor',
         label: 'Add Multiplier',
         type: 'slider',
         min: 0,
         max: 2,
         step: 0.1,
         default: 0.4,
-        description: 'Additive component multiplier (for addboost mode)',
+        description: 'Beat intensity multiplier for additive component (for addboost mode)',
         showIf: { blend_mode: 'addboost' }
       }
     ]
