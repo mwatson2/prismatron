@@ -1022,7 +1022,7 @@ def main():
             """Setup network connectivity in background."""
             try:
                 nm = NetworkManager()
-                mode = await nm.ensure_connectivity(startup_delay=10)
+                mode = await nm.ensure_connectivity(startup_delay=30)
                 if mode == "client":
                     logger.info("Network startup complete - WiFi client mode active")
                 elif mode == "ap":
