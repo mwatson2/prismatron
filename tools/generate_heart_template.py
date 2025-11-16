@@ -128,16 +128,20 @@ def generate_heart_animation(
         height: Frame height in pixels
         outline_width: Width of the outline in pixels
         start_radius: Starting scale factor (default: 10.0)
-        end_radius: Ending scale factor (default: diagonal distance to corner)
+        end_radius: Ending scale factor (default: diagonal + heart size + outline to go fully off screen)
 
     Returns:
         Array of shape (num_frames, height, width) with fp16 precision
     """
-    # Calculate default end radius if not specified (distance to corner)
+    # Calculate default end radius if not specified
+    # Need to go beyond corner by heart size (1.0 normalized units) plus outline
     if end_radius is None:
         center_x = width / 2.0
         center_y = height / 2.0
-        end_radius = np.sqrt(center_x**2 + center_y**2)
+        diagonal_to_corner = np.sqrt(center_x**2 + center_y**2)
+        # Heart has normalized size of 1.0, so add this to diagonal
+        # Also add outline width to ensure outline is completely off screen
+        end_radius = diagonal_to_corner + diagonal_to_corner * 1.0 + outline_width
 
     # Generate array to hold all frames
     animation = np.zeros((num_frames, height, width), dtype=np.float16)
