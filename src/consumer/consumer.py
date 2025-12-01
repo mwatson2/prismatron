@@ -23,7 +23,7 @@ from ..core.control_state import ProducerState, RendererState
 from ..utils.frame_drop_rate_ewma import FrameDropRateEwma
 from ..utils.frame_timing import FrameTimingData, FrameTimingLogger
 from .adaptive_frame_dropper import AdaptiveFrameDropper
-from .audio_beat_analyzer import AudioBeatAnalyzer, BeatEvent
+from .audio_beat_analyzer import AudioBeatAnalyzer, BeatEvent, BuildDropEvent
 from .audio_capture import AudioConfig
 from .frame_renderer import FrameRenderer
 from .led_buffer import LEDBuffer
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 # Audio capture configuration - switch between test file and live microphone
 USE_AUDIO_TEST_FILE = True  # Set to False for live microphone capture
-AUDIO_TEST_FILE_PATH = "audio_capture_test.wav"  # Path to test audio file
+AUDIO_TEST_FILE_PATH = "whereyouare.wav"  # Path to test audio file
 
 
 @dataclass
@@ -181,14 +181,21 @@ class ConsumerProcess:
         # Always try to initialize audio analyzer for potential runtime enabling
         try:
             self._audio_beat_analyzer = AudioBeatAnalyzer(
-                beat_callback=self._on_beat_detected, device=audio_device, audio_config=audio_config
+                beat_callback=self._on_beat_detected,
+                builddrop_callback=self._on_builddrop_event,
+                device=audio_device,
+                audio_config=audio_config,
+                enable_builddrop_detection=True,  # Enable build-drop detection
             )
             mode_str = (
                 f"FILE MODE: {AUDIO_TEST_FILE_PATH}"
                 if USE_AUDIO_TEST_FILE
                 else f"LIVE MODE: device={audio_config.device_name}"
             )
-            logger.info(f"Audio beat analyzer initialized ({mode_str}), " f"sample_rate={audio_config.sample_rate}Hz")
+            logger.info(
+                f"Audio beat analyzer initialized with build-drop detection ({mode_str}), "
+                f"sample_rate={audio_config.sample_rate}Hz"
+            )
         except Exception as e:
             logger.warning(f"Audio beat analyzer unavailable: {e}")
             self._audio_beat_analyzer = None
@@ -418,6 +425,28 @@ class ConsumerProcess:
 
         except Exception as e:
             logger.error(f"Error handling beat event: {e}")
+
+    def _on_builddrop_event(self, builddrop_event: BuildDropEvent):
+        """Handle detected build-drop events and update control state"""
+        try:
+            # Update control state with build-drop information
+            status_updates = {
+                "buildup_state": builddrop_event.event_type,
+                "buildup_intensity": builddrop_event.buildup_intensity,
+            }
+
+            # Update cut/drop timestamps when events occur
+            if builddrop_event.is_cut:
+                status_updates["last_cut_time"] = builddrop_event.system_time
+                logger.info(f"🎵 CUT detected: intensity={builddrop_event.buildup_intensity:.2f}")
+            if builddrop_event.is_drop:
+                status_updates["last_drop_time"] = builddrop_event.system_time
+                logger.info(f"🎵 DROP detected: intensity={builddrop_event.buildup_intensity:.2f}")
+
+            self._control_state.update_status(**status_updates)
+
+        except Exception as e:
+            logger.error(f"Error handling build-drop event: {e}")
 
     def initialize(self) -> bool:
         """

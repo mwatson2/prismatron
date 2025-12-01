@@ -107,6 +107,14 @@ class SystemStatus:
     beat_confidence: float = 0.0
     audio_intensity: float = 0.0
 
+    # Build-up/drop detection state
+    buildup_state: str = "NORMAL"  # NORMAL or BUILDUP
+    buildup_intensity: float = 0.0  # Continuous build-up progression (can exceed 1.0)
+    bass_energy: float = 0.0  # Current bass energy level
+    high_energy: float = 0.0  # Current high-frequency energy level
+    last_cut_time: float = 0.0  # Wall-clock time of last cut event
+    last_drop_time: float = 0.0  # Wall-clock time of last drop event
+
     # Audio reactive effects control
     audio_reactive_enabled: bool = False
 
@@ -264,7 +272,7 @@ class ControlState:
             safe_size = int(estimated_size * 1.5)
             aligned_size = ((safe_size + 1023) // 1024) * 1024  # Round up to 1KB
 
-            return max(aligned_size, 2048)  # Minimum 2KB
+            return max(aligned_size, 4096)  # Minimum 4KB (increased from 2KB for build-drop fields)
 
         except Exception as e:
             logger.warning(f"Failed to calculate buffer size: {e}")
@@ -785,11 +793,36 @@ class ControlState:
                 return False
 
             # Update only the provided fields
+            builddrop_updated = False
             for field_name, value in updates.items():
                 if hasattr(current_status, field_name):
                     setattr(current_status, field_name, value)
+                    # Track if build-drop fields are being updated
+                    if field_name in (
+                        "buildup_state",
+                        "buildup_intensity",
+                        "bass_energy",
+                        "high_energy",
+                        "last_cut_time",
+                        "last_drop_time",
+                    ):
+                        builddrop_updated = True
                 else:
                     logger.warning(f"Unknown status field: {field_name}")
+
+            # Log build-drop updates (with sampling to avoid spam)
+            if builddrop_updated:
+                if not hasattr(self, "_builddrop_update_counter"):
+                    self._builddrop_update_counter = 0
+                self._builddrop_update_counter += 1
+                if self._builddrop_update_counter % 20 == 0:  # Log every 20th update
+                    logger.info(
+                        f"ControlState: build-drop update #{self._builddrop_update_counter}: "
+                        f"state={getattr(current_status, 'buildup_state', 'N/A')}, "
+                        f"intensity={getattr(current_status, 'buildup_intensity', 0.0):.2f}, "
+                        f"bass={getattr(current_status, 'bass_energy', 0.0):.6f}, "
+                        f"high={getattr(current_status, 'high_energy', 0.0):.6f}"
+                    )
 
             result = self._write_status(current_status)
             if result:

@@ -99,6 +99,26 @@ class AudioState:
     beats_per_measure: int = 4
     confidence: float = 0.0
     beat_intensity: float = 0.0  # Last beat's RMS intensity (0.0-1.0)
+    # Build-up/drop detection state
+    buildup_state: str = "NORMAL"  # NORMAL or BUILDUP
+    buildup_intensity: float = 0.0  # Continuous build-up progression (can exceed 1.0)
+    last_cut_time: float = 0.0  # Wall-clock time of last cut event
+    last_drop_time: float = 0.0  # Wall-clock time of last drop event
+
+
+@dataclass
+class BuildDropEvent:
+    """Data structure for build-up/drop events"""
+
+    timestamp: float  # Event time in seconds
+    system_time: float  # System time when detected
+    event_type: str  # "BUILDUP_UPDATE", "CUT", "DROP"
+    buildup_intensity: float  # Continuous build-up progression (can exceed 1.0)
+    bass_energy: float  # Current bass energy level
+    high_energy: float  # Current high-frequency energy level
+    confidence: float  # Detection confidence (0.0-1.0)
+    is_cut: bool = False  # True on cut frames
+    is_drop: bool = False  # True on drop frames
 
 
 class MockAubio:
@@ -131,6 +151,590 @@ class MockAubio:
 
     def get_confidence(self):
         return 0.8  # Mock confidence
+
+
+@dataclass
+class BuildDropConfig:
+    """Configuration for build-up/drop detection using spectral analysis"""
+
+    # Frequency band definitions (Hz)
+    bass_range: tuple[float, float] = (20.0, 250.0)  # Kick drum, bass
+    mid_range: tuple[float, float] = (250.0, 2000.0)  # Snare, vocals, melodic
+    high_range: tuple[float, float] = (2000.0, 8000.0)  # Cymbals, general hi-freq
+    air_range: tuple[float, float] = (8000.0, 16000.0)  # Hi-hats, transient clicks
+
+    # Snare roll detection bands
+    snare_body_range: tuple[float, float] = (150.0, 400.0)  # Snare body
+    snare_crack_range: tuple[float, float] = (2000.0, 5000.0)  # Snare rattle/crack
+
+    # EWMA half-lives (in frames at ~86 fps)
+    # Centroid slope: 1s input EWMA -> 0.25s diff -> 2s output EWMA
+    ewma_centroid_input: int = 86  # 1s - applied to raw centroid before diff
+    # Flux slopes: 0.5s input EWMA -> 0.25s diff -> 1s output EWMA
+    ewma_flux_input: int = 43  # 0.5s - applied to raw flux before diff
+    deriv_interval: int = 22  # 0.25s interval for slope calculation
+    ewma_centroid_output: int = 172  # 2s - smoothing applied to centroid slope
+    ewma_flux_output: int = 86  # 1s - smoothing applied to flux slopes
+
+    ewma_mid_energy_short: int = 22  # 0.25s for current mid energy
+    ewma_mid_energy_long: int = 344  # 4s for baseline mid energy
+
+    # Thresholds
+    cut_threshold: float = 0.5  # Mid energy ratio for cut detection
+    drop_bass_slope_threshold: float = 20.0  # Bass flux slope for drop
+    snare_magnitude_threshold: float = 0.3  # Snare autocorrelation peak
+    snare_multiplier_minimum: int = 4  # 4x or 8x BPM
+    flux_slope_entry_threshold: float = 5.0  # High/air slope for buildup entry
+
+    # Cooldowns (in frames)
+    cut_cooldown_frames: int = 172  # ~2s between cuts
+    max_buildup_decrease_frames: int = 86  # ~1s dips allowed in buildup
+
+    # Performance optimization
+    snare_detection_interval: int = 1  # Run snare detection every N frames (1 = every frame)
+    snare_window_size: int = 86  # ~1 second window for autocorrelation
+
+    # FFT parameters
+    fft_size: int = 2048
+
+
+class BuildDropDetector:
+    """
+    Detects house/trance build-up and drop patterns in real-time audio.
+
+    Uses spectral analysis to detect:
+    - Build-up phases: snare rolls + rising high/air flux + rising spectral centroid
+    - Cut events: sudden drop in mid energy (ends buildup)
+    - Drop events: bass flux spike after buildup or within 2 bars of cut
+
+    Outputs:
+    - buildup_intensity: Continuous value during buildup (can exceed 1.0)
+    - is_cut: True on frames where cut is detected
+    - is_drop: True on frames where drop is detected
+    """
+
+    # Indices for the slopes array: [centroid, bass_flux, mid_flux, high_flux, air_flux]
+    IDX_CENTROID = 0
+    IDX_BASS_FLUX = 1
+    IDX_MID_FLUX = 2
+    IDX_HIGH_FLUX = 3
+    IDX_AIR_FLUX = 4
+    NUM_SLOPE_SIGNALS = 5
+
+    def __init__(self, config: Optional[BuildDropConfig] = None, sample_rate: int = 44100, buf_size: int = 512):
+        """
+        Initialize build-up/drop detector.
+
+        Args:
+            config: Detection configuration (uses defaults if None)
+            sample_rate: Audio sample rate
+            buf_size: Audio buffer size (hop size)
+        """
+        self.config = config if config is not None else BuildDropConfig()
+        self.sample_rate = sample_rate
+        self.buf_size = buf_size
+        self.frame_rate = sample_rate / buf_size  # ~86 fps at 44100/512
+
+        # Calculate EWMA alphas from half-lives
+        # Centroid: 1s input -> 2s output
+        self.alpha_centroid_input = 1 - np.exp(-np.log(2) / self.config.ewma_centroid_input)
+        self.alpha_centroid_output = 1 - np.exp(-np.log(2) / self.config.ewma_centroid_output)
+        # Flux: 0.5s input -> 1s output
+        self.alpha_flux_input = 1 - np.exp(-np.log(2) / self.config.ewma_flux_input)
+        self.alpha_flux_output = 1 - np.exp(-np.log(2) / self.config.ewma_flux_output)
+        # Mid energy
+        self.alpha_mid_short = 1 - np.exp(-np.log(2) / self.config.ewma_mid_energy_short)
+        self.alpha_mid_long = 1 - np.exp(-np.log(2) / self.config.ewma_mid_energy_long)
+
+        # Frequency bin ranges
+        self._calculate_frequency_bins()
+
+        # Circular buffers for slope calculation (need deriv_interval + 1 frames)
+        self.slope_buffer_size = self.config.deriv_interval + 1
+        # Separate buffers for centroid (1 value) and flux (4 values)
+        self.centroid_input_buffer = np.zeros(self.slope_buffer_size)
+        self.flux_input_buffer = np.zeros((self.slope_buffer_size, 4))  # bass, mid, high, air
+        self.slope_buffer_idx = 0
+        self.slope_buffer_filled = False
+
+        # EWMA state - separate for centroid and flux
+        self.ewma_centroid_input = 0.0  # Centroid input EWMA (1s)
+        self.ewma_centroid_output = 0.0  # Centroid slope output EWMA (2s)
+        self.ewma_flux_input = np.zeros(4)  # Flux input EWMAs (0.5s) [bass, mid, high, air]
+        self.ewma_flux_output = np.zeros(4)  # Flux slope output EWMAs (1s)
+        self.ewma_mid_short = 0.0  # Short-term mid energy EWMA
+        self.ewma_mid_long = 0.0  # Long-term mid energy EWMA
+
+        # Raw intensity smoothing (0.5s EWMA for smooth buildup curve)
+        self.ewma_raw_intensity = 0.0
+        self.alpha_raw_intensity = 1 - np.exp(-np.log(2) / 43)  # 0.5s half-life
+
+        # Snare roll detection state
+        self.snare_flux_buffer = deque(maxlen=self.config.snare_window_size)
+        self.snare_roll_multiplier = 0  # 0, 2, 4, or 8
+        self.snare_roll_magnitude = 0.0
+
+        # Buildup state
+        self.in_buildup = False
+        self.buildup_start_frame = 0
+        self.buildup_start_offset = 0.0
+        self.buildup_intensity = 0.0
+        self.peak_smoothed_intensity = 0.0
+        self.frames_since_peak = 0
+
+        # Cut/drop state
+        self.last_cut_frame = -1000
+        self.last_drop_frame = -1000
+
+        # Frame counter
+        self.frame_count = 0
+        self.first_active_frame = -1  # Frame when audio becomes non-silent
+
+        # Current BPM (updated externally)
+        self.current_bpm = 120.0
+
+        # Previous spectrum for flux calculation
+        self.prev_spectrum = None
+
+        # Current energies (for output)
+        self.current_bass_energy = 0.0
+        self.current_high_energy = 0.0
+
+        # Initialize aubio phase vocoder for spectrum computation
+        # This gives us overlapping windows (fft_size window, buf_size hop)
+        self.pvoc = None
+        if AUBIO_AVAILABLE:
+            try:
+                self.pvoc = aubio.pvoc(self.config.fft_size, self.buf_size)
+                logger.info(
+                    f"BuildDropDetector using aubio pvoc (fft_size={self.config.fft_size}, "
+                    f"hop_size={self.buf_size})"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create aubio pvoc: {e}, falling back to numpy FFT")
+                self.pvoc = None
+
+        logger.info(
+            f"BuildDropDetector initialized (sample_rate={sample_rate}, "
+            f"buf_size={buf_size}, frame_rate={self.frame_rate:.1f} fps)"
+        )
+
+    def _calculate_frequency_bins(self):
+        """Calculate FFT bin indices for each frequency band"""
+        freq_resolution = self.sample_rate / self.config.fft_size
+
+        def freq_to_bin(freq: float) -> int:
+            return int(freq / freq_resolution)
+
+        self.bass_bins = (freq_to_bin(self.config.bass_range[0]), freq_to_bin(self.config.bass_range[1]))
+        self.mid_bins = (freq_to_bin(self.config.mid_range[0]), freq_to_bin(self.config.mid_range[1]))
+        self.high_bins = (freq_to_bin(self.config.high_range[0]), freq_to_bin(self.config.high_range[1]))
+        self.air_bins = (freq_to_bin(self.config.air_range[0]), freq_to_bin(self.config.air_range[1]))
+        self.snare_body_bins = (
+            freq_to_bin(self.config.snare_body_range[0]),
+            freq_to_bin(self.config.snare_body_range[1]),
+        )
+        self.snare_crack_bins = (
+            freq_to_bin(self.config.snare_crack_range[0]),
+            freq_to_bin(self.config.snare_crack_range[1]),
+        )
+
+    def _extract_band_energy(self, spectrum: np.ndarray, bin_range: tuple[int, int]) -> float:
+        """Extract energy (sum of squared magnitudes) from a frequency band."""
+        start_bin, end_bin = bin_range
+        start_bin = max(0, start_bin)
+        end_bin = min(len(spectrum), end_bin)
+        if start_bin >= end_bin:
+            return 0.0
+        return float(np.sum(spectrum[start_bin:end_bin] ** 2))
+
+    def _extract_band_flux(self, curr: np.ndarray, prev: np.ndarray, bin_range: tuple[int, int]) -> float:
+        """Extract spectral flux (half-wave rectified difference) from a frequency band."""
+        start_bin, end_bin = bin_range
+        start_bin = max(0, start_bin)
+        end_bin = min(len(curr), end_bin)
+        if start_bin >= end_bin:
+            return 0.0
+        diff = curr[start_bin:end_bin] - prev[start_bin:end_bin]
+        return float(np.sum(np.maximum(0, diff)))
+
+    def set_bpm(self, bpm: float):
+        """Update current BPM (called from AudioBeatAnalyzer)."""
+        if bpm > 0:
+            self.current_bpm = bpm
+
+    def process_frame(self, audio_buffer: np.ndarray) -> dict:
+        """
+        Process audio frame and detect build-up/drop patterns.
+
+        Args:
+            audio_buffer: Audio samples (float32, mono)
+
+        Returns:
+            Dictionary with detection results:
+                - buildup_intensity: Continuous buildup intensity
+                - bass_energy: Current bass energy
+                - high_energy: Current high-frequency energy
+                - is_cut: True if cut detected this frame
+                - is_drop: True if drop detected this frame
+                - confidence: Detection confidence
+        """
+        # Ensure buffer is correct type and shape
+        if audio_buffer.ndim > 1:
+            audio_buffer = audio_buffer.flatten()
+        audio_buffer = audio_buffer.astype(np.float32)
+
+        # Pad or truncate to expected size
+        if len(audio_buffer) < self.buf_size:
+            audio_buffer = np.pad(audio_buffer, (0, self.buf_size - len(audio_buffer)))
+        elif len(audio_buffer) > self.buf_size:
+            audio_buffer = audio_buffer[: self.buf_size]
+
+        self.frame_count += 1
+
+        # Check for first active frame (non-silent)
+        if self.first_active_frame < 0:
+            rms = np.sqrt(np.mean(audio_buffer**2))
+            if rms > 0.01:
+                # Skip warmup frames after first detecting audio
+                self.first_active_frame = self.frame_count + 86  # ~1s warmup
+
+        # Compute FFT spectrum using aubio pvoc (preferred) or numpy fallback
+        if self.pvoc is not None:
+            # Use aubio phase vocoder - provides overlapping windows internally
+            # pvoc maintains state and gives us fft_size window with buf_size hop
+            cvec = self.pvoc(audio_buffer)
+            spectrum = np.array(cvec.norm)
+        else:
+            # Fallback: numpy FFT with zero-padding (less accurate for flux)
+            windowed = audio_buffer * np.hanning(len(audio_buffer))
+            padded = np.zeros(self.config.fft_size)
+            padded[: len(windowed)] = windowed
+            spectrum = np.abs(np.fft.rfft(padded))
+
+        # Extract band energies
+        bass_energy = self._extract_band_energy(spectrum, self.bass_bins)
+        mid_energy = self._extract_band_energy(spectrum, self.mid_bins)
+        high_energy = self._extract_band_energy(spectrum, self.high_bins)
+        air_energy = self._extract_band_energy(spectrum, self.air_bins)
+
+        self.current_bass_energy = bass_energy
+        self.current_high_energy = high_energy + air_energy
+
+        # Extract spectral flux (requires previous spectrum)
+        bass_flux = 0.0
+        mid_flux = 0.0
+        high_flux = 0.0
+        air_flux = 0.0
+        snare_body_flux = 0.0
+        snare_crack_flux = 0.0
+
+        if self.prev_spectrum is not None:
+            bass_flux = self._extract_band_flux(spectrum, self.prev_spectrum, self.bass_bins)
+            mid_flux = self._extract_band_flux(spectrum, self.prev_spectrum, self.mid_bins)
+            high_flux = self._extract_band_flux(spectrum, self.prev_spectrum, self.high_bins)
+            air_flux = self._extract_band_flux(spectrum, self.prev_spectrum, self.air_bins)
+            snare_body_flux = self._extract_band_flux(spectrum, self.prev_spectrum, self.snare_body_bins)
+            snare_crack_flux = self._extract_band_flux(spectrum, self.prev_spectrum, self.snare_crack_bins)
+
+        self.prev_spectrum = spectrum.copy()
+
+        # Compute spectral centroid
+        freqs = np.fft.rfftfreq(self.config.fft_size, 1.0 / self.sample_rate)
+        total_magnitude = np.sum(spectrum)
+        if total_magnitude > 0:
+            spectral_centroid = np.sum(freqs * spectrum) / total_magnitude
+        else:
+            spectral_centroid = 0.0
+
+        # Skip processing until first active frame + warmup
+        # first_active_frame is -1 until audio is detected, then set to frame + 86
+        if self.first_active_frame < 0 or self.frame_count < self.first_active_frame:
+            return {
+                "buildup_intensity": 0.0,
+                "bass_energy": bass_energy,
+                "high_energy": self.current_high_energy,
+                "is_cut": False,
+                "is_drop": False,
+                "confidence": 0.0,
+                # Extended signals (zeros during warmup)
+                "mid_energy": mid_energy,
+                "air_energy": air_energy,
+                "spectral_centroid": spectral_centroid,
+                "bass_flux": bass_flux,
+                "mid_flux": mid_flux,
+                "high_flux": high_flux,
+                "air_flux": air_flux,
+                "ewma_slope_input": np.zeros(5),  # [centroid, bass, mid, high, air]
+                "ewma_slope_output": np.zeros(5),  # slopes
+                "ewma_mid_short": 0.0,
+                "ewma_mid_long": 0.0,
+                "mid_energy_ratio": 1.0,
+                "snare_roll_multiplier": 0,
+                "snare_roll_magnitude": 0.0,
+                "in_buildup": False,
+            }
+
+        # Initialize EWMAs on first active frame
+        if self.frame_count == self.first_active_frame:
+            # Centroid starts at current value
+            self.ewma_centroid_input = spectral_centroid
+            self.ewma_centroid_output = 0.0
+            # Flux starts at current values
+            self.ewma_flux_input = np.array([bass_flux, mid_flux, high_flux, air_flux])
+            self.ewma_flux_output = np.zeros(4)
+            # Mid energy - initialize both to current mid energy
+            self.ewma_mid_short = mid_energy
+            self.ewma_mid_long = mid_energy
+            # Fill buffers with initial values
+            for i in range(self.slope_buffer_size):
+                self.centroid_input_buffer[i] = self.ewma_centroid_input
+                self.flux_input_buffer[i] = self.ewma_flux_input.copy()
+            self.slope_buffer_filled = True
+            logger.info(f"BuildDropDetector: First active frame {self.frame_count}")
+
+        # Update centroid EWMA (1s half-life input)
+        self.ewma_centroid_input = (
+            self.alpha_centroid_input * spectral_centroid + (1 - self.alpha_centroid_input) * self.ewma_centroid_input
+        )
+
+        # Update flux EWMAs (0.5s half-life input)
+        raw_flux = np.array([bass_flux, mid_flux, high_flux, air_flux])
+        self.ewma_flux_input = self.alpha_flux_input * raw_flux + (1 - self.alpha_flux_input) * self.ewma_flux_input
+
+        # Store in circular buffers for derivative calculation
+        self.centroid_input_buffer[self.slope_buffer_idx] = self.ewma_centroid_input
+        self.flux_input_buffer[self.slope_buffer_idx] = self.ewma_flux_input.copy()
+        prev_idx = (self.slope_buffer_idx - self.config.deriv_interval) % self.slope_buffer_size
+        self.slope_buffer_idx = (self.slope_buffer_idx + 1) % self.slope_buffer_size
+
+        # Compute derivatives (current - past) / interval_seconds
+        interval_seconds = self.config.deriv_interval * self.buf_size / self.sample_rate
+        centroid_slope_raw = (self.ewma_centroid_input - self.centroid_input_buffer[prev_idx]) / interval_seconds
+        flux_slope_raw = (self.ewma_flux_input - self.flux_input_buffer[prev_idx]) / interval_seconds
+
+        # Apply output EWMA smoothing to slopes
+        # Centroid: 2s half-life output
+        self.ewma_centroid_output = (
+            self.alpha_centroid_output * centroid_slope_raw
+            + (1 - self.alpha_centroid_output) * self.ewma_centroid_output
+        )
+        # Flux: 1s half-life output
+        self.ewma_flux_output = (
+            self.alpha_flux_output * flux_slope_raw + (1 - self.alpha_flux_output) * self.ewma_flux_output
+        )
+
+        # Update mid energy EWMAs
+        self.ewma_mid_short = self.alpha_mid_short * mid_energy + (1 - self.alpha_mid_short) * self.ewma_mid_short
+        self.ewma_mid_long = self.alpha_mid_long * mid_energy + (1 - self.alpha_mid_long) * self.ewma_mid_long
+
+        # Mid energy ratio for cut detection
+        mid_energy_ratio = self.ewma_mid_short / (self.ewma_mid_long + 1e-10)
+
+        # Snare roll detection (every N frames for performance)
+        self.snare_flux_buffer.append(snare_body_flux * snare_crack_flux)
+        if self.frame_count % self.config.snare_detection_interval == 0:
+            self._detect_snare_roll()
+
+        # Get slopes for detection logic
+        centroid_slope = self.ewma_centroid_output
+        bass_slope = self.ewma_flux_output[0]  # bass
+        mid_slope = self.ewma_flux_output[1]  # mid (not used in detection, but for output)
+        high_slope = self.ewma_flux_output[2]  # high
+        air_slope = self.ewma_flux_output[3]  # air
+
+        # Detection logic
+        is_cut = False
+        is_drop = False
+
+        # Calculate drop window based on current BPM (2 bars = 8 beats)
+        if self.current_bpm > 0:
+            beats_per_second = self.current_bpm / 60.0
+            two_bars_seconds = 8.0 / beats_per_second
+            drop_window_frames = int(two_bars_seconds * self.frame_rate)
+        else:
+            drop_window_frames = int(4.0 * self.frame_rate)  # Default ~4s
+
+        # Check for CUT: mid energy drops below threshold of long-term average
+        cut_debounce_ok = (self.frame_count - self.last_cut_frame) > self.config.cut_cooldown_frames
+        if mid_energy_ratio < self.config.cut_threshold and cut_debounce_ok and self.in_buildup:
+            is_cut = True
+            self.last_cut_frame = self.frame_count
+            self.in_buildup = False
+            logger.info(f"🎵 CUT at frame {self.frame_count} - mid energy ratio {mid_energy_ratio:.2f}")
+
+        # Check for DROP: bass flux slope > threshold
+        in_drop_window = (self.frame_count - self.last_cut_frame) <= drop_window_frames
+        if bass_slope > self.config.drop_bass_slope_threshold:
+            if self.in_buildup:
+                is_drop = True
+                self.last_drop_frame = self.frame_count
+                self.in_buildup = False
+                logger.info(f"🎵🎵🎵 DROP at frame {self.frame_count} - bass return during buildup")
+            elif in_drop_window and self.last_cut_frame >= 0:
+                is_drop = True
+                self.last_drop_frame = self.frame_count
+                logger.info(f"🎵🎵🎵 DROP at frame {self.frame_count} - bass return after cut")
+                self.last_cut_frame = -1000  # Reset to prevent multiple drops
+
+        # Buildup entry: snare roll + rising high/air flux
+        can_start_buildup = (self.frame_count - self.last_cut_frame) > self.config.cut_cooldown_frames
+        if not self.in_buildup and can_start_buildup:
+            snare_entry = (
+                self.snare_roll_magnitude > self.config.snare_magnitude_threshold
+                and self.snare_roll_multiplier >= self.config.snare_multiplier_minimum
+            )
+            slope_entry = (
+                high_slope > self.config.flux_slope_entry_threshold
+                or air_slope > self.config.flux_slope_entry_threshold
+            )
+
+            if snare_entry and slope_entry:
+                self.in_buildup = True
+                self.buildup_start_frame = self.frame_count
+                self.buildup_start_offset = self.ewma_raw_intensity  # Use smoothed value
+                self.peak_smoothed_intensity = 0.0
+                self.frames_since_peak = 0
+                logger.info(f"🎵 Buildup started at frame {self.frame_count}")
+
+        # Compute and smooth raw intensity (always, for continuous EWMA)
+        raw_intensity = self._compute_raw_intensity(high_slope, air_slope, centroid_slope)
+        self.ewma_raw_intensity = (
+            self.alpha_raw_intensity * raw_intensity + (1 - self.alpha_raw_intensity) * self.ewma_raw_intensity
+        )
+
+        # Update buildup intensity using smoothed value
+        if self.in_buildup:
+            current_intensity = self.ewma_raw_intensity - self.buildup_start_offset
+
+            # Check for sustained decrease (exit condition)
+            if current_intensity < self.peak_smoothed_intensity - 0.05:
+                self.frames_since_peak += 1
+                if self.frames_since_peak > self.config.max_buildup_decrease_frames:
+                    self.in_buildup = False
+                    self.buildup_intensity = 0.0
+                    logger.info(f"🎵 Buildup ended (intensity decreased) at frame {self.frame_count}")
+            else:
+                if current_intensity > self.peak_smoothed_intensity:
+                    self.peak_smoothed_intensity = current_intensity
+                self.frames_since_peak = 0
+                self.buildup_intensity = max(0, current_intensity)
+        else:
+            self.buildup_intensity = 0.0
+
+        return {
+            "buildup_intensity": self.buildup_intensity,
+            "bass_energy": bass_energy,
+            "high_energy": self.current_high_energy,
+            "is_cut": is_cut,
+            "is_drop": is_drop,
+            "confidence": 0.8 if self.in_buildup else 0.5,
+            # Extended signals for visualization/debugging
+            "mid_energy": mid_energy,
+            "air_energy": air_energy,
+            "spectral_centroid": spectral_centroid,
+            "bass_flux": bass_flux,
+            "mid_flux": mid_flux,
+            "high_flux": high_flux,
+            "air_flux": air_flux,
+            "ewma_slope_input": np.array(
+                [self.ewma_centroid_input, *self.ewma_flux_input]
+            ),  # [centroid, bass, mid, high, air]
+            "ewma_slope_output": np.array(
+                [self.ewma_centroid_output, *self.ewma_flux_output]
+            ),  # slopes [centroid, bass, mid, high, air]
+            "ewma_mid_short": self.ewma_mid_short,
+            "ewma_mid_long": self.ewma_mid_long,
+            "mid_energy_ratio": mid_energy_ratio,
+            "snare_roll_multiplier": self.snare_roll_multiplier,
+            "snare_roll_magnitude": self.snare_roll_magnitude,
+            "in_buildup": self.in_buildup,
+        }
+
+    def _compute_raw_intensity(self, high_slope: float, air_slope: float, centroid_slope: float) -> float:
+        """Compute raw combined intensity metric for buildup detection."""
+        # Use max of high and air flux slopes
+        high_air_slope = max(high_slope, air_slope)
+
+        # Snare component
+        snare_intensity = 0.0
+        if self.snare_roll_multiplier >= 4:
+            snare_intensity = self.snare_roll_magnitude
+
+        # Combined raw intensity
+        raw_intensity = (
+            max(0, high_air_slope) / 20.0  # high/air slope contribution
+            + max(0, centroid_slope) / 1000.0  # centroid slope contribution
+            + snare_intensity * 0.5  # snare contribution
+        )
+        return raw_intensity
+
+    def _detect_snare_roll(self):
+        """Detect snare roll using autocorrelation of snare flux product."""
+        if len(self.snare_flux_buffer) < self.config.snare_window_size:
+            return
+
+        # Normalize the buffer
+        window = np.array(self.snare_flux_buffer)
+        max_val = np.max(window)
+        if max_val > 0:
+            window = window / max_val
+
+        window_mean = np.mean(window)
+        window_centered = window - window_mean
+        window_std = np.std(window_centered)
+
+        if window_std <= 0:
+            self.snare_roll_multiplier = 0
+            self.snare_roll_magnitude = 0.0
+            return
+
+        window_norm = window_centered / window_std
+
+        # Compute autocorrelation
+        autocorr = np.correlate(window_norm, window_norm, mode="full")
+        autocorr = autocorr[len(autocorr) // 2 :]  # Take positive lags
+        autocorr = autocorr / len(window)
+
+        # Calculate lag values for 2x, 4x, 8x BPM
+        if self.current_bpm <= 0:
+            self.snare_roll_multiplier = 0
+            self.snare_roll_magnitude = 0.0
+            return
+
+        beat_period_frames = self.frame_rate * 60.0 / self.current_bpm
+
+        # Check for peaks at 8x, 4x, 2x (fastest first)
+        multipliers = [8, 4, 2]
+        detected_multiplier = 0
+        detected_magnitude = 0.0
+
+        for mult in multipliers:
+            lag = beat_period_frames / mult
+            lag_int = int(round(lag))
+
+            if lag_int < 2 or lag_int >= len(autocorr) - 1:
+                continue
+
+            val = autocorr[lag_int]
+            val_before = autocorr[lag_int - 1]
+            val_after = autocorr[lag_int + 1]
+
+            if val > val_before and val > val_after and val > 0.1:
+                detected_multiplier = mult
+                detected_magnitude = val
+                break
+
+        self.snare_roll_multiplier = detected_multiplier
+        self.snare_roll_magnitude = detected_magnitude
+
+    def get_state(self) -> str:
+        """Get current state (NORMAL or BUILDUP for compatibility)."""
+        return "BUILDUP" if self.in_buildup else "NORMAL"
+
+    def get_buildup_intensity(self) -> float:
+        """Get current build-up intensity."""
+        return self.buildup_intensity
 
 
 class BeatIntensityAnalyzer:
@@ -233,24 +837,31 @@ class AudioBeatAnalyzer:
     def __init__(
         self,
         beat_callback: Optional[Callable[[BeatEvent], None]] = None,
+        builddrop_callback: Optional[Callable[[BuildDropEvent], None]] = None,
         model: int = 1,
         device: str = "auto",
         sample_rate: int = 22050,
         buffer_size: int = 1024,
         audio_config: Optional[AudioConfig] = None,
+        enable_builddrop_detection: bool = False,
+        builddrop_config: Optional[BuildDropConfig] = None,
     ):
         """
         Initialize audio beat analyzer.
 
         Args:
             beat_callback: Callback function for beat events
+            builddrop_callback: Callback function for build-up/drop events
             model: BeatNet model selection (1-3)
             device: Processing device ('auto', 'cuda', 'cpu')
             sample_rate: Audio sample rate
             buffer_size: Audio buffer size
             audio_config: Optional AudioConfig for custom audio capture settings (file mode, etc)
+            enable_builddrop_detection: Enable build-up/drop detection (default: False)
+            builddrop_config: Configuration for build-up/drop detection
         """
         self.beat_callback = beat_callback
+        self.builddrop_callback = builddrop_callback
         self.sample_rate = sample_rate  # Aubio can work with 44100Hz directly
         self.capture_rate = 44100  # USB device native rate
         self.buffer_size = buffer_size
@@ -261,13 +872,23 @@ class AudioBeatAnalyzer:
         self.bpm_calculator = BPMCalculator()
         self.intensity_analyzer = BeatIntensityAnalyzer(self.sample_rate, buffer_size)
 
+        # Build-up/drop detection (optional)
+        self.enable_builddrop_detection = enable_builddrop_detection
+        if self.enable_builddrop_detection:
+            self.builddrop_detector = BuildDropDetector(
+                config=builddrop_config, sample_rate=self.capture_rate, buf_size=self.hop_size
+            )
+            logger.info("Build-up/drop detection enabled")
+        else:
+            self.builddrop_detector = None
+
         # Threading
         self.running = False
         self.beat_thread = None
         self.beat_queue = queue.Queue(maxsize=100)
 
         # Thread pool for non-blocking beat callback execution
-        self.callback_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="BeatCallback")
+        self.callback_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="BeatCallback")
 
         # State tracking
         self.audio_state = AudioState()
@@ -398,6 +1019,104 @@ class AudioBeatAnalyzer:
 
             self.total_frames_processed += 1
 
+            # Process build-up/drop detection if enabled
+            if self.builddrop_detector is not None:
+                # Update BPM in detector from current audio state
+                if self.audio_state.current_bpm > 0:
+                    self.builddrop_detector.set_bpm(self.audio_state.current_bpm)
+
+                builddrop_result = self.builddrop_detector.process_frame(audio_frame)
+
+                # Log periodic statistics (every 500 frames ~= 5.8s @ 512 samples/44.1kHz)
+                if not hasattr(self, "_builddrop_log_counter"):
+                    self._builddrop_log_counter = 0
+                    self._builddrop_max_bass = 0.0
+                    self._builddrop_max_high = 0.0
+                    self._builddrop_max_intensity = 0.0
+                    self._builddrop_cut_count = 0
+                    self._builddrop_drop_count = 0
+
+                self._builddrop_log_counter += 1
+                self._builddrop_max_bass = max(self._builddrop_max_bass, builddrop_result["bass_energy"])
+                self._builddrop_max_high = max(self._builddrop_max_high, builddrop_result["high_energy"])
+                self._builddrop_max_intensity = max(
+                    self._builddrop_max_intensity, builddrop_result["buildup_intensity"]
+                )
+                if builddrop_result.get("is_cut", False):
+                    self._builddrop_cut_count += 1
+                if builddrop_result.get("is_drop", False):
+                    self._builddrop_drop_count += 1
+
+                if self._builddrop_log_counter >= 500:
+                    logger.info(
+                        f"BuildDrop Stats (~5.8s): "
+                        f"intensity={self._builddrop_max_intensity:.2f}, "
+                        f"bass={self._builddrop_max_bass:.4f}, "
+                        f"high={self._builddrop_max_high:.4f}, "
+                        f"cuts={self._builddrop_cut_count}, drops={self._builddrop_drop_count}"
+                    )
+                    # Reset counters
+                    self._builddrop_log_counter = 0
+                    self._builddrop_max_bass = 0.0
+                    self._builddrop_max_high = 0.0
+                    self._builddrop_max_intensity = 0.0
+                    self._builddrop_cut_count = 0
+                    self._builddrop_drop_count = 0
+
+                # Update audio state with build-up/drop info
+                current_time = time.time()
+                self.audio_state.buildup_state = "BUILDUP" if builddrop_result["buildup_intensity"] > 0 else "NORMAL"
+                self.audio_state.buildup_intensity = builddrop_result["buildup_intensity"]
+
+                # Update cut/drop times and log events
+                is_cut = builddrop_result.get("is_cut", False)
+                is_drop = builddrop_result.get("is_drop", False)
+                if is_cut:
+                    self.audio_state.last_cut_time = current_time
+                    logger.info(
+                        f"CUT detected: intensity={builddrop_result['buildup_intensity']:.2f}, "
+                        f"bass={builddrop_result['bass_energy']:.4f}"
+                    )
+                if is_drop:
+                    self.audio_state.last_drop_time = current_time
+                    logger.info(
+                        f"DROP detected: intensity={builddrop_result['buildup_intensity']:.2f}, "
+                        f"bass={builddrop_result['bass_energy']:.4f}"
+                    )
+
+                # Trigger callback on cut, drop, or significant intensity changes
+                should_trigger_callback = is_cut or is_drop
+                if self.builddrop_callback and should_trigger_callback:
+                    # Calculate timestamp relative to audio start
+                    audio_timestamp = (self.total_frames_processed * self.hop_size) / self.capture_rate
+
+                    # Determine event type
+                    if is_cut:
+                        event_type = "CUT"
+                    elif is_drop:
+                        event_type = "DROP"
+                    else:
+                        event_type = "BUILDUP_UPDATE"
+
+                    # Create build-drop event
+                    builddrop_event = BuildDropEvent(
+                        timestamp=audio_timestamp,
+                        system_time=current_time,
+                        event_type=event_type,
+                        buildup_intensity=builddrop_result["buildup_intensity"],
+                        bass_energy=builddrop_result["bass_energy"],
+                        high_energy=builddrop_result["high_energy"],
+                        confidence=builddrop_result["confidence"],
+                        is_cut=is_cut,
+                        is_drop=is_drop,
+                    )
+
+                    # Call callback asynchronously
+                    try:
+                        self.callback_executor.submit(self.builddrop_callback, builddrop_event)
+                    except Exception as e:
+                        logger.error(f"Build-drop callback submission error: {e}")
+
             if beat_detected:
                 # Calculate timestamp relative to audio start (in audio time, not wall clock)
                 audio_timestamp = (self.total_frames_processed * self.hop_size) / self.capture_rate
@@ -412,10 +1131,7 @@ class AudioBeatAnalyzer:
 
                     # Calculate beat intensity from RMS of audio frame
                     # RMS gives us the energy/strength of the beat
-                    beat_intensity = np.sqrt(np.mean(audio_frame**2))
-                    # Normalize to 0-1 range with 5.0x scaling for better dynamic range
-                    # This gives: heavy bass ~0.5-1.0, light hi-hats ~0.1-0.3
-                    beat_intensity = float(np.clip(beat_intensity * 5.0, 0.0, 1.0))
+                    beat_intensity = float(np.sqrt(np.mean(audio_frame**2)))
 
                     # Log beat detection timing (DEBUG level for latency tracking)
                     logger.debug(
@@ -650,30 +1366,102 @@ if __name__ == "__main__":
             f"Confidence={beat_event.confidence:.2f}"
         )
 
-    # Create and start beat analyzer
-    analyzer = AudioBeatAnalyzer(beat_callback=beat_event_handler)
+    def builddrop_event_handler(builddrop_event: BuildDropEvent):
+        """Example build-up/drop event handler"""
+        # Create visual indicator based on event type
+        indicators = {
+            "NORMAL": "⚪",
+            "BUILDUP": "🟡",
+            "PREDROP": "🟠",
+            "DROP": "🔴💥",
+            "POSTDROP": "🟢",
+        }
+        indicator = indicators.get(builddrop_event.event_type, "⚪")
+
+        print(
+            f"\n{indicator} BUILD/DROP EVENT: {builddrop_event.event_type}\n"
+            f"  Intensity: {builddrop_event.buildup_intensity:.2f}\n"
+            f"  Bass Energy: {builddrop_event.bass_energy:.4f}\n"
+            f"  High Energy: {builddrop_event.high_energy:.4f}\n"
+            f"  Confidence: {builddrop_event.confidence:.2f}\n"
+        )
+
+        # Example: trigger different LED effects based on state
+        if builddrop_event.event_type == "BUILDUP":
+            # Gradually increase saturation/brightness based on intensity
+            effect_intensity = builddrop_event.buildup_intensity
+            print(f"  → Apply build-up effect at {effect_intensity*100:.0f}% intensity")
+
+        elif builddrop_event.event_type == "DROP":
+            # Trigger explosive visual effect
+            print("  → 💥 TRIGGER DROP EFFECT - Maximum impact!")
+
+        elif builddrop_event.event_type == "POSTDROP":
+            # Maintain elevated bass reactivity
+            print(f"  → Enhanced bass response (energy: {builddrop_event.bass_energy:.4f})")
+
+    # Example 1: Basic beat detection only
+    print("=" * 60)
+    print("Example 1: Basic beat detection")
+    print("=" * 60)
+
+    analyzer_basic = AudioBeatAnalyzer(beat_callback=beat_event_handler)
+
+    # Example 2: Beat detection + build-up/drop detection
+    print("\n" + "=" * 60)
+    print("Example 2: Beat detection + Build-up/Drop detection")
+    print("=" * 60)
+
+    # Create custom build-drop configuration
+    custom_config = BuildDropConfig(
+        hihat_transient_threshold=0.15,  # Sensitivity for hi-hat detection
+        buildup_entry_threshold=8,  # Consecutive hi-hat hits to enter build-up
+        drop_bass_multiplier=3.0,  # Bass spike multiplier for drop detection
+    )
+
+    analyzer_full = AudioBeatAnalyzer(
+        beat_callback=beat_event_handler,
+        builddrop_callback=builddrop_event_handler,
+        enable_builddrop_detection=True,
+        builddrop_config=custom_config,
+    )
+
+    # Choose which analyzer to run
+    print("\nSelect mode:")
+    print("1. Basic beat detection only")
+    print("2. Beat detection + Build-up/Drop detection (recommended for house/trance)")
+    choice = input("Enter choice (1 or 2, default=2): ").strip() or "2"
+
+    analyzer = analyzer_full if choice == "2" else analyzer_basic
 
     try:
         analyzer.start_analysis()
-        print("Beat analyzer started. Press Ctrl+C to stop...")
+        print("\n✓ Audio analyzer started. Press Ctrl+C to stop...\n")
 
         # Run for testing
         start_time = time.time()
-        while time.time() - start_time < 30:  # Run for 30 seconds
-            time.sleep(1)
+        while time.time() - start_time < 60:  # Run for 60 seconds
+            time.sleep(2)
 
             # Print current state
             state = analyzer.get_current_state()
-            print(
+            status_line = (
                 f"State: BPM={state.current_bpm:.1f}, "
                 f"Beats={state.beat_count}, "
-                f"Downbeats={state.downbeat_count}, "
-                f"Active={state.is_active}"
+                f"Intensity={state.beat_intensity:.2f}"
             )
 
+            # Add build-up/drop state if enabled
+            if analyzer.enable_builddrop_detection:
+                status_line += f", Build/Drop={state.buildup_state}"
+                if state.buildup_state == "BUILDUP":
+                    status_line += f" ({state.buildup_intensity*100:.0f}%)"
+
+            print(status_line)
+
     except KeyboardInterrupt:
-        print("\nStopping beat analyzer...")
+        print("\n\nStopping audio analyzer...")
 
     finally:
         analyzer.stop_analysis()
-        print("Beat analyzer stopped")
+        print("✓ Audio analyzer stopped")

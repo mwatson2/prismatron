@@ -691,6 +691,14 @@ class SystemStatus(BaseModel):
     # Optimization settings
     optimization_iterations: int = Field(10, description="Number of LED optimization iterations")
 
+    # Build-up/drop detection state
+    buildup_state: str = Field("NORMAL", description="Build-up/drop state (NORMAL or BUILDUP)")
+    buildup_intensity: float = Field(0.0, description="Build-up progression (can exceed 1.0)")
+    bass_energy: float = Field(0.0, description="Current bass energy level")
+    high_energy: float = Field(0.0, description="Current high-frequency energy level")
+    last_cut_time: float = Field(0.0, description="Wall-clock time of last cut event")
+    last_drop_time: float = Field(0.0, description="Wall-clock time of last drop event")
+
 
 # Network Management Models
 class WiFiConnectRequest(BaseModel):
@@ -1399,14 +1407,76 @@ async def preview_broadcast_task():
                 cpu_temp = ewma_cpu_temp
                 gpu_temp = ewma_gpu_temp
 
-                # Get rendering_index, renderer state, and optimization_iterations from control state
+                # Get rendering_index, renderer state, optimization_iterations, and build-drop state from control state
                 rendering_index_for_status = -1
                 renderer_state_value = "STOPPED"  # Default fallback
                 optimization_iterations_value = 10  # Default fallback
+                buildup_state_value = "NORMAL"  # Default fallback
+                buildup_intensity_value = 0.0
+                bass_energy_value = 0.0
+                high_energy_value = 0.0
+                last_cut_time_value = 0.0
+                last_drop_time_value = 0.0
                 if control_state:
                     system_status_for_index = control_state.get_status_dict()
                     rendering_index_for_status = system_status_for_index.get("rendering_index", -1)
                     optimization_iterations_value = system_status_for_index.get("optimization_iterations", 10)
+
+                    # Get build-drop state
+                    buildup_state_value = system_status_for_index.get("buildup_state", "NORMAL")
+                    buildup_intensity_value = system_status_for_index.get("buildup_intensity", 0.0)
+                    bass_energy_value = system_status_for_index.get("bass_energy", 0.0)
+                    high_energy_value = system_status_for_index.get("high_energy", 0.0)
+                    last_cut_time_value = system_status_for_index.get("last_cut_time", 0.0)
+                    last_drop_time_value = system_status_for_index.get("last_drop_time", 0.0)
+
+                    # Collect statistics for periodic logging (every 20 broadcasts ~= 1 second)
+                    if not hasattr(preview_broadcast_task, "builddrop_log_counter"):
+                        preview_broadcast_task.builddrop_log_counter = 0
+                        preview_broadcast_task.builddrop_max_intensity = 0.0
+                        preview_broadcast_task.builddrop_cut_count = 0
+                        preview_broadcast_task.builddrop_drop_count = 0
+                        preview_broadcast_task.builddrop_last_cut_time = 0.0
+                        preview_broadcast_task.builddrop_last_drop_time = 0.0
+
+                    preview_broadcast_task.builddrop_log_counter += 1
+                    preview_broadcast_task.builddrop_max_intensity = max(
+                        preview_broadcast_task.builddrop_max_intensity, buildup_intensity_value
+                    )
+
+                    # Track new cut/drop events
+                    if last_cut_time_value > preview_broadcast_task.builddrop_last_cut_time:
+                        preview_broadcast_task.builddrop_cut_count += 1
+                        preview_broadcast_task.builddrop_last_cut_time = last_cut_time_value
+                    if last_drop_time_value > preview_broadcast_task.builddrop_last_drop_time:
+                        preview_broadcast_task.builddrop_drop_count += 1
+                        preview_broadcast_task.builddrop_last_drop_time = last_drop_time_value
+
+                    if preview_broadcast_task.builddrop_log_counter >= 20:
+                        # Calculate time since last events
+                        time_since_cut = (
+                            f"{current_time - last_cut_time_value:.1f}s" if last_cut_time_value > 0 else "never"
+                        )
+                        time_since_drop = (
+                            f"{current_time - last_drop_time_value:.1f}s" if last_drop_time_value > 0 else "never"
+                        )
+
+                        # Build log message parts - show current intensity and highlight events
+                        log_parts = [f"intensity={buildup_intensity_value:.2f}"]
+                        if preview_broadcast_task.builddrop_cut_count > 0:
+                            log_parts.append("CUT!")
+                        if preview_broadcast_task.builddrop_drop_count > 0:
+                            log_parts.append("DROP!")
+                        log_parts.append(f"since_cut={time_since_cut}")
+                        log_parts.append(f"since_drop={time_since_drop}")
+
+                        logger.info(f"BuildDrop: {', '.join(log_parts)}")
+
+                        # Reset counters (but keep last event times for tracking)
+                        preview_broadcast_task.builddrop_log_counter = 0
+                        preview_broadcast_task.builddrop_max_intensity = 0.0
+                        preview_broadcast_task.builddrop_cut_count = 0
+                        preview_broadcast_task.builddrop_drop_count = 0
 
                     # Get renderer state
                     status_obj = control_state.get_status()
@@ -1441,6 +1511,12 @@ async def preview_broadcast_task():
                     "dropped_frames_percentage": dropped_frames_percentage,
                     "late_frame_percentage": late_frame_percentage,
                     "optimization_iterations": optimization_iterations_value,
+                    "buildup_state": buildup_state_value,
+                    "buildup_intensity": buildup_intensity_value,
+                    "bass_energy": bass_energy_value,
+                    "high_energy": high_energy_value,
+                    "last_cut_time": last_cut_time_value,
+                    "last_drop_time": last_drop_time_value,
                     "timestamp": current_time,
                 }
 
@@ -1867,14 +1943,24 @@ async def get_system_status():
     except Exception:
         pass  # Use default frame_rate if shared memory not available
 
-    # Get rendering_index, renderer state, and optimization_iterations from control state
+    # Get rendering_index, renderer state, optimization_iterations, and build-drop state from control state
     rendering_index = -1
     renderer_state_value = "STOPPED"  # Default fallback
     optimization_iterations = 10  # Default fallback
+    buildup_state = "NORMAL"  # Default fallback
+    buildup_intensity = 0.0
+    bass_energy = 0.0
+    high_energy = 0.0
     if control_state:
         system_status_dict = control_state.get_status_dict()
         rendering_index = system_status_dict.get("rendering_index", -1)
         optimization_iterations = system_status_dict.get("optimization_iterations", 10)
+
+        # Get build-drop state
+        buildup_state = system_status_dict.get("buildup_state", "NORMAL")
+        buildup_intensity = system_status_dict.get("buildup_intensity", 0.0)
+        bass_energy = system_status_dict.get("bass_energy", 0.0)
+        high_energy = system_status_dict.get("high_energy", 0.0)
 
         # Get renderer state
         status_obj = control_state.get_status()
@@ -1907,6 +1993,10 @@ async def get_system_status():
         dropped_frames_percentage=dropped_frames_percentage,
         late_frame_percentage=late_frame_percentage,
         optimization_iterations=optimization_iterations,
+        buildup_state=buildup_state,
+        buildup_intensity=buildup_intensity,
+        bass_energy=bass_energy,
+        high_energy=high_energy,
     )
 
 
