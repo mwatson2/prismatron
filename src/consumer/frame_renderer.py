@@ -284,8 +284,8 @@ class EffectTriggerManager:
         if time_since_last < self.test_trigger_interval:
             return
 
-        # Evaluate test triggers in order (first match wins)
-        for trigger in self.triggers:
+        # Evaluate test triggers from common triggers (first match wins)
+        for trigger in self.common_triggers:
             if trigger.trigger_type != "test":
                 continue
 
@@ -506,6 +506,11 @@ class FrameRenderer:
 
         # Track last known trigger configuration hash to detect changes
         self._last_trigger_config_hash = None
+
+        # Sparkle effect state for buildup integration
+        self._sparkle_effect = None  # SparkleEffect instance or None
+        self._last_cut_time_processed: float = 0.0
+        self._last_drop_time_processed: float = 0.0
 
         # Initialize triggers from control state (if available)
         self._initialize_triggers_from_control_state()
@@ -1222,6 +1227,104 @@ class FrameRenderer:
         except Exception as e:
             logger.error(f"Failed to evaluate test triggers: {e}")
 
+    def _manage_sparkle_effect_for_buildup(self, frame_timeline_time: float) -> None:
+        """
+        Manage sparkle effect based on buildup detection state.
+
+        Creates, updates, or removes sparkle effects based on:
+        - Buildup intensity (0 = no sparkle, >0 = sparkle with intensity-based parameters)
+        - Cut/drop events (remove sparkle on cut or drop)
+
+        Args:
+            frame_timeline_time: Current time on the frame timeline
+        """
+        # Import led_effect locally to avoid circular imports
+        from . import led_effect
+
+        # Check if audio beat analyzer is available
+        if not self._audio_beat_analyzer:
+            return
+
+        try:
+            # Get current audio state
+            audio_state = self._audio_beat_analyzer.get_current_state()
+            if not audio_state or not audio_state.is_active:
+                return
+
+            buildup_intensity = audio_state.buildup_intensity
+            last_cut_time = audio_state.last_cut_time
+            last_drop_time = audio_state.last_drop_time
+
+            # Check for cut or drop events since last frame
+            cut_occurred = last_cut_time > self._last_cut_time_processed
+            drop_occurred = last_drop_time > self._last_drop_time_processed
+
+            # Update processed times
+            self._last_cut_time_processed = last_cut_time
+            self._last_drop_time_processed = last_drop_time
+
+            # Remove sparkle effect on cut or drop
+            if cut_occurred or drop_occurred:
+                if self._sparkle_effect is not None:
+                    self.effect_manager.remove_effect(self._sparkle_effect)
+                    self._sparkle_effect = None
+                    event_type = "CUT" if cut_occurred else "DROP"
+                    logger.info(f"🎆 Removed sparkle effect on {event_type}")
+                return  # Don't create new sparkle on the same frame as cut/drop
+
+            # If buildup intensity is zero, remove any existing sparkle effect
+            if buildup_intensity <= 0:
+                if self._sparkle_effect is not None:
+                    self.effect_manager.remove_effect(self._sparkle_effect)
+                    self._sparkle_effect = None
+                    logger.debug("Removed sparkle effect (buildup intensity = 0)")
+                return
+
+            # Calculate sparkle parameters based on buildup intensity
+            x = buildup_intensity
+
+            # LED fraction: min(x/10, 1)
+            density = min(x / 10.0, 1.0)
+
+            # Sparkle interval: min(300, max(30, 30/x)) in milliseconds
+            interval_ms = min(300.0, max(30.0, 30.0 / x))
+
+            # Fade interval: 2x the sparkle interval
+            fade_ms = 2.0 * interval_ms
+
+            # Create or update sparkle effect
+            if self._sparkle_effect is None:
+                # Create new sparkle effect
+                # Get LED count from the LED ordering array
+                led_count = len(self.led_ordering)
+
+                self._sparkle_effect = led_effect.SparkleEffect(
+                    start_time=frame_timeline_time,
+                    interval_ms=interval_ms,
+                    fade_ms=fade_ms,
+                    density=density,
+                    led_count=led_count,
+                )
+                self.effect_manager.add_effect(self._sparkle_effect)
+                logger.info(
+                    f"🎆 Created sparkle effect: intensity={x:.2f}, density={density:.2%}, "
+                    f"interval={interval_ms:.1f}ms, fade={fade_ms:.1f}ms"
+                )
+            else:
+                # Update existing sparkle effect parameters
+                self._sparkle_effect.set_parameters(
+                    interval_ms=interval_ms,
+                    fade_ms=fade_ms,
+                    density=density,
+                )
+                logger.debug(
+                    f"🎆 Updated sparkle effect: intensity={x:.2f}, density={density:.2%}, "
+                    f"interval={interval_ms:.1f}ms, fade={fade_ms:.1f}ms"
+                )
+
+        except Exception as e:
+            logger.error(f"Error managing sparkle effect for buildup: {e}")
+
     def enable_template_effect_testing(
         self,
         enabled: bool = True,
@@ -1282,6 +1385,9 @@ class FrameRenderer:
 
         # Create periodic template effects for testing (if enabled)
         self._create_periodic_template_effect(frame_timeline_time)
+
+        # Manage sparkle effect based on buildup detection
+        self._manage_sparkle_effect_for_buildup(frame_timeline_time)
 
         # Apply all active effects to spatial LED values (including beat brightness boost)
         self.effect_manager.apply_effects(led_values, frame_timeline_time)
