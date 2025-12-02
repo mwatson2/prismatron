@@ -1417,6 +1417,12 @@ async def preview_broadcast_task():
                 high_energy_value = 0.0
                 last_cut_time_value = 0.0
                 last_drop_time_value = 0.0
+                # Audio metrics
+                audio_level_value = 0.0
+                agc_gain_db_value = 0.0
+                last_beat_time_value = 0.0
+                beat_intensity_value = 0.0
+                beat_confidence_value = 0.0
                 if control_state:
                     system_status_for_index = control_state.get_status_dict()
                     rendering_index_for_status = system_status_for_index.get("rendering_index", -1)
@@ -1429,6 +1435,13 @@ async def preview_broadcast_task():
                     high_energy_value = system_status_for_index.get("high_energy", 0.0)
                     last_cut_time_value = system_status_for_index.get("last_cut_time", 0.0)
                     last_drop_time_value = system_status_for_index.get("last_drop_time", 0.0)
+
+                    # Get audio metrics for visualizer
+                    audio_level_value = system_status_for_index.get("audio_level", 0.0)
+                    agc_gain_db_value = system_status_for_index.get("agc_gain_db", 0.0)
+                    last_beat_time_value = system_status_for_index.get("last_beat_time", 0.0)
+                    beat_intensity_value = system_status_for_index.get("audio_intensity", 0.0)
+                    beat_confidence_value = system_status_for_index.get("beat_confidence", 0.0)
 
                     # Collect statistics for periodic logging (every 20 broadcasts ~= 1 second)
                     if not hasattr(preview_broadcast_task, "builddrop_log_counter"):
@@ -1517,6 +1530,12 @@ async def preview_broadcast_task():
                     "high_energy": high_energy_value,
                     "last_cut_time": last_cut_time_value,
                     "last_drop_time": last_drop_time_value,
+                    # Audio visualizer metrics
+                    "audio_level": audio_level_value,
+                    "agc_gain_db": agc_gain_db_value,
+                    "last_beat_time": last_beat_time_value,
+                    "beat_intensity": beat_intensity_value,
+                    "beat_confidence": beat_confidence_value,
                     "timestamp": current_time,
                 }
 

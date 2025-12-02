@@ -8,6 +8,7 @@ import {
   SpeakerXMarkIcon
 } from '@heroicons/react/24/solid'
 import { useWebSocket } from '../hooks/useWebSocket'
+import AudioVisualizer from '../components/AudioVisualizer'
 
 const HomePage = () => {
   const { playlist, isConnected, systemStatus, previewData: wsPreviewData } = useWebSocket()
@@ -579,6 +580,9 @@ const HomePage = () => {
           </div>
         </div>
       )}
+
+      {/* Audio Visualizer */}
+      {status && <AudioVisualizer systemStatus={status} />}
 
       {/* Preview Settings / Status */}
       <div className="retro-container">

@@ -107,6 +107,10 @@ class SystemStatus:
     beat_confidence: float = 0.0
     audio_intensity: float = 0.0
 
+    # Audio level and AGC state
+    audio_level: float = 0.0  # Raw RMS audio level (0-1)
+    agc_gain_db: float = 0.0  # Current AGC gain in dB
+
     # Build-up/drop detection state
     buildup_state: str = "NORMAL"  # NORMAL or BUILDUP
     buildup_intensity: float = 0.0  # Continuous build-up progression (can exceed 1.0)

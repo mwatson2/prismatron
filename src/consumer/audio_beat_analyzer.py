@@ -1349,6 +1349,29 @@ class AudioBeatAnalyzer:
         else:
             return self.audio_state.last_downbeat_time + measure_interval
 
+    def get_audio_stats(self) -> dict:
+        """
+        Get current audio statistics including level and AGC state.
+
+        Returns:
+            Dictionary with audio_level and agc_gain_db
+        """
+        stats = {
+            "audio_level": 0.0,
+            "agc_gain_db": 0.0,
+        }
+
+        if hasattr(self, "audio_capture") and self.audio_capture is not None:
+            capture_stats = self.audio_capture.get_statistics()
+
+            # Get AGC statistics if available
+            agc_stats = capture_stats.get("agc")
+            if agc_stats:
+                stats["audio_level"] = agc_stats.get("smoothed_rms", 0.0)
+                stats["agc_gain_db"] = agc_stats.get("current_gain_db", 0.0)
+
+        return stats
+
 
 # Example usage and testing
 if __name__ == "__main__":

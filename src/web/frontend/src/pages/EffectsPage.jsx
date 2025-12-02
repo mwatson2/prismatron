@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { PlusIcon, AdjustmentsHorizontalIcon } from '@heroicons/react/24/outline'
 import AudioReactivePanel from '../components/AudioReactivePanel_NEW'
-import BuildDropVisualizer from '../components/BuildDropVisualizer'
-import { useWebSocket } from '../hooks/useWebSocket'
 
 const EffectsPage = () => {
   const [effects, setEffects] = useState([])
@@ -11,7 +9,6 @@ const EffectsPage = () => {
   const [selectedCategory, setSelectedCategory] = useState('all')
   const [showConfig, setShowConfig] = useState(null)
   const [customConfig, setCustomConfig] = useState({})
-  const { systemStatus } = useWebSocket()
 
   useEffect(() => {
     fetchEffects()
@@ -138,9 +135,6 @@ const EffectsPage = () => {
 
       {/* Audio Reactive Effects - New Trigger Framework */}
       <AudioReactivePanel />
-
-      {/* Build-up/Drop Detection Visualizer */}
-      <BuildDropVisualizer systemStatus={systemStatus} />
 
       {/* Effects Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

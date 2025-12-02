@@ -378,6 +378,17 @@ class ConsumerProcess:
                 except Exception as e:
                     logger.error(f"Failed to stop audio analysis: {e}")
 
+            # Update audio level and AGC stats (even when audio reactive is disabled)
+            if self._audio_analysis_running:
+                try:
+                    audio_stats = self._audio_beat_analyzer.get_audio_stats()
+                    self._control_state.update_status(
+                        audio_level=audio_stats.get("audio_level", 0.0),
+                        agc_gain_db=audio_stats.get("agc_gain_db", 0.0),
+                    )
+                except Exception as e:
+                    logger.debug(f"Failed to update audio stats: {e}")
+
         except Exception as e:
             logger.warning(f"Error updating audio reactive state: {e}")
 
