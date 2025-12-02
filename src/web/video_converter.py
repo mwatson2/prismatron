@@ -355,6 +355,14 @@ class ConversionManager:
                 input_info["width"], input_info["height"], config.get("width", 800), config.get("height", 480)
             )
 
+            # Cap frame rate at 30fps - halve if higher
+            input_fps = input_info["fps"]
+            if input_fps > 30:
+                output_fps = input_fps / 2
+                logger.info(f"Input FPS {input_fps:.2f} > 30, converting to {output_fps:.2f} fps")
+            else:
+                output_fps = input_fps
+
             # Build FFmpeg command - input file is already in temp_conversions
             # Check that input file exists
             if not job.input_path.exists():
@@ -380,7 +388,7 @@ class ConversionManager:
                 "-vf",
                 f"{crop_filter},scale={config.get('width', 800)}:{config.get('height', 480)}",
                 "-r",
-                str(input_info["fps"]),
+                str(output_fps),
                 "-preset",
                 config.get("preset", "fast"),
                 "-crf",
