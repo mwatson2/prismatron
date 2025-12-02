@@ -2,11 +2,70 @@ import React, { useEffect, useRef, useState, useCallback } from 'react'
 
 /**
  * AudioMeter - Compact vertical VU-style meter for audio metrics
+ * Optionally tracks and displays a decaying peak indicator
  */
-const AudioMeter = ({ value, label, color = 'cyan', maxValue = 1.0, showPeakLine = false, unit = '%' }) => {
+const AudioMeter = ({
+  value,
+  label,
+  color = 'cyan',
+  maxValue = 1.0,
+  unit = '%',
+  trackPeak = false,
+  peakDecayMs = 5000,
+}) => {
+  // Peak tracking state
+  const [peakValue, setPeakValue] = useState(0)
+  const peakTimeRef = useRef(0)
+  const animationRef = useRef(null)
+
   // Clamp and normalize value
   const normalizedValue = Math.min(1.5, Math.max(0, value / maxValue))
   const heightPercent = Math.min(100, normalizedValue * 100)
+
+  // Peak animation
+  const animatePeak = useCallback(() => {
+    const elapsed = Date.now() - peakTimeRef.current
+    const progress = Math.min(1, elapsed / peakDecayMs)
+    const decayedPeak = peakValue * (1 - progress)
+
+    if (progress < 1 && decayedPeak > 0.001) {
+      animationRef.current = requestAnimationFrame(animatePeak)
+    }
+    // Peak value is updated in useEffect, animation just keeps running
+  }, [peakValue, peakDecayMs])
+
+  // Track peak values
+  useEffect(() => {
+    if (!trackPeak) return
+
+    const normalizedVal = value / maxValue
+    if (normalizedVal > peakValue) {
+      // New peak detected
+      setPeakValue(normalizedVal)
+      peakTimeRef.current = Date.now()
+
+      // Start/restart decay animation
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current)
+      }
+      animationRef.current = requestAnimationFrame(animatePeak)
+    } else {
+      // Decay existing peak
+      const elapsed = Date.now() - peakTimeRef.current
+      const progress = Math.min(1, elapsed / peakDecayMs)
+      const decayedPeak = peakValue * (1 - progress)
+
+      if (decayedPeak !== peakValue) {
+        setPeakValue(Math.max(0, decayedPeak))
+      }
+    }
+
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current)
+      }
+    }
+  }, [value, maxValue, trackPeak, peakValue, peakDecayMs, animatePeak])
 
   // Color configurations
   const colorConfig = {
@@ -35,6 +94,9 @@ const AudioMeter = ({ value, label, color = 'cyan', maxValue = 1.0, showPeakLine
     ? `${value.toFixed(1)}dB`
     : value.toFixed(2)
 
+  // Calculate peak line position (from bottom, as percentage)
+  const peakHeightPercent = Math.min(100, peakValue * 100)
+
   return (
     <div className="flex flex-col items-center gap-1">
       <div className="text-[10px] font-mono text-metal-silver whitespace-nowrap">
@@ -54,9 +116,15 @@ const AudioMeter = ({ value, label, color = 'cyan', maxValue = 1.0, showPeakLine
             <div key={i} className="h-px bg-dark-700" />
           ))}
         </div>
-        {/* Peak marker at 100% */}
-        {showPeakLine && (
-          <div className="absolute left-0 right-0 bottom-[66.67%] h-0.5 bg-red-500 opacity-50" />
+        {/* Decaying peak indicator line */}
+        {trackPeak && peakValue > 0.01 && (
+          <div
+            className="absolute left-0 right-0 h-0.5 bg-white transition-all duration-100"
+            style={{
+              bottom: `${peakHeightPercent}%`,
+              opacity: Math.max(0.3, peakValue),
+            }}
+          />
         )}
       </div>
       <div className="text-[10px] font-mono text-metal-silver font-bold text-center leading-tight max-w-[48px]">
@@ -68,25 +136,48 @@ const AudioMeter = ({ value, label, color = 'cyan', maxValue = 1.0, showPeakLine
 
 /**
  * DecayingMeter - Meter that receives values on events and decays over time
+ * Also tracks peak values with a separate decay
  */
-const DecayingMeter = ({ value, lastEventTime, label, color = 'cyan', decayMs = 250 }) => {
+const DecayingMeter = ({
+  value,
+  lastEventTime,
+  label,
+  color = 'cyan',
+  decayMs = 250,
+  trackPeak = false,
+  peakDecayMs = 5000,
+}) => {
   const [displayValue, setDisplayValue] = useState(0)
+  const [peakValue, setPeakValue] = useState(0)
   const lastEventTimeRef = useRef(0)
   const animationRef = useRef(null)
   const targetValueRef = useRef(0)
   const startTimeRef = useRef(0)
+  const peakTimeRef = useRef(0)
 
   const animate = useCallback(() => {
-    const elapsed = Date.now() - startTimeRef.current
+    const now = Date.now()
+
+    // Decay main value
+    const elapsed = now - startTimeRef.current
     const progress = Math.min(1, elapsed / decayMs)
     const newValue = targetValueRef.current * (1 - progress)
-
     setDisplayValue(newValue)
 
-    if (progress < 1) {
+    // Decay peak value
+    if (trackPeak && peakTimeRef.current > 0) {
+      const peakElapsed = now - peakTimeRef.current
+      const peakProgress = Math.min(1, peakElapsed / peakDecayMs)
+      setPeakValue(prev => {
+        const decayed = prev * (1 - peakProgress / 100) // Slow decay per frame
+        return decayed > 0.001 ? decayed : 0
+      })
+    }
+
+    if (progress < 1 || (trackPeak && peakValue > 0.001)) {
       animationRef.current = requestAnimationFrame(animate)
     }
-  }, [decayMs])
+  }, [decayMs, trackPeak, peakDecayMs, peakValue])
 
   useEffect(() => {
     // Check if this is a new event
@@ -94,6 +185,12 @@ const DecayingMeter = ({ value, lastEventTime, label, color = 'cyan', decayMs = 
       lastEventTimeRef.current = lastEventTime
       targetValueRef.current = value
       startTimeRef.current = Date.now()
+
+      // Update peak if new value is higher
+      if (trackPeak && value > peakValue) {
+        setPeakValue(value)
+        peakTimeRef.current = Date.now()
+      }
 
       // Cancel any existing animation
       if (animationRef.current) {
@@ -110,16 +207,45 @@ const DecayingMeter = ({ value, lastEventTime, label, color = 'cyan', decayMs = 
         cancelAnimationFrame(animationRef.current)
       }
     }
-  }, [lastEventTime, value, animate])
+  }, [lastEventTime, value, animate, trackPeak, peakValue])
+
+  // Calculate peak line position
+  const peakHeightPercent = Math.min(100, peakValue * 100)
 
   return (
-    <AudioMeter
-      value={displayValue}
-      label={label}
-      color={color}
-      maxValue={1.0}
-      unit="%"
-    />
+    <div className="flex flex-col items-center gap-1">
+      <div className="text-[10px] font-mono text-metal-silver whitespace-nowrap">
+        {`${Math.round(displayValue * 100)}%`}
+      </div>
+      <div className="relative w-6 h-24 bg-dark-900 rounded-retro border border-metal-silver border-opacity-30 overflow-hidden">
+        {/* Meter fill */}
+        <div className="absolute inset-0 flex flex-col justify-end">
+          <div
+            className={`w-full bg-gradient-to-t from-${color}-500 to-${color}-400 transition-all duration-75 ease-out`}
+            style={{ height: `${Math.min(100, displayValue * 100)}%` }}
+          />
+        </div>
+        {/* Segment lines */}
+        <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
+          {[...Array(8)].map((_, i) => (
+            <div key={i} className="h-px bg-dark-700" />
+          ))}
+        </div>
+        {/* Decaying peak indicator line */}
+        {trackPeak && peakValue > 0.01 && (
+          <div
+            className="absolute left-0 right-0 h-0.5 bg-white transition-all duration-100"
+            style={{
+              bottom: `${peakHeightPercent}%`,
+              opacity: Math.max(0.3, peakValue),
+            }}
+          />
+        )}
+      </div>
+      <div className="text-[10px] font-mono text-metal-silver font-bold text-center leading-tight max-w-[48px]">
+        {label}
+      </div>
+    </div>
   )
 }
 
@@ -194,17 +320,15 @@ const EventLight = ({ label, lastEventTime, color, fadeMs = 1000 }) => {
  * AudioVisualizer - Comprehensive audio metrics display
  *
  * Displays 5 side-by-side meters:
- * - Audio Level: Raw RMS audio level (continuous)
- * - AGC Gain: Automatic Gain Control setting in dB (continuous)
- * - Beat Intensity: Intensity of detected beats (decays after beat)
- * - Beat Confidence: Confidence of beat detection (decays after beat)
- * - BuildUp Intensity: Build-up progression for drops (continuous)
+ * - Audio Level: Raw RMS audio level (continuous, with peak)
+ * - AGC Gain: Automatic Gain Control setting in dB (continuous, no peak)
+ * - Beat Intensity: Intensity of detected beats (decays after beat, with peak)
+ * - Beat Confidence: Confidence of beat detection (decays after beat, with peak)
+ * - BuildUp Intensity: Build-up progression for drops (continuous, no peak)
  *
  * Plus event lights for CUT and DROP events.
  */
 const AudioVisualizer = ({ systemStatus }) => {
-  const prevBeatTimeRef = useRef(0)
-
   if (!systemStatus) {
     return null
   }
@@ -231,48 +355,57 @@ const AudioVisualizer = ({ systemStatus }) => {
 
       {/* Main visualization: 5 meters + event lights */}
       <div className="flex items-end justify-between gap-2">
-        {/* Continuous meters */}
+        {/* Audio Level - continuous with peak */}
         <AudioMeter
           value={audio_level}
           label="LEVEL"
           color="green"
           maxValue={0.5}
           unit="%"
+          trackPeak={true}
+          peakDecayMs={5000}
         />
 
+        {/* AGC Gain - continuous, no peak */}
         <AudioMeter
           value={normalizedAgcGain}
           label="AGC"
           color="purple"
           maxValue={1.0}
           unit="dB"
+          trackPeak={false}
         />
 
-        {/* Decaying meters (triggered by beats) */}
+        {/* Beat Intensity - decaying with peak */}
         <DecayingMeter
           value={beat_intensity}
           lastEventTime={last_beat_time}
           label="BEAT"
           color="yellow"
           decayMs={250}
+          trackPeak={true}
+          peakDecayMs={5000}
         />
 
+        {/* Beat Confidence - decaying with peak */}
         <DecayingMeter
           value={beat_confidence}
           lastEventTime={last_beat_time}
           label="CONF"
           color="orange"
           decayMs={250}
+          trackPeak={true}
+          peakDecayMs={5000}
         />
 
-        {/* Build-up intensity (continuous) */}
+        {/* Build-up intensity - continuous, no peak */}
         <AudioMeter
           value={buildup_intensity}
           label="BUILD"
           color="dynamic"
           maxValue={1.5}
-          showPeakLine={true}
           unit="%"
+          trackPeak={false}
         />
 
         {/* Spacer */}

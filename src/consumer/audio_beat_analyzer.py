@@ -99,6 +99,7 @@ class AudioState:
     beats_per_measure: int = 4
     confidence: float = 0.0
     beat_intensity: float = 0.0  # Last beat's RMS intensity (0.0-1.0)
+    current_rms: float = 0.0  # Continuous RMS audio level (EWMA smoothed)
     # Build-up/drop detection state
     buildup_state: str = "NORMAL"  # NORMAL or BUILDUP
     buildup_intensity: float = 0.0  # Continuous build-up progression (can exceed 1.0)
@@ -1007,6 +1008,10 @@ class AudioBeatAnalyzer:
             end_idx = start_idx + self.hop_size
             audio_frame = audio_chunk[start_idx:end_idx].astype(np.float32)
 
+            # Update continuous RMS level (EWMA with alpha=0.1 for smooth display)
+            frame_rms = float(np.sqrt(np.mean(audio_frame**2)))
+            self.audio_state.current_rms = 0.1 * frame_rms + 0.9 * self.audio_state.current_rms
+
             # Process with Aubio
             beat_detected = False
             if hasattr(self.aubio_tempo, "process_frame"):
@@ -1357,17 +1362,15 @@ class AudioBeatAnalyzer:
             Dictionary with audio_level and agc_gain_db
         """
         stats = {
-            "audio_level": 0.0,
+            "audio_level": self.audio_state.current_rms,  # Continuous RMS from aubio processing
             "agc_gain_db": 0.0,
         }
 
+        # Get AGC gain if available
         if hasattr(self, "audio_capture") and self.audio_capture is not None:
             capture_stats = self.audio_capture.get_statistics()
-
-            # Get AGC statistics if available
             agc_stats = capture_stats.get("agc")
             if agc_stats:
-                stats["audio_level"] = agc_stats.get("smoothed_rms", 0.0)
                 stats["agc_gain_db"] = agc_stats.get("current_gain_db", 0.0)
 
         return stats
