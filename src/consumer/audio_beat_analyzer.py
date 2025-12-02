@@ -1084,8 +1084,8 @@ class AudioBeatAnalyzer:
                         f"bass={builddrop_result['bass_energy']:.4f}"
                     )
 
-                # Trigger callback on cut, drop, or significant intensity changes
-                should_trigger_callback = is_cut or is_drop
+                # Trigger callback on cut, drop, or during buildup (for intensity updates)
+                should_trigger_callback = is_cut or is_drop or builddrop_result["buildup_intensity"] > 0
                 if self.builddrop_callback and should_trigger_callback:
                     # Calculate timestamp relative to audio start
                     audio_timestamp = (self.total_frames_processed * self.hop_size) / self.capture_rate
