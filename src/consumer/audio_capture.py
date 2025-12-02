@@ -23,6 +23,164 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class AGCConfig:
+    """Configuration for Automatic Gain Control"""
+
+    enabled: bool = True  # Enable/disable AGC
+    target_rms: float = 0.25  # Target RMS level (leaves headroom for peaks)
+    rms_window_ms: float = 200.0  # RMS calculation window in milliseconds
+    attack_time_ms: float = 50.0  # Fast attack when signal exceeds target
+    release_time_s: float = 120.0  # Slow release (2 minutes) for gain increase
+    max_gain_db: float = 20.0  # Maximum gain in dB (10x multiplier)
+    min_gain_db: float = -20.0  # Minimum gain in dB (0.1x multiplier)
+    noise_gate_threshold: float = 0.01  # Below this RMS, freeze gain increase
+
+
+class AutomaticGainControl:
+    """
+    Automatic Gain Control for microphone input normalization.
+
+    Uses RMS-based level detection with asymmetric attack/release:
+    - Fast attack: Quickly reduce gain when signal saturates
+    - Slow release: Gradually increase gain over minutes for quiet signals
+    - Noise gate: Prevents amplifying background noise during silence
+    """
+
+    def __init__(self, config: AGCConfig, sample_rate: int, chunk_size: int):
+        """
+        Initialize AGC.
+
+        Args:
+            config: AGC configuration parameters
+            sample_rate: Audio sample rate in Hz
+            chunk_size: Number of samples per audio chunk
+        """
+        self.config = config
+        self.sample_rate = sample_rate
+        self.chunk_size = chunk_size
+
+        # Current gain (linear, starts at unity)
+        self.current_gain = 1.0
+
+        # Precompute gain limits (convert dB to linear)
+        self.max_gain = 10 ** (config.max_gain_db / 20.0)  # 20dB = 10x
+        self.min_gain = 10 ** (config.min_gain_db / 20.0)  # -20dB = 0.1x
+
+        # Precompute smoothing coefficients
+        # Attack: time constant in samples, then convert to per-chunk alpha
+        chunk_duration_s = chunk_size / sample_rate
+        attack_time_s = config.attack_time_ms / 1000.0
+        release_time_s = config.release_time_s
+
+        # Alpha = 1 - exp(-chunk_duration / time_constant)
+        # Higher alpha = faster response
+        self.attack_alpha = 1.0 - np.exp(-chunk_duration_s / attack_time_s)
+        self.release_alpha = 1.0 - np.exp(-chunk_duration_s / release_time_s)
+
+        # RMS smoothing for stable level detection
+        rms_window_s = config.rms_window_ms / 1000.0
+        self.rms_alpha = 1.0 - np.exp(-chunk_duration_s / rms_window_s)
+        self.smoothed_rms = 0.0
+
+        # Statistics
+        self.peak_gain_applied = 1.0
+        self.min_gain_applied = 1.0
+        self.gain_adjustments = 0
+        self.noise_gate_activations = 0
+
+        logger.info(
+            f"AGC initialized: target_rms={config.target_rms:.2f}, "
+            f"gain_range=[{config.min_gain_db:.0f}dB, {config.max_gain_db:.0f}dB], "
+            f"attack={config.attack_time_ms:.0f}ms, release={config.release_time_s:.0f}s"
+        )
+
+    def process(self, audio_chunk: np.ndarray) -> np.ndarray:
+        """
+        Apply AGC to an audio chunk.
+
+        Args:
+            audio_chunk: Input audio samples (float32, -1.0 to 1.0 range)
+
+        Returns:
+            Gain-adjusted audio chunk
+        """
+        if not self.config.enabled:
+            return audio_chunk
+
+        # Calculate RMS of input chunk
+        chunk_rms = np.sqrt(np.mean(audio_chunk * audio_chunk))
+
+        # Smooth the RMS measurement
+        self.smoothed_rms += self.rms_alpha * (chunk_rms - self.smoothed_rms)
+
+        # Determine target gain based on smoothed RMS
+        if self.smoothed_rms > 0.0001:  # Avoid division by near-zero
+            desired_gain = self.config.target_rms / self.smoothed_rms
+        else:
+            desired_gain = self.current_gain  # Hold current gain
+
+        # Clamp desired gain to limits
+        desired_gain = np.clip(desired_gain, self.min_gain, self.max_gain)
+
+        # Apply asymmetric smoothing
+        if desired_gain < self.current_gain:
+            # Need to reduce gain (signal too loud) - use fast attack
+            alpha = self.attack_alpha
+            self.gain_adjustments += 1
+        elif self.smoothed_rms < self.config.noise_gate_threshold:
+            # Signal below noise gate - freeze gain (don't increase)
+            alpha = 0.0
+            self.noise_gate_activations += 1
+        else:
+            # Need to increase gain (signal too quiet) - use slow release
+            alpha = self.release_alpha
+            if alpha > 0:
+                self.gain_adjustments += 1
+
+        # Update gain with smoothing
+        self.current_gain += alpha * (desired_gain - self.current_gain)
+
+        # Track statistics
+        self.peak_gain_applied = max(self.peak_gain_applied, self.current_gain)
+        self.min_gain_applied = min(self.min_gain_applied, self.current_gain)
+
+        # Apply gain to audio
+        output = audio_chunk * self.current_gain
+
+        # Soft clip to prevent hard clipping (tanh-based limiting)
+        # Only kicks in if signal exceeds ±1.0
+        output = np.tanh(output)
+
+        return output
+
+    def get_gain_db(self) -> float:
+        """Get current gain in dB."""
+        return 20.0 * np.log10(max(self.current_gain, 1e-10))
+
+    def get_statistics(self) -> dict:
+        """Get AGC statistics."""
+        return {
+            "enabled": self.config.enabled,
+            "current_gain": self.current_gain,
+            "current_gain_db": self.get_gain_db(),
+            "smoothed_rms": self.smoothed_rms,
+            "peak_gain_applied": self.peak_gain_applied,
+            "min_gain_applied": self.min_gain_applied,
+            "gain_adjustments": self.gain_adjustments,
+            "noise_gate_activations": self.noise_gate_activations,
+        }
+
+    def reset(self):
+        """Reset AGC to initial state."""
+        self.current_gain = 1.0
+        self.smoothed_rms = 0.0
+        self.peak_gain_applied = 1.0
+        self.min_gain_applied = 1.0
+        self.gain_adjustments = 0
+        self.noise_gate_activations = 0
+
+
+@dataclass
 class AudioConfig:
     """Configuration for audio capture"""
 
@@ -33,6 +191,7 @@ class AudioConfig:
     device_name: Optional[str] = "USB Audio"  # Device name to search for
     file_path: Optional[str] = None  # Path to audio file (test mode)
     playback_speed: float = 1.0  # Playback speed multiplier for file mode (1.0 = realtime)
+    agc: Optional[AGCConfig] = None  # AGC configuration (None = disabled, AGCConfig() = enabled with defaults)
 
 
 class AudioCapture:
@@ -82,6 +241,15 @@ class AudioCapture:
         self.overflow_count = 0
         self.start_time = 0.0
         self.dropped_callbacks = 0
+
+        # Initialize AGC if configured (only for live mode)
+        self.agc: Optional[AutomaticGainControl] = None
+        if not self.file_mode and self.config.agc is not None:
+            self.agc = AutomaticGainControl(
+                config=self.config.agc,
+                sample_rate=self.config.sample_rate,
+                chunk_size=self.config.chunk_size,
+            )
 
         # File mode info
         if self.file_mode:
@@ -224,6 +392,10 @@ class AudioCapture:
             if audio_chunk.ndim > 1:
                 audio_chunk = audio_chunk.flatten()
 
+            # Apply AGC if enabled
+            if self.agc is not None:
+                audio_chunk = self.agc.process(audio_chunk)
+
             # Update statistics
             self.total_samples_captured += len(audio_chunk)
             self.total_chunks_captured += 1
@@ -249,11 +421,14 @@ class AudioCapture:
             if current_time - last_status_log[0] >= status_log_interval:
                 duration = current_time - self.start_time
                 rms = np.sqrt(np.mean(audio_chunk * audio_chunk))
+                agc_info = ""
+                if self.agc is not None:
+                    agc_info = f", AGC_gain={self.agc.get_gain_db():.1f}dB"
                 logger.debug(
                     f"Audio capture status: {self.total_chunks_captured} chunks, "
                     f"{self.total_samples_captured} samples, "
                     f"{duration:.1f}s, "
-                    f"RMS={rms:.6f}"
+                    f"RMS={rms:.6f}{agc_info}"
                 )
                 last_status_log[0] = current_time
 
@@ -461,7 +636,7 @@ class AudioCapture:
             Dictionary of statistics
         """
         duration = time.time() - self.start_time if self.is_capturing else 0.0
-        return {
+        stats = {
             "is_capturing": self.is_capturing,
             "duration": duration,
             "total_chunks": self.total_chunks_captured,
@@ -471,6 +646,12 @@ class AudioCapture:
             "sample_rate": self.config.sample_rate,
             "channels": self.config.channels,
         }
+
+        # Include AGC statistics if enabled
+        if self.agc is not None:
+            stats["agc"] = self.agc.get_statistics()
+
+        return stats
 
 
 # Example usage
