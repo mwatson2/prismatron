@@ -514,11 +514,24 @@ class FrameRenderer:
 
         # Cut fade effect state (separate tracking from sparkle's cut detection)
         self._last_cut_time_for_fade: float = 0.0
-        self._cut_fade_effect = None  # FadeInEffect instance or None
+        self._cut_fade_effect = None  # Effect instance or None
 
         # Drop fade effect state (inverse fade from white back to content)
         self._last_drop_time_for_fade: float = 0.0
-        self._drop_fade_effect = None  # InverseFadeEffect instance or None
+        self._drop_fade_effect = None  # Effect instance or None
+
+        # Cut/drop effect configuration (loaded from control state)
+        # Default configurations if not set in control state
+        self._cut_effect_config: Optional[Dict[str, Any]] = {
+            "enabled": True,
+            "effect_class": "FadeInEffect",
+            "params": {"duration": 2.0, "curve": "ease-in", "min_brightness": 0.0},
+        }
+        self._drop_effect_config: Optional[Dict[str, Any]] = {
+            "enabled": True,
+            "effect_class": "InverseFadeIn",
+            "params": {"duration": 2.0, "curve": "ease-out"},
+        }
 
         # Initialize triggers from control state (if available)
         self._initialize_triggers_from_control_state()
@@ -629,6 +642,25 @@ class FrameRenderer:
                             common_triggers, carousel_rule_sets, carousel_beat_interval
                         )
                         self.trigger_manager.set_test_interval(test_interval)
+
+                        # Load cut/drop effect configuration
+                        cut_effect = trigger_config.get("cut_effect")
+                        drop_effect = trigger_config.get("drop_effect")
+
+                        if cut_effect:
+                            self._cut_effect_config = cut_effect
+                            logger.info(
+                                f"Loaded cut effect config: class={cut_effect.get('effect_class')}, "
+                                f"enabled={cut_effect.get('enabled', True)}"
+                            )
+
+                        if drop_effect:
+                            self._drop_effect_config = drop_effect
+                            logger.info(
+                                f"Loaded drop effect config: class={drop_effect.get('effect_class')}, "
+                                f"enabled={drop_effect.get('enabled', True)}"
+                            )
+
                         logger.info(
                             f"Loaded {len(common_triggers)} common rules, {len(carousel_rule_sets)} carousel sets"
                         )
@@ -1333,22 +1365,108 @@ class FrameRenderer:
         except Exception as e:
             logger.error(f"Error managing sparkle effect for buildup: {e}")
 
+    def _create_event_effect(self, effect_config: Dict[str, Any], frame_timeline_time: float):
+        """
+        Create an effect instance from event configuration.
+
+        Args:
+            effect_config: Configuration dict with effect_class and params
+            frame_timeline_time: Current time on the frame timeline
+
+        Returns:
+            Effect instance or None if creation fails
+        """
+        # Import effect classes locally to avoid circular imports
+        from . import led_effect, led_effect_transitions
+
+        effect_class = effect_config.get("effect_class", "none")
+        params = effect_config.get("params", {})
+
+        if effect_class == "none":
+            return None
+
+        try:
+            # Map effect class names to actual classes
+            # From led_effect_transitions.py
+            if effect_class == "FadeInEffect":
+                return led_effect_transitions.FadeInEffect(
+                    start_time=frame_timeline_time,
+                    duration=params.get("duration", 2.0),
+                    curve=params.get("curve", "ease-in"),
+                    min_brightness=params.get("min_brightness", 0.0),
+                )
+            elif effect_class == "FadeOutEffect":
+                return led_effect_transitions.FadeOutEffect(
+                    start_time=frame_timeline_time,
+                    duration=params.get("duration", 2.0),
+                    curve=params.get("curve", "ease-out"),
+                    min_brightness=params.get("min_brightness", 0.0),
+                )
+            elif effect_class == "RandomInEffect":
+                return led_effect_transitions.RandomInEffect(
+                    start_time=frame_timeline_time,
+                    duration=params.get("duration", 2.0),
+                    leds_per_frame=params.get("leds_per_frame", 10),
+                    fade_tail=params.get("fade_tail", True),
+                )
+            elif effect_class == "RandomOutEffect":
+                return led_effect_transitions.RandomOutEffect(
+                    start_time=frame_timeline_time,
+                    duration=params.get("duration", 2.0),
+                    leds_per_frame=params.get("leds_per_frame", 10),
+                    fade_tail=params.get("fade_tail", True),
+                )
+            # From led_effect.py
+            elif effect_class == "InverseFadeIn":
+                return led_effect.InverseFadeEffect(
+                    start_time=frame_timeline_time,
+                    duration=params.get("duration", 2.0),
+                    direction="in",
+                    curve=params.get("curve", "ease-out"),
+                )
+            elif effect_class == "InverseFadeOut":
+                return led_effect.InverseFadeEffect(
+                    start_time=frame_timeline_time,
+                    duration=params.get("duration", 2.0),
+                    direction="out",
+                    curve=params.get("curve", "ease-in"),
+                )
+            elif effect_class == "TemplateEffect":
+                template_path = params.get("template_path", "templates/ring_800x480_leds.npy")
+                return led_effect.TemplateEffectFactory.create_effect(
+                    template_path=template_path,
+                    start_time=frame_timeline_time,
+                    duration=params.get("duration", 1.0),
+                    blend_mode=params.get("blend_mode", "addboost"),
+                    intensity=params.get("intensity", 2.0),
+                    add_multiplier=params.get("add_multiplier", 0.4),
+                    color_thieving=params.get("color_thieving", False),
+                )
+            else:
+                logger.warning(f"Unknown event effect class: {effect_class}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Failed to create event effect {effect_class}: {e}")
+            return None
+
     def _manage_cut_fade_effect(self, frame_timeline_time: float) -> None:
         """
-        Manage fade-in effect on cut events.
+        Manage effect on cut events using configurable effect types.
 
-        When a cut is detected, creates a 1-second fade-in effect that causes
-        the panel to fade from black back to the content. The effect is added
-        last in the effects list to ensure it runs after other effects.
+        When a cut is detected, creates an effect based on the current
+        cut_effect configuration. The effect is added last in the effects
+        list to ensure it runs after other effects.
 
         Args:
             frame_timeline_time: Current time on the frame timeline
         """
-        # Import locally to avoid circular imports
-        from .led_effect_transitions import FadeInEffect
-
         # Check if audio beat analyzer is available
         if not self._audio_beat_analyzer:
+            return
+
+        # Check if cut effect is enabled
+        if not self._cut_effect_config or not self._cut_effect_config.get("enabled", True):
             return
 
         try:
@@ -1368,18 +1486,14 @@ class FrameRenderer:
                     self.effect_manager.remove_effect(self._cut_fade_effect)
                     self._cut_fade_effect = None
 
-                # Create new fade-in effect starting now, lasting 2 seconds
-                # Use ease-in curve: slow start (stays dark longer), fast end
-                self._cut_fade_effect = FadeInEffect(
-                    start_time=frame_timeline_time,
-                    duration=2.0,
-                    curve="ease-in",
-                    min_brightness=0.0,
-                )
+                # Create effect from configuration
+                self._cut_fade_effect = self._create_event_effect(self._cut_effect_config, frame_timeline_time)
 
-                # Add to effect manager - it will be applied last since we add it last
-                self.effect_manager.add_effect(self._cut_fade_effect)
-                logger.info(f"🎬 Created cut fade-in effect at t={frame_timeline_time:.3f}s")
+                if self._cut_fade_effect is not None:
+                    # Add to effect manager - it will be applied last since we add it last
+                    self.effect_manager.add_effect(self._cut_fade_effect)
+                    effect_class = self._cut_effect_config.get("effect_class", "unknown")
+                    logger.info(f"🎬 Created cut effect ({effect_class}) at t={frame_timeline_time:.3f}s")
 
             # Clean up reference when effect completes
             if self._cut_fade_effect is not None and self._cut_fade_effect.is_complete(frame_timeline_time):
@@ -1390,20 +1504,22 @@ class FrameRenderer:
 
     def _manage_drop_fade_effect(self, frame_timeline_time: float) -> None:
         """
-        Manage inverse fade effect on drop events.
+        Manage effect on drop events using configurable effect types.
 
-        When a drop is detected, creates a 2-second inverse fade-in effect that
-        starts with the panel at full white and fades back to the playing video.
-        This creates a dramatic "flash to white" effect on the drop.
+        When a drop is detected, creates an effect based on the current
+        drop_effect configuration. By default, creates an inverse fade-in
+        effect that starts with the panel at full white and fades back to
+        the playing video for a dramatic "flash to white" effect.
 
         Args:
             frame_timeline_time: Current time on the frame timeline
         """
-        # Import locally to avoid circular imports
-        from .led_effect import InverseFadeEffect
-
         # Check if audio beat analyzer is available
         if not self._audio_beat_analyzer:
+            return
+
+        # Check if drop effect is enabled
+        if not self._drop_effect_config or not self._drop_effect_config.get("enabled", True):
             return
 
         try:
@@ -1423,19 +1539,14 @@ class FrameRenderer:
                     self.effect_manager.remove_effect(self._drop_fade_effect)
                     self._drop_fade_effect = None
 
-                # Create new inverse fade-in effect starting now, lasting 2 seconds
-                # direction="in" fades FROM white TO the current content
-                # Use ease-out curve: fast start (white clears quickly), slow end (gentle return)
-                self._drop_fade_effect = InverseFadeEffect(
-                    start_time=frame_timeline_time,
-                    duration=2.0,
-                    direction="in",
-                    curve="ease-out",
-                )
+                # Create effect from configuration
+                self._drop_fade_effect = self._create_event_effect(self._drop_effect_config, frame_timeline_time)
 
-                # Add to effect manager
-                self.effect_manager.add_effect(self._drop_fade_effect)
-                logger.info(f"💥 Created drop inverse fade effect at t={frame_timeline_time:.3f}s")
+                if self._drop_fade_effect is not None:
+                    # Add to effect manager
+                    self.effect_manager.add_effect(self._drop_fade_effect)
+                    effect_class = self._drop_effect_config.get("effect_class", "unknown")
+                    logger.info(f"💥 Created drop effect ({effect_class}) at t={frame_timeline_time:.3f}s")
 
             # Clean up reference when effect completes
             if self._drop_fade_effect is not None and self._drop_fade_effect.is_complete(frame_timeline_time):

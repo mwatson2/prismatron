@@ -8,6 +8,9 @@ export const TEMPLATE_OPTIONS = {
   'Star': 'templates/star7_800x480_leds.npy'
 }
 
+// Interpolation curve options
+export const CURVE_OPTIONS = ['linear', 'ease-in', 'ease-out', 'ease-in-out']
+
 // Trigger Type Registry
 export const TRIGGER_TYPES = {
   beat: {
@@ -208,4 +211,300 @@ export function getTemplateName(templatePath) {
 // Helper function to get template path from friendly name
 export function getTemplatePath(templateName) {
   return TEMPLATE_OPTIONS[templateName] || templateName
+}
+
+// ========================================================================================
+// Event Effect Types (for Cut/Drop events)
+// ========================================================================================
+
+// Event Effect Type Registry - effects that can be triggered by cut/drop audio events
+export const EVENT_EFFECT_TYPES = {
+  none: {
+    name: 'None (Disabled)',
+    icon: '🚫',
+    description: 'No effect on this event',
+    params: []
+  },
+  FadeInEffect: {
+    name: 'Fade In (from Black)',
+    icon: '🌅',
+    description: 'Fade from black to content over duration',
+    params: [
+      {
+        key: 'duration',
+        label: 'Duration',
+        type: 'number',
+        min: 0.1,
+        max: 10,
+        step: 0.1,
+        default: 2.0,
+        description: 'Fade duration in seconds'
+      },
+      {
+        key: 'curve',
+        label: 'Curve',
+        type: 'select',
+        options: CURVE_OPTIONS,
+        default: 'ease-in',
+        description: 'Interpolation curve'
+      },
+      {
+        key: 'min_brightness',
+        label: 'Min Brightness',
+        type: 'slider',
+        min: 0,
+        max: 0.5,
+        step: 0.01,
+        default: 0.0,
+        description: 'Starting brightness level'
+      }
+    ]
+  },
+  FadeOutEffect: {
+    name: 'Fade Out (to Black)',
+    icon: '🌑',
+    description: 'Fade from content to black over duration',
+    params: [
+      {
+        key: 'duration',
+        label: 'Duration',
+        type: 'number',
+        min: 0.1,
+        max: 10,
+        step: 0.1,
+        default: 2.0,
+        description: 'Fade duration in seconds'
+      },
+      {
+        key: 'curve',
+        label: 'Curve',
+        type: 'select',
+        options: CURVE_OPTIONS,
+        default: 'ease-out',
+        description: 'Interpolation curve'
+      },
+      {
+        key: 'min_brightness',
+        label: 'Min Brightness',
+        type: 'slider',
+        min: 0,
+        max: 0.5,
+        step: 0.01,
+        default: 0.0,
+        description: 'Ending brightness level'
+      }
+    ]
+  },
+  InverseFadeIn: {
+    name: 'Inverse Fade In (from White)',
+    icon: '💫',
+    description: 'Flash to white then fade back to content',
+    params: [
+      {
+        key: 'duration',
+        label: 'Duration',
+        type: 'number',
+        min: 0.1,
+        max: 10,
+        step: 0.1,
+        default: 2.0,
+        description: 'Fade duration in seconds'
+      },
+      {
+        key: 'curve',
+        label: 'Curve',
+        type: 'select',
+        options: CURVE_OPTIONS,
+        default: 'ease-out',
+        description: 'Interpolation curve'
+      }
+    ]
+  },
+  InverseFadeOut: {
+    name: 'Inverse Fade Out (to White)',
+    icon: '☀️',
+    description: 'Fade from content to white over duration',
+    params: [
+      {
+        key: 'duration',
+        label: 'Duration',
+        type: 'number',
+        min: 0.1,
+        max: 10,
+        step: 0.1,
+        default: 2.0,
+        description: 'Fade duration in seconds'
+      },
+      {
+        key: 'curve',
+        label: 'Curve',
+        type: 'select',
+        options: CURVE_OPTIONS,
+        default: 'ease-in',
+        description: 'Interpolation curve'
+      }
+    ]
+  },
+  RandomInEffect: {
+    name: 'Random Reveal',
+    icon: '✨',
+    description: 'LEDs light up in random order from black',
+    params: [
+      {
+        key: 'duration',
+        label: 'Duration',
+        type: 'number',
+        min: 0.1,
+        max: 10,
+        step: 0.1,
+        default: 2.0,
+        description: 'Transition duration in seconds'
+      },
+      {
+        key: 'leds_per_frame',
+        label: 'LEDs per Frame',
+        type: 'number',
+        min: 1,
+        max: 100,
+        step: 1,
+        default: 10,
+        description: 'Number of LEDs to light per frame'
+      },
+      {
+        key: 'fade_tail',
+        label: 'Fade Tail',
+        type: 'checkbox',
+        default: true,
+        description: 'Apply fade effect to recently lit LEDs'
+      }
+    ]
+  },
+  RandomOutEffect: {
+    name: 'Random Blank',
+    icon: '🌌',
+    description: 'LEDs blank out in random order to black',
+    params: [
+      {
+        key: 'duration',
+        label: 'Duration',
+        type: 'number',
+        min: 0.1,
+        max: 10,
+        step: 0.1,
+        default: 2.0,
+        description: 'Transition duration in seconds'
+      },
+      {
+        key: 'leds_per_frame',
+        label: 'LEDs per Frame',
+        type: 'number',
+        min: 1,
+        max: 100,
+        step: 1,
+        default: 10,
+        description: 'Number of LEDs to blank per frame'
+      },
+      {
+        key: 'fade_tail',
+        label: 'Fade Tail',
+        type: 'checkbox',
+        default: true,
+        description: 'Apply fade effect to recently blanked LEDs'
+      }
+    ]
+  },
+  TemplateEffect: {
+    name: 'Template Animation',
+    icon: '🎨',
+    description: 'Play a pre-rendered LED pattern template',
+    params: [
+      {
+        key: 'template_path',
+        label: 'Template',
+        type: 'template_select',
+        options: TEMPLATE_OPTIONS,
+        default: 'templates/ring_800x480_leds.npy',
+        description: 'LED pattern template to play'
+      },
+      {
+        key: 'duration',
+        label: 'Duration',
+        type: 'number',
+        min: 0.1,
+        max: 10,
+        step: 0.1,
+        default: 1.0,
+        description: 'Effect duration in seconds'
+      },
+      {
+        key: 'blend_mode',
+        label: 'Blend Mode',
+        type: 'select',
+        options: ['alpha', 'add', 'multiply', 'replace', 'boost', 'addboost'],
+        default: 'addboost',
+        description: 'How to blend template with base LED values'
+      },
+      {
+        key: 'intensity',
+        label: 'Intensity',
+        type: 'slider',
+        min: 0,
+        max: 5,
+        step: 0.1,
+        default: 2.0,
+        description: 'Effect intensity/opacity'
+      },
+      {
+        key: 'add_multiplier',
+        label: 'Add Multiplier',
+        type: 'slider',
+        min: 0,
+        max: 2,
+        step: 0.1,
+        default: 0.4,
+        description: 'Additive component strength (for addboost mode)',
+        showIf: { blend_mode: 'addboost' }
+      },
+      {
+        key: 'color_thieving',
+        label: 'Color Thieving',
+        type: 'checkbox',
+        default: false,
+        description: 'Extract color from input LEDs'
+      }
+    ]
+  }
+}
+
+// Helper function to get default event effect params
+export function getDefaultEventEffectParams(effectType) {
+  const effect = EVENT_EFFECT_TYPES[effectType]
+  if (!effect) return {}
+
+  const params = {}
+  effect.params.forEach(param => {
+    params[param.key] = param.default
+  })
+  return params
+}
+
+// Default cut effect configuration
+export const DEFAULT_CUT_EFFECT = {
+  enabled: true,
+  effect_class: 'FadeInEffect',
+  params: {
+    duration: 2.0,
+    curve: 'ease-in',
+    min_brightness: 0.0
+  }
+}
+
+// Default drop effect configuration
+export const DEFAULT_DROP_EFFECT = {
+  enabled: true,
+  effect_class: 'InverseFadeIn',
+  params: {
+    duration: 2.0,
+    curve: 'ease-out'
+  }
 }

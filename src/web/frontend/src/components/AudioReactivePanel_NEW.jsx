@@ -4,11 +4,15 @@ import { useWebSocket } from '../hooks/useWebSocket'
 import {
   TRIGGER_TYPES,
   EFFECT_TYPES,
+  EVENT_EFFECT_TYPES,
   getDefaultTriggerParams,
   getDefaultEffectParams,
+  getDefaultEventEffectParams,
   shouldShowParam,
   getTemplateName,
-  getTemplatePath
+  getTemplatePath,
+  DEFAULT_CUT_EFFECT,
+  DEFAULT_DROP_EFFECT
 } from '../config/audioReactiveConfig'
 
 const AudioReactivePanel = () => {
@@ -29,10 +33,18 @@ const AudioReactivePanel = () => {
   const [carouselRuleSets, setCarouselRuleSets] = useState([])
   const [carouselBeatInterval, setCarouselBeatInterval] = useState(4)
 
+  // Cut effect configuration
+  const [cutEffect, setCutEffect] = useState(DEFAULT_CUT_EFFECT)
+
+  // Drop effect configuration
+  const [dropEffect, setDropEffect] = useState(DEFAULT_DROP_EFFECT)
+
   // Collapsed state for sections
   const [collapsedSections, setCollapsedSections] = useState({
     common: false,
     carousel: false,
+    cutEffect: false,
+    dropEffect: false,
   })
 
   // Editing state for rule set names
@@ -71,6 +83,13 @@ const AudioReactivePanel = () => {
         setCommonRules(data.common_rules || [])
         setCarouselRuleSets(data.carousel_rule_sets || [])
         setCarouselBeatInterval(data.carousel_beat_interval || 4)
+        // Load cut/drop effect configuration
+        if (data.cut_effect) {
+          setCutEffect(data.cut_effect)
+        }
+        if (data.drop_effect) {
+          setDropEffect(data.drop_effect)
+        }
       }
     } catch (error) {
       console.error('Failed to fetch audio reactive settings:', error)
@@ -86,6 +105,8 @@ const AudioReactivePanel = () => {
       common_rules: commonRules,
       carousel_rule_sets: carouselRuleSets,
       carousel_beat_interval: carouselBeatInterval,
+      cut_effect: cutEffect,
+      drop_effect: dropEffect,
       ...updates
     }
 
@@ -348,6 +369,58 @@ const AudioReactivePanel = () => {
     const newSets = [...carouselRuleSets, newSet]
     setCarouselRuleSets(newSets)
     updateServerConfig({ carousel_rule_sets: newSets })
+  }
+
+  // === Cut Effect Functions ===
+  const updateCutEffectEnabled = (enabled) => {
+    const newCutEffect = { ...cutEffect, enabled }
+    setCutEffect(newCutEffect)
+    updateServerConfig({ cut_effect: newCutEffect })
+  }
+
+  const updateCutEffectClass = (effect_class) => {
+    const newCutEffect = {
+      ...cutEffect,
+      effect_class,
+      params: getDefaultEventEffectParams(effect_class)
+    }
+    setCutEffect(newCutEffect)
+    updateServerConfig({ cut_effect: newCutEffect })
+  }
+
+  const updateCutEffectParam = (key, value) => {
+    const newCutEffect = {
+      ...cutEffect,
+      params: { ...cutEffect.params, [key]: value }
+    }
+    setCutEffect(newCutEffect)
+    updateServerConfig({ cut_effect: newCutEffect })
+  }
+
+  // === Drop Effect Functions ===
+  const updateDropEffectEnabled = (enabled) => {
+    const newDropEffect = { ...dropEffect, enabled }
+    setDropEffect(newDropEffect)
+    updateServerConfig({ drop_effect: newDropEffect })
+  }
+
+  const updateDropEffectClass = (effect_class) => {
+    const newDropEffect = {
+      ...dropEffect,
+      effect_class,
+      params: getDefaultEventEffectParams(effect_class)
+    }
+    setDropEffect(newDropEffect)
+    updateServerConfig({ drop_effect: newDropEffect })
+  }
+
+  const updateDropEffectParam = (key, value) => {
+    const newDropEffect = {
+      ...dropEffect,
+      params: { ...dropEffect.params, [key]: value }
+    }
+    setDropEffect(newDropEffect)
+    updateServerConfig({ drop_effect: newDropEffect })
   }
 
   return (
@@ -635,6 +708,96 @@ const AudioReactivePanel = () => {
                 </div>
               )}
             </div>
+
+            {/* ✂️ CUT EFFECTS Section */}
+            <div className="pl-4 border-l-2 border-neon-orange border-opacity-30">
+              <button
+                onClick={() => toggleSection('cutEffect')}
+                className="w-full flex items-center justify-between text-sm font-retro text-neon-orange mb-3 hover:text-neon-cyan transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  {collapsedSections.cutEffect ? <ChevronRightIcon className="w-4 h-4" /> : <ChevronDownIcon className="w-4 h-4" />}
+                  <span>✂️ CUT EFFECTS (Energy Drop Detection)</span>
+                </div>
+                <span className="text-xs text-metal-silver">{cutEffect.enabled ? 'ON' : 'OFF'}</span>
+              </button>
+
+              {!collapsedSections.cutEffect && (
+                <div className="space-y-3">
+                  <p className="text-xs text-metal-silver font-mono mb-2">
+                    Triggered when audio energy suddenly drops (e.g., breakdown, silence before drop).
+                  </p>
+
+                  {/* Enable/Disable Toggle */}
+                  <div className="flex items-center justify-between bg-dark-800 rounded-retro p-3">
+                    <span className="text-xs text-metal-silver font-mono">Enable Cut Effect</span>
+                    <button
+                      onClick={() => updateCutEffectEnabled(!cutEffect.enabled)}
+                      className={`px-4 py-1 rounded-retro text-xs font-retro font-bold transition-all duration-200 ${
+                        cutEffect.enabled
+                          ? 'bg-neon-orange bg-opacity-20 text-neon-orange border border-neon-orange border-opacity-50'
+                          : 'bg-dark-700 text-metal-silver border border-metal-silver border-opacity-30'
+                      }`}
+                    >
+                      {cutEffect.enabled ? 'ENABLED' : 'DISABLED'}
+                    </button>
+                  </div>
+
+                  {cutEffect.enabled && (
+                    <EventEffectConfig
+                      effectConfig={cutEffect}
+                      onUpdateEffectClass={updateCutEffectClass}
+                      onUpdateEffectParam={updateCutEffectParam}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* 💥 DROP EFFECTS Section */}
+            <div className="pl-4 border-l-2 border-neon-red border-opacity-30">
+              <button
+                onClick={() => toggleSection('dropEffect')}
+                className="w-full flex items-center justify-between text-sm font-retro text-neon-red mb-3 hover:text-neon-cyan transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  {collapsedSections.dropEffect ? <ChevronRightIcon className="w-4 h-4" /> : <ChevronDownIcon className="w-4 h-4" />}
+                  <span>💥 DROP EFFECTS (Bass Drop Detection)</span>
+                </div>
+                <span className="text-xs text-metal-silver">{dropEffect.enabled ? 'ON' : 'OFF'}</span>
+              </button>
+
+              {!collapsedSections.dropEffect && (
+                <div className="space-y-3">
+                  <p className="text-xs text-metal-silver font-mono mb-2">
+                    Triggered when bass energy suddenly increases after a buildup (e.g., the drop).
+                  </p>
+
+                  {/* Enable/Disable Toggle */}
+                  <div className="flex items-center justify-between bg-dark-800 rounded-retro p-3">
+                    <span className="text-xs text-metal-silver font-mono">Enable Drop Effect</span>
+                    <button
+                      onClick={() => updateDropEffectEnabled(!dropEffect.enabled)}
+                      className={`px-4 py-1 rounded-retro text-xs font-retro font-bold transition-all duration-200 ${
+                        dropEffect.enabled
+                          ? 'bg-neon-red bg-opacity-20 text-neon-red border border-neon-red border-opacity-50'
+                          : 'bg-dark-700 text-metal-silver border border-metal-silver border-opacity-30'
+                      }`}
+                    >
+                      {dropEffect.enabled ? 'ENABLED' : 'DISABLED'}
+                    </button>
+                  </div>
+
+                  {dropEffect.enabled && (
+                    <EventEffectConfig
+                      effectConfig={dropEffect}
+                      onUpdateEffectClass={updateDropEffectClass}
+                      onUpdateEffectParam={updateDropEffectParam}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -644,6 +807,7 @@ const AudioReactivePanel = () => {
         <p className="text-xs text-metal-silver font-mono leading-relaxed">
           <span className="text-neon-purple">INFO:</span> Common rules are always checked first. If no common rule matches,
           the current carousel rule set is checked. Carousel sets rotate every N beats for variety.
+          Cut/Drop effects trigger on audio energy transitions.
         </p>
       </div>
     </div>
@@ -890,6 +1054,52 @@ const ParameterInput = ({ param, value, onChange }) => {
   }
 
   return null
+}
+
+// Event Effect Configuration Component (for Cut/Drop effects)
+const EventEffectConfig = ({ effectConfig, onUpdateEffectClass, onUpdateEffectParam }) => {
+  const effectType = EVENT_EFFECT_TYPES[effectConfig.effect_class] || EVENT_EFFECT_TYPES.none
+
+  return (
+    <div className="space-y-4 bg-dark-800 rounded-retro p-4">
+      {/* Effect Type Selector */}
+      <div>
+        <h5 className="text-xs font-retro text-neon-yellow mb-2">EFFECT TYPE</h5>
+        <div className="flex items-center gap-2">
+          <span className="text-lg">{effectType.icon}</span>
+          <select
+            value={effectConfig.effect_class}
+            onChange={(e) => onUpdateEffectClass(e.target.value)}
+            className="retro-input flex-1 text-sm"
+          >
+            {Object.entries(EVENT_EFFECT_TYPES).map(([key, config]) => (
+              <option key={key} value={key}>
+                {config.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <p className="text-xs text-metal-silver font-mono mt-1">{effectType.description}</p>
+      </div>
+
+      {/* Effect Parameters */}
+      {effectType.params.length > 0 && (
+        <div className="space-y-3">
+          <h5 className="text-xs font-retro text-neon-orange mb-2">PARAMETERS</h5>
+          {effectType.params.map(param => (
+            shouldShowParam(param, effectConfig.params) && (
+              <ParameterInput
+                key={param.key}
+                param={param}
+                value={effectConfig.params[param.key]}
+                onChange={(value) => onUpdateEffectParam(param.key, value)}
+              />
+            )
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default AudioReactivePanel

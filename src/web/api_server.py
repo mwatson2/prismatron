@@ -3395,6 +3395,14 @@ class CarouselRuleSet(BaseModel):
     rules: List[TriggerEffectRule] = Field(default_factory=list, description="Rules in this set")
 
 
+class EventEffectConfig(BaseModel):
+    """Configuration for an event-triggered effect (cut/drop)."""
+
+    enabled: bool = Field(True, description="Whether this event effect is enabled")
+    effect_class: str = Field(..., description="Effect class name (e.g., FadeInEffect, InverseFadeIn)")
+    params: Dict[str, Any] = Field(default_factory=dict, description="Effect parameters")
+
+
 class AudioReactiveTriggersRequest(BaseModel):
     """Request model for audio reactive trigger configuration."""
 
@@ -3407,6 +3415,12 @@ class AudioReactiveTriggersRequest(BaseModel):
     # Carousel rule sets (fallback, rotates every N beats)
     carousel_rule_sets: List[CarouselRuleSet] = Field(default_factory=list, description="Carousel rule sets (rotates)")
     carousel_beat_interval: int = Field(4, ge=1, le=100, description="Number of beats between carousel rotations")
+
+    # Cut/Drop event effect configurations
+    cut_effect: Optional[EventEffectConfig] = Field(
+        default=None, description="Effect triggered on audio cut (energy drop)"
+    )
+    drop_effect: Optional[EventEffectConfig] = Field(default=None, description="Effect triggered on bass drop")
 
     # Deprecated: old flat rules list for backward compatibility
     rules: Optional[List[TriggerEffectRule]] = Field(default=None, description="Deprecated: use common_rules instead")
@@ -3444,6 +3458,8 @@ async def get_audio_reactive_triggers():
         common_rules = []
         carousel_rule_sets = []
         carousel_beat_interval = 4
+        cut_effect = None
+        drop_effect = None
 
         if control_state:
             try:
@@ -3458,6 +3474,8 @@ async def get_audio_reactive_triggers():
                     common_rules = trigger_config.get("common_rules", [])
                     carousel_rule_sets = trigger_config.get("carousel_rule_sets", [])
                     carousel_beat_interval = trigger_config.get("carousel_beat_interval", 4)
+                    cut_effect = trigger_config.get("cut_effect")
+                    drop_effect = trigger_config.get("drop_effect")
 
                     # Backward compatibility: convert old flat rules list to common_rules
                     if not common_rules and not carousel_rule_sets and "rules" in trigger_config:
@@ -3470,6 +3488,8 @@ async def get_audio_reactive_triggers():
                         common_rules = saved_config.get("common_rules", [])
                         carousel_rule_sets = saved_config.get("carousel_rule_sets", [])
                         carousel_beat_interval = saved_config.get("carousel_beat_interval", 4)
+                        cut_effect = saved_config.get("cut_effect")
+                        drop_effect = saved_config.get("drop_effect")
 
                         # Backward compatibility
                         if not common_rules and not carousel_rule_sets and "rules" in saved_config:
@@ -3483,6 +3503,8 @@ async def get_audio_reactive_triggers():
             "common_rules": common_rules,
             "carousel_rule_sets": carousel_rule_sets,
             "carousel_beat_interval": carousel_beat_interval,
+            "cut_effect": cut_effect,
+            "drop_effect": drop_effect,
         }
 
     except Exception as e:
@@ -3533,6 +3555,23 @@ async def set_audio_reactive_triggers(request: AudioReactiveTriggersRequest):
                 for rule in request.rules
             ]
 
+        # Convert cut/drop effect configs to dict format
+        cut_effect_dict = None
+        if request.cut_effect:
+            cut_effect_dict = {
+                "enabled": request.cut_effect.enabled,
+                "effect_class": request.cut_effect.effect_class,
+                "params": request.cut_effect.params,
+            }
+
+        drop_effect_dict = None
+        if request.drop_effect:
+            drop_effect_dict = {
+                "enabled": request.drop_effect.enabled,
+                "effect_class": request.drop_effect.effect_class,
+                "params": request.drop_effect.params,
+            }
+
         # Update in control state if available
         if control_state:
             # Update master enable
@@ -3544,6 +3583,8 @@ async def set_audio_reactive_triggers(request: AudioReactiveTriggersRequest):
                 "common_rules": common_rules_dict,
                 "carousel_rule_sets": carousel_rule_sets_dict,
                 "carousel_beat_interval": request.carousel_beat_interval,
+                "cut_effect": cut_effect_dict,
+                "drop_effect": drop_effect_dict,
             }
 
             control_state.update_status(audio_reactive_trigger_config=trigger_config)
@@ -3557,7 +3598,9 @@ async def set_audio_reactive_triggers(request: AudioReactiveTriggersRequest):
                 f"common_rules={len(common_rules_dict)}, "
                 f"carousel_sets={len(carousel_rule_sets_dict)}, "
                 f"carousel_interval={request.carousel_beat_interval} beats, "
-                f"total_rules={total_rules}"
+                f"total_rules={total_rules}, "
+                f"cut_effect={cut_effect_dict is not None and cut_effect_dict.get('enabled', False)}, "
+                f"drop_effect={drop_effect_dict is not None and drop_effect_dict.get('enabled', False)}"
             )
         else:
             logger.warning("Control state not available - trigger configuration not updated")
@@ -3569,6 +3612,8 @@ async def set_audio_reactive_triggers(request: AudioReactiveTriggersRequest):
             "common_rules": common_rules_dict,
             "carousel_rule_sets": carousel_rule_sets_dict,
             "carousel_beat_interval": request.carousel_beat_interval,
+            "cut_effect": cut_effect_dict,
+            "drop_effect": drop_effect_dict,
         }
         await schedule_audio_config_save(config_to_save)
 
@@ -3579,6 +3624,8 @@ async def set_audio_reactive_triggers(request: AudioReactiveTriggersRequest):
                 "test_interval": request.test_interval,
                 "common_rule_count": len(common_rules_dict),
                 "carousel_set_count": len(carousel_rule_sets_dict),
+                "cut_effect_enabled": cut_effect_dict is not None and cut_effect_dict.get("enabled", False),
+                "drop_effect_enabled": drop_effect_dict is not None and drop_effect_dict.get("enabled", False),
             }
         )
 
@@ -3588,6 +3635,8 @@ async def set_audio_reactive_triggers(request: AudioReactiveTriggersRequest):
             "common_rules": common_rules_dict,
             "carousel_rule_sets": carousel_rule_sets_dict,
             "carousel_beat_interval": request.carousel_beat_interval,
+            "cut_effect": cut_effect_dict,
+            "drop_effect": drop_effect_dict,
             "status": "updated",
         }
 
