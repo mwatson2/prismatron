@@ -11,28 +11,30 @@ const AudioMeter = ({
   maxValue = 1.0,
   unit = '%',
   trackPeak = false,
-  peakDecayMs = 5000,
+  peakDecayMs = 2000,
 }) => {
   // Peak tracking state
   const [peakValue, setPeakValue] = useState(0)
   const peakTimeRef = useRef(0)
+  const peakValueRef = useRef(0) // Store peak value at time of setting
   const animationRef = useRef(null)
 
   // Clamp and normalize value
   const normalizedValue = Math.min(1.5, Math.max(0, value / maxValue))
   const heightPercent = Math.min(100, normalizedValue * 100)
 
-  // Peak animation
+  // Peak animation - decays linearly from stored peak value
   const animatePeak = useCallback(() => {
     const elapsed = Date.now() - peakTimeRef.current
     const progress = Math.min(1, elapsed / peakDecayMs)
-    const decayedPeak = peakValue * (1 - progress)
+    const decayedPeak = peakValueRef.current * (1 - progress)
 
-    if (progress < 1 && decayedPeak > 0.001) {
+    setPeakValue(decayedPeak > 0.001 ? decayedPeak : 0)
+
+    if (progress < 1) {
       animationRef.current = requestAnimationFrame(animatePeak)
     }
-    // Peak value is updated in useEffect, animation just keeps running
-  }, [peakValue, peakDecayMs])
+  }, [peakDecayMs])
 
   // Track peak values
   useEffect(() => {
@@ -40,8 +42,9 @@ const AudioMeter = ({
 
     const normalizedVal = value / maxValue
     if (normalizedVal > peakValue) {
-      // New peak detected
+      // New peak detected - store and start decay
       setPeakValue(normalizedVal)
+      peakValueRef.current = normalizedVal
       peakTimeRef.current = Date.now()
 
       // Start/restart decay animation
@@ -49,15 +52,6 @@ const AudioMeter = ({
         cancelAnimationFrame(animationRef.current)
       }
       animationRef.current = requestAnimationFrame(animatePeak)
-    } else {
-      // Decay existing peak
-      const elapsed = Date.now() - peakTimeRef.current
-      const progress = Math.min(1, elapsed / peakDecayMs)
-      const decayedPeak = peakValue * (1 - progress)
-
-      if (decayedPeak !== peakValue) {
-        setPeakValue(Math.max(0, decayedPeak))
-      }
     }
 
     return () => {
@@ -65,7 +59,7 @@ const AudioMeter = ({
         cancelAnimationFrame(animationRef.current)
       }
     }
-  }, [value, maxValue, trackPeak, peakValue, peakDecayMs, animatePeak])
+  }, [value, maxValue, trackPeak, peakValue, animatePeak])
 
   // Color configurations
   const colorConfig = {
@@ -145,7 +139,7 @@ const DecayingMeter = ({
   color = 'cyan',
   decayMs = 250,
   trackPeak = false,
-  peakDecayMs = 5000,
+  peakDecayMs = 2000,
 }) => {
   const [displayValue, setDisplayValue] = useState(0)
   const [peakValue, setPeakValue] = useState(0)
@@ -154,30 +148,31 @@ const DecayingMeter = ({
   const targetValueRef = useRef(0)
   const startTimeRef = useRef(0)
   const peakTimeRef = useRef(0)
+  const peakValueRef = useRef(0) // Store peak value at time of setting
 
   const animate = useCallback(() => {
     const now = Date.now()
 
-    // Decay main value
+    // Decay main value linearly over decayMs
     const elapsed = now - startTimeRef.current
     const progress = Math.min(1, elapsed / decayMs)
     const newValue = targetValueRef.current * (1 - progress)
     setDisplayValue(newValue)
 
-    // Decay peak value
+    // Decay peak value linearly over peakDecayMs
+    let peakStillDecaying = false
     if (trackPeak && peakTimeRef.current > 0) {
       const peakElapsed = now - peakTimeRef.current
       const peakProgress = Math.min(1, peakElapsed / peakDecayMs)
-      setPeakValue(prev => {
-        const decayed = prev * (1 - peakProgress / 100) // Slow decay per frame
-        return decayed > 0.001 ? decayed : 0
-      })
+      const decayedPeak = peakValueRef.current * (1 - peakProgress)
+      setPeakValue(decayedPeak > 0.001 ? decayedPeak : 0)
+      peakStillDecaying = peakProgress < 1
     }
 
-    if (progress < 1 || (trackPeak && peakValue > 0.001)) {
+    if (progress < 1 || peakStillDecaying) {
       animationRef.current = requestAnimationFrame(animate)
     }
-  }, [decayMs, trackPeak, peakDecayMs, peakValue])
+  }, [decayMs, trackPeak, peakDecayMs])
 
   useEffect(() => {
     // Check if this is a new event
@@ -186,9 +181,10 @@ const DecayingMeter = ({
       targetValueRef.current = value
       startTimeRef.current = Date.now()
 
-      // Update peak if new value is higher
+      // Update peak if new value is higher than current decayed peak
       if (trackPeak && value > peakValue) {
         setPeakValue(value)
+        peakValueRef.current = value // Store for linear decay calculation
         peakTimeRef.current = Date.now()
       }
 
@@ -363,7 +359,7 @@ const AudioVisualizer = ({ systemStatus }) => {
           maxValue={0.5}
           unit="%"
           trackPeak={true}
-          peakDecayMs={5000}
+          peakDecayMs={2000}
         />
 
         {/* AGC Gain - continuous, no peak */}
@@ -384,7 +380,7 @@ const AudioVisualizer = ({ systemStatus }) => {
           color="yellow"
           decayMs={250}
           trackPeak={true}
-          peakDecayMs={5000}
+          peakDecayMs={2000}
         />
 
         {/* Beat Confidence - decaying with peak */}
@@ -395,7 +391,7 @@ const AudioVisualizer = ({ systemStatus }) => {
           color="orange"
           decayMs={250}
           trackPeak={true}
-          peakDecayMs={5000}
+          peakDecayMs={2000}
         />
 
         {/* Build-up intensity - continuous, no peak */}
