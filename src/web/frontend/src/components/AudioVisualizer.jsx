@@ -150,20 +150,29 @@ const DecayingMeter = ({
   const peakTimeRef = useRef(0)
   const peakValueRef = useRef(0) // Store peak value at time of setting
 
+  // Store config in refs to avoid recreating animate callback
+  const decayMsRef = useRef(decayMs)
+  const trackPeakRef = useRef(trackPeak)
+  const peakDecayMsRef = useRef(peakDecayMs)
+  decayMsRef.current = decayMs
+  trackPeakRef.current = trackPeak
+  peakDecayMsRef.current = peakDecayMs
+
+  // Animation function that reads from refs to avoid dependency issues
   const animate = useCallback(() => {
     const now = Date.now()
 
     // Decay main value linearly over decayMs
     const elapsed = now - startTimeRef.current
-    const progress = Math.min(1, elapsed / decayMs)
+    const progress = Math.min(1, elapsed / decayMsRef.current)
     const newValue = targetValueRef.current * (1 - progress)
     setDisplayValue(newValue)
 
     // Decay peak value linearly over peakDecayMs
     let peakStillDecaying = false
-    if (trackPeak && peakTimeRef.current > 0) {
+    if (trackPeakRef.current && peakTimeRef.current > 0) {
       const peakElapsed = now - peakTimeRef.current
-      const peakProgress = Math.min(1, peakElapsed / peakDecayMs)
+      const peakProgress = Math.min(1, peakElapsed / peakDecayMsRef.current)
       const decayedPeak = peakValueRef.current * (1 - peakProgress)
       setPeakValue(decayedPeak > 0.001 ? decayedPeak : 0)
       peakStillDecaying = peakProgress < 1
@@ -172,8 +181,9 @@ const DecayingMeter = ({
     if (progress < 1 || peakStillDecaying) {
       animationRef.current = requestAnimationFrame(animate)
     }
-  }, [decayMs, trackPeak, peakDecayMs])
+  }, []) // No dependencies - reads from refs
 
+  // Handle new events
   useEffect(() => {
     // Check if this is a new event
     if (lastEventTime > lastEventTimeRef.current) {
@@ -188,22 +198,25 @@ const DecayingMeter = ({
         peakTimeRef.current = Date.now()
       }
 
-      // Cancel any existing animation
+      // Cancel any existing animation and start new decay
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current)
       }
 
-      // Start decay animation
+      // Set initial value and start decay animation
       setDisplayValue(value)
       animationRef.current = requestAnimationFrame(animate)
     }
+  }, [lastEventTime, value, animate, trackPeak, peakValue])
 
+  // Cleanup on unmount only
+  useEffect(() => {
     return () => {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current)
       }
     }
-  }, [lastEventTime, value, animate, trackPeak, peakValue])
+  }, [])
 
   // Calculate peak line position
   const peakHeightPercent = Math.min(100, peakValue * 100)
