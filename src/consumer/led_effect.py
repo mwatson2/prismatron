@@ -8,6 +8,7 @@ are sent to output sinks.
 
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -632,6 +633,352 @@ class BeatBrightnessEffect(LedEffect):
                 "duration_fraction": self.duration_fraction,
                 "boost_duration": self.boost_duration,
                 "dynamic_boost_factor": self.dynamic_boost_factor,
+            }
+        )
+        return info
+
+
+class InverseFadeEffect(LedEffect):
+    """
+    LED effect that fades between the current LED values and full white (255).
+
+    Unlike a regular fade which goes to/from black (0), this inverse fade
+    transitions to/from full white.
+
+    - "out" direction: Animates from current LED values (x) to white (255)
+    - "in" direction: Animates from white (255) to current LED values (x)
+
+    Uses linear interpolation over the specified duration.
+    """
+
+    def __init__(
+        self,
+        start_time: float,
+        duration: float,
+        direction: str = "out",
+        curve: str = "linear",
+        **kwargs,
+    ):
+        """
+        Initialize inverse fade effect.
+
+        Args:
+            start_time: Frame timestamp when effect starts
+            duration: Effect duration in seconds
+            direction: "out" to fade from current to white, "in" to fade from white to current
+            curve: Interpolation curve ("linear", "ease-in", "ease-out", "ease-in-out")
+            **kwargs: Additional parameters passed to base class
+        """
+        super().__init__(start_time=start_time, duration=duration, **kwargs)
+
+        if direction not in ("in", "out"):
+            raise ValueError(f"direction must be 'in' or 'out', got '{direction}'")
+
+        self.direction = direction
+        self.curve = curve
+
+        # Store the initial LED values for "in" direction (will be captured on first frame)
+        self.target_values = None
+
+        logger.info(f"Created InverseFadeEffect: direction={direction}, duration={duration:.2f}s, curve={curve}")
+
+    def _apply_curve(self, progress: float) -> float:
+        """
+        Apply interpolation curve to linear progress.
+
+        Args:
+            progress: Linear progress value between 0.0 and 1.0
+
+        Returns:
+            Transformed progress value with curve applied
+        """
+        progress = max(0.0, min(1.0, progress))
+
+        if self.curve == "linear":
+            return progress
+        elif self.curve == "ease-in":
+            # Quadratic ease-in (slow start, fast end)
+            return progress * progress
+        elif self.curve == "ease-out":
+            # Quadratic ease-out (fast start, slow end)
+            return 1.0 - (1.0 - progress) * (1.0 - progress)
+        elif self.curve == "ease-in-out":
+            # Cubic ease-in-out (slow start and end, fast middle)
+            if progress < 0.5:
+                return 2.0 * progress * progress
+            else:
+                return 1.0 - 2.0 * (1.0 - progress) * (1.0 - progress)
+        else:
+            logger.warning(f"Unknown curve type '{self.curve}', using linear")
+            return progress
+
+    def apply(self, led_values: np.ndarray, frame_timestamp: float) -> bool:
+        """
+        Apply inverse fade effect to LED values.
+
+        Args:
+            led_values: LED values to modify (led_count, 3) in range [0, 255]
+            frame_timestamp: Current frame timestamp
+
+        Returns:
+            True if effect is complete
+        """
+        self.frame_count += 1
+
+        # Check if effect is complete
+        if self.is_complete(frame_timestamp):
+            # Apply final state
+            if self.direction == "out":
+                # Final state is white
+                led_values[:] = 255
+            # For "in" direction, final state is the target values (already in led_values)
+            return True
+
+        # Calculate progress
+        progress = self.get_progress(frame_timestamp)
+        curved_progress = self._apply_curve(progress)
+
+        if self.direction == "out":
+            # Fade from current values to white
+            # led = current * (1 - progress) + 255 * progress
+            # led = current + progress * (255 - current)
+            led_values[:] = np.clip(
+                led_values + curved_progress * (255.0 - led_values.astype(np.float32)),
+                0,
+                255,
+            ).astype(led_values.dtype)
+
+        else:  # direction == "in"
+            # Fade from white to target values
+            # On first frame, capture target values and set to white
+            if self.target_values is None:
+                self.target_values = led_values.copy()
+                led_values[:] = 255
+
+            # led = 255 * (1 - progress) + target * progress
+            # led = 255 + progress * (target - 255)
+            led_values[:] = np.clip(
+                255.0 + curved_progress * (self.target_values.astype(np.float32) - 255.0),
+                0,
+                255,
+            ).astype(led_values.dtype)
+
+        return False
+
+    def get_info(self) -> Dict[str, Any]:
+        """Get inverse fade effect information."""
+        info = super().get_info()
+        info.update(
+            {
+                "direction": self.direction,
+                "curve": self.curve,
+                "has_target_values": self.target_values is not None,
+            }
+        )
+        return info
+
+
+@dataclass
+class SparkleSet:
+    """Represents a set of LEDs that were sparkled at a specific time."""
+
+    start_time: float  # When this set started sparkling
+    count: int  # Number of LEDs in this set
+    seed: int  # RNG seed to reproduce the LED selection
+
+
+class SparkleEffect(LedEffect):
+    """
+    LED effect that creates a sparkling/glitter effect.
+
+    Every `interval_ms` milliseconds, a fraction `density` of LEDs are set to full
+    brightness (white) and then fade linearly over `fade_ms` milliseconds back to
+    their target color.
+
+    Since fade_ms can be greater than interval_ms, multiple overlapping sparkle sets
+    can be active at once. Each set is tracked by its start time, count, and RNG seed
+    for compact storage.
+
+    This effect has no fixed duration - it continues until explicitly removed.
+    Parameters (interval_ms, fade_ms, density) can be modified at any time.
+    """
+
+    def __init__(
+        self,
+        start_time: float,
+        interval_ms: float = 50.0,
+        fade_ms: float = 200.0,
+        density: float = 0.05,
+        led_count: int = 2600,
+        **kwargs,
+    ):
+        """
+        Initialize sparkle effect.
+
+        Args:
+            start_time: Frame timestamp when effect starts
+            interval_ms: Interval between sparkle bursts in milliseconds
+            fade_ms: Duration of fade from white to target color in milliseconds
+            density: Fraction of LEDs to sparkle each interval [0, 1]
+            led_count: Total number of LEDs in the system
+            **kwargs: Additional parameters passed to base class
+        """
+        # No fixed duration - effect continues until removed
+        super().__init__(start_time=start_time, duration=None, **kwargs)
+
+        self.interval_ms = interval_ms
+        self.fade_ms = fade_ms
+        self.density = density
+        self.led_count = led_count
+
+        # Track active sparkle sets
+        self.active_sets: list[SparkleSet] = []
+
+        # Track the last interval boundary we processed
+        self.last_interval_boundary = 0
+
+        # RNG for generating seeds (use start_time as initial seed for reproducibility)
+        self._seed_rng = np.random.default_rng(int(start_time * 1000) % (2**31))
+
+        logger.info(
+            f"Created SparkleEffect: interval={interval_ms}ms, fade={fade_ms}ms, "
+            f"density={density:.1%}, led_count={led_count}"
+        )
+
+    def set_parameters(
+        self,
+        interval_ms: Optional[float] = None,
+        fade_ms: Optional[float] = None,
+        density: Optional[float] = None,
+    ) -> None:
+        """
+        Update effect parameters dynamically.
+
+        Args:
+            interval_ms: New interval between sparkle bursts (or None to keep current)
+            fade_ms: New fade duration (or None to keep current)
+            density: New LED density fraction (or None to keep current)
+        """
+        if interval_ms is not None:
+            self.interval_ms = interval_ms
+        if fade_ms is not None:
+            self.fade_ms = fade_ms
+        if density is not None:
+            self.density = max(0.0, min(1.0, density))
+
+        logger.debug(
+            f"SparkleEffect parameters updated: interval={self.interval_ms}ms, "
+            f"fade={self.fade_ms}ms, density={self.density:.1%}"
+        )
+
+    def _get_sparkle_indices(self, count: int, seed: int) -> np.ndarray:
+        """
+        Get the LED indices for a sparkle set using its seed.
+
+        Args:
+            count: Number of LEDs to select
+            seed: RNG seed for reproducible selection
+
+        Returns:
+            Array of LED indices
+        """
+        rng = np.random.default_rng(seed)
+        return rng.choice(self.led_count, size=min(count, self.led_count), replace=False)
+
+    def apply(self, led_values: np.ndarray, frame_timestamp: float) -> bool:
+        """
+        Apply sparkle effect to LED values.
+
+        Args:
+            led_values: LED values to modify (led_count, 3) in range [0, 255]
+            frame_timestamp: Current frame timestamp
+
+        Returns:
+            Always False (effect never completes on its own)
+        """
+        self.frame_count += 1
+
+        # Update led_count from actual array if different
+        actual_led_count = led_values.shape[0]
+        if actual_led_count != self.led_count:
+            self.led_count = actual_led_count
+
+        # Calculate elapsed time in milliseconds
+        elapsed_ms = self.get_elapsed_time(frame_timestamp) * 1000.0
+        fade_ms = self.fade_ms
+        interval_ms = self.interval_ms
+
+        # Step 1: Remove expired sparkle sets (older than fade_ms)
+        cutoff_time = frame_timestamp - (fade_ms / 1000.0)
+        self.active_sets = [s for s in self.active_sets if s.start_time > cutoff_time]
+
+        # Step 2: Determine how many new sparkle sets need to be added
+        # Calculate which interval boundaries have passed since last frame
+        current_interval = int(elapsed_ms / interval_ms)
+
+        # Add new sets for each interval boundary that has passed
+        while self.last_interval_boundary < current_interval:
+            self.last_interval_boundary += 1
+
+            # Calculate the actual start time for this interval boundary
+            boundary_elapsed_ms = self.last_interval_boundary * interval_ms
+            set_start_time = self.start_time + (boundary_elapsed_ms / 1000.0)
+
+            # Only add if the set hasn't already expired
+            if set_start_time > cutoff_time:
+                # Calculate number of LEDs to sparkle
+                count = max(1, int(self.led_count * self.density))
+
+                # Generate a new seed for this set
+                seed = int(self._seed_rng.integers(0, 2**31))
+
+                self.active_sets.append(SparkleSet(start_time=set_start_time, count=count, seed=seed))
+
+        # Step 3: Apply fades for all active sparkle sets
+        # We need to blend white towards target based on how far through the fade we are
+        # fade_progress = 0: full white, fade_progress = 1: target color
+
+        for sparkle_set in self.active_sets:
+            # Calculate fade progress for this set
+            set_age_ms = (frame_timestamp - sparkle_set.start_time) * 1000.0
+            fade_progress = min(1.0, max(0.0, set_age_ms / fade_ms))
+
+            # Get the LED indices for this set
+            indices = self._get_sparkle_indices(sparkle_set.count, sparkle_set.seed)
+
+            # Apply the fade: lerp from white (255) to target color
+            # At fade_progress=0: full white
+            # At fade_progress=1: original target color
+            # led = 255 * (1 - fade_progress) + target * fade_progress
+            # led = 255 - fade_progress * (255 - target)
+
+            if led_values.ndim == 2 and led_values.shape[1] == 3:
+                # RGB format
+                target_colors = led_values[indices].astype(np.float32)
+                white_blend = 255.0 * (1.0 - fade_progress)
+                led_values[indices] = np.clip(white_blend + target_colors * fade_progress, 0, 255).astype(
+                    led_values.dtype
+                )
+            else:
+                # Single channel
+                target_values = led_values[indices].astype(np.float32)
+                white_blend = 255.0 * (1.0 - fade_progress)
+                led_values[indices] = np.clip(white_blend + target_values * fade_progress, 0, 255).astype(
+                    led_values.dtype
+                )
+
+        return False  # Effect never completes on its own
+
+    def get_info(self) -> Dict[str, Any]:
+        """Get sparkle effect information."""
+        info = super().get_info()
+        info.update(
+            {
+                "interval_ms": self.interval_ms,
+                "fade_ms": self.fade_ms,
+                "density": self.density,
+                "led_count": self.led_count,
+                "active_sets": len(self.active_sets),
             }
         )
         return info
