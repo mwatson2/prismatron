@@ -512,6 +512,14 @@ class FrameRenderer:
         self._last_cut_time_processed: float = 0.0
         self._last_drop_time_processed: float = 0.0
 
+        # Cut fade effect state (separate tracking from sparkle's cut detection)
+        self._last_cut_time_for_fade: float = 0.0
+        self._cut_fade_effect = None  # FadeInEffect instance or None
+
+        # Drop fade effect state (inverse fade from white back to content)
+        self._last_drop_time_for_fade: float = 0.0
+        self._drop_fade_effect = None  # InverseFadeEffect instance or None
+
         # Initialize triggers from control state (if available)
         self._initialize_triggers_from_control_state()
 
@@ -1325,6 +1333,117 @@ class FrameRenderer:
         except Exception as e:
             logger.error(f"Error managing sparkle effect for buildup: {e}")
 
+    def _manage_cut_fade_effect(self, frame_timeline_time: float) -> None:
+        """
+        Manage fade-in effect on cut events.
+
+        When a cut is detected, creates a 1-second fade-in effect that causes
+        the panel to fade from black back to the content. The effect is added
+        last in the effects list to ensure it runs after other effects.
+
+        Args:
+            frame_timeline_time: Current time on the frame timeline
+        """
+        # Import locally to avoid circular imports
+        from .led_effect_transitions import FadeInEffect
+
+        # Check if audio beat analyzer is available
+        if not self._audio_beat_analyzer:
+            return
+
+        try:
+            # Get current audio state
+            audio_state = self._audio_beat_analyzer.get_current_state()
+            if not audio_state or not audio_state.is_active:
+                return
+
+            last_cut_time = audio_state.last_cut_time
+
+            # Check if a cut occurred since last frame
+            if last_cut_time > self._last_cut_time_for_fade:
+                self._last_cut_time_for_fade = last_cut_time
+
+                # Remove any existing cut fade effect
+                if self._cut_fade_effect is not None:
+                    self.effect_manager.remove_effect(self._cut_fade_effect)
+                    self._cut_fade_effect = None
+
+                # Create new fade-in effect starting now, lasting 2 seconds
+                # Use ease-in curve: slow start (stays dark longer), fast end
+                self._cut_fade_effect = FadeInEffect(
+                    start_time=frame_timeline_time,
+                    duration=2.0,
+                    curve="ease-in",
+                    min_brightness=0.0,
+                )
+
+                # Add to effect manager - it will be applied last since we add it last
+                self.effect_manager.add_effect(self._cut_fade_effect)
+                logger.info(f"🎬 Created cut fade-in effect at t={frame_timeline_time:.3f}s")
+
+            # Clean up reference when effect completes
+            if self._cut_fade_effect is not None and self._cut_fade_effect.is_complete(frame_timeline_time):
+                self._cut_fade_effect = None
+
+        except Exception as e:
+            logger.error(f"Error managing cut fade effect: {e}")
+
+    def _manage_drop_fade_effect(self, frame_timeline_time: float) -> None:
+        """
+        Manage inverse fade effect on drop events.
+
+        When a drop is detected, creates a 2-second inverse fade-in effect that
+        starts with the panel at full white and fades back to the playing video.
+        This creates a dramatic "flash to white" effect on the drop.
+
+        Args:
+            frame_timeline_time: Current time on the frame timeline
+        """
+        # Import locally to avoid circular imports
+        from .led_effect import InverseFadeEffect
+
+        # Check if audio beat analyzer is available
+        if not self._audio_beat_analyzer:
+            return
+
+        try:
+            # Get current audio state
+            audio_state = self._audio_beat_analyzer.get_current_state()
+            if not audio_state or not audio_state.is_active:
+                return
+
+            last_drop_time = audio_state.last_drop_time
+
+            # Check if a drop occurred since last frame
+            if last_drop_time > self._last_drop_time_for_fade:
+                self._last_drop_time_for_fade = last_drop_time
+
+                # Remove any existing drop fade effect
+                if self._drop_fade_effect is not None:
+                    self.effect_manager.remove_effect(self._drop_fade_effect)
+                    self._drop_fade_effect = None
+
+                # Create new inverse fade-in effect starting now, lasting 2 seconds
+                # direction="in" fades FROM white TO the current content
+                # Use ease-out curve: fast start (white clears quickly), slow end (gentle return)
+                self._drop_fade_effect = InverseFadeEffect(
+                    start_time=frame_timeline_time,
+                    duration=2.0,
+                    direction="in",
+                    curve="ease-out",
+                )
+
+                # Add to effect manager
+                self.effect_manager.add_effect(self._drop_fade_effect)
+                logger.info(f"💥 Created drop inverse fade effect at t={frame_timeline_time:.3f}s")
+
+            # Clean up reference when effect completes
+            if self._drop_fade_effect is not None and self._drop_fade_effect.is_complete(frame_timeline_time):
+                self._drop_fade_effect = None
+
+        except Exception as e:
+            logger.error(f"Error managing drop fade effect: {e}")
+
     def enable_template_effect_testing(
         self,
         enabled: bool = True,
@@ -1388,6 +1507,12 @@ class FrameRenderer:
 
         # Manage sparkle effect based on buildup detection
         self._manage_sparkle_effect_for_buildup(frame_timeline_time)
+
+        # Manage cut fade effect - fade from black on cut
+        self._manage_cut_fade_effect(frame_timeline_time)
+
+        # Manage drop fade effect - flash to white on drop, fade back to content
+        self._manage_drop_fade_effect(frame_timeline_time)
 
         # Apply all active effects to spatial LED values (including beat brightness boost)
         self.effect_manager.apply_effects(led_values, frame_timeline_time)
