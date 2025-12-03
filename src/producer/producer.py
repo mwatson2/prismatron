@@ -20,6 +20,7 @@ from ..core.playlist_sync import PlaylistState as SyncPlaylistState
 from ..core.playlist_sync import PlaylistSyncClient, TransitionConfig
 from ..core.shared_buffer import FrameProducer
 from ..utils.frame_timing import FrameTimingData
+from .content_preparer import ContentPreparer
 from .content_sources import (
     ContentSource,
     ContentSourceRegistry,
@@ -455,6 +456,9 @@ class ProducerProcess:
         self._accumulated_duration = 0.0  # Accumulated actual durations from completed items
         self._last_frame_duration: Optional[float] = None  # Duration from last frame for accumulation
 
+        # Content pre-preparer for seamless transitions
+        self._content_preparer: Optional[ContentPreparer] = None
+
     def initialize(self) -> bool:
         """
         Initialize producer process components.
@@ -484,6 +488,10 @@ class ProducerProcess:
                 logger.info("Producer connected to playlist synchronization service")
             else:
                 logger.warning("Producer failed to connect to playlist synchronization service - using fallback")
+
+            # Create content preparer for seamless transitions (timer-based, no polling thread)
+            self._content_preparer = ContentPreparer(self._playlist, lookahead_seconds=2.0)
+            logger.info("Content preparer initialized")
 
             logger.info("Producer process initialized successfully")
             return True
@@ -887,76 +895,125 @@ class ProducerProcess:
                 if self._current_source:
                     self._current_source.cleanup()
 
-                # Load new content
-                # Check if this is an effect (JSON config)
-                content_type = ContentSourceRegistry.detect_content_type(current_item.filepath)
-                if content_type == ContentType.EFFECT:
-                    logger.info("Loading effect content from JSON config")
-                    import json
+                # Try to get pre-prepared source first (fast path)
+                pending_source = None
+                if self._content_preparer:
+                    pending_source = self._content_preparer.get_pending_source(
+                        expected_index=current_playlist_index,
+                        expected_filepath=current_item.filepath,
+                    )
+
+                if pending_source:
+                    # Use pre-prepared source (seamless transition)
+                    logger.info(f"Using pre-prepared content source for index {current_playlist_index}")
+                    self._current_source = pending_source
+                    self._current_item = current_item
+                    self._current_item_index = current_playlist_index
+                    self._is_first_frame_of_current_item = True
+                    self._content_finished_processed = False
+
+                    # Calculate global timestamp offset for this item
+                    self._update_global_timestamp_offset()
+
+                    # Update control state with current file
+                    self._control_state.set_current_file(current_item.filepath)
+
+                    # Adjust target FPS based on content
+                    if hasattr(self._current_source, "content_info"):
+                        content_fps = self._current_source.content_info.fps
+                        if content_fps > 0:
+                            self._target_fps = min(content_fps, 60.0)
+                            self._frame_interval = 1.0 / self._target_fps
+
+                    # Schedule pre-preparation of NEXT item
+                    item_duration = self._current_source.get_duration()
+                    if item_duration > 0:
+                        self._content_preparer.schedule_preparation(
+                            current_index=current_playlist_index,
+                            item_duration=item_duration,
+                        )
+
+                    logger.info(f"Pre-prepared content ready: {current_item.filepath} (fps: {self._target_fps})")
+                else:
+                    # Fall back to inline setup (no pre-prepared source available)
+                    # Check if this is an effect (JSON config)
+                    content_type = ContentSourceRegistry.detect_content_type(current_item.filepath)
+                    if content_type == ContentType.EFFECT:
+                        logger.info("Loading effect content from JSON config")
+                        import json
+
+                        try:
+                            config = json.loads(current_item.filepath)
+                            logger.info(f"Effect config: {config}")
+                        except Exception as e:
+                            logger.error(f"Failed to parse effect config: {e}")
+                    else:
+                        logger.info(f"Loading content (inline): {os.path.basename(current_item.filepath)}")
+
+                    self._current_source = current_item.get_content_source()
+                    self._current_item = current_item
+                    self._current_item_index = current_playlist_index
+                    self._is_first_frame_of_current_item = True
+                    self._content_finished_processed = False
+
+                    # Log the index update for debugging
+                    logger.debug(
+                        f"Loaded content at index {self._current_item_index}: {os.path.basename(current_item.filepath)}"
+                    )
+
+                    # Calculate global timestamp offset for this item
+                    self._update_global_timestamp_offset()
+
+                    if not self._current_source:
+                        logger.error(
+                            f"Failed to create content source for type {content_type}: {current_item.filepath[:100]}"
+                        )
+                        return False
+                    else:
+                        logger.info(f"Created content source: {type(self._current_source).__name__}")
+
+                    # Setup content source
+                    logger.info(f"Setting up content source {type(self._current_source).__name__}...")
+                    logger.debug(
+                        f"About to call setup() on {type(self._current_source).__name__} for {current_item.filepath}"
+                    )
 
                     try:
-                        config = json.loads(current_item.filepath)
-                        logger.info(f"Effect config: {config}")
-                    except Exception as e:
-                        logger.error(f"Failed to parse effect config: {e}")
-                else:
-                    logger.info(f"Loading content: {os.path.basename(current_item.filepath)}")
+                        setup_success = self._current_source.setup()
+                        logger.debug(f"setup() returned: {setup_success}")
 
-                self._current_source = current_item.get_content_source()
-                self._current_item = current_item
-                self._current_item_index = current_playlist_index  # Store the index that was atomically read
-                self._is_first_frame_of_current_item = True  # Reset flag for new item
-                self._content_finished_processed = False  # Reset flag for new content
+                        if not setup_success:
+                            logger.error(f"Failed to setup content: {current_item.filepath[:100]}")
+                            return False
 
-                # Log the index update for debugging
-                logger.debug(
-                    f"Loaded content at index {self._current_item_index}: {os.path.basename(current_item.filepath)}"
-                )
-
-                # Calculate global timestamp offset for this item
-                self._update_global_timestamp_offset()
-
-                if not self._current_source:
-                    logger.error(
-                        f"Failed to create content source for type {content_type}: {current_item.filepath[:100]}"
-                    )
-                    return False
-                else:
-                    logger.info(f"Created content source: {type(self._current_source).__name__}")
-
-                # Setup content source
-                logger.info(f"Setting up content source {type(self._current_source).__name__}...")
-                logger.debug(
-                    f"About to call setup() on {type(self._current_source).__name__} for {current_item.filepath}"
-                )
-
-                try:
-                    setup_success = self._current_source.setup()
-                    logger.debug(f"setup() returned: {setup_success}")
-
-                    if not setup_success:
-                        logger.error(f"Failed to setup content: {current_item.filepath[:100]}")
+                        logger.info(f"Content source setup successful, status={self._current_source.status}")
+                    except Exception as setup_error:
+                        logger.error(f"Exception during content source setup: {setup_error}", exc_info=True)
                         return False
 
-                    logger.info(f"Content source setup successful, status={self._current_source.status}")
-                except Exception as setup_error:
-                    logger.error(f"Exception during content source setup: {setup_error}", exc_info=True)
-                    return False
+                    # Update control state with current file
+                    self._control_state.set_current_file(current_item.filepath)
 
-                # Update control state with current file
-                self._control_state.set_current_file(current_item.filepath)
+                    # Adjust target FPS based on content
+                    if hasattr(self._current_source, "content_info"):
+                        content_fps = self._current_source.content_info.fps
+                        if content_fps > 0:
+                            self._target_fps = min(content_fps, 60.0)
+                            self._frame_interval = 1.0 / self._target_fps
 
-                # Adjust target FPS based on content
-                if hasattr(self._current_source, "content_info"):
-                    content_fps = self._current_source.content_info.fps
-                    if content_fps > 0:
-                        self._target_fps = min(content_fps, 60.0)  # Cap at 60 FPS
-                        self._frame_interval = 1.0 / self._target_fps
+                    # Schedule pre-preparation of next item
+                    if self._content_preparer:
+                        item_duration = self._current_source.get_duration()
+                        if item_duration > 0:
+                            self._content_preparer.schedule_preparation(
+                                current_index=current_playlist_index,
+                                item_duration=item_duration,
+                            )
 
-                if content_type == ContentType.EFFECT:
-                    logger.info(f"Loaded effect content (fps: {self._target_fps})")
-                else:
-                    logger.info(f"Loaded content: {current_item.filepath} (fps: {self._target_fps})")
+                    if content_type == ContentType.EFFECT:
+                        logger.info(f"Loaded effect content (fps: {self._target_fps})")
+                    else:
+                        logger.info(f"Loaded content: {current_item.filepath} (fps: {self._target_fps})")
             return True
 
     def _advance_to_next_content(self) -> None:
@@ -1562,7 +1619,22 @@ class ProducerProcess:
     def _on_playlist_sync_update(self, sync_state: SyncPlaylistState) -> None:
         """Handle playlist updates from synchronization service."""
         try:
-            old_index = self._playlist.get_current_index() if hasattr(self, "_playlist") else -1
+            old_index = self._playlist.get_current_index() if hasattr(self, "_playlist") else None
+            playlist_len = len(self._playlist) if hasattr(self, "_playlist") else 0
+
+            # Only invalidate pre-prepared content if this is NOT a natural advance to next item.
+            # Natural advance: old_index + 1 == new_index (or wrap from last to 0)
+            # Skip/reorder/etc: anything else should invalidate
+            if self._content_preparer and old_index is not None:
+                is_natural_advance = sync_state.current_index == old_index + 1 or (
+                    old_index == playlist_len - 1 and sync_state.current_index == 0
+                )
+                if not is_natural_advance:
+                    logger.debug(
+                        f"Non-sequential playlist change ({old_index} -> {sync_state.current_index}), "
+                        "invalidating pre-prepared content"
+                    )
+                    self._content_preparer.invalidate()
             logger.info(
                 f"Received playlist sync update: {len(sync_state.items)} items, "
                 f"index change: {old_index} -> {sync_state.current_index}, "
@@ -1690,6 +1762,11 @@ class ProducerProcess:
         try:
             # Stop if running
             self.stop()
+
+            # Clean up content preparer
+            if self._content_preparer:
+                self._content_preparer.cleanup()
+                self._content_preparer = None
 
             # Clean up playlist
             self._playlist.clear()
