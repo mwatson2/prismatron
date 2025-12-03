@@ -543,11 +543,15 @@ class NetworkManager:
             logger.error(f"Failed to disconnect: {e}")
             return False
 
-    async def enable_ap_mode(self, persist: bool = True) -> bool:
+    async def enable_ap_mode(self, persist: bool = False) -> bool:
         """Enable WiFi access point mode.
 
         Args:
-            persist: If True, AP mode will auto-start on boot (default: True)
+            persist: If True, AP mode will auto-start on boot (default: False).
+                     Note: We default to False because AP autoconnect can prevent
+                     the system from connecting to saved client networks on boot.
+                     AP fallback is handled by the system-level NetworkManager
+                     dispatcher script at /etc/NetworkManager/dispatcher.d/99-prismatron-ap-fallback
         """
         try:
             # Disconnect from any current connections
@@ -670,54 +674,33 @@ class NetworkManager:
             logger.error(f"Failed to disable AP mode: {e}")
             return False
 
-    async def ensure_connectivity(self, startup_delay: int = 10) -> str:
-        """Ensure network connectivity on startup.
+    async def get_connectivity_status(self) -> str:
+        """Report current network connectivity status.
 
-        Waits for system to establish connections, then checks if connected.
-        If no connection exists, enables AP mode as fallback.
-
-        Args:
-            startup_delay: Seconds to wait for system to establish connections
+        Note: AP fallback on boot is handled by the system-level NetworkManager
+        dispatcher script at /etc/NetworkManager/dispatcher.d/99-prismatron-ap-fallback
 
         Returns:
-            "client" if connected to WiFi, "ap" if AP mode was enabled
+            "client" if connected to WiFi, "ap" if in AP mode, "disconnected" otherwise
         """
-        logger.info(f"Checking network connectivity in {startup_delay} seconds...")
-        await asyncio.sleep(startup_delay)
-
         try:
-            # Check current network status
             status = await self.get_status()
 
             if status.connected and status.mode == NetworkMode.CLIENT:
-                logger.info(f"Network connectivity OK - connected to {status.ssid} ({status.ip_address})")
+                logger.info(f"Network status: client mode - {status.ssid} ({status.ip_address})")
                 return "client"
 
             elif status.mode == NetworkMode.AP:
-                logger.info(f"Already in AP mode - network available as {self.config.ap_config.ssid}")
+                logger.info(f"Network status: AP mode - {self.config.ap_config.ssid}")
                 return "ap"
 
             else:
-                logger.info("No network connectivity detected - enabling AP mode as fallback")
-                success = await self.enable_ap_mode(persist=True)
-
-                if success:
-                    logger.info(f"AP mode enabled - network available as {self.config.ap_config.ssid}")
-                    return "ap"
-                else:
-                    logger.error("Failed to enable AP mode - no network connectivity available")
-                    return "disconnected"
+                logger.info("Network status: disconnected")
+                return "disconnected"
 
         except Exception as e:
-            logger.error(f"Error checking network connectivity: {e}")
-            try:
-                # Try to enable AP mode as last resort
-                logger.info("Attempting AP mode as emergency fallback")
-                await self.enable_ap_mode(persist=True)
-                return "ap"
-            except Exception:
-                logger.error("Emergency AP mode failed - no network available")
-                return "disconnected"
+            logger.error(f"Error checking network status: {e}")
+            return "disconnected"
 
     async def switch_to_client_mode(self, ssid: str, password: Optional[str] = None) -> bool:
         """Switch from AP mode to client mode."""
@@ -732,14 +715,18 @@ class NetworkManager:
             logger.error(f"Failed to switch to client mode: {e}")
             raise NetworkManagerError(f"Failed to switch to client mode: {e}") from e
 
-    async def switch_to_ap_mode(self) -> bool:
-        """Switch from client mode to AP mode."""
+    async def switch_to_ap_mode(self, persist: bool = False) -> bool:
+        """Switch from client mode to AP mode.
+
+        Args:
+            persist: If True, AP mode will auto-start on boot (default: False)
+        """
         try:
             # Disconnect from client network
             await self.disconnect()
 
             # Enable AP mode
-            return await self.enable_ap_mode()
+            return await self.enable_ap_mode(persist=persist)
 
         except Exception as e:
             logger.error(f"Failed to switch to AP mode: {e}")

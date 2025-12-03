@@ -1019,18 +1019,21 @@ def main():
         from src.network.manager import NetworkManager
 
         async def setup_network():
-            """Setup network connectivity in background."""
+            """Log network connectivity status.
+
+            Note: AP fallback is handled by system-level NetworkManager dispatcher script.
+            """
             try:
                 nm = NetworkManager()
-                mode = await nm.ensure_connectivity(startup_delay=30)
+                mode = await nm.get_connectivity_status()
                 if mode == "client":
-                    logger.info("Network startup complete - WiFi client mode active")
+                    logger.info("Network status: WiFi client mode active")
                 elif mode == "ap":
-                    logger.info("Network startup complete - AP mode active (connect to 'prismatron' WiFi)")
+                    logger.info("Network status: AP mode active")
                 else:
-                    logger.warning("Network startup failed - no connectivity available")
+                    logger.info("Network status: disconnected (AP fallback handled by system)")
             except Exception as e:
-                logger.error(f"Network startup error: {e}")
+                logger.error(f"Network status check error: {e}")
 
         # Start network setup in background (don't block main process)
         import threading

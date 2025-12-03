@@ -1,0 +1,65 @@
+#!/bin/bash
+# Prismatron AP Fallback Script
+# Enables AP mode if no WiFi client connection is established after boot
+#
+# This runs independently of the Prismatron service to ensure the device
+# remains accessible even if the main service fails to start.
+#
+# INSTALLATION:
+#   sudo cp /mnt/dev/prismatron/tools/99-prismatron-ap-fallback /etc/NetworkManager/dispatcher.d/
+#   sudo chmod 755 /etc/NetworkManager/dispatcher.d/99-prismatron-ap-fallback
+#
+# TEST (simulates boot event):
+#   sudo /etc/NetworkManager/dispatcher.d/99-prismatron-ap-fallback lo up
+#
+# VIEW LOGS:
+#   journalctl -t prismatron-ap-fallback
+
+INTERFACE="$1"
+ACTION="$2"
+AP_CONNECTION="prismatron-ap"
+LOG_TAG="prismatron-ap-fallback"
+
+log() {
+    logger -t "$LOG_TAG" "$1"
+}
+
+# Only act on "up" events for the loopback interface (runs once at boot)
+if [[ "$ACTION" != "up" ]] || [[ "$INTERFACE" != "lo" ]]; then
+    exit 0
+fi
+
+log "Boot detected, scheduling AP fallback check..."
+
+# Run the check in background so we don't block NetworkManager
+(
+    # Wait for NetworkManager to attempt client connections
+    sleep 30
+
+    # Check if we have an active WiFi client connection
+    ACTIVE_WIFI=$(nmcli -t -f TYPE,STATE device status | grep "^wifi:connected" || true)
+
+    if [[ -n "$ACTIVE_WIFI" ]]; then
+        log "WiFi client connection active, no fallback needed"
+        exit 0
+    fi
+
+    # Check if AP is already active
+    AP_ACTIVE=$(nmcli -t -f NAME connection show --active | grep "^${AP_CONNECTION}$" || true)
+
+    if [[ -n "$AP_ACTIVE" ]]; then
+        log "AP mode already active"
+        exit 0
+    fi
+
+    # No client connection and no AP - enable AP mode
+    log "No WiFi connection after 30s, enabling AP fallback..."
+
+    if nmcli connection up "$AP_CONNECTION" 2>&1; then
+        log "AP mode enabled successfully"
+    else
+        log "ERROR: Failed to enable AP mode"
+    fi
+) &
+
+exit 0
