@@ -121,6 +121,7 @@ class SystemStatus:
 
     # Audio reactive effects control
     audio_reactive_enabled: bool = False
+    use_audio_test_file: bool = True  # True = test file, False = live microphone
 
     # Audio reactive trigger configuration (new framework)
     audio_reactive_trigger_config: dict = None  # Dictionary with test_interval and rules list

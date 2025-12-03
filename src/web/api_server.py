@@ -3357,6 +3357,56 @@ async def set_beat_brightness_settings(request: BeatBrightnessRequest):
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+class AudioSourceRequest(BaseModel):
+    """Request model for audio source setting."""
+
+    use_test_file: bool = Field(..., description="True = use test audio file, False = use live microphone")
+
+
+@app.get("/api/settings/audio-source")
+async def get_audio_source():
+    """Get current audio source setting (test file vs live microphone)."""
+    try:
+        use_test_file = True  # Default to test file
+
+        if control_state:
+            try:
+                status = control_state.get_status()
+                if status:
+                    use_test_file = getattr(status, "use_audio_test_file", True)
+            except Exception as e:
+                logger.warning(f"Failed to get audio source status: {e}")
+
+        return {
+            "use_test_file": use_test_file,
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get audio source setting: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/settings/audio-source")
+async def set_audio_source(request: AudioSourceRequest):
+    """Set audio source (test file vs live microphone)."""
+    try:
+        # Update in control state if available
+        if control_state:
+            control_state.update_status(use_audio_test_file=request.use_test_file)
+            source_name = "test file" if request.use_test_file else "live microphone"
+            logger.info(f"Updated audio source to {source_name}")
+        else:
+            logger.warning("Control state not available - audio source setting not updated")
+
+        await manager.broadcast({"type": "audio_source_changed", "use_test_file": request.use_test_file})
+
+        return {"use_test_file": request.use_test_file, "status": "updated"}
+
+    except Exception as e:
+        logger.error(f"Failed to set audio source: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 # ========================================================================================
 # Audio Reactive Trigger Configuration (New Framework)
 # ========================================================================================
@@ -3752,14 +3802,22 @@ async def perform_restart():
 async def reboot_system():
     """Reboot the entire device."""
     try:
+        logger.info("Reboot request received via API")
+
         # Send reboot signal via control state
         if control_state:
+            logger.info("Signaling reboot via control state")
             control_state.signal_reboot()
+        else:
+            logger.error("Control state not available - cannot signal reboot")
+            raise HTTPException(status_code=503, detail="Control state not available")
 
         await manager.broadcast({"type": "system_reboot", "timestamp": time.time()})
 
         return {"status": "reboot_initiated", "message": "Device reboot initiated"}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to reboot system: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e

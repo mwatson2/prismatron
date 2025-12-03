@@ -600,8 +600,10 @@ class ProcessManager:
         self.stop_all_processes()
 
         try:
-            # Only works on Linux with appropriate permissions
-            os.system("sudo reboot")
+            # Use full path for reboot command
+            # Requires sudoers rule: mark ALL=(ALL) NOPASSWD: /sbin/reboot
+            logger.info("Executing sudo /sbin/reboot...")
+            os.system("sudo /sbin/reboot")
         except Exception as e:
             logger.error(f"Failed to reboot system: {e}")
 

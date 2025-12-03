@@ -36,8 +36,7 @@ from .wled_sink import WLEDSink, WLEDSinkConfig
 
 logger = logging.getLogger(__name__)
 
-# Audio capture configuration - switch between test file and live microphone
-USE_AUDIO_TEST_FILE = True  # Set to False for live microphone capture
+# Audio capture configuration
 AUDIO_TEST_FILE_PATH = "whereyouare.wav"  # Path to test audio file
 
 
@@ -160,45 +159,12 @@ class ConsumerProcess:
         self._audio_analysis_running = False
         self._audio_device = audio_device
 
-        # Create AudioConfig - test file or live microphone based on constant
-        if USE_AUDIO_TEST_FILE:
-            audio_config = AudioConfig(
-                sample_rate=44100,
-                channels=1,
-                chunk_size=1024,
-                file_path=AUDIO_TEST_FILE_PATH,  # Test file mode
-                playback_speed=1.0,  # Real-time playback
-            )
-        else:
-            audio_config = AudioConfig(
-                sample_rate=44100,
-                channels=1,
-                chunk_size=1024,
-                device_name="USB Audio",  # Will search for USB Audio device
-                file_path=None,  # Live microphone mode
-            )
+        # Track current audio source setting for dynamic switching
+        # Default to test file mode - will be updated from ControlState at runtime
+        self._use_audio_test_file = True
 
-        # Always try to initialize audio analyzer for potential runtime enabling
-        try:
-            self._audio_beat_analyzer = AudioBeatAnalyzer(
-                beat_callback=self._on_beat_detected,
-                builddrop_callback=self._on_builddrop_event,
-                device=audio_device,
-                audio_config=audio_config,
-                enable_builddrop_detection=True,  # Enable build-drop detection
-            )
-            mode_str = (
-                f"FILE MODE: {AUDIO_TEST_FILE_PATH}"
-                if USE_AUDIO_TEST_FILE
-                else f"LIVE MODE: device={audio_config.device_name}"
-            )
-            logger.info(
-                f"Audio beat analyzer initialized with build-drop detection ({mode_str}), "
-                f"sample_rate={audio_config.sample_rate}Hz"
-            )
-        except Exception as e:
-            logger.warning(f"Audio beat analyzer unavailable: {e}")
-            self._audio_beat_analyzer = None
+        # Initialize audio analyzer with default config (will be recreated if setting changes)
+        self._init_audio_beat_analyzer()
 
         # Note: Playlist sync handled by producer, consumer just tracks rendered items
         # WLED and LED buffer will be created after LED optimizer loads pattern file
@@ -346,15 +312,92 @@ class ConsumerProcess:
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
 
+    def _init_audio_beat_analyzer(self) -> None:
+        """Initialize or reinitialize audio beat analyzer with current settings."""
+        # Create AudioConfig based on current audio source setting
+        if self._use_audio_test_file:
+            audio_config = AudioConfig(
+                sample_rate=44100,
+                channels=1,
+                chunk_size=1024,
+                file_path=AUDIO_TEST_FILE_PATH,  # Test file mode
+                playback_speed=1.0,  # Real-time playback
+            )
+        else:
+            audio_config = AudioConfig(
+                sample_rate=44100,
+                channels=1,
+                chunk_size=1024,
+                device_name="USB Audio",  # Will search for USB Audio device
+                file_path=None,  # Live microphone mode
+            )
+
+        # Always try to initialize audio analyzer for potential runtime enabling
+        try:
+            self._audio_beat_analyzer = AudioBeatAnalyzer(
+                beat_callback=self._on_beat_detected,
+                builddrop_callback=self._on_builddrop_event,
+                device=self._audio_device,
+                audio_config=audio_config,
+                enable_builddrop_detection=True,  # Enable build-drop detection
+            )
+            mode_str = (
+                f"FILE MODE: {AUDIO_TEST_FILE_PATH}"
+                if self._use_audio_test_file
+                else f"LIVE MODE: device={audio_config.device_name}"
+            )
+            logger.info(
+                f"Audio beat analyzer initialized with build-drop detection ({mode_str}), "
+                f"sample_rate={audio_config.sample_rate}Hz"
+            )
+        except Exception as e:
+            logger.warning(f"Audio beat analyzer unavailable: {e}")
+            self._audio_beat_analyzer = None
+
     def _update_audio_reactive_state(self):
         """Check control state and start/stop audio analysis as needed."""
-        if not self._audio_beat_analyzer:
-            return  # Audio analyzer not available
-
         try:
             # Get current control state
             status = self._control_state.get_status()
-            should_be_running = status and status.audio_reactive_enabled
+            if not status:
+                return
+
+            # Check for audio source change (test file vs live microphone)
+            use_test_file = getattr(status, "use_audio_test_file", True)
+            if use_test_file != self._use_audio_test_file:
+                logger.info(
+                    f"Audio source changed: {'test file' if use_test_file else 'live microphone'} -> "
+                    f"reinitializing audio analyzer"
+                )
+
+                # Stop current audio analysis if running
+                if self._audio_analysis_running and self._audio_beat_analyzer:
+                    try:
+                        self._audio_beat_analyzer.stop_analysis()
+                        self._audio_analysis_running = False
+                    except Exception as e:
+                        logger.error(f"Failed to stop audio analysis during source change: {e}")
+
+                # Update setting and reinitialize analyzer
+                self._use_audio_test_file = use_test_file
+                self._init_audio_beat_analyzer()
+
+                # Restart analysis if it should be running
+                if status.audio_reactive_enabled and self._audio_beat_analyzer:
+                    try:
+                        self._audio_beat_analyzer.start_analysis()
+                        self._audio_analysis_running = True
+                        self._control_state.update_status(audio_enabled=True)
+                        logger.info("Audio analysis restarted after source change")
+                    except Exception as e:
+                        logger.error(f"Failed to restart audio analysis: {e}")
+
+                return  # Skip rest of state update after reinit
+
+            if not self._audio_beat_analyzer:
+                return  # Audio analyzer not available
+
+            should_be_running = status.audio_reactive_enabled
 
             # Start audio analysis if needed
             if should_be_running and not self._audio_analysis_running:
