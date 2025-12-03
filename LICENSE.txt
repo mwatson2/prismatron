@@ -1,0 +1,58 @@
+# Prismatron Licensing
+
+This project uses a dual-license structure:
+
+- **Software and source code** are licensed under the Polyform Noncommercial License 1.0.0
+- **Documentation, designs, images, and other non-code assets** are licensed under Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)
+
+Both licenses permit personal use, research, education, and art projects with attribution. Commercial use requires a separate license — contact [YOUR EMAIL] to discuss.
+
+---
+
+## Software License: Polyform Noncommercial 1.0.0
+
+Applies to: all files with extensions .py, .cpp, .c, .h, .ino, .js, .ts, .rs, .go, .sh, and any other source code files.
+
+Full license text: https://polyformproject.org/licenses/noncommercial/1.0.0/
+
+### Summary (not a substitute for the full license):
+
+- ✓ Use, modify, and share for non-commercial purposes
+- ✓ Attribution required
+- ✗ Commercial use prohibited without separate license
+
+---
+
+## Non-Code License: CC BY-NC 4.0
+
+Applies to: documentation, schematics, CAD files, images, diagrams, written content, and all other non-software materials.
+
+Full license text: https://creativecommons.org/licenses/by-nc/4.0/legalcode
+
+### Summary (not a substitute for the full license):
+
+- ✓ Share and adapt for non-commercial purposes
+- ✓ Attribution required
+- ✗ Commercial use prohibited without separate license
+
+---
+
+## Attribution
+
+When using or adapting this work, please credit:
+
+    Prismatron by [YOUR NAME]
+    https://[YOUR PROJECT URL]
+    Licensed under Polyform NC 1.0.0 (code) and CC BY-NC 4.0 (other materials)
+
+---
+
+## Commercial Licensing
+
+If you wish to use Prismatron or any of its components in a commercial product or service, please contact [YOUR EMAIL] to discuss licensing terms.
+
+---
+
+## Questions
+
+If you're unsure whether your use case qualifies as non-commercial, feel free to reach out at [YOUR EMAIL].
