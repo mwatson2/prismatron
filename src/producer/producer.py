@@ -876,8 +876,22 @@ class ProducerProcess:
             # Don't try to load content if we're waiting for sync service to respond
             # This prevents race condition where we load stale content before sync update arrives
             if self._waiting_for_sync_response:
-                logger.debug("Waiting for sync service response before loading content")
-                return False
+                # Check for timeout - if we've been waiting too long, clear the flag and proceed
+                # This prevents permanent lockup if sync service doesn't respond
+                if hasattr(self, "_content_finished_time"):
+                    wait_time = time.time() - self._content_finished_time
+                    if wait_time > 5.0:
+                        logger.warning(
+                            f"Sync service response timeout after {wait_time:.1f}s - clearing wait flag and proceeding"
+                        )
+                        self._waiting_for_sync_response = False
+                        # Fall through to load content from current playlist state
+                    else:
+                        logger.debug("Waiting for sync service response before loading content")
+                        return False
+                else:
+                    logger.debug("Waiting for sync service response before loading content")
+                    return False
 
             # Atomically get current playlist item and index to avoid race conditions
             current_item, current_playlist_index = self._playlist.get_current_item_and_index()
