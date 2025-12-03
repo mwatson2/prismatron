@@ -9,7 +9,10 @@ import {
   ExclamationTriangleIcon,
   SignalIcon,
   ShieldCheckIcon,
-  ArrowPathIcon
+  ArrowPathIcon,
+  SpeakerWaveIcon,
+  MicrophoneIcon,
+  DocumentIcon
 } from '@heroicons/react/24/outline'
 import { useWebSocket } from '../hooks/useWebSocket'
 
@@ -28,9 +31,15 @@ const SettingsPage = () => {
   const [networkMessage, setNetworkMessage] = useState(null)
   const [scanning, setScanning] = useState(false)
 
+  // Audio state
+  const [audioSource, setAudioSource] = useState({ useTestFile: true })
+  const [audioLoading, setAudioLoading] = useState(false)
+  const [audioMessage, setAudioMessage] = useState(null)
+
   useEffect(() => {
     fetchSettings()
     fetchNetworkStatus()
+    fetchAudioSource()
   }, [])
 
   const fetchSettings = async () => {
@@ -225,6 +234,48 @@ const SettingsPage = () => {
     }
   }
 
+  // Audio source management functions
+  const fetchAudioSource = async () => {
+    try {
+      const response = await fetch('/api/settings/audio-source')
+      if (response.ok) {
+        const data = await response.json()
+        setAudioSource({ useTestFile: data.use_test_file })
+      }
+    } catch (error) {
+      console.error('Failed to fetch audio source:', error)
+    }
+  }
+
+  const setAudioSourceMode = async (useTestFile) => {
+    setAudioLoading(true)
+    setAudioMessage(null)
+    try {
+      const response = await fetch('/api/settings/audio-source', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ use_test_file: useTestFile })
+      })
+
+      if (response.ok) {
+        setAudioSource({ useTestFile })
+        const sourceName = useTestFile ? 'Test File' : 'Live Microphone'
+        setAudioMessage({ type: 'success', message: `Audio source changed to ${sourceName}` })
+        setTimeout(() => setAudioMessage(null), 3000)
+      } else {
+        const error = await response.json()
+        setAudioMessage({ type: 'error', message: error.detail || 'Failed to change audio source' })
+      }
+    } catch (error) {
+      console.error('Failed to set audio source:', error)
+      setAudioMessage({ type: 'error', message: 'Failed to change audio source' })
+    } finally {
+      setAudioLoading(false)
+    }
+  }
+
   // System management functions
   const handleRestart = async () => {
     if (!confirm('Are you sure you want to restart the application? The system will be unavailable for a few seconds.')) {
@@ -257,8 +308,27 @@ const SettingsPage = () => {
   }
 
   const handleReboot = async () => {
-    // Placeholder for future implementation
-    alert('System reboot is not yet implemented. This will be available once the systemd service is configured.')
+    if (!confirm('Are you sure you want to reboot the device? The system will be unavailable for about a minute.')) {
+      return
+    }
+
+    try {
+      setSaveStatus({ type: 'info', message: 'Rebooting device...' })
+
+      const response = await fetch('/api/system/reboot', {
+        method: 'POST'
+      })
+
+      if (response.ok) {
+        setSaveStatus({ type: 'info', message: 'Device is rebooting. Please wait...' })
+      } else {
+        throw new Error('Failed to reboot device')
+      }
+    } catch (error) {
+      console.error('Failed to reboot:', error)
+      setSaveStatus({ type: 'error', message: 'Failed to reboot device' })
+      setTimeout(() => setSaveStatus(null), 3000)
+    }
   }
 
   const pollForReconnection = async () => {
@@ -595,6 +665,76 @@ const SettingsPage = () => {
         </div>
       </div>
 
+      {/* Audio Settings */}
+      <div className="retro-container">
+        <h3 className="text-lg font-retro text-neon-pink mb-4 flex items-center gap-2">
+          <SpeakerWaveIcon className="w-5 h-5" />
+          AUDIO SETTINGS
+        </h3>
+
+        <div className="space-y-6">
+          {/* Audio Source Selection */}
+          <div>
+            <label className="block text-sm font-retro text-neon-cyan mb-2">
+              AUDIO SOURCE
+            </label>
+            <p className="text-xs text-metal-silver font-mono mb-3">
+              Select audio input for beat detection and audio-reactive effects
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => setAudioSourceMode(true)}
+                disabled={audioLoading}
+                className={`p-4 border rounded-retro cursor-pointer transition-colors flex flex-col items-center gap-2 ${
+                  audioSource.useTestFile
+                    ? 'border-neon-cyan bg-neon-cyan bg-opacity-10 text-neon-cyan'
+                    : 'border-metal-silver border-opacity-30 hover:border-neon-cyan hover:border-opacity-50 text-metal-silver'
+                } ${audioLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                <DocumentIcon className="w-8 h-8" />
+                <span className="text-sm font-retro font-bold">TEST FILE</span>
+                <span className="text-xs font-mono opacity-70">whereyouare.wav</span>
+              </button>
+              <button
+                onClick={() => setAudioSourceMode(false)}
+                disabled={audioLoading}
+                className={`p-4 border rounded-retro cursor-pointer transition-colors flex flex-col items-center gap-2 ${
+                  !audioSource.useTestFile
+                    ? 'border-neon-cyan bg-neon-cyan bg-opacity-10 text-neon-cyan'
+                    : 'border-metal-silver border-opacity-30 hover:border-neon-cyan hover:border-opacity-50 text-metal-silver'
+                } ${audioLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                <MicrophoneIcon className="w-8 h-8" />
+                <span className="text-sm font-retro font-bold">MICROPHONE</span>
+                <span className="text-xs font-mono opacity-70">USB Audio Device</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Audio Status Message */}
+          {audioMessage && (
+            <div className={`retro-container border ${
+              audioMessage.type === 'success'
+                ? 'border-neon-green border-opacity-50 bg-neon-green bg-opacity-10'
+                : 'border-neon-orange border-opacity-50 bg-neon-orange bg-opacity-10'
+            }`}>
+              <div className="flex items-center gap-3">
+                {audioMessage.type === 'success' ? (
+                  <InformationCircleIcon className="w-6 h-6 text-neon-green" />
+                ) : (
+                  <ExclamationTriangleIcon className="w-6 h-6 text-neon-orange" />
+                )}
+                <p className={`font-mono text-sm ${
+                  audioMessage.type === 'success' ? 'text-neon-green' : 'text-neon-orange'
+                }`}>
+                  {audioMessage.message}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* System Settings */}
       <div className="retro-container">
         <h3 className="text-lg font-retro text-neon-orange mb-4 flex items-center gap-2">
@@ -747,10 +887,9 @@ const SettingsPage = () => {
             </div>
             <button
               onClick={handleReboot}
-              disabled={true}
-              className="retro-button px-4 py-2 text-metal-silver text-sm font-retro font-bold cursor-not-allowed opacity-50"
-              title="System reboot not yet implemented"
+              className="retro-button px-4 py-2 text-neon-orange text-sm font-retro font-bold hover:bg-neon-orange hover:bg-opacity-10 transition-colors"
             >
+              <PowerIcon className="w-4 h-4 inline mr-2" />
               REBOOT
             </button>
           </div>
