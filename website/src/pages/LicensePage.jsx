@@ -90,10 +90,10 @@ export default function LicensePage() {
           <p className="text-neon-cyan font-mono text-sm">
             Prismatron by Mark Watson —{' '}
             <a
-              href="https://prismatron.info"
+              href="https://prismatron.net"
               className="text-neon-pink hover:underline"
             >
-              prismatron.info
+              prismatron.net
             </a>
           </p>
         </div>
