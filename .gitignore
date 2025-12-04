@@ -198,27 +198,33 @@ cython_debug/
 diffusion_patterns/
 patterns_*.npz
 
-# Test images
-test_images/
+# Generated template files (large numpy arrays)
+templates/*.npy
 
-# Uploads directory - user uploaded files for testing
+# Runtime directories
 uploads/
-
-# Video conversion temp directory
-temp_conversions/
-
-# Media directory - uploaded video/image files
 media/
-
-# Playlists - runtime generated playlist files
 playlists/
 
-# Timing data and performance logs
-timing.csv
-timing/
-experiments/
+# Local directory for temporary debug/visualization files
+local/
 
-# Root-level PNG and LOG files
+# Working documents
+PLAN.md
+open-issues.md
+prismatron-website-copy.md
+WEBSITE_LICENSE_TEXT.md
+CLEANUP_PROPOSAL.md
+Bill of Materials*.csv
+
+# Runtime configs (in config/ directory)
+config/audio_config.json
+
+# Logs directory
+logs/
+
+# Root-level image/audio files
 /*.png
-/*.log
+/*.jpg
 /*.wav
+*.svg

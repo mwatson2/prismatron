@@ -527,7 +527,7 @@ def main():
     parser.add_argument("--usb", action="store_true", help="Use USB camera instead of CSI camera")
     parser.add_argument("--resolution", default="1920x1080", help="Camera resolution (WxH), e.g. 1920x1080, 1280x720")
     parser.add_argument("--list-resolutions", action="store_true", help="List supported camera resolutions and exit")
-    parser.add_argument("--output-config", default="camera.json", help="Output configuration file path (.json)")
+    parser.add_argument("--output-config", default="config/camera.json", help="Output configuration file path (.json)")
     parser.add_argument("--test-capture", action="store_true", help="Just test camera capture and save a frame")
     parser.add_argument(
         "--flip-image", action="store_true", help="Flip image 180 degrees (for upside-down camera mounting)"

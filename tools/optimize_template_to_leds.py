@@ -185,7 +185,7 @@ def main():
     parser.add_argument(
         "--config",
         type=str,
-        default="config.json",
+        default="config/config.json",
         help="Path to config.json file",
     )
 

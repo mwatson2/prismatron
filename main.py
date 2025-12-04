@@ -189,7 +189,7 @@ class ProcessManager:
                     console_handler = logging.StreamHandler()
                     console_handler.setFormatter(formatter)
 
-                    log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prismatron.log")
+                    log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "prismatron.log")
                     file_handler = logging.FileHandler(log_file_path, mode="a")
                     file_handler.setFormatter(formatter)
 
@@ -263,7 +263,7 @@ class ProcessManager:
                     console_handler = logging.StreamHandler()
                     console_handler.setFormatter(formatter)
 
-                    log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prismatron.log")
+                    log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "prismatron.log")
                     file_handler = logging.FileHandler(log_file_path, mode="a")
                     file_handler.setFormatter(formatter)
 
@@ -337,7 +337,7 @@ class ProcessManager:
                     console_handler = logging.StreamHandler()
                     console_handler.setFormatter(formatter)
 
-                    log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prismatron.log")
+                    log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "prismatron.log")
                     file_handler = logging.FileHandler(log_file_path, mode="a")
                     file_handler.setFormatter(formatter)
 
@@ -447,7 +447,7 @@ class ProcessManager:
                     console_handler = logging.StreamHandler()
                     console_handler.setFormatter(formatter)
 
-                    log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prismatron.log")
+                    log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "prismatron.log")
                     file_handler = logging.FileHandler(log_file_path, mode="a")
                     file_handler.setFormatter(formatter)
 
@@ -678,7 +678,7 @@ def setup_logging(debug: bool = False) -> None:
     level = logging.DEBUG if debug else logging.INFO
 
     # Clear the log file on startup
-    log_file = "prismatron.log"
+    log_file = "logs/prismatron.log"
     try:
         with open(log_file, "w") as f:
             f.write("")  # Clear the file
@@ -827,8 +827,15 @@ def daemonize():
     os.close(devnull)
 
 
-def load_config_file(config_path: str = "config.json") -> Dict:
+# Get the project root directory (where main.py is located)
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "config.json")
+
+
+def load_config_file(config_path: str = None) -> Dict:
     """Load configuration from JSON file."""
+    if config_path is None:
+        config_path = DEFAULT_CONFIG_PATH
     config = {}
     if os.path.exists(config_path):
         try:
@@ -839,6 +846,8 @@ def load_config_file(config_path: str = "config.json") -> Dict:
             logger.info(f"Loaded configuration from {config_path}")
         except Exception as e:
             logger.warning(f"Failed to load config file {config_path}: {e}")
+    else:
+        logger.warning(f"Config file not found: {config_path}")
     return config
 
 
@@ -847,16 +856,14 @@ def main():
 
     # Parse just the config argument first to know which config file to load
     parser_config = argparse.ArgumentParser(add_help=False)
-    parser_config.add_argument("--config", default="config.json", help="Path to configuration file")
+    parser_config.add_argument("--config", default=DEFAULT_CONFIG_PATH, help="Path to configuration file")
     config_args, remaining = parser_config.parse_known_args()
 
     # Load default configuration from specified file
     file_config = load_config_file(config_args.config)
 
     parser = argparse.ArgumentParser(description="Prismatron LED Display System")
-    parser.add_argument(
-        "--config", default=config_args.config, help="Path to configuration file (default: config.json)"
-    )
+    parser.add_argument("--config", default=config_args.config, help="Path to configuration file")
     parser.add_argument(
         "--debug", action="store_true", default=file_config.get("debug", False), help="Enable debug logging"
     )

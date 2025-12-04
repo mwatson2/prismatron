@@ -24,7 +24,7 @@ ExecStartPre=-/bin/bash -c 'rm -f /dev/shm/prismatron_* 2>/dev/null || true'
 ExecStartPre=-/bin/bash -c 'umask 0002'
 
 # Main execution
-ExecStart=/home/mark/dev/prismatron/env/bin/python /home/mark/dev/prismatron/main.py --config /home/mark/dev/prismatron/config.json
+ExecStart=/home/mark/dev/prismatron/env/bin/python /home/mark/dev/prismatron/main.py --config /home/mark/dev/prismatron/config/config.json
 
 # Graceful shutdown
 ExecStop=/bin/kill -TERM $MAINPID

@@ -31,7 +31,7 @@ class LogRotator:
     Keeps one backup copy (prismatron.1.log) for a total of ~200MB max log storage.
     """
 
-    def __init__(self, log_file_path: str = "prismatron.log", check_interval: int = 300):
+    def __init__(self, log_file_path: str = "logs/prismatron.log", check_interval: int = 300):
         """
         Initialize log rotator.
 
@@ -286,7 +286,7 @@ class LogRotator:
 _global_rotator: Optional[LogRotator] = None
 
 
-def get_log_rotator(log_file_path: str = "prismatron.log", check_interval: int = 300) -> LogRotator:
+def get_log_rotator(log_file_path: str = "logs/prismatron.log", check_interval: int = 300) -> LogRotator:
     """
     Get the global log rotator instance (singleton pattern).
 
@@ -305,7 +305,7 @@ def get_log_rotator(log_file_path: str = "prismatron.log", check_interval: int =
     return _global_rotator
 
 
-def start_log_rotation(log_file_path: str = "prismatron.log", check_interval: int = 300) -> bool:
+def start_log_rotation(log_file_path: str = "logs/prismatron.log", check_interval: int = 300) -> bool:
     """
     Start global log rotation.
 

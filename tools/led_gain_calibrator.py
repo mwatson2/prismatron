@@ -979,7 +979,7 @@ def main():
     parser.add_argument("--camera-device", type=int, default=0, help="Camera device ID")
     parser.add_argument("--usb", action="store_true", help="Use USB camera instead of CSI camera")
     parser.add_argument(
-        "--camera-config", default="camera.json", help="Camera configuration JSON file with crop region"
+        "--camera-config", default="config/camera.json", help="Camera configuration JSON file with crop region"
     )
     parser.add_argument("--resolution", default="1920x1080", help="Camera resolution (WxH), e.g. 1920x1080, 1280x720")
     parser.add_argument("--list-resolutions", action="store_true", help="List supported camera resolutions and exit")

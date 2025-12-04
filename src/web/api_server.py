@@ -761,7 +761,7 @@ UPLOAD_DIR = Path("uploads")
 MEDIA_DIR = Path("media")
 THUMBNAILS_DIR = Path("thumbnails")
 PLAYLISTS_DIR = Path("playlists")
-AUDIO_CONFIG_FILE = Path("audio_config.json")
+AUDIO_CONFIG_FILE = Path("config/audio_config.json")
 
 # Ensure directories exist
 for dir_path in [UPLOAD_DIR, MEDIA_DIR, THUMBNAILS_DIR, PLAYLISTS_DIR]:
