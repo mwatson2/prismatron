@@ -1124,6 +1124,13 @@ async def startup_event():
         try:
             control_state.update_status(audio_reactive_trigger_config=saved_config)
             logger.info(f"Loaded audio config from disk: {len(saved_config.get('rules', []))} rules")
+
+            # Load audio source setting (use_test_file) if present
+            if "use_test_file" in saved_config:
+                use_test_file = saved_config["use_test_file"]
+                control_state.update_status(use_audio_test_file=use_test_file)
+                source_name = "test file" if use_test_file else "live microphone"
+                logger.info(f"Loaded audio source setting from disk: {source_name}")
         except Exception as e:
             logger.error(f"Failed to apply saved audio config to control state: {e}")
 
@@ -3390,13 +3397,20 @@ async def get_audio_source():
 async def set_audio_source(request: AudioSourceRequest):
     """Set audio source (test file vs live microphone)."""
     try:
+        source_name = "test file" if request.use_test_file else "live microphone"
+
         # Update in control state if available
         if control_state:
             control_state.update_status(use_audio_test_file=request.use_test_file)
-            source_name = "test file" if request.use_test_file else "live microphone"
             logger.info(f"Updated audio source to {source_name}")
         else:
             logger.warning("Control state not available - audio source setting not updated")
+
+        # Persist to audio_config.json
+        saved_config = load_audio_config() or {}
+        saved_config["use_test_file"] = request.use_test_file
+        save_audio_config(saved_config)
+        logger.info(f"Saved audio source setting to disk: {source_name}")
 
         await manager.broadcast({"type": "audio_source_changed", "use_test_file": request.use_test_file})
 

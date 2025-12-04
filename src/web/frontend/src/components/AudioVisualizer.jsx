@@ -149,6 +149,7 @@ const DecayingMeter = ({
   const startTimeRef = useRef(0)
   const peakTimeRef = useRef(0)
   const peakValueRef = useRef(0) // Store peak value at time of setting
+  const displayValueRef = useRef(0) // Track display value in ref to avoid race
 
   // Store config in refs to avoid recreating animate callback
   const decayMsRef = useRef(decayMs)
@@ -166,7 +167,12 @@ const DecayingMeter = ({
     const elapsed = now - startTimeRef.current
     const progress = Math.min(1, elapsed / decayMsRef.current)
     const newValue = targetValueRef.current * (1 - progress)
-    setDisplayValue(newValue)
+
+    // Only update if value actually changed significantly
+    if (Math.abs(newValue - displayValueRef.current) > 0.001) {
+      displayValueRef.current = newValue
+      setDisplayValue(newValue)
+    }
 
     // Decay peak value linearly over peakDecayMs
     let peakStillDecaying = false
@@ -192,7 +198,8 @@ const DecayingMeter = ({
       startTimeRef.current = Date.now()
 
       // Update peak if new value is higher than current decayed peak
-      if (trackPeak && value > peakValue) {
+      // Use ref to get current peak value to avoid stale closure
+      if (trackPeak && value > peakValueRef.current) {
         setPeakValue(value)
         peakValueRef.current = value // Store for linear decay calculation
         peakTimeRef.current = Date.now()
@@ -203,11 +210,17 @@ const DecayingMeter = ({
         cancelAnimationFrame(animationRef.current)
       }
 
-      // Set initial value and start decay animation
+      // Set initial value immediately via ref and state
+      displayValueRef.current = value
       setDisplayValue(value)
-      animationRef.current = requestAnimationFrame(animate)
+
+      // Delay animation start by one frame to ensure state is committed
+      // This prevents the first animate() call from racing with setDisplayValue
+      animationRef.current = requestAnimationFrame(() => {
+        animationRef.current = requestAnimationFrame(animate)
+      })
     }
-  }, [lastEventTime, value, animate, trackPeak, peakValue])
+  }, [lastEventTime, value, animate, trackPeak]) // Removed peakValue dependency
 
   // Cleanup on unmount only
   useEffect(() => {

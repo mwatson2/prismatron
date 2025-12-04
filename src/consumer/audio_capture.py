@@ -18,6 +18,7 @@ from typing import Callable, Optional
 
 import numpy as np
 import sounddevice as sd
+from scipy import signal as scipy_signal
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,107 @@ class AGCConfig:
     max_gain_db: float = 20.0  # Maximum gain in dB (10x multiplier)
     min_gain_db: float = -20.0  # Minimum gain in dB (0.1x multiplier)
     noise_gate_threshold: float = 0.01  # Below this RMS, freeze gain increase
+
+
+@dataclass
+class BassBoostConfig:
+    """Configuration for bass boost EQ filter.
+
+    Compensates for poor low-frequency response in typical USB microphones.
+    Uses a low-shelf filter to boost frequencies below the cutoff.
+    """
+
+    enabled: bool = True  # Enable/disable bass boost
+    gain_db: float = 6.0  # Boost amount in dB (default +6dB based on mic analysis)
+    cutoff_hz: float = 150.0  # Corner frequency in Hz
+    q_factor: float = 0.707  # Q factor (0.707 = Butterworth, no resonance)
+
+
+class BassBoostFilter:
+    """
+    Low-shelf filter for bass boost compensation.
+
+    Compensates for the poor low-frequency response typical of USB microphones.
+    Uses a biquad low-shelf filter design.
+    """
+
+    def __init__(self, config: BassBoostConfig, sample_rate: int):
+        """
+        Initialize bass boost filter.
+
+        Args:
+            config: Bass boost configuration
+            sample_rate: Audio sample rate in Hz
+        """
+        self.config = config
+        self.sample_rate = sample_rate
+
+        # Design the low-shelf biquad filter
+        self.b, self.a = self._design_low_shelf(config.gain_db, config.cutoff_hz, sample_rate, config.q_factor)
+
+        # Filter state for continuity between chunks (zi for lfilter_zi)
+        self.zi = scipy_signal.lfilter_zi(self.b, self.a)
+
+        logger.info(
+            f"BassBoost initialized: gain={config.gain_db:+.1f}dB, "
+            f"cutoff={config.cutoff_hz:.0f}Hz, Q={config.q_factor:.2f}"
+        )
+
+    def _design_low_shelf(
+        self, gain_db: float, cutoff_hz: float, sample_rate: int, Q: float
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Design a low-shelf biquad filter.
+
+        Args:
+            gain_db: Gain in dB (positive = boost, negative = cut)
+            cutoff_hz: Corner frequency in Hz
+            sample_rate: Sample rate in Hz
+            Q: Q factor (controls slope steepness)
+
+        Returns:
+            Tuple of (b, a) filter coefficients
+        """
+        A = 10 ** (gain_db / 40)  # Amplitude
+        w0 = 2 * np.pi * cutoff_hz / sample_rate
+        alpha = np.sin(w0) / (2 * Q)
+
+        cos_w0 = np.cos(w0)
+        sqrt_A = np.sqrt(A)
+
+        b0 = A * ((A + 1) - (A - 1) * cos_w0 + 2 * sqrt_A * alpha)
+        b1 = 2 * A * ((A - 1) - (A + 1) * cos_w0)
+        b2 = A * ((A + 1) - (A - 1) * cos_w0 - 2 * sqrt_A * alpha)
+        a0 = (A + 1) + (A - 1) * cos_w0 + 2 * sqrt_A * alpha
+        a1 = -2 * ((A - 1) + (A + 1) * cos_w0)
+        a2 = (A + 1) + (A - 1) * cos_w0 - 2 * sqrt_A * alpha
+
+        b = np.array([b0 / a0, b1 / a0, b2 / a0])
+        a = np.array([1.0, a1 / a0, a2 / a0])
+
+        return b, a
+
+    def process(self, audio_chunk: np.ndarray) -> np.ndarray:
+        """
+        Apply bass boost filter to audio chunk.
+
+        Args:
+            audio_chunk: Input audio samples (float32)
+
+        Returns:
+            Filtered audio chunk
+        """
+        if not self.config.enabled:
+            return audio_chunk
+
+        # Apply filter with state continuity
+        output, self.zi = scipy_signal.lfilter(self.b, self.a, audio_chunk, zi=self.zi * audio_chunk[0])
+
+        return output.astype(np.float32)
+
+    def reset(self):
+        """Reset filter state."""
+        self.zi = scipy_signal.lfilter_zi(self.b, self.a)
 
 
 class AutomaticGainControl:
@@ -192,6 +294,7 @@ class AudioConfig:
     file_path: Optional[str] = None  # Path to audio file (test mode)
     playback_speed: float = 1.0  # Playback speed multiplier for file mode (1.0 = realtime)
     agc: Optional[AGCConfig] = None  # AGC configuration (None = disabled, AGCConfig() = enabled with defaults)
+    bass_boost: Optional[BassBoostConfig] = None  # Bass boost EQ (None = disabled, BassBoostConfig() = enabled)
 
 
 class AudioCapture:
@@ -249,6 +352,14 @@ class AudioCapture:
                 config=self.config.agc,
                 sample_rate=self.config.sample_rate,
                 chunk_size=self.config.chunk_size,
+            )
+
+        # Initialize bass boost if configured (only for live mode)
+        self.bass_boost: Optional[BassBoostFilter] = None
+        if not self.file_mode and self.config.bass_boost is not None:
+            self.bass_boost = BassBoostFilter(
+                config=self.config.bass_boost,
+                sample_rate=self.config.sample_rate,
             )
 
         # File mode info
@@ -395,6 +506,10 @@ class AudioCapture:
             # Apply AGC if enabled
             if self.agc is not None:
                 audio_chunk = self.agc.process(audio_chunk)
+
+            # Apply bass boost EQ if enabled (after AGC to boost normalized signal)
+            if self.bass_boost is not None:
+                audio_chunk = self.bass_boost.process(audio_chunk)
 
             # Update statistics
             self.total_samples_captured += len(audio_chunk)

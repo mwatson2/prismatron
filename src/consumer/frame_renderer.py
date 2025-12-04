@@ -154,6 +154,10 @@ class EffectTriggerManager:
         Checks common rules first (always active), then carousel rules (rotating).
         Uses first-match semantics - stops after first matching rule.
 
+        Note: Beat intensity is accumulated over 3 audio frames (~35ms) for accuracy.
+        If beat_intensity_ready is False, we skip this frame and wait for intensity
+        to be finalized. The original beat timestamp is still used for effect timing.
+
         Args:
             frame_timeline_time: Current time on frame timeline
             beat_state: AudioBeatState from beat analyzer
@@ -163,6 +167,14 @@ class EffectTriggerManager:
         # Check if this is a new beat we haven't processed yet
         if last_beat_wallclock_time <= self._last_beat_time_processed:
             return  # Already processed this beat
+
+        # Check if beat intensity is ready (accumulated over 3 frames)
+        # If not ready, skip this frame - we'll process on the next frame when intensity is available
+        beat_intensity_ready = getattr(beat_state, "beat_intensity_ready", True)
+        if not beat_intensity_ready:
+            # Beat detected but intensity still accumulating - wait for next frame
+            # This adds ~20-35ms latency but gives much more accurate intensity
+            return
 
         # Convert beat wall-clock time to frame timeline
         beat_frame_timeline_time = last_beat_wallclock_time - wallclock_delta

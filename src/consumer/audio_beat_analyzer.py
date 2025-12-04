@@ -98,7 +98,8 @@ class AudioState:
     downbeat_count: int = 0
     beats_per_measure: int = 4
     confidence: float = 0.0
-    beat_intensity: float = 0.0  # Last beat's RMS intensity (0.0-1.0)
+    beat_intensity: float = 0.0  # Last beat's accumulated bass energy intensity (0.0-1.0)
+    beat_intensity_ready: bool = True  # False while accumulating bass energy for current beat
     current_rms: float = 0.0  # Continuous RMS audio level (EWMA smoothed)
     # Build-up/drop detection state
     buildup_state: str = "NORMAL"  # NORMAL or BUILDUP
@@ -901,6 +902,17 @@ class AudioBeatAnalyzer:
         self.last_status_log = 0.0
         self.last_beat_audio_timestamp = 0.0  # Track last beat in audio time, not wall clock
 
+        # Bass energy accumulator for beat intensity calculation
+        # Instead of using RMS of the onset frame, we accumulate bass energy over 3 frames
+        # (onset frame + 2 subsequent frames) for more accurate beat intensity
+        self._pending_beat_timestamp: Optional[float] = None  # Audio timestamp of pending beat
+        self._pending_beat_wallclock: Optional[float] = None  # Wall-clock time of pending beat
+        self._pending_beat_bpm: float = 120.0  # BPM at time of pending beat
+        self._pending_beat_confidence: float = 0.8  # Confidence at time of pending beat
+        self._bass_energy_accumulator: float = 0.0  # Accumulated bass energy
+        self._bass_energy_frames_remaining: int = 0  # Frames left to accumulate (0 = no pending beat)
+        self._bass_energy_frames_total: int = 3  # Total frames to accumulate (onset + 2)
+
         # Aubio doesn't use GPU - always CPU-based but very fast
         self.device = "cpu"  # Aubio is CPU-only but optimized
 
@@ -1025,6 +1037,7 @@ class AudioBeatAnalyzer:
             self.total_frames_processed += 1
 
             # Process build-up/drop detection if enabled
+            builddrop_result = None  # Initialize to None for bass energy extraction
             if self.builddrop_detector is not None:
                 # Update BPM in detector from current audio state
                 if self.audio_state.current_bpm > 0:
@@ -1122,6 +1135,56 @@ class AudioBeatAnalyzer:
                     except Exception as e:
                         logger.error(f"Build-drop callback submission error: {e}")
 
+            # Get bass energy from builddrop_result if available (for beat intensity)
+            # This provides spectral bass energy which is more accurate than RMS
+            # Fall back to RMS-based energy if builddrop detection is not enabled
+            current_bass_energy = 0.0
+            use_bass_energy = False
+            if self.builddrop_detector is not None and builddrop_result is not None:
+                current_bass_energy = builddrop_result.get("bass_energy", 0.0)
+                use_bass_energy = True
+            else:
+                # Fallback: use RMS energy when builddrop detection is not available
+                # Scale RMS (typically 0-0.5) to similar range as bass energy (0-200)
+                current_bass_energy = float(np.sqrt(np.mean(audio_frame**2))) * 400.0
+
+            # === Bass energy accumulation for pending beat ===
+            # Accumulate bass energy over 3 frames after beat detection for more accurate intensity
+            if self._bass_energy_frames_remaining > 0:
+                self._bass_energy_accumulator += current_bass_energy
+                self._bass_energy_frames_remaining -= 1
+
+                # Check if accumulation is complete
+                if self._bass_energy_frames_remaining == 0:
+                    # Compute final beat intensity from accumulated bass energy
+                    # Normalize by number of frames and scale to [0, 1] range
+                    # Bass energy values are typically in range 0-1000+ depending on audio level
+                    accumulated_bass = self._bass_energy_accumulator / self._bass_energy_frames_total
+                    # Scale to approximately [0, 1] - bass energy of ~100 maps to 0.5
+                    beat_intensity = min(1.0, accumulated_bass / 200.0)
+
+                    logger.debug(
+                        f"Beat intensity finalized: accumulated_bass={self._bass_energy_accumulator:.2f}, "
+                        f"avg={accumulated_bass:.2f}, intensity={beat_intensity:.3f}, "
+                        f"use_bass_energy={use_bass_energy}"
+                    )
+
+                    # Send the completed beat to the queue
+                    try:
+                        self.beat_queue.put_nowait(
+                            (self._pending_beat_timestamp, 0.1, self._pending_beat_wallclock, beat_intensity)
+                        )
+                        logger.debug(
+                            f"Beat queued (with accumulated intensity): beat_count={self.total_beats_detected}, "
+                            f"intensity={beat_intensity:.3f}"
+                        )
+                    except queue.Full:
+                        logger.warning("Beat queue full - dropping beat event")
+
+                    # Clear pending beat state
+                    self._pending_beat_timestamp = None
+                    self._pending_beat_wallclock = None
+
             if beat_detected:
                 # Calculate timestamp relative to audio start (in audio time, not wall clock)
                 audio_timestamp = (self.total_frames_processed * self.hop_size) / self.capture_rate
@@ -1134,16 +1197,11 @@ class AudioBeatAnalyzer:
                     self.beat_times.append(audio_timestamp)
                     self.total_beats_detected += 1
 
-                    # Calculate beat intensity from RMS of audio frame
-                    # RMS gives us the energy/strength of the beat
-                    beat_intensity = float(np.sqrt(np.mean(audio_frame**2)))
-
                     # Log beat detection timing (DEBUG level for latency tracking)
                     logger.debug(
                         f"Beat detected: audio_time={audio_timestamp:.3f}s, "
                         f"wall_time={current_time:.3f}, "
-                        f"detection_latency={detection_latency_ms:.1f}ms, "
-                        f"intensity={beat_intensity:.3f}"
+                        f"detection_latency={detection_latency_ms:.1f}ms"
                     )
 
                     # Calculate BPM from aubio and intervals
@@ -1178,22 +1236,22 @@ class AudioBeatAnalyzer:
                     if self.total_beats_detected <= 10 or np.random.random() < 0.1:
                         logger.debug(f"🎵 Aubio beat detected: BPM={current_bpm:.1f}, confidence={confidence:.3f}")
 
-                    # Send to beat queue with intensity
-                    try:
-                        queue_time = time.time()
-                        self.beat_queue.put_nowait(
-                            (audio_timestamp, 0.1, current_time, beat_intensity)
-                        )  # Non-blocking put
-                        queue_latency_ms = (queue_time - current_time) * 1000
-                        logger.debug(
-                            f"Beat queued: beat_count={self.total_beats_detected}, "
-                            f"queue_depth={self.beat_queue.qsize()}, "
-                            f"queue_latency={queue_latency_ms:.2f}ms, "
-                            f"intensity={beat_intensity:.3f}"
-                        )
-                    except queue.Full:
-                        # Drop beat event if queue is full to avoid blocking audio thread
-                        logger.warning("Beat queue full - dropping beat event to maintain audio performance")
+                    # Start bass energy accumulation instead of immediately sending beat
+                    # Store pending beat info and start accumulating
+                    self._pending_beat_timestamp = audio_timestamp
+                    self._pending_beat_wallclock = current_time
+                    self._pending_beat_bpm = current_bpm
+                    self._pending_beat_confidence = confidence
+                    self._bass_energy_accumulator = current_bass_energy  # Include onset frame
+                    self._bass_energy_frames_remaining = self._bass_energy_frames_total - 1  # -1 for onset frame
+
+                    # Update audio state to indicate beat detected but intensity pending
+                    self.audio_state.beat_intensity_ready = False
+
+                    logger.debug(
+                        f"Beat pending: starting {self._bass_energy_frames_total}-frame bass energy accumulation, "
+                        f"onset_bass={current_bass_energy:.2f}"
+                    )
 
         # Periodic status logging
         current_time = time.time()
@@ -1238,7 +1296,7 @@ class AudioBeatAnalyzer:
             beat_timestamp: Beat time in audio timeline (seconds)
             downbeat_prob: Probability of downbeat (>0.5 = downbeat)
             system_time: Wall-clock time when beat was detected
-            intensity: Beat intensity from RMS energy (0.0-1.0)
+            intensity: Beat intensity from accumulated bass energy (0.0-1.0)
         """
         # Check if this is a new beat (avoid duplicates with tolerance)
         if abs(beat_timestamp - self.audio_state.last_beat_time) < 0.1:
@@ -1260,9 +1318,9 @@ class AudioBeatAnalyzer:
         self.audio_state.current_bpm = bpm
         self.audio_state.confidence = confidence
         self.audio_state.beat_intensity = intensity  # Store intensity for renderer access
+        self.audio_state.beat_intensity_ready = True  # Mark intensity as ready (accumulation complete)
 
-        # Use the RMS-based intensity passed from audio processing
-        # (intensity is already calculated from the audio frame that triggered the beat)
+        # Note: intensity is now from accumulated bass energy over 3 frames, not single-frame RMS
 
         # Create beat event
         beat_event = BeatEvent(

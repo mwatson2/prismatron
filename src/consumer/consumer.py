@@ -24,7 +24,7 @@ from ..utils.frame_drop_rate_ewma import FrameDropRateEwma
 from ..utils.frame_timing import FrameTimingData, FrameTimingLogger
 from .adaptive_frame_dropper import AdaptiveFrameDropper
 from .audio_beat_analyzer import AudioBeatAnalyzer, BeatEvent, BuildDropEvent
-from .audio_capture import AudioConfig
+from .audio_capture import AGCConfig, AudioConfig, BassBoostConfig
 from .frame_renderer import FrameRenderer
 from .led_buffer import LEDBuffer
 from .led_effect import TemplateEffectFactory
@@ -330,6 +330,8 @@ class ConsumerProcess:
                 chunk_size=1024,
                 device_name="USB Audio",  # Will search for USB Audio device
                 file_path=None,  # Live microphone mode
+                agc=AGCConfig(),  # Enable AGC with default settings for live mic
+                bass_boost=BassBoostConfig(),  # Enable bass boost EQ to compensate for mic response
             )
 
         # Always try to initialize audio analyzer for potential runtime enabling
