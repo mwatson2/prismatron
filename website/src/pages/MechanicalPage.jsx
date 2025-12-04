@@ -26,7 +26,7 @@ export default function MechanicalPage() {
             <ul className="text-metal-silver space-y-1 text-sm">
               <li>• 1/4" textured acrylic sheet (60" × 36")</li>
               <li>• Creates unique, irregular light patterns from each LED</li>
-              <li>• Mounted with edge-grip standoffs for a clean, hole-free appearance</li>
+              <li>• Mounted with cylindrical aluminium standoffs close to the edges</li>
               <li>• The texture transforms point sources into organic light shapes</li>
             </ul>
           </div>
@@ -34,10 +34,9 @@ export default function MechanicalPage() {
           <div className="border-l-2 border-neon-pink pl-4">
             <h3 className="font-retro text-neon-pink mb-2">Back Panel — The Heat Sink</h3>
             <ul className="text-metal-silver space-y-1 text-sm">
-              <li>• 3mm 6061 aluminum sheet (slightly oversized to accommodate edge grips)</li>
+              <li>• 3mm 6061 aluminum sheet, CNC rounded corners and mounting holes</li>
               <li>• Provides structural rigidity and thermal management</li>
               <li>• Dissipates heat from 3,200 LEDs without requiring active cooling</li>
-              <li>• Anodized finish improves thermal radiation</li>
             </ul>
           </div>
 
@@ -65,8 +64,8 @@ export default function MechanicalPage() {
         </h2>
         <p className="text-metal-silver mb-4">
           The back panel attaches to a standard VESA TV mount, making Prismatron easy to hang
-          on walls or mount on stands. The front panel floats in front, held by edge-grip
-          standoffs that create a clean, frameless appearance.
+          on walls or mount on stands. The front panel floats in front, held by cylindrical post
+          standoffs. We used an off-the-shelf TV Easel mount to install in any enviroment.
         </p>
 
         <div className="bg-dark-800 p-4 rounded border border-neon-cyan/20">

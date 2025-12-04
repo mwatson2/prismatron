@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Outlet, NavLink, useLocation } from 'react-router-dom'
-import { Menu, X, Cpu, Zap, Box, Code, Music, Settings, Home, FileText, Smartphone, Scale } from 'lucide-react'
+import { Menu, X, Cpu, Zap, Box, Code, Music, Settings, Home, FileText, Smartphone, Scale, ShoppingCart } from 'lucide-react'
 import clsx from 'clsx'
 import Footer from './Footer'
 
@@ -14,6 +14,7 @@ const navItems = [
   { path: '/software', label: 'Software', icon: Settings },
   { path: '/control-app', label: 'Control App', icon: Smartphone },
   { path: '/specs', label: 'Specifications', icon: FileText },
+  { path: '/bom', label: 'Bill of Materials', icon: ShoppingCart },
   { path: '/license', label: 'License', icon: Scale },
 ]
 

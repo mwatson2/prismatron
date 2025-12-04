@@ -15,8 +15,22 @@ export default function HomePage() {
         <h1 className="font-retro text-4xl md:text-6xl text-neon-cyan text-neon-strong mb-4 animate-glow">
           PRISMATRON
         </h1>
-        <p className="text-xl md:text-2xl text-neon-pink mb-6">
+        <p className="text-xl md:text-2xl text-neon-pink mb-4">
           A computational LED display where chaos becomes coherent
+        </p>
+        <p className="text-sm text-metal-silver mb-6 flex items-center justify-center gap-2">
+          Made with help from
+          <a
+            href="https://claude.ai/code"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-neon-orange hover:text-neon-pink transition-colors"
+          >
+            <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
+              <path d="M4.709 15.955l4.72-2.647.08-.08 2.958-1.665c.084-.05.2-.05.283 0l2.958 1.665.08.08 4.72 2.647c.26.147.26.537 0 .683l-4.72 2.648-.08.079-2.958 1.665c-.084.05-.2.05-.283 0l-2.958-1.665-.08-.08-4.72-2.647c-.26-.146-.26-.536 0-.683zM12 3c.103 0 .205.026.297.078l7.5 4.25c.185.104.297.298.297.508v8.328c0 .21-.112.404-.297.508l-7.5 4.25c-.184.104-.41.104-.594 0l-7.5-4.25C4.018 16.568 3.906 16.374 3.906 16.164V7.836c0-.21.112-.404.297-.508l7.5-4.25C11.795 3.026 11.897 3 12 3z"/>
+            </svg>
+            Claude Code
+          </a>
         </p>
         <p className="text-metal-silver max-w-2xl mx-auto text-lg leading-relaxed">
           3,200 LEDs. Randomly arranged. Mathematically orchestrated. Prismatron transforms
@@ -53,13 +67,10 @@ export default function HomePage() {
           </p>
           <p>
             The magic happens in software. By photographing the exact diffusion pattern of
-            every single LED, we create a mathematical model of the display. An optimization
-            algorithm then calculates the precise brightness for each LED to best approximate
-            any target image—turning random chaos into coherent visuals.
-          </p>
-          <p>
-            The result is something that feels alive. Images emerge from the noise with an
-            organic, almost dreamlike quality that grid-based displays can't replicate.
+            every single LED, we create a mathematical model of the display. Them, 67Tflops of finest
+            Kuang-grade Nvidia silicon runs a real-time optimization
+            algorithm that calculates the precise brightness for each LED to best approximate
+            any target image or video—turning random chaos into coherent visuals.
           </p>
         </div>
       </motion.section>
@@ -77,23 +88,30 @@ export default function HomePage() {
           asks a different question: what if we embraced imperfection and let computation
           bridge the gap?
         </p>
-        <p className="text-metal-silver mb-4">This project explores the intersection of:</p>
+        <p className="text-metal-silver mb-6">As well as a lot of fun with an exciting result, this project was in large part a learning opportunity:</p>
         <ul className="space-y-2 text-metal-silver">
           <li className="flex items-start gap-2">
             <span className="text-neon-cyan">•</span>
-            <span><strong className="text-neon-cyan">Computational photography</strong> — using calibration to understand how physical systems behave</span>
+            <span><strong className="text-neon-cyan">Mechanical Engineering</strong> — nothing I had done before - who knew acrylic could
+             be made more rigid by installing with a very slight bow - and how much weight do we need to stop the thing blowing over in a Burning Man dust storm
+            ?</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="text-neon-cyan">•</span>
-            <span><strong className="text-neon-cyan">Optimization theory</strong> — finding the best solution among billions of possibilities</span>
+            <span><strong className="text-neon-cyan">Electrical / LEDs</strong> — turns out there's a whole world of LED engineering to draw on</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="text-neon-cyan">•</span>
-            <span><strong className="text-neon-cyan">Generative art</strong> — creating visuals with emergent, organic qualities</span>
+            <span><strong className="text-neon-cyan">GPU optimization, modern tensor cores</strong> — did you know headline GPU speeds are valid only if you
+            happen to be calculating exactly the right kind of thing ? (basically an AI matrix multiplication)</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="text-neon-cyan">•</span>
-            <span><strong className="text-neon-cyan">Audio-reactive systems</strong> — responding to music in real-time</span>
+            <span><strong className="text-neon-cyan">Audio-reactive systems</strong> — how do we process audio to extract music features</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="text-neon-cyan">•</span>
+            <span><strong className="text-neon-cyan">AI assistance and coding</strong> — this project would not have been possible (in the time available) without Claude</span>
           </li>
         </ul>
         <p className="text-metal-silver mt-6">

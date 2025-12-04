@@ -9,6 +9,7 @@ import AudioPage from './pages/AudioPage'
 import SoftwarePage from './pages/SoftwarePage'
 import ControlAppPage from './pages/ControlAppPage'
 import SpecsPage from './pages/SpecsPage'
+import BOMPage from './pages/BOMPage'
 import LicensePage from './pages/LicensePage'
 
 export default function App() {
@@ -24,6 +25,7 @@ export default function App() {
         <Route path="software" element={<SoftwarePage />} />
         <Route path="control-app" element={<ControlAppPage />} />
         <Route path="specs" element={<SpecsPage />} />
+        <Route path="bom" element={<BOMPage />} />
         <Route path="license" element={<LicensePage />} />
       </Route>
     </Routes>

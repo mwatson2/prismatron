@@ -31,7 +31,7 @@ export default function ElectricalPage() {
         </div>
 
         <p className="text-metal-silver">
-          The LEDs are arranged in organic, curving patterns rather than straight lines.
+          The LEDs are arranged in organic, random patterns rather than straight lines.
           String lights provide point sources with natural spacing, while LED strips fill
           denser areas. This intentional irregularity is what gives Prismatron its unique character.
         </p>
@@ -107,13 +107,13 @@ export default function ElectricalPage() {
           The Jetson calculates LED values and sends them over WiFi using the DDP
           (Distributed Display Protocol)—a simple UDP-based protocol supported by WLED.
           This eliminates the need for wired connections between the compute unit and
-          LED controller.
+          LED controller, although we also do have an Ethernet connection.
         </p>
 
         <p className="text-metal-silver">
           The QuinLED DigiOcta runs WLED firmware and drives 8 parallel LED data outputs,
-          enabling fast refresh rates across all 3,200 LEDs. Each output handles a segment
-          of the display, with the controller managing timing-critical LED protocol generation.
+          enabling fast refresh rates across all 3,200 LEDs. Each output handles a subset
+          of the LEDs, with the controller managing timing-critical LED data generation.
         </p>
 
         <div className="mt-6 p-4 retro-panel rounded border border-neon-purple/30">
