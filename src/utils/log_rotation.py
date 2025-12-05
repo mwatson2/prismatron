@@ -19,6 +19,10 @@ from pathlib import Path
 from typing import Optional
 
 from const import LOG_MAX_SIZE_MB
+from src.paths import get_log_file_path
+
+# Default log file path from centralized paths module
+_DEFAULT_LOG_FILE = str(get_log_file_path())
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +35,7 @@ class LogRotator:
     Keeps one backup copy (prismatron.1.log) for a total of ~200MB max log storage.
     """
 
-    def __init__(self, log_file_path: str = "logs/prismatron.log", check_interval: int = 300):
+    def __init__(self, log_file_path: str = _DEFAULT_LOG_FILE, check_interval: int = 300):
         """
         Initialize log rotator.
 
@@ -286,7 +290,7 @@ class LogRotator:
 _global_rotator: Optional[LogRotator] = None
 
 
-def get_log_rotator(log_file_path: str = "logs/prismatron.log", check_interval: int = 300) -> LogRotator:
+def get_log_rotator(log_file_path: str = _DEFAULT_LOG_FILE, check_interval: int = 300) -> LogRotator:
     """
     Get the global log rotator instance (singleton pattern).
 
@@ -305,7 +309,7 @@ def get_log_rotator(log_file_path: str = "logs/prismatron.log", check_interval: 
     return _global_rotator
 
 
-def start_log_rotation(log_file_path: str = "logs/prismatron.log", check_interval: int = 300) -> bool:
+def start_log_rotation(log_file_path: str = _DEFAULT_LOG_FILE, check_interval: int = 300) -> bool:
     """
     Start global log rotation.
 

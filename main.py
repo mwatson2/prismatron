@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 # from src.consumer.consumer import ConsumerProcess
 from src.core.control_state import ControlState, PlayState, SystemState
 from src.core.playlist_sync import PlaylistSyncService
+from src.paths import LOGS_DIR, get_log_file_path
 from src.producer.producer import ProducerProcess
 from src.web.api_server import run_server
 
@@ -678,7 +679,7 @@ def setup_logging(debug: bool = False) -> None:
     level = logging.DEBUG if debug else logging.INFO
 
     # Clear the log file on startup
-    log_file = "logs/prismatron.log"
+    log_file = get_log_file_path()
     try:
         with open(log_file, "w") as f:
             f.write("")  # Clear the file

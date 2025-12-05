@@ -7,16 +7,19 @@ Wants=network-online.target
 [Service]
 Type=simple
 
-WorkingDirectory=/home/mark/dev/prismatron
+WorkingDirectory=/mnt/dev/prismatron
 
 # Environment setup
-Environment="PYTHONPATH=/home/mark/dev/prismatron"
-Environment="PATH=/home/mark/dev/prismatron/env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="PYTHONPATH=/mnt/dev/prismatron"
+Environment="PATH=/mnt/dev/prismatron/env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="PYTHONUNBUFFERED=1"
 Environment="DISPLAY=:99"
 Environment="XDG_SESSION_TYPE=x11"
 Environment="LD_LIBRARY_PATH=/usr/local/cuda/lib64"
 Environment="CUDA_HOME=/usr/local/cuda"
+
+# Runtime data storage on SSD (avoids slow SD card)
+Environment="PRISMATRON_ROOT=/mnt/prismatron"
 
 # Pre-start cleanup (remove stale shared memory)
 ExecStartPre=-/bin/bash -c 'rm -f /dev/shm/prismatron_* 2>/dev/null || true'
@@ -24,7 +27,7 @@ ExecStartPre=-/bin/bash -c 'rm -f /dev/shm/prismatron_* 2>/dev/null || true'
 ExecStartPre=-/bin/bash -c 'umask 0002'
 
 # Main execution
-ExecStart=/home/mark/dev/prismatron/env/bin/python /home/mark/dev/prismatron/main.py --config /home/mark/dev/prismatron/config/config.json
+ExecStart=/mnt/dev/prismatron/env/bin/python /mnt/dev/prismatron/main.py --config /mnt/prismatron/config/config.json
 
 # Graceful shutdown
 ExecStop=/bin/kill -TERM $MAINPID

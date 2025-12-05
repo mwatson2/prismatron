@@ -81,9 +81,11 @@ class ConversionManager:
         self.shutdown_event = threading.Event()
         self.lock = threading.Lock()
 
-        # Ensure temp directory exists
-        self.temp_dir = Path(config.get("temp_directory", "temp_conversions"))
-        self.temp_dir.mkdir(exist_ok=True)
+        # Use centralized paths module for temp directory
+        from src.paths import TEMP_CONVERSIONS_DIR, UPLOADS_DIR
+
+        self.temp_dir = TEMP_CONVERSIONS_DIR
+        self.uploads_dir = UPLOADS_DIR
 
         logger.info(f"ConversionManager initialized with temp directory: {self.temp_dir}")
 
@@ -110,12 +112,12 @@ class ConversionManager:
         """Queue a video file for conversion."""
         job_id = str(uuid.uuid4())
 
-        # Input file is already in temp_conversions with _upload suffix
+        # Input file is already in temp conversions dir with _upload suffix
         # Output will be temp_conversions/{base_name}_converted.mp4
         # Final destination will be uploads/{original_name}
         base_name = Path(original_name).stem
         temp_output = self.temp_dir / f"{base_name}_converted.mp4"
-        final_output = Path("uploads") / original_name
+        final_output = self.uploads_dir / original_name
 
         job = ConversionJob(
             id=job_id,

@@ -756,16 +756,17 @@ playlist_sync_client: Optional[PlaylistSyncClient] = None
 UPLOADS_PLAYLIST_NAME = "Uploads Playlist.json"
 UPLOADS_PLAYLIST_MAX_ITEMS = 8
 
-# File storage paths
-UPLOAD_DIR = Path("uploads")
-MEDIA_DIR = Path("media")
-THUMBNAILS_DIR = Path("thumbnails")
-PLAYLISTS_DIR = Path("playlists")
-AUDIO_CONFIG_FILE = Path("config/audio_config.json")
+# File storage paths - imported from centralized paths module
+from src.paths import (
+    AUDIO_CONFIG_FILE,
+    MEDIA_DIR,
+    PLAYLISTS_DIR,
+    TEMP_CONVERSIONS_DIR,
+    THUMBNAILS_DIR,
+)
+from src.paths import UPLOADS_DIR as UPLOAD_DIR
 
-# Ensure directories exist
-for dir_path in [UPLOAD_DIR, MEDIA_DIR, THUMBNAILS_DIR, PLAYLISTS_DIR]:
-    dir_path.mkdir(exist_ok=True)
+# Note: directories are auto-created by src.paths module on import
 
 # Import the visual effects system
 try:
@@ -2312,13 +2313,10 @@ async def upload_file(
         # Generate unique ID for playlist item
         file_id = str(uuid.uuid4())
 
-        # Use original filename and save to temp_conversions with _upload suffix
+        # Use original filename and save to temp conversions dir with _upload suffix
         original_name = name or file.filename or f"uploaded_file.{file_ext}"
         base_name = Path(original_name).stem
-        temp_file_path = Path("temp_conversions") / f"{base_name}_upload.{file_ext}"
-
-        # Ensure temp_conversions directory exists
-        temp_file_path.parent.mkdir(exist_ok=True)
+        temp_file_path = TEMP_CONVERSIONS_DIR / f"{base_name}_upload.{file_ext}"
 
         # Save uploaded file to temp location
         with open(temp_file_path, "wb") as buffer:
