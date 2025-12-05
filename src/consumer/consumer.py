@@ -37,7 +37,7 @@ from .wled_sink import WLEDSink, WLEDSinkConfig
 logger = logging.getLogger(__name__)
 
 # Audio capture configuration
-AUDIO_TEST_FILE_PATH = "whereyouare.wav"  # Path to test audio file
+AUDIO_TEST_FILE_PATH = "local/whereyouare.wav"  # Path to test audio file
 
 
 @dataclass

@@ -693,9 +693,12 @@ def setup_logging(debug: bool = False) -> None:
     root_logger.handlers = []
 
     # Create handlers
+    # Console handler: WARNING+ only (these go to journalctl when running as systemd service)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
+    console_handler.setLevel(logging.WARNING)
 
+    # File handler: full logging level (DEBUG or INFO based on --debug flag)
     file_handler = logging.FileHandler(log_file)
     file_handler.setFormatter(formatter)
 

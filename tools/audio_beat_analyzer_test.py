@@ -1534,7 +1534,7 @@ def main():
     else:
         # Default to audio_capture_test.wav in project root
         project_root = Path(__file__).parent.parent
-        audio_file = project_root / "whereyouare.wav"
+        audio_file = project_root / "local" / "whereyouare.wav"
 
     if not audio_file.exists():
         logger.error(f"Audio file not found: {audio_file}")
