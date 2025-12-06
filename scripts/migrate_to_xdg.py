@@ -6,7 +6,9 @@ This script moves runtime data from the old in-repo locations to the SSD
 storage location at /mnt/prismatron (avoiding the small SD card at ~/).
 
 Old locations (in repo):          New locations (/mnt/prismatron):
-    config/                   ->  /mnt/prismatron/config/
+    config/config.json        ->  /mnt/prismatron/config/config.json
+    config/camera.json        ->  /mnt/prismatron/config/camera.json
+    config/audio_config.json  ->  /mnt/prismatron/config/audio_config.json
     logs/                     ->  /mnt/prismatron/data/logs/
     media/                    ->  /mnt/prismatron/data/media/
     uploads/                  ->  /mnt/prismatron/data/uploads/
@@ -48,6 +50,8 @@ PATTERNS_DIR = DATA_DIR / "patterns"
 TEMP_CONVERSIONS_DIR = CACHE_DIR / "conversions"
 
 # Config files
+CONFIG_FILE = CONFIG_DIR / "config.json"
+CAMERA_CONFIG_FILE = CONFIG_DIR / "camera.json"
 AUDIO_CONFIG_FILE = CONFIG_DIR / "audio_config.json"
 
 # All directories that need to be created
@@ -65,6 +69,8 @@ ALL_DIRS = [
 
 # Mapping of old paths to new paths
 MIGRATIONS = [
+    (PROJECT_ROOT / "config" / "config.json", CONFIG_FILE),
+    (PROJECT_ROOT / "config" / "camera.json", CAMERA_CONFIG_FILE),
     (PROJECT_ROOT / "config" / "audio_config.json", AUDIO_CONFIG_FILE),
     (PROJECT_ROOT / "logs", LOGS_DIR),
     (PROJECT_ROOT / "media", MEDIA_DIR),
