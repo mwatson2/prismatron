@@ -13,7 +13,6 @@ Old locations (in repo):          New locations (/mnt/prismatron):
     playlists/                ->  /mnt/prismatron/data/playlists/
     diffusion_patterns/       ->  /mnt/prismatron/data/patterns/
     temp_conversions/         ->  /mnt/prismatron/cache/conversions/
-    thumbnails/               ->  /mnt/prismatron/data/thumbnails/
 
 The service file (scripts/prismatron-user.service) sets PRISMATRON_ROOT=/mnt/prismatron
 which configures src/paths.py to use these locations.
@@ -43,7 +42,6 @@ MEDIA_DIR = DATA_DIR / "media"
 UPLOADS_DIR = DATA_DIR / "uploads"
 PLAYLISTS_DIR = DATA_DIR / "playlists"
 LOGS_DIR = DATA_DIR / "logs"
-THUMBNAILS_DIR = DATA_DIR / "thumbnails"
 PATTERNS_DIR = DATA_DIR / "patterns"
 
 # Cache subdirectories
@@ -61,7 +59,6 @@ ALL_DIRS = [
     UPLOADS_DIR,
     PLAYLISTS_DIR,
     LOGS_DIR,
-    THUMBNAILS_DIR,
     PATTERNS_DIR,
     TEMP_CONVERSIONS_DIR,
 ]
@@ -75,7 +72,6 @@ MIGRATIONS = [
     (PROJECT_ROOT / "playlists", PLAYLISTS_DIR),
     (PROJECT_ROOT / "diffusion_patterns", PATTERNS_DIR),
     (PROJECT_ROOT / "temp_conversions", TEMP_CONVERSIONS_DIR),
-    (PROJECT_ROOT / "thumbnails", THUMBNAILS_DIR),
 ]
 
 
@@ -171,7 +167,7 @@ def main():
         print("Migration complete!")
         print()
         print("You can now safely delete the old directories from the repo:")
-        print("  rm -rf config/ logs/ media/ uploads/ playlists/ diffusion_patterns/ temp_conversions/ thumbnails/")
+        print("  rm -rf config/ logs/ media/ uploads/ playlists/ diffusion_patterns/ temp_conversions/")
 
 
 if __name__ == "__main__":

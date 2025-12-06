@@ -762,7 +762,6 @@ from src.paths import (
     MEDIA_DIR,
     PLAYLISTS_DIR,
     TEMP_CONVERSIONS_DIR,
-    THUMBNAILS_DIR,
 )
 from src.paths import UPLOADS_DIR as UPLOAD_DIR
 

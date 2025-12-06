@@ -60,7 +60,6 @@ MEDIA_DIR = DATA_DIR / "media"
 UPLOADS_DIR = DATA_DIR / "uploads"
 PLAYLISTS_DIR = DATA_DIR / "playlists"
 LOGS_DIR = DATA_DIR / "logs"
-THUMBNAILS_DIR = DATA_DIR / "thumbnails"
 PATTERNS_DIR = DATA_DIR / "patterns"
 
 # Cache subdirectories
@@ -75,7 +74,6 @@ _ALL_DIRS = [
     UPLOADS_DIR,
     PLAYLISTS_DIR,
     LOGS_DIR,
-    THUMBNAILS_DIR,
     PATTERNS_DIR,
     TEMP_CONVERSIONS_DIR,
 ]
