@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 # from src.consumer.consumer import ConsumerProcess
 from src.core.control_state import ControlState, PlayState, SystemState
 from src.core.playlist_sync import PlaylistSyncService
-from src.paths import LOGS_DIR, get_log_file_path
+from src.paths import LOGS_DIR, PATTERNS_DIR, get_log_file_path
 from src.producer.producer import ProducerProcess
 from src.web.api_server import run_server
 
@@ -190,7 +190,7 @@ class ProcessManager:
                     console_handler = logging.StreamHandler()
                     console_handler.setFormatter(formatter)
 
-                    log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "prismatron.log")
+                    log_file_path = str(get_log_file_path())
                     file_handler = logging.FileHandler(log_file_path, mode="a")
                     file_handler.setFormatter(formatter)
 
@@ -264,7 +264,7 @@ class ProcessManager:
                     console_handler = logging.StreamHandler()
                     console_handler.setFormatter(formatter)
 
-                    log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "prismatron.log")
+                    log_file_path = str(get_log_file_path())
                     file_handler = logging.FileHandler(log_file_path, mode="a")
                     file_handler.setFormatter(formatter)
 
@@ -338,7 +338,7 @@ class ProcessManager:
                     console_handler = logging.StreamHandler()
                     console_handler.setFormatter(formatter)
 
-                    log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "prismatron.log")
+                    log_file_path = str(get_log_file_path())
                     file_handler = logging.FileHandler(log_file_path, mode="a")
                     file_handler.setFormatter(formatter)
 
@@ -448,7 +448,7 @@ class ProcessManager:
                     console_handler = logging.StreamHandler()
                     console_handler.setFormatter(formatter)
 
-                    log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "prismatron.log")
+                    log_file_path = str(get_log_file_path())
                     file_handler = logging.FileHandler(log_file_path, mode="a")
                     file_handler.setFormatter(formatter)
 
@@ -976,11 +976,20 @@ def main():
     # Register emergency cleanup for all exit scenarios
     atexit.register(emergency_cleanup)
 
+    # Resolve diffusion patterns path
+    diffusion_patterns_path = None
+    if args.diffusion_patterns:
+        patterns_path = Path(args.diffusion_patterns)
+        if patterns_path.is_absolute():
+            diffusion_patterns_path = str(patterns_path)
+        else:
+            diffusion_patterns_path = str(PATTERNS_DIR / patterns_path)
+
     # Load LED count from patterns file if provided
     led_count = None
-    if args.diffusion_patterns:
+    if diffusion_patterns_path:
         try:
-            led_count = load_led_count_from_patterns(args.diffusion_patterns)
+            led_count = load_led_count_from_patterns(diffusion_patterns_path)
         except ValueError as e:
             logger.error(f"Failed to load LED count: {e}")
             sys.exit(1)
@@ -993,7 +1002,7 @@ def main():
         "wled_hosts": args.wled_hosts,
         "wled_port": args.wled_port,
         "default_content_dir": args.content_dir,
-        "diffusion_patterns_path": args.diffusion_patterns,
+        "diffusion_patterns_path": diffusion_patterns_path,
         "led_count": led_count,  # Add LED count to config
         "timing_log_path": args.timing_log,
         "enable_batch_mode": args.batch_mode,

@@ -4335,12 +4335,17 @@ async def load_playlist(filename: str):
                         # If it's not already an absolute path
                         if not item_data["file_path"].startswith("/"):
                             file_path = item_data["file_path"]
-                            # If path already includes uploads/ or media/, use as-is
-                            if file_path.startswith(("uploads/", "media/")):
-                                item_data["file_path"] = str(Path(file_path))
+                            # Resolve relative filename to absolute path
+                            # Check uploads first, then media directory
+                            uploads_path = UPLOAD_DIR / file_path
+                            media_path = MEDIA_DIR / file_path
+                            if uploads_path.exists():
+                                item_data["file_path"] = str(uploads_path)
+                            elif media_path.exists():
+                                item_data["file_path"] = str(media_path)
                             else:
-                                # If it's just a filename, default to uploads directory
-                                item_data["file_path"] = str(UPLOAD_DIR / file_path)
+                                # Default to media directory (will fail with clear error)
+                                item_data["file_path"] = str(media_path)
                     # For text type, file_path contains JSON config string
                     elif item_data["type"] == "text":
                         # Extract duration from text config if available

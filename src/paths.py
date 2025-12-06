@@ -1,27 +1,20 @@
 """
 Prismatron Path Configuration.
 
-Centralized path management following XDG Base Directory Specification.
-All runtime data is stored outside the source tree in standard locations.
+Centralized path management for runtime data storage.
+All runtime data is stored outside the source tree.
 
-Directory structure (default):
-    ~/.config/prismatron/           - Configuration files
-    ~/.local/share/prismatron/      - Runtime data (media, uploads, playlists, logs, patterns)
-    ~/.cache/prismatron/            - Temporary/cache files (video conversions)
+Directory structure with PRISMATRON_ROOT=/mnt/prismatron:
+    /mnt/prismatron/config/       - Configuration files
+    /mnt/prismatron/logs/         - Log files
+    /mnt/prismatron/media/        - Media files
+    /mnt/prismatron/uploads/      - User uploads
+    /mnt/prismatron/playlists/    - Playlist definitions
+    /mnt/prismatron/patterns/     - Diffusion pattern files
+    /mnt/prismatron/conversions/  - Temporary video conversions (cache)
 
-Environment variable overrides:
-    PRISMATRON_ROOT         - Override all directories (sets config/, data/, cache/ under this path)
-    PRISMATRON_CONFIG_DIR   - Override config directory only
-    PRISMATRON_DATA_DIR     - Override data directory only
-    PRISMATRON_CACHE_DIR    - Override cache directory only
-
-Example for SSD storage at /mnt/prismatron:
-    Environment="PRISMATRON_ROOT=/mnt/prismatron"
-
-This creates:
-    /mnt/prismatron/config/
-    /mnt/prismatron/data/
-    /mnt/prismatron/cache/
+Environment variable:
+    PRISMATRON_ROOT - Base directory for all data (default: ~/.local/share/prismatron)
 """
 
 import os
@@ -29,51 +22,33 @@ from pathlib import Path
 
 APP_NAME = "prismatron"
 
-# Check for unified root override first
+# Get root directory from environment or use default
 _root_override = os.environ.get("PRISMATRON_ROOT")
-
 if _root_override:
-    # Single root path for all data (e.g., /mnt/prismatron)
-    _root = Path(_root_override)
-    _default_config = _root / "config"
-    _default_data = _root / "data"
-    _default_cache = _root / "cache"
+    ROOT_DIR = Path(_root_override)
 else:
-    # XDG Base Directory defaults
-    _xdg_config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     _xdg_data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
-    _xdg_cache_home = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-    _default_config = _xdg_config_home / APP_NAME
-    _default_data = _xdg_data_home / APP_NAME
-    _default_cache = _xdg_cache_home / APP_NAME
+    ROOT_DIR = _xdg_data_home / APP_NAME
 
-# Individual directory overrides take precedence
-CONFIG_DIR = Path(os.environ.get("PRISMATRON_CONFIG_DIR", _default_config))
-DATA_DIR = Path(os.environ.get("PRISMATRON_DATA_DIR", _default_data))
-CACHE_DIR = Path(os.environ.get("PRISMATRON_CACHE_DIR", _default_cache))
+# All directories directly under root
+CONFIG_DIR = ROOT_DIR / "config"
+LOGS_DIR = ROOT_DIR / "logs"
+MEDIA_DIR = ROOT_DIR / "media"
+UPLOADS_DIR = ROOT_DIR / "uploads"
+PLAYLISTS_DIR = ROOT_DIR / "playlists"
+PATTERNS_DIR = ROOT_DIR / "patterns"
+TEMP_CONVERSIONS_DIR = ROOT_DIR / "conversions"
 
-# Config subdirectories and files
+# Config files
 AUDIO_CONFIG_FILE = CONFIG_DIR / "audio_config.json"
-
-# Data subdirectories
-MEDIA_DIR = DATA_DIR / "media"
-UPLOADS_DIR = DATA_DIR / "uploads"
-PLAYLISTS_DIR = DATA_DIR / "playlists"
-LOGS_DIR = DATA_DIR / "logs"
-PATTERNS_DIR = DATA_DIR / "patterns"
-
-# Cache subdirectories
-TEMP_CONVERSIONS_DIR = CACHE_DIR / "conversions"
 
 # All directories that should be auto-created
 _ALL_DIRS = [
     CONFIG_DIR,
-    DATA_DIR,
-    CACHE_DIR,
+    LOGS_DIR,
     MEDIA_DIR,
     UPLOADS_DIR,
     PLAYLISTS_DIR,
-    LOGS_DIR,
     PATTERNS_DIR,
     TEMP_CONVERSIONS_DIR,
 ]

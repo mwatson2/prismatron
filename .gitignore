@@ -217,15 +217,5 @@ Bill of Materials*.csv
 # Runtime data is now stored externally (see src/paths.py)
 # Default: XDG directories (~/.local/share/prismatron/, etc.)
 # With PRISMATRON_ROOT=/mnt/prismatron: /mnt/prismatron/{config,data,cache}/
-#
-# These in-repo directories are legacy and kept in gitignore for migration safety
-diffusion_patterns/
-patterns/
-patterns_*.npz
-uploads/
-media/
-playlists/
-config/
-logs/
-temp_conversions/
-thumbnails/
+# Symlink to runtime data
+.var
