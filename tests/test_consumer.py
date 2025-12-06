@@ -18,7 +18,10 @@ import numpy as np
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.const import FRAME_CHANNELS, FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
+from src.const import FRAME_CHANNELS, FRAME_HEIGHT, FRAME_WIDTH
+
+# LED_COUNT is now dynamic from pattern files; use test constant
+LED_COUNT = 2624
 from src.consumer.consumer import ConsumerProcess, ConsumerStats
 
 
@@ -82,7 +85,7 @@ class TestConsumerProcess(unittest.TestCase):
             self.consumer = ConsumerProcess(
                 buffer_name="test_buffer",
                 control_name="test_control",
-                wled_host="192.168.7.140",
+                wled_hosts="192.168.7.140",
                 wled_port=4048,
             )
 

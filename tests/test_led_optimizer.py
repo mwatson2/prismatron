@@ -18,12 +18,15 @@ import pytest
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.const import FRAME_HEIGHT, FRAME_WIDTH, LED_COUNT
+from src.const import FRAME_HEIGHT, FRAME_WIDTH
 from src.consumer.led_optimizer import LEDOptimizer, OptimizationResult
 
 
 class TestLEDOptimizer:
     """Test suite for LEDOptimizer class."""
+
+    # Path to patterns in fixtures directory
+    REAL_PATTERNS_PATH = str(Path(__file__).parent / "fixtures" / "synthetic_2624_fp32.npz")
 
     def setup_method(self):
         """Setup test fixtures."""
@@ -51,9 +54,9 @@ class TestLEDOptimizer:
 
     def test_initialization_default_parameters(self):
         """Test LEDOptimizer initialization with default parameters."""
-        optimizer = LEDOptimizer()
+        optimizer = LEDOptimizer(diffusion_patterns_path=self.REAL_PATTERNS_PATH)
 
-        assert optimizer.diffusion_patterns_path == "diffusion_patterns/synthetic_1000"
+        assert optimizer.diffusion_patterns_path == self.REAL_PATTERNS_PATH
         assert optimizer.max_iterations == 10
         assert optimizer.convergence_threshold == 1e-3
         assert optimizer.step_size_scaling == 0.9
@@ -77,7 +80,7 @@ class TestLEDOptimizer:
         """Test initialization failure when pattern files are missing."""
         mock_exists.return_value = False
 
-        optimizer = LEDOptimizer()
+        optimizer = LEDOptimizer(diffusion_patterns_path="/nonexistent/patterns.npz")
         result = optimizer.initialize()
 
         assert not result
@@ -104,7 +107,7 @@ class TestLEDOptimizer:
         mock_dia_matrix.dia_data_cpu = np.random.rand(3, 50, 100).astype(np.float32)
         mock_dia_from_dict.return_value = mock_dia_matrix
 
-        optimizer = LEDOptimizer()
+        optimizer = LEDOptimizer(diffusion_patterns_path="/mock/patterns.npz")
         result = optimizer.initialize()
 
         assert result
@@ -114,7 +117,7 @@ class TestLEDOptimizer:
     def test_optimize_frame_api_integration(self):
         """Test that optimize_frame integrates correctly with mocked frame optimizer."""
         # Create optimizer
-        optimizer = LEDOptimizer()
+        optimizer = LEDOptimizer(diffusion_patterns_path=self.REAL_PATTERNS_PATH)
 
         # Mock the entire optimize_frame method to test API integration
         with patch.object(optimizer, "optimize_frame") as mock_optimize:
@@ -142,7 +145,7 @@ class TestLEDOptimizer:
 
     def test_optimize_frame_invalid_input_shape(self):
         """Test optimize_frame with invalid input frame shape."""
-        optimizer = LEDOptimizer()
+        optimizer = LEDOptimizer(diffusion_patterns_path=self.REAL_PATTERNS_PATH)
         optimizer._matrix_loaded = True
 
         # Wrong frame shape
@@ -159,7 +162,7 @@ class TestLEDOptimizer:
 
     def test_optimize_frame_matrix_not_loaded(self):
         """Test optimize_frame when matrices are not loaded."""
-        optimizer = LEDOptimizer()
+        optimizer = LEDOptimizer(diffusion_patterns_path=self.REAL_PATTERNS_PATH)
         optimizer._matrix_loaded = False
 
         target_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
@@ -173,7 +176,7 @@ class TestLEDOptimizer:
 
     def test_get_optimizer_stats(self):
         """Test getting optimizer statistics."""
-        optimizer = LEDOptimizer()
+        optimizer = LEDOptimizer(diffusion_patterns_path=self.REAL_PATTERNS_PATH)
         optimizer._matrix_loaded = True
         optimizer._actual_led_count = 100
         optimizer._optimization_count = 5
@@ -196,7 +199,7 @@ class TestLEDOptimizer:
 
     def test_deprecated_methods_warning(self):
         """Test that deprecated methods issue warnings."""
-        optimizer = LEDOptimizer()
+        optimizer = LEDOptimizer(diffusion_patterns_path=self.REAL_PATTERNS_PATH)
 
         # Mock the mixed tensor method to avoid AttributeError
         with patch.object(optimizer, "_calculate_atb_mixed_tensor", return_value=Mock()), patch(
@@ -214,7 +217,7 @@ class TestLEDOptimizer:
 
     def test_initial_values_format_conversion(self):
         """Test that initial values are correctly converted between formats."""
-        optimizer = LEDOptimizer()
+        optimizer = LEDOptimizer(diffusion_patterns_path=self.REAL_PATTERNS_PATH)
         optimizer._matrix_loaded = True
         optimizer._actual_led_count = 100
         optimizer._mixed_tensor = Mock()

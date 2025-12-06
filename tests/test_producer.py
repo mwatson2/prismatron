@@ -17,13 +17,12 @@ import numpy as np
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.core.control_state import PlayState
+from src.core.control_state import PlayState, ProducerState
 from src.producer.content_sources.base import ContentStatus, ContentType, FrameData
 from src.producer.producer import (
     ContentPlaylist,
     PlaylistItem,
     ProducerProcess,
-    pause,
     play,
     stop,
 )
@@ -448,40 +447,27 @@ class TestProducerControlFunctions(unittest.TestCase):
         """Test play control function."""
         mock_control = Mock()
         mock_control.connect.return_value = True
-        mock_control.set_play_state.return_value = True
+        mock_control.set_producer_state.return_value = True
         mock_control_state.return_value = mock_control
 
         result = play()
 
         self.assertTrue(result)
         mock_control.connect.assert_called_once()
-        mock_control.set_play_state.assert_called_once_with(PlayState.PLAYING)
-
-    @patch("src.producer.producer.ControlState")
-    def test_pause_function(self, mock_control_state):
-        """Test pause control function."""
-        mock_control = Mock()
-        mock_control.connect.return_value = True
-        mock_control.set_play_state.return_value = True
-        mock_control_state.return_value = mock_control
-
-        result = pause()
-
-        self.assertTrue(result)
-        mock_control.set_play_state.assert_called_once_with(PlayState.PAUSED)
+        mock_control.set_producer_state.assert_called_once_with(ProducerState.PLAYING)
 
     @patch("src.producer.producer.ControlState")
     def test_stop_function(self, mock_control_state):
         """Test stop control function."""
         mock_control = Mock()
         mock_control.connect.return_value = True
-        mock_control.set_play_state.return_value = True
+        mock_control.set_producer_state.return_value = True
         mock_control_state.return_value = mock_control
 
         result = stop()
 
         self.assertTrue(result)
-        mock_control.set_play_state.assert_called_once_with(PlayState.STOPPED)
+        mock_control.set_producer_state.assert_called_once_with(ProducerState.STOPPED)
 
     @patch("src.producer.producer.ControlState")
     def test_control_function_failure(self, mock_control_state):

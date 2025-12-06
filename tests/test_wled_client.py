@@ -16,7 +16,10 @@ import numpy as np
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.const import DDP_HEADER_SIZE, LED_COUNT
+from src.const import DDP_HEADER_SIZE
+
+# LED_COUNT is now dynamic from pattern files; use test constant
+LED_COUNT = 2624
 from src.consumer.wled_sink import TransmissionResult, WLEDSink, WLEDSinkConfig
 
 
@@ -70,7 +73,7 @@ class TestWLEDSinkConfig(unittest.TestCase):
 
     def test_default_initialization(self):
         """Test config with default values."""
-        config = WLEDSinkConfig()
+        config = WLEDSinkConfig(led_count=LED_COUNT)
 
         self.assertEqual(config.led_count, LED_COUNT)
         self.assertEqual(config.max_fps, 60.0)
@@ -98,7 +101,7 @@ class TestWLEDSink(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.config = WLEDSinkConfig(host="192.168.7.140", port=4048, timeout=1.0)
+        self.config = WLEDSinkConfig(led_count=LED_COUNT, host="192.168.7.140", port=4048, timeout=1.0)
         self.client = WLEDSink(self.config)
 
     def tearDown(self):
@@ -275,7 +278,7 @@ class TestWLEDSink(unittest.TestCase):
             "packets_sent",
             "transmission_errors",
             "is_connected",
-            "host",
+            "current_host",  # Changed from "host" to "current_host"
             "port",
             "led_count",
         ]
@@ -327,7 +330,7 @@ class TestWLEDSinkIntegration(unittest.TestCase):
         mock_socket = Mock()
         mock_socket_class.return_value = mock_socket
 
-        config = WLEDSinkConfig(host="192.168.7.140", port=4048)
+        config = WLEDSinkConfig(led_count=LED_COUNT, host="192.168.7.140", port=4048)
         client = WLEDSink(config)
 
         # Connect and send test data
