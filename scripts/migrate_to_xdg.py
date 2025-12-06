@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """
-Migrate Prismatron data from in-repo directories to XDG-compliant locations.
+Migrate Prismatron data from in-repo directories to /mnt/prismatron.
 
-This script moves runtime data from the old in-repo locations to the new
-XDG Base Directory Specification compliant locations:
+This script moves runtime data from the old in-repo locations to the SSD
+storage location at /mnt/prismatron (avoiding the small SD card at ~/).
 
-Old locations (in repo):          New locations (XDG):
-    config/                   ->  ~/.config/prismatron/
-    logs/                     ->  ~/.local/share/prismatron/logs/
-    media/                    ->  ~/.local/share/prismatron/media/
-    uploads/                  ->  ~/.local/share/prismatron/uploads/
-    playlists/                ->  ~/.local/share/prismatron/playlists/
-    diffusion_patterns/       ->  ~/.local/share/prismatron/diffusion_patterns/
-    temp_conversions/         ->  ~/.cache/prismatron/conversions/
-    thumbnails/               ->  ~/.local/share/prismatron/thumbnails/
+Old locations (in repo):          New locations (/mnt/prismatron):
+    config/                   ->  /mnt/prismatron/config/
+    logs/                     ->  /mnt/prismatron/data/logs/
+    media/                    ->  /mnt/prismatron/data/media/
+    uploads/                  ->  /mnt/prismatron/data/uploads/
+    playlists/                ->  /mnt/prismatron/data/playlists/
+    diffusion_patterns/       ->  /mnt/prismatron/data/patterns/
+    temp_conversions/         ->  /mnt/prismatron/cache/conversions/
+    thumbnails/               ->  /mnt/prismatron/data/thumbnails/
+
+The service file (scripts/prismatron-user.service) sets PRISMATRON_ROOT=/mnt/prismatron
+which configures src/paths.py to use these locations.
 
 Usage:
     python scripts/migrate_to_xdg.py [--dry-run]
@@ -24,28 +27,44 @@ Options:
 
 import argparse
 import shutil
-import sys
 from pathlib import Path
-
-# Add parent to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from src.paths import (
-    AUDIO_CONFIG_FILE,
-    CACHE_DIR,
-    CONFIG_DIR,
-    DATA_DIR,
-    LOGS_DIR,
-    MEDIA_DIR,
-    PATTERNS_DIR,
-    PLAYLISTS_DIR,
-    TEMP_CONVERSIONS_DIR,
-    THUMBNAILS_DIR,
-    UPLOADS_DIR,
-)
 
 # Project root (where this script's parent directory is)
 PROJECT_ROOT = Path(__file__).parent.parent
+
+# Target location on SSD
+PRISMATRON_ROOT = Path("/mnt/prismatron")
+CONFIG_DIR = PRISMATRON_ROOT / "config"
+DATA_DIR = PRISMATRON_ROOT / "data"
+CACHE_DIR = PRISMATRON_ROOT / "cache"
+
+# Data subdirectories
+MEDIA_DIR = DATA_DIR / "media"
+UPLOADS_DIR = DATA_DIR / "uploads"
+PLAYLISTS_DIR = DATA_DIR / "playlists"
+LOGS_DIR = DATA_DIR / "logs"
+THUMBNAILS_DIR = DATA_DIR / "thumbnails"
+PATTERNS_DIR = DATA_DIR / "patterns"
+
+# Cache subdirectories
+TEMP_CONVERSIONS_DIR = CACHE_DIR / "conversions"
+
+# Config files
+AUDIO_CONFIG_FILE = CONFIG_DIR / "audio_config.json"
+
+# All directories that need to be created
+ALL_DIRS = [
+    CONFIG_DIR,
+    DATA_DIR,
+    CACHE_DIR,
+    MEDIA_DIR,
+    UPLOADS_DIR,
+    PLAYLISTS_DIR,
+    LOGS_DIR,
+    THUMBNAILS_DIR,
+    PATTERNS_DIR,
+    TEMP_CONVERSIONS_DIR,
+]
 
 # Mapping of old paths to new paths
 MIGRATIONS = [
@@ -114,14 +133,14 @@ def migrate_path(old_path: Path, new_path: Path, dry_run: bool = False) -> bool:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Migrate Prismatron data to XDG directories")
+    parser = argparse.ArgumentParser(description="Migrate Prismatron data to SSD at /mnt/prismatron")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be migrated")
     args = parser.parse_args()
 
-    print("Prismatron XDG Migration")
+    print("Prismatron Data Migration to SSD")
     print("=" * 50)
     print()
-    print("New directory locations:")
+    print(f"Target root: {PRISMATRON_ROOT}")
     print(f"  Config:  {CONFIG_DIR}")
     print(f"  Data:    {DATA_DIR}")
     print(f"  Cache:   {CACHE_DIR}")
@@ -129,6 +148,13 @@ def main():
 
     if args.dry_run:
         print("DRY RUN - no files will be moved")
+        print()
+    else:
+        # Create all directories
+        print("Creating directories...")
+        for dir_path in ALL_DIRS:
+            dir_path.mkdir(parents=True, exist_ok=True)
+            print(f"  Created: {dir_path}")
         print()
 
     any_migrated = False
