@@ -545,6 +545,16 @@ class FrameRenderer:
             "params": {"duration": 2.0, "curve": "ease-out"},
         }
 
+        # Sparkle effect configuration (buildup-triggered)
+        # Default configuration if not set in control state
+        self._sparkle_effect_config: Optional[Dict[str, Any]] = {
+            "enabled": True,
+            "random_colors": False,
+            "density": {"min": 0.01, "max": 0.15, "curve": "linear"},
+            "interval_ms": {"min": 30, "max": 300, "curve": "inverse"},
+            "fade_multiplier": 2.0,
+        }
+
         # Initialize triggers from control state (if available)
         self._initialize_triggers_from_control_state()
 
@@ -672,6 +682,12 @@ class FrameRenderer:
                                 f"Loaded drop effect config: class={drop_effect.get('effect_class')}, "
                                 f"enabled={drop_effect.get('enabled', True)}"
                             )
+
+                        # Load sparkle effect configuration
+                        sparkle_effect = trigger_config.get("sparkle_effect")
+                        if sparkle_effect:
+                            self._sparkle_effect_config = sparkle_effect
+                            logger.info(f"Loaded sparkle effect config: enabled={sparkle_effect.get('enabled', True)}")
 
                         logger.info(
                             f"Loaded {len(common_triggers)} common rules, {len(carousel_rule_sets)} carousel sets"
@@ -1279,6 +1295,37 @@ class FrameRenderer:
         except Exception as e:
             logger.error(f"Failed to evaluate test triggers: {e}")
 
+    def _calculate_sparkle_param(self, intensity: float, param_config: Dict[str, Any]) -> float:
+        """
+        Calculate a sparkle parameter from buildup intensity using configured curve.
+
+        Args:
+            intensity: Buildup intensity (0-10 range)
+            param_config: Configuration dict with min, max, and curve keys
+
+        Returns:
+            Interpolated parameter value based on intensity and curve type
+        """
+        min_val = param_config.get("min", 0.0)
+        max_val = param_config.get("max", 1.0)
+        curve = param_config.get("curve", "linear")
+
+        # Clamp intensity to 0-10 range and normalize to 0-1
+        clamped_intensity = max(0.0, min(10.0, intensity))
+        t = clamped_intensity / 10.0
+
+        # Apply curve transformation
+        if curve == "ease-in":
+            curved_t = t * t
+        elif curve == "ease-out":
+            curved_t = 1.0 - (1.0 - t) * (1.0 - t)
+        elif curve == "inverse":
+            curved_t = 1.0 - t
+        else:  # linear
+            curved_t = t
+
+        return min_val + curved_t * (max_val - min_val)
+
     def _manage_sparkle_effect_for_buildup(self, frame_timeline_time: float) -> None:
         """
         Manage sparkle effect based on buildup detection state.
@@ -1292,6 +1339,14 @@ class FrameRenderer:
         """
         # Import led_effect locally to avoid circular imports
         from . import led_effect
+
+        # Check if sparkle effect is enabled
+        if not self._sparkle_effect_config.get("enabled", True):
+            # If disabled, remove any existing sparkle effect
+            if self._sparkle_effect is not None:
+                self.effect_manager.remove_effect(self._sparkle_effect)
+                self._sparkle_effect = None
+            return
 
         # Check if audio beat analyzer is available
         if not self._audio_beat_analyzer:
@@ -1332,17 +1387,17 @@ class FrameRenderer:
                     logger.debug("Removed sparkle effect (buildup intensity = 0)")
                 return
 
-            # Calculate sparkle parameters based on buildup intensity
-            x = buildup_intensity
+            # Calculate sparkle parameters based on buildup intensity using config
+            density_config = self._sparkle_effect_config.get("density", {"min": 0.01, "max": 0.15, "curve": "linear"})
+            interval_config = self._sparkle_effect_config.get(
+                "interval_ms", {"min": 30, "max": 300, "curve": "inverse"}
+            )
+            fade_multiplier = self._sparkle_effect_config.get("fade_multiplier", 2.0)
+            random_colors = self._sparkle_effect_config.get("random_colors", False)
 
-            # LED fraction: min(x/10, 1)
-            density = min(x / 10.0, 1.0)
-
-            # Sparkle interval: min(300, max(30, 30/x)) in milliseconds
-            interval_ms = min(300.0, max(30.0, 30.0 / x))
-
-            # Fade interval: 2x the sparkle interval
-            fade_ms = 2.0 * interval_ms
+            density = self._calculate_sparkle_param(buildup_intensity, density_config)
+            interval_ms = self._calculate_sparkle_param(buildup_intensity, interval_config)
+            fade_ms = fade_multiplier * interval_ms
 
             # Create or update sparkle effect
             if self._sparkle_effect is None:
@@ -1356,11 +1411,12 @@ class FrameRenderer:
                     fade_ms=fade_ms,
                     density=density,
                     led_count=led_count,
+                    random_colors=random_colors,
                 )
                 self.effect_manager.add_effect(self._sparkle_effect)
                 logger.info(
-                    f"🎆 Created sparkle effect: intensity={x:.2f}, density={density:.2%}, "
-                    f"interval={interval_ms:.1f}ms, fade={fade_ms:.1f}ms"
+                    f"🎆 Created sparkle effect: intensity={buildup_intensity:.2f}, density={density:.2%}, "
+                    f"interval={interval_ms:.1f}ms, fade={fade_ms:.1f}ms, random_colors={random_colors}"
                 )
             else:
                 # Update existing sparkle effect parameters
@@ -1368,10 +1424,11 @@ class FrameRenderer:
                     interval_ms=interval_ms,
                     fade_ms=fade_ms,
                     density=density,
+                    random_colors=random_colors,
                 )
                 logger.debug(
-                    f"🎆 Updated sparkle effect: intensity={x:.2f}, density={density:.2%}, "
-                    f"interval={interval_ms:.1f}ms, fade={fade_ms:.1f}ms"
+                    f"🎆 Updated sparkle effect: intensity={buildup_intensity:.2f}, density={density:.2%}, "
+                    f"interval={interval_ms:.1f}ms, fade={fade_ms:.1f}ms, random_colors={random_colors}"
                 )
 
         except Exception as e:

@@ -3464,6 +3464,30 @@ class EventEffectConfig(BaseModel):
     params: Dict[str, Any] = Field(default_factory=dict, description="Effect parameters")
 
 
+class SparkleRangeConfig(BaseModel):
+    """Configuration for a sparkle parameter range with curve."""
+
+    min: float = Field(..., description="Minimum value at low buildup intensity")
+    max: float = Field(..., description="Maximum value at high buildup intensity")
+    curve: str = Field("linear", description="Response curve: linear, ease-in, ease-out, inverse")
+
+
+class SparkleEffectConfig(BaseModel):
+    """Configuration for sparkle effect triggered by buildup intensity."""
+
+    enabled: bool = Field(True, description="Whether sparkle effect is enabled")
+    random_colors: bool = Field(False, description="Use random hue colors instead of white")
+    density: SparkleRangeConfig = Field(
+        default_factory=lambda: SparkleRangeConfig(min=0.01, max=0.15, curve="linear"),
+        description="LED density range (fraction of LEDs per burst)",
+    )
+    interval_ms: SparkleRangeConfig = Field(
+        default_factory=lambda: SparkleRangeConfig(min=30, max=300, curve="inverse"),
+        description="Sparkle interval range in milliseconds",
+    )
+    fade_multiplier: float = Field(2.0, ge=0.5, le=5.0, description="Fade duration = interval × multiplier")
+
+
 class AudioReactiveTriggersRequest(BaseModel):
     """Request model for audio reactive trigger configuration."""
 
@@ -3482,6 +3506,11 @@ class AudioReactiveTriggersRequest(BaseModel):
         default=None, description="Effect triggered on audio cut (energy drop)"
     )
     drop_effect: Optional[EventEffectConfig] = Field(default=None, description="Effect triggered on bass drop")
+
+    # Sparkle effect configuration (buildup-triggered)
+    sparkle_effect: Optional[SparkleEffectConfig] = Field(
+        default=None, description="Sparkle effect configuration triggered by buildup intensity"
+    )
 
     # Deprecated: old flat rules list for backward compatibility
     rules: Optional[List[TriggerEffectRule]] = Field(default=None, description="Deprecated: use common_rules instead")
@@ -3521,6 +3550,7 @@ async def get_audio_reactive_triggers():
         carousel_beat_interval = 4
         cut_effect = None
         drop_effect = None
+        sparkle_effect = None
 
         if control_state:
             try:
@@ -3537,6 +3567,7 @@ async def get_audio_reactive_triggers():
                     carousel_beat_interval = trigger_config.get("carousel_beat_interval", 4)
                     cut_effect = trigger_config.get("cut_effect")
                     drop_effect = trigger_config.get("drop_effect")
+                    sparkle_effect = trigger_config.get("sparkle_effect")
 
                     # Backward compatibility: convert old flat rules list to common_rules
                     if not common_rules and not carousel_rule_sets and "rules" in trigger_config:
@@ -3551,6 +3582,7 @@ async def get_audio_reactive_triggers():
                         carousel_beat_interval = saved_config.get("carousel_beat_interval", 4)
                         cut_effect = saved_config.get("cut_effect")
                         drop_effect = saved_config.get("drop_effect")
+                        sparkle_effect = saved_config.get("sparkle_effect")
 
                         # Backward compatibility
                         if not common_rules and not carousel_rule_sets and "rules" in saved_config:
@@ -3566,6 +3598,7 @@ async def get_audio_reactive_triggers():
             "carousel_beat_interval": carousel_beat_interval,
             "cut_effect": cut_effect,
             "drop_effect": drop_effect,
+            "sparkle_effect": sparkle_effect,
         }
 
     except Exception as e:
@@ -3633,6 +3666,25 @@ async def set_audio_reactive_triggers(request: AudioReactiveTriggersRequest):
                 "params": request.drop_effect.params,
             }
 
+        # Convert sparkle effect config to dict format
+        sparkle_effect_dict = None
+        if request.sparkle_effect:
+            sparkle_effect_dict = {
+                "enabled": request.sparkle_effect.enabled,
+                "random_colors": request.sparkle_effect.random_colors,
+                "density": {
+                    "min": request.sparkle_effect.density.min,
+                    "max": request.sparkle_effect.density.max,
+                    "curve": request.sparkle_effect.density.curve,
+                },
+                "interval_ms": {
+                    "min": request.sparkle_effect.interval_ms.min,
+                    "max": request.sparkle_effect.interval_ms.max,
+                    "curve": request.sparkle_effect.interval_ms.curve,
+                },
+                "fade_multiplier": request.sparkle_effect.fade_multiplier,
+            }
+
         # Update in control state if available
         if control_state:
             # Update master enable
@@ -3646,6 +3698,7 @@ async def set_audio_reactive_triggers(request: AudioReactiveTriggersRequest):
                 "carousel_beat_interval": request.carousel_beat_interval,
                 "cut_effect": cut_effect_dict,
                 "drop_effect": drop_effect_dict,
+                "sparkle_effect": sparkle_effect_dict,
             }
 
             control_state.update_status(audio_reactive_trigger_config=trigger_config)
@@ -3661,7 +3714,8 @@ async def set_audio_reactive_triggers(request: AudioReactiveTriggersRequest):
                 f"carousel_interval={request.carousel_beat_interval} beats, "
                 f"total_rules={total_rules}, "
                 f"cut_effect={cut_effect_dict is not None and cut_effect_dict.get('enabled', False)}, "
-                f"drop_effect={drop_effect_dict is not None and drop_effect_dict.get('enabled', False)}"
+                f"drop_effect={drop_effect_dict is not None and drop_effect_dict.get('enabled', False)}, "
+                f"sparkle_effect={sparkle_effect_dict is not None and sparkle_effect_dict.get('enabled', False)}"
             )
         else:
             logger.warning("Control state not available - trigger configuration not updated")
@@ -3675,6 +3729,7 @@ async def set_audio_reactive_triggers(request: AudioReactiveTriggersRequest):
             "carousel_beat_interval": request.carousel_beat_interval,
             "cut_effect": cut_effect_dict,
             "drop_effect": drop_effect_dict,
+            "sparkle_effect": sparkle_effect_dict,
         }
         await schedule_audio_config_save(config_to_save)
 
@@ -3687,6 +3742,7 @@ async def set_audio_reactive_triggers(request: AudioReactiveTriggersRequest):
                 "carousel_set_count": len(carousel_rule_sets_dict),
                 "cut_effect_enabled": cut_effect_dict is not None and cut_effect_dict.get("enabled", False),
                 "drop_effect_enabled": drop_effect_dict is not None and drop_effect_dict.get("enabled", False),
+                "sparkle_effect_enabled": sparkle_effect_dict is not None and sparkle_effect_dict.get("enabled", False),
             }
         )
 
@@ -3698,6 +3754,7 @@ async def set_audio_reactive_triggers(request: AudioReactiveTriggersRequest):
             "carousel_beat_interval": request.carousel_beat_interval,
             "cut_effect": cut_effect_dict,
             "drop_effect": drop_effect_dict,
+            "sparkle_effect": sparkle_effect_dict,
             "status": "updated",
         }
 

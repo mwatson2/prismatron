@@ -12,7 +12,9 @@ import {
   getTemplateName,
   getTemplatePath,
   DEFAULT_CUT_EFFECT,
-  DEFAULT_DROP_EFFECT
+  DEFAULT_DROP_EFFECT,
+  DEFAULT_SPARKLE_EFFECT,
+  SPARKLE_CURVE_OPTIONS
 } from '../config/audioReactiveConfig'
 
 const AudioReactivePanel = () => {
@@ -39,12 +41,16 @@ const AudioReactivePanel = () => {
   // Drop effect configuration
   const [dropEffect, setDropEffect] = useState(DEFAULT_DROP_EFFECT)
 
+  // Sparkle effect configuration (buildup-triggered)
+  const [sparkleEffect, setSparkleEffect] = useState(DEFAULT_SPARKLE_EFFECT)
+
   // Collapsed state for sections
   const [collapsedSections, setCollapsedSections] = useState({
     common: false,
     carousel: false,
     cutEffect: false,
     dropEffect: false,
+    sparkleEffect: false,
   })
 
   // Editing state for rule set names
@@ -90,6 +96,10 @@ const AudioReactivePanel = () => {
         if (data.drop_effect) {
           setDropEffect(data.drop_effect)
         }
+        // Load sparkle effect configuration
+        if (data.sparkle_effect) {
+          setSparkleEffect(data.sparkle_effect)
+        }
       }
     } catch (error) {
       console.error('Failed to fetch audio reactive settings:', error)
@@ -107,6 +117,7 @@ const AudioReactivePanel = () => {
       carousel_beat_interval: carouselBeatInterval,
       cut_effect: cutEffect,
       drop_effect: dropEffect,
+      sparkle_effect: sparkleEffect,
       ...updates
     }
 
@@ -421,6 +432,43 @@ const AudioReactivePanel = () => {
     }
     setDropEffect(newDropEffect)
     updateServerConfig({ drop_effect: newDropEffect })
+  }
+
+  // === Sparkle Effect Functions ===
+  const updateSparkleEffectEnabled = (enabled) => {
+    const newSparkleEffect = { ...sparkleEffect, enabled }
+    setSparkleEffect(newSparkleEffect)
+    updateServerConfig({ sparkle_effect: newSparkleEffect })
+  }
+
+  const updateSparkleEffectDensity = (key, value) => {
+    const newSparkleEffect = {
+      ...sparkleEffect,
+      density: { ...sparkleEffect.density, [key]: value }
+    }
+    setSparkleEffect(newSparkleEffect)
+    updateServerConfig({ sparkle_effect: newSparkleEffect })
+  }
+
+  const updateSparkleEffectInterval = (key, value) => {
+    const newSparkleEffect = {
+      ...sparkleEffect,
+      interval_ms: { ...sparkleEffect.interval_ms, [key]: value }
+    }
+    setSparkleEffect(newSparkleEffect)
+    updateServerConfig({ sparkle_effect: newSparkleEffect })
+  }
+
+  const updateSparkleEffectFadeMultiplier = (value) => {
+    const newSparkleEffect = { ...sparkleEffect, fade_multiplier: value }
+    setSparkleEffect(newSparkleEffect)
+    updateServerConfig({ sparkle_effect: newSparkleEffect })
+  }
+
+  const updateSparkleEffectRandomColors = (enabled) => {
+    const newSparkleEffect = { ...sparkleEffect, random_colors: enabled }
+    setSparkleEffect(newSparkleEffect)
+    updateServerConfig({ sparkle_effect: newSparkleEffect })
   }
 
   return (
@@ -794,6 +842,192 @@ const AudioReactivePanel = () => {
                       onUpdateEffectClass={updateDropEffectClass}
                       onUpdateEffectParam={updateDropEffectParam}
                     />
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* ✨ SPARKLE EFFECTS Section */}
+            <div className="pl-4 border-l-2 border-neon-yellow border-opacity-30">
+              <button
+                onClick={() => toggleSection('sparkleEffect')}
+                className="w-full flex items-center justify-between text-sm font-retro text-neon-yellow mb-3 hover:text-neon-cyan transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  {collapsedSections.sparkleEffect ? <ChevronRightIcon className="w-4 h-4" /> : <ChevronDownIcon className="w-4 h-4" />}
+                  <span>✨ SPARKLE EFFECTS (Buildup Detection)</span>
+                </div>
+                <span className="text-xs text-metal-silver">{sparkleEffect.enabled ? 'ON' : 'OFF'}</span>
+              </button>
+
+              {!collapsedSections.sparkleEffect && (
+                <div className="space-y-4">
+                  <p className="text-xs text-metal-silver font-mono mb-2">
+                    Creates sparkle/glitter effect during buildups. Parameters are derived from buildup intensity using configurable ranges and curves.
+                  </p>
+
+                  {/* Enable/Disable Toggle */}
+                  <div className="flex items-center justify-between bg-dark-800 rounded-retro p-3">
+                    <span className="text-xs text-metal-silver font-mono">Enable Sparkle Effect</span>
+                    <button
+                      onClick={() => updateSparkleEffectEnabled(!sparkleEffect.enabled)}
+                      className={`px-4 py-1 rounded-retro text-xs font-retro font-bold transition-all duration-200 ${
+                        sparkleEffect.enabled
+                          ? 'bg-neon-yellow bg-opacity-20 text-neon-yellow border border-neon-yellow border-opacity-50'
+                          : 'bg-dark-700 text-metal-silver border border-metal-silver border-opacity-30'
+                      }`}
+                    >
+                      {sparkleEffect.enabled ? 'ENABLED' : 'DISABLED'}
+                    </button>
+                  </div>
+
+                  {sparkleEffect.enabled && (
+                    <div className="space-y-4 bg-dark-800 rounded-retro p-4">
+                      {/* Random Colors Toggle */}
+                      <div className="flex items-center justify-between py-2 border-b border-dark-600">
+                        <div>
+                          <span className="text-xs text-metal-silver font-mono">Random Colors</span>
+                          <p className="text-xs text-metal-silver opacity-50 mt-0.5">Use random hue colors instead of white</p>
+                        </div>
+                        <button
+                          onClick={() => updateSparkleEffectRandomColors(!sparkleEffect.random_colors)}
+                          className={`px-3 py-1 text-xs font-mono rounded transition-colors ${
+                            sparkleEffect.random_colors
+                              ? 'bg-neon-cyan bg-opacity-20 text-neon-cyan border border-neon-cyan border-opacity-50'
+                              : 'bg-dark-700 text-metal-silver border border-metal-silver border-opacity-30'
+                          }`}
+                        >
+                          {sparkleEffect.random_colors ? 'ON' : 'OFF'}
+                        </button>
+                      </div>
+
+                      {/* LED Density Configuration */}
+                      <div className="space-y-3">
+                        <h5 className="text-xs font-retro text-neon-cyan">LED DENSITY</h5>
+                        <p className="text-xs text-metal-silver font-mono opacity-70">
+                          Fraction of LEDs that sparkle per burst (low intensity → min, high intensity → max)
+                        </p>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                            <label className="block text-xs text-metal-silver font-mono">
+                              Min Density ({((sparkleEffect.density?.min || 0.01) * 100).toFixed(0)}%)
+                            </label>
+                            <input
+                              type="range"
+                              min="0"
+                              max="0.5"
+                              step="0.01"
+                              value={sparkleEffect.density?.min || 0.01}
+                              onChange={(e) => updateSparkleEffectDensity('min', parseFloat(e.target.value))}
+                              className="w-full h-2 bg-dark-700 rounded-lg appearance-none cursor-pointer slider-track"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="block text-xs text-metal-silver font-mono">
+                              Max Density ({((sparkleEffect.density?.max || 0.15) * 100).toFixed(0)}%)
+                            </label>
+                            <input
+                              type="range"
+                              min="0.01"
+                              max="1.0"
+                              step="0.01"
+                              value={sparkleEffect.density?.max || 0.15}
+                              onChange={(e) => updateSparkleEffectDensity('max', parseFloat(e.target.value))}
+                              className="w-full h-2 bg-dark-700 rounded-lg appearance-none cursor-pointer slider-track"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="block text-xs text-metal-silver font-mono">Response Curve</label>
+                          <select
+                            value={sparkleEffect.density?.curve || 'linear'}
+                            onChange={(e) => updateSparkleEffectDensity('curve', e.target.value)}
+                            className="retro-input w-full text-sm"
+                          >
+                            {SPARKLE_CURVE_OPTIONS.map(curve => (
+                              <option key={curve} value={curve}>{curve}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Sparkle Interval Configuration */}
+                      <div className="space-y-3">
+                        <h5 className="text-xs font-retro text-neon-cyan">SPARKLE INTERVAL</h5>
+                        <p className="text-xs text-metal-silver font-mono opacity-70">
+                          Time between sparkle bursts in ms (inverse: high intensity → faster sparkles)
+                        </p>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                            <label className="block text-xs text-metal-silver font-mono">
+                              Min Interval ({sparkleEffect.interval_ms?.min || 30}ms)
+                            </label>
+                            <input
+                              type="range"
+                              min="10"
+                              max="100"
+                              step="5"
+                              value={sparkleEffect.interval_ms?.min || 30}
+                              onChange={(e) => updateSparkleEffectInterval('min', parseFloat(e.target.value))}
+                              className="w-full h-2 bg-dark-700 rounded-lg appearance-none cursor-pointer slider-track"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="block text-xs text-metal-silver font-mono">
+                              Max Interval ({sparkleEffect.interval_ms?.max || 300}ms)
+                            </label>
+                            <input
+                              type="range"
+                              min="100"
+                              max="1000"
+                              step="10"
+                              value={sparkleEffect.interval_ms?.max || 300}
+                              onChange={(e) => updateSparkleEffectInterval('max', parseFloat(e.target.value))}
+                              className="w-full h-2 bg-dark-700 rounded-lg appearance-none cursor-pointer slider-track"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="block text-xs text-metal-silver font-mono">Response Curve</label>
+                          <select
+                            value={sparkleEffect.interval_ms?.curve || 'inverse'}
+                            onChange={(e) => updateSparkleEffectInterval('curve', e.target.value)}
+                            className="retro-input w-full text-sm"
+                          >
+                            {SPARKLE_CURVE_OPTIONS.map(curve => (
+                              <option key={curve} value={curve}>{curve}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Fade Multiplier */}
+                      <div className="space-y-3">
+                        <h5 className="text-xs font-retro text-neon-cyan">FADE DURATION</h5>
+                        <p className="text-xs text-metal-silver font-mono opacity-70">
+                          Fade duration = interval × multiplier
+                        </p>
+
+                        <div className="space-y-1">
+                          <label className="block text-xs text-metal-silver font-mono">
+                            Fade Multiplier ({(sparkleEffect.fade_multiplier || 2.0).toFixed(1)}x)
+                          </label>
+                          <input
+                            type="range"
+                            min="0.5"
+                            max="5.0"
+                            step="0.1"
+                            value={sparkleEffect.fade_multiplier || 2.0}
+                            onChange={(e) => updateSparkleEffectFadeMultiplier(parseFloat(e.target.value))}
+                            className="w-full h-2 bg-dark-700 rounded-lg appearance-none cursor-pointer slider-track"
+                          />
+                        </div>
+                      </div>
+                    </div>
                   )}
                 </div>
               )}

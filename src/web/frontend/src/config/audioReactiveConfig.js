@@ -508,3 +508,103 @@ export const DEFAULT_DROP_EFFECT = {
     curve: 'ease-out'
   }
 }
+
+// ========================================================================================
+// Sparkle Effect Configuration (triggered by buildup intensity)
+// ========================================================================================
+
+// Response curve options for sparkle parameter derivation
+export const SPARKLE_CURVE_OPTIONS = ['linear', 'ease-in', 'ease-out', 'inverse']
+
+// Sparkle effect configuration registry
+// Maps buildup intensity (0-10) to sparkle parameters using configurable ranges and curves
+export const SPARKLE_EFFECT_CONFIG = {
+  // Density: fraction of LEDs that sparkle per burst
+  // At intensity 0 -> min, at intensity 10 -> max
+  density: {
+    key: 'density',
+    label: 'LED Density',
+    description: 'Fraction of LEDs that sparkle per burst',
+    min: { value: 0.01, label: 'Min Density', min: 0, max: 0.5, step: 0.01 },
+    max: { value: 0.15, label: 'Max Density', min: 0.01, max: 1.0, step: 0.01 },
+    curve: 'linear'  // linear, ease-in, ease-out
+  },
+  // Interval: milliseconds between sparkle bursts
+  // At intensity 0 -> max (slow), at intensity 10 -> min (fast)
+  interval_ms: {
+    key: 'interval_ms',
+    label: 'Sparkle Interval',
+    description: 'Time between sparkle bursts (inverted: high intensity = faster)',
+    min: { value: 30, label: 'Min Interval', min: 10, max: 100, step: 5 },
+    max: { value: 300, label: 'Max Interval', min: 100, max: 1000, step: 10 },
+    curve: 'inverse'  // inverse: high intensity = low value
+  },
+  // Fade: multiplier applied to interval to get fade duration
+  fade_multiplier: {
+    key: 'fade_multiplier',
+    label: 'Fade Multiplier',
+    description: 'Fade duration = interval × multiplier',
+    value: 2.0,
+    min: 0.5,
+    max: 5.0,
+    step: 0.1
+  }
+}
+
+// Default sparkle effect configuration
+export const DEFAULT_SPARKLE_EFFECT = {
+  enabled: true,
+  random_colors: false,
+  density: {
+    min: 0.01,
+    max: 0.15,
+    curve: 'linear'
+  },
+  interval_ms: {
+    min: 30,
+    max: 300,
+    curve: 'inverse'
+  },
+  fade_multiplier: 2.0
+}
+
+// Helper function to get default sparkle effect config
+export function getDefaultSparkleEffectConfig() {
+  return { ...DEFAULT_SPARKLE_EFFECT }
+}
+
+// Helper function to calculate sparkle parameter from buildup intensity
+// intensity: buildup intensity value (0 to ~10)
+// paramConfig: { min, max, curve } configuration object
+// Returns: calculated parameter value
+export function calculateSparkleParam(intensity, paramConfig) {
+  const { min, max, curve } = paramConfig
+
+  // Clamp intensity to 0-10 range for calculation
+  const clampedIntensity = Math.max(0, Math.min(10, intensity))
+  // Normalize to 0-1
+  const t = clampedIntensity / 10.0
+
+  let curvedT
+  switch (curve) {
+    case 'ease-in':
+      // Quadratic ease-in: slow start, fast end
+      curvedT = t * t
+      break
+    case 'ease-out':
+      // Quadratic ease-out: fast start, slow end
+      curvedT = 1 - (1 - t) * (1 - t)
+      break
+    case 'inverse':
+      // Inverse: high intensity = low value
+      curvedT = 1 - t
+      break
+    case 'linear':
+    default:
+      curvedT = t
+      break
+  }
+
+  // Interpolate between min and max
+  return min + curvedT * (max - min)
+}

@@ -784,7 +784,7 @@ class SparkleSet:
 
     start_time: float  # When this set started sparkling
     count: int  # Number of LEDs in this set
-    seed: int  # RNG seed to reproduce the LED selection
+    seed: int  # RNG seed to reproduce the LED selection and colors
 
 
 class SparkleEffect(LedEffect):
@@ -803,6 +803,15 @@ class SparkleEffect(LedEffect):
     Parameters (interval_ms, fade_ms, density) can be modified at any time.
     """
 
+    # XYZ to RGB conversion matrix (D65 illuminant)
+    _XYZ_TO_RGB = np.array(
+        [
+            [3.2404542, -1.5371385, -0.4985314],
+            [-0.9692660, 1.8760108, 0.0415560],
+            [0.0556434, -0.2040259, 1.0572252],
+        ]
+    )
+
     def __init__(
         self,
         start_time: float,
@@ -810,6 +819,7 @@ class SparkleEffect(LedEffect):
         fade_ms: float = 200.0,
         density: float = 0.05,
         led_count: int = 2600,
+        random_colors: bool = False,
         **kwargs,
     ):
         """
@@ -821,6 +831,7 @@ class SparkleEffect(LedEffect):
             fade_ms: Duration of fade from white to target color in milliseconds
             density: Fraction of LEDs to sparkle each interval [0, 1]
             led_count: Total number of LEDs in the system
+            random_colors: If True, sparkles use random colors instead of white
             **kwargs: Additional parameters passed to base class
         """
         # No fixed duration - effect continues until removed
@@ -830,6 +841,7 @@ class SparkleEffect(LedEffect):
         self.fade_ms = fade_ms
         self.density = density
         self.led_count = led_count
+        self.random_colors = random_colors
 
         # Track active sparkle sets
         self.active_sets: list[SparkleSet] = []
@@ -842,7 +854,7 @@ class SparkleEffect(LedEffect):
 
         logger.info(
             f"Created SparkleEffect: interval={interval_ms}ms, fade={fade_ms}ms, "
-            f"density={density:.1%}, led_count={led_count}"
+            f"density={density:.1%}, led_count={led_count}, random_colors={random_colors}"
         )
 
     def set_parameters(
@@ -850,6 +862,7 @@ class SparkleEffect(LedEffect):
         interval_ms: Optional[float] = None,
         fade_ms: Optional[float] = None,
         density: Optional[float] = None,
+        random_colors: Optional[bool] = None,
     ) -> None:
         """
         Update effect parameters dynamically.
@@ -858,6 +871,7 @@ class SparkleEffect(LedEffect):
             interval_ms: New interval between sparkle bursts (or None to keep current)
             fade_ms: New fade duration (or None to keep current)
             density: New LED density fraction (or None to keep current)
+            random_colors: New random colors setting (or None to keep current)
         """
         if interval_ms is not None:
             self.interval_ms = interval_ms
@@ -865,25 +879,86 @@ class SparkleEffect(LedEffect):
             self.fade_ms = fade_ms
         if density is not None:
             self.density = max(0.0, min(1.0, density))
+        if random_colors is not None:
+            self.random_colors = random_colors
 
         logger.debug(
             f"SparkleEffect parameters updated: interval={self.interval_ms}ms, "
-            f"fade={self.fade_ms}ms, density={self.density:.1%}"
+            f"fade={self.fade_ms}ms, density={self.density:.1%}, random_colors={self.random_colors}"
         )
 
-    def _get_sparkle_indices(self, count: int, seed: int) -> np.ndarray:
+    def _get_sparkle_data(self, count: int, seed: int) -> tuple[np.ndarray, Optional[np.ndarray]]:
         """
-        Get the LED indices for a sparkle set using its seed.
+        Get the LED indices and optional random colors for a sparkle set using its seed.
 
         Args:
             count: Number of LEDs to select
             seed: RNG seed for reproducible selection
 
         Returns:
-            Array of LED indices
+            Tuple of (indices array, colors array or None)
+            Colors array is shape (count, 3) RGB values if random_colors is enabled
         """
         rng = np.random.default_rng(seed)
-        return rng.choice(self.led_count, size=min(count, self.led_count), replace=False)
+        actual_count = min(count, self.led_count)
+        indices = rng.choice(self.led_count, size=actual_count, replace=False)
+
+        if not self.random_colors:
+            return indices, None
+
+        # Generate random colors in XYZ space, then convert to RGB
+        # We pick random X and Z (chromaticity), with Y=1.0 (full luminance)
+        # X and Z typically range from 0 to ~1.1 for visible colors
+        # Using a simpler approach: generate random hues in HSV then convert to RGB
+        # This ensures vibrant, saturated colors
+
+        # Generate random hues (0-1), full saturation, full value
+        hues = rng.uniform(0, 1, size=actual_count)
+
+        # HSV to RGB conversion (S=1, V=1)
+        # H is in [0,1], maps to [0,360) degrees
+        h6 = hues * 6.0
+        sector = h6.astype(int) % 6
+        f = h6 - sector
+
+        # For S=1, V=1: p=0, q=1-f, t=f
+        colors = np.zeros((actual_count, 3), dtype=np.float32)
+
+        # Red channel
+        colors[:, 0] = np.where(
+            sector == 0,
+            1.0,
+            np.where(
+                sector == 1,
+                1.0 - f,
+                np.where(sector == 2, 0.0, np.where(sector == 3, 0.0, np.where(sector == 4, f, 1.0))),
+            ),
+        )
+        # Green channel
+        colors[:, 1] = np.where(
+            sector == 0,
+            f,
+            np.where(
+                sector == 1,
+                1.0,
+                np.where(sector == 2, 1.0, np.where(sector == 3, 1.0 - f, np.where(sector == 4, 0.0, 0.0))),
+            ),
+        )
+        # Blue channel
+        colors[:, 2] = np.where(
+            sector == 0,
+            0.0,
+            np.where(
+                sector == 1,
+                0.0,
+                np.where(sector == 2, f, np.where(sector == 3, 1.0, np.where(sector == 4, 1.0, 1.0 - f))),
+            ),
+        )
+
+        # Scale to 0-255
+        colors = (colors * 255.0).astype(np.float32)
+
+        return indices, colors
 
     def apply(self, led_values: np.ndarray, frame_timestamp: float) -> bool:
         """
@@ -935,32 +1010,40 @@ class SparkleEffect(LedEffect):
                 self.active_sets.append(SparkleSet(start_time=set_start_time, count=count, seed=seed))
 
         # Step 3: Apply fades for all active sparkle sets
-        # We need to blend white towards target based on how far through the fade we are
-        # fade_progress = 0: full white, fade_progress = 1: target color
+        # We need to blend sparkle color towards target based on how far through the fade we are
+        # fade_progress = 0: full sparkle color, fade_progress = 1: target color
 
         for sparkle_set in self.active_sets:
             # Calculate fade progress for this set
             set_age_ms = (frame_timestamp - sparkle_set.start_time) * 1000.0
             fade_progress = min(1.0, max(0.0, set_age_ms / fade_ms))
 
-            # Get the LED indices for this set
-            indices = self._get_sparkle_indices(sparkle_set.count, sparkle_set.seed)
+            # Get the LED indices and optional random colors for this set
+            indices, sparkle_colors = self._get_sparkle_data(sparkle_set.count, sparkle_set.seed)
 
-            # Apply the fade: lerp from white (255) to target color
-            # At fade_progress=0: full white
+            # Apply the fade: lerp from sparkle color to target color
+            # At fade_progress=0: full sparkle color (white or random)
             # At fade_progress=1: original target color
-            # led = 255 * (1 - fade_progress) + target * fade_progress
-            # led = 255 - fade_progress * (255 - target)
 
             if led_values.ndim == 2 and led_values.shape[1] == 3:
                 # RGB format
                 target_colors = led_values[indices].astype(np.float32)
-                white_blend = 255.0 * (1.0 - fade_progress)
-                led_values[indices] = np.clip(white_blend + target_colors * fade_progress, 0, 255).astype(
-                    led_values.dtype
-                )
+
+                if sparkle_colors is not None:
+                    # Random colors mode: fade from random color to target
+                    # Scale random color by (1 - fade_progress) to fade out
+                    sparkle_blend = sparkle_colors * (1.0 - fade_progress)
+                    led_values[indices] = np.clip(sparkle_blend + target_colors * fade_progress, 0, 255).astype(
+                        led_values.dtype
+                    )
+                else:
+                    # White sparkle mode: fade from white to target
+                    white_blend = 255.0 * (1.0 - fade_progress)
+                    led_values[indices] = np.clip(white_blend + target_colors * fade_progress, 0, 255).astype(
+                        led_values.dtype
+                    )
             else:
-                # Single channel
+                # Single channel - random colors not supported, use white
                 target_values = led_values[indices].astype(np.float32)
                 white_blend = 255.0 * (1.0 - fade_progress)
                 led_values[indices] = np.clip(white_blend + target_values * fade_progress, 0, 255).astype(
@@ -979,6 +1062,7 @@ class SparkleEffect(LedEffect):
                 "density": self.density,
                 "led_count": self.led_count,
                 "active_sets": len(self.active_sets),
+                "random_colors": self.random_colors,
             }
         )
         return info
