@@ -278,50 +278,6 @@ class TestBatch8SymmetricWMMA:
         print(f"Medium matrix (320 LEDs) test passed in {elapsed_time*1000:.2f}ms")
         print(f"Result shape: {result.shape}, non-zero sum: {cupy.sum(cupy.abs(result)):.6f}")
 
-    @pytest.mark.skip(reason="_sequential_8frame_fallback method removed from API")
-    def test_8frame_performance_comparison(self, medium_matrix_8frame):
-        """Compare 8-frame vs sequential performance."""
-        matrix = medium_matrix_8frame
-
-        # Create simple test matrix
-        matrix = self.create_simple_diagonal_matrix(matrix)
-
-        # Create test input
-        input_batch = self.create_test_input_batch(matrix.led_count, batch_size=8)
-
-        # Warmup
-        for _ in range(3):
-            _ = matrix.multiply_batch8_3d(input_batch, debug_logging=False)
-            _ = matrix._sequential_8frame_fallback(input_batch, debug_logging=False)
-
-        cupy.cuda.Stream.null.synchronize()
-
-        # Time 8-frame batch processing
-        num_trials = 10
-        start_time = time.time()
-        for _ in range(num_trials):
-            result_8frame = matrix.multiply_batch8_3d(input_batch, debug_logging=False)
-        cupy.cuda.Stream.null.synchronize()
-        time_8frame = (time.time() - start_time) / num_trials
-
-        # Time sequential processing
-        start_time = time.time()
-        for _ in range(num_trials):
-            result_sequential = matrix._sequential_8frame_fallback(input_batch, debug_logging=False)
-        cupy.cuda.Stream.null.synchronize()
-        time_sequential = (time.time() - start_time) / num_trials
-
-        # Calculate speedup
-        speedup = time_sequential / time_8frame if time_8frame > 0 else 0
-
-        print("Performance comparison (320 LEDs):")
-        print(f"  8-frame batch: {time_8frame*1000:.2f}ms")
-        print(f"  Sequential:    {time_sequential*1000:.2f}ms")
-        print(f"  Speedup:       {speedup:.2f}x")
-
-        # Should be faster than sequential (allowing for some variance)
-        assert speedup > 0.5, f"8-frame processing not faster than sequential: {speedup:.2f}x"
-
     def test_8frame_kernel_availability(self):
         """Test kernel availability detection."""
         from utils.batch_symmetric_diagonal_ata_matrix import BATCH8_WMMA_KERNEL_AVAILABLE
@@ -384,13 +340,10 @@ def run_8frame_tests():
         print("\n6. Testing medium matrix...")
         test_suite.test_8frame_medium_matrix(medium_matrix)
 
-        print("\n7. Testing performance comparison...")
-        test_suite.test_8frame_performance_comparison(medium_matrix)
-
-        print("\n8. Testing kernel availability...")
+        print("\n7. Testing kernel availability...")
         test_suite.test_8frame_kernel_availability()
 
-        print("\n9. Testing class info...")
+        print("\n8. Testing class info...")
         test_suite.test_8frame_class_info(small_matrix)
 
         print("\n✅ All 8-frame batch WMMA tests passed!")

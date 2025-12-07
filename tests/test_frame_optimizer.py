@@ -529,11 +529,6 @@ class TestFrameOptimizer:
 
         print(f"  ✅ {precision} patterns test completed")
 
-    @pytest.mark.skip(reason="FP16 pattern file not available - mixed tensor FP16 support removed")
-    def test_optimization_fp16_patterns_regression(self):
-        """Test optimization with fp16 patterns and validate against fixture for regression detection."""
-        self._test_optimization_patterns_regression("fp16")
-
     def test_optimization_fp32_patterns_regression(self):
         """Test optimization with fp32 patterns and validate against fixture for regression detection."""
         self._test_optimization_patterns_regression("fp32")
