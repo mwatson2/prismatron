@@ -332,8 +332,8 @@ def compute_matrices_from_tensor(pattern_file: Path, args) -> int:
             print(f"  Saving converted uint8 tensor to file...")
 
         # Add computed or existing matrices
-        if compute_all or not has_dense_ata:
-            save_dict["dense_ata_matrix"] = dense_ata_matrix.to_dict()
+        # Note: Dense ATA is only used as an intermediate computation step and is NOT saved
+        # to the pattern file. Only the Symmetric DIA matrix and ATA inverse are saved.
         if compute_all or not has_ata_inverse:
             save_dict["ata_inverse"] = ata_inverse
         if compute_all or missing_matrices:
@@ -403,17 +403,15 @@ def compute_matrices_from_tensor(pattern_file: Path, args) -> int:
         batch_symmetric_memory = (
             batch_symmetric_ata_matrix.block_data_gpu.nbytes if batch_symmetric_ata_matrix is not None else 0
         )
-        total_memory = (
-            dense_ata_matrix.dense_matrices_cpu.nbytes
-            + symmetric_dia_memory
-            + batch_symmetric_memory
-            + ata_inverse.nbytes
-        ) / (1024 * 1024)
+        # Note: Dense ATA is not saved to file, only used for intermediate computation
+        saved_memory = (symmetric_dia_memory + batch_symmetric_memory + ata_inverse.nbytes) / (1024 * 1024)
 
         print(f"\n✅ Matrix computation completed successfully!")
         print(f"   Total computation time: {total_time:.2f}s")
-        print(f"   Total matrix memory: {total_memory:.1f}MB")
-        print(f"   Dense ATA: {dense_ata_matrix.dense_matrices_cpu.nbytes / (1024*1024):.1f}MB")
+        print(f"   Saved matrix memory: {saved_memory:.1f}MB")
+        print(
+            f"   Dense ATA (intermediate, not saved): {dense_ata_matrix.dense_matrices_cpu.nbytes / (1024*1024):.1f}MB"
+        )
         if symmetric_dia_matrix is not None:
             print(
                 f"   Symmetric DIA: {symmetric_dia_matrix.dia_data_gpu.nbytes / (1024*1024):.1f}MB ({symmetric_dia_matrix.k_upper} upper diagonals)"
