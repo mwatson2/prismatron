@@ -154,8 +154,7 @@ class ConsumerProcess:
 
         # Audio beat analyzer (always try to initialize for dynamic enable/disable)
         self._audio_beat_analyzer: Optional[AudioBeatAnalyzer] = None
-        # TEMPORARY: Force enable audio-reactive for microphone testing
-        self._enable_audio_reactive = True  # enable_audio_reactive
+        self._enable_audio_reactive = enable_audio_reactive
         self._audio_analysis_running = False
         self._audio_device = audio_device
 
@@ -823,6 +822,11 @@ class ConsumerProcess:
                 return
 
             current_renderer_state = control_status.renderer_state
+
+            # Check if LED buffer is initialized
+            if self._led_buffer is None:
+                return  # Buffer not ready yet
+
             buffer_stats = self._led_buffer.get_buffer_stats()
             buffer_frames = buffer_stats.get("current_count", 0)
             buffer_capacity = buffer_stats.get("buffer_size", 10)
@@ -1284,6 +1288,9 @@ class ConsumerProcess:
                     break
 
                 # Try reconnection if not connected
+                if self._wled_client is None:
+                    continue  # WLED client not initialized yet
+
                 if not self._wled_client.is_connected:
                     logger.debug("Attempting WLED reconnection...")
                     if self._wled_client.connect():

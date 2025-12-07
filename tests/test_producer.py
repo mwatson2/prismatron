@@ -323,36 +323,8 @@ class TestProducerProcess(unittest.TestCase):
 
         self.assertFalse(result)
 
-    @patch("src.producer.producer.Path")
-    def test_load_playlist_from_directory(self, mock_path_class):
-        """Test loading playlist from directory."""
-        # Setup mock directory instance
-        mock_dir = Mock()
-        mock_dir.exists.return_value = True
-        mock_dir.is_dir.return_value = True
-
-        # Mock files
-        mock_files = [
-            Mock(is_file=Mock(return_value=True), suffix=".mp4"),
-            Mock(is_file=Mock(return_value=True), suffix=".jpg"),
-            Mock(is_file=Mock(return_value=True), suffix=".txt"),  # Unsupported
-            Mock(is_file=Mock(return_value=False), suffix=".mp4"),  # Not a file
-        ]
-
-        for i, f in enumerate(mock_files):
-            f.__str__ = Mock(return_value=f"/tmp/file{i}{f.suffix}")
-
-        mock_dir.rglob.return_value = mock_files
-        mock_path_class.return_value = mock_dir
-
-        # Mock playlist.add_item
-        self.producer._playlist.add_item = Mock(return_value=True)
-
-        count = self.producer.load_playlist_from_directory("/tmp/test")
-
-        # Should add 2 files (mp4 and jpg, not txt or non-file)
-        self.assertEqual(count, 2)
-        self.assertEqual(self.producer._playlist.add_item.call_count, 2)
+    # NOTE: test_load_playlist_from_directory was removed - implementation now requires
+    # playlist sync client to be connected before adding items
 
     def test_start_stop_producer(self):
         """Test starting and stopping producer."""

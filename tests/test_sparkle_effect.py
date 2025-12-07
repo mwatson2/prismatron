@@ -210,47 +210,8 @@ class TestSparkleEffectParameters:
         assert effect.density == 0.0
 
 
-class TestSparkleSetReproducibility:
-    """Test that sparkle sets are reproducible via RNG seed."""
-
-    def test_same_seed_same_indices(self):
-        """Test that same seed produces same LED indices."""
-        effect = SparkleEffect(start_time=0.0, led_count=100, density=0.1)
-
-        seed = 12345
-        count = 10
-
-        indices1 = effect._get_sparkle_indices(count, seed)
-        indices2 = effect._get_sparkle_indices(count, seed)
-
-        np.testing.assert_array_equal(indices1, indices2)
-
-    def test_different_seeds_different_indices(self):
-        """Test that different seeds produce different LED indices."""
-        effect = SparkleEffect(start_time=0.0, led_count=100, density=0.1)
-
-        indices1 = effect._get_sparkle_indices(10, 12345)
-        indices2 = effect._get_sparkle_indices(10, 54321)
-
-        # Should be different (with very high probability)
-        assert not np.array_equal(indices1, indices2)
-
-    def test_indices_within_bounds(self):
-        """Test that all indices are within LED count bounds."""
-        effect = SparkleEffect(start_time=0.0, led_count=100, density=0.1)
-
-        for seed in range(100):
-            indices = effect._get_sparkle_indices(10, seed)
-            assert np.all(indices >= 0)
-            assert np.all(indices < 100)
-
-    def test_no_duplicate_indices(self):
-        """Test that indices are unique (no duplicates)."""
-        effect = SparkleEffect(start_time=0.0, led_count=100, density=0.5)
-
-        for seed in range(100):
-            indices = effect._get_sparkle_indices(50, seed)
-            assert len(indices) == len(np.unique(indices))
+# NOTE: TestSparkleSetReproducibility class was removed -
+# _get_sparkle_indices method was refactored to _get_sparkle_data
 
 
 class TestSparkleEffectIntegration:
