@@ -6,6 +6,7 @@ integration, WLED communication, and performance monitoring.
 """
 
 import os
+import signal
 import sys
 import tempfile
 import threading
@@ -61,6 +62,10 @@ class TestConsumerProcess(unittest.TestCase):
         """Set up test fixtures."""
         self.temp_dir = tempfile.mkdtemp()
 
+        # Save original signal handlers to restore after test
+        self._original_sigint_handler = signal.getsignal(signal.SIGINT)
+        self._original_sigterm_handler = signal.getsignal(signal.SIGTERM)
+
         # Create consumer with mocked dependencies
         # Note: We patch create_frame_renderer_with_pattern at the source module
         # because it's imported locally inside ConsumerProcess.__init__
@@ -106,6 +111,10 @@ class TestConsumerProcess(unittest.TestCase):
         """Clean up after tests."""
         if hasattr(self.consumer, "_running") and self.consumer._running:
             self.consumer.stop()
+
+        # Restore original signal handlers
+        signal.signal(signal.SIGINT, self._original_sigint_handler)
+        signal.signal(signal.SIGTERM, self._original_sigterm_handler)
 
         # Clean up temp files
         import shutil
@@ -315,6 +324,16 @@ class TestConsumerProcess(unittest.TestCase):
 
 class TestConsumerProcessIntegration(unittest.TestCase):
     """Integration tests for consumer process."""
+
+    def setUp(self):
+        """Save original signal handlers."""
+        self._original_sigint_handler = signal.getsignal(signal.SIGINT)
+        self._original_sigterm_handler = signal.getsignal(signal.SIGTERM)
+
+    def tearDown(self):
+        """Restore original signal handlers."""
+        signal.signal(signal.SIGINT, self._original_sigint_handler)
+        signal.signal(signal.SIGTERM, self._original_sigterm_handler)
 
     @patch("src.consumer.consumer.FrameConsumer")
     @patch("src.consumer.consumer.ControlState")

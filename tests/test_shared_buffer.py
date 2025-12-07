@@ -33,6 +33,23 @@ def get_buffer_array(buffer_info, width=FRAME_WIDTH, height=FRAME_HEIGHT, channe
     return buffer_info.get_array_interleaved(width, height, channels)
 
 
+def cleanup_consumer(consumer):
+    """Clean up consumer connection without unlinking shared memory.
+
+    This must be called before producer.cleanup() to avoid BufferError
+    when shared memory is closed while numpy arrays still reference it.
+    """
+    if consumer is None:
+        return
+    if hasattr(consumer, "_shared_memory"):
+        consumer._shared_memory.clear()
+    if hasattr(consumer, "_metadata_memory"):
+        consumer._metadata_memory = None
+    if hasattr(consumer, "_control_memory"):
+        consumer._control_memory = None
+    consumer._initialized = False
+
+
 @unittest.skipUnless(SHARED_MEMORY_AVAILABLE, "Shared memory not available (requires Python 3.8+)")
 class TestFrameRingBuffer(unittest.TestCase):
     """Test cases for FrameRingBuffer class."""
@@ -136,9 +153,7 @@ class TestFrameRingBuffer(unittest.TestCase):
         self.assertTrue(status["initialized"])
 
         # Clean up the consumer buffer (but don't unlink shared memory)
-        consumer_buffer._shared_memory.clear()
-        consumer_buffer._control_memory = None
-        consumer_buffer._initialized = False
+        cleanup_consumer(consumer_buffer)
 
     def test_error_handling_uninitialized(self):
         """Test error handling when buffer is not initialized."""
@@ -161,14 +176,17 @@ class TestFrameRingBuffer(unittest.TestCase):
         consumer = FrameConsumer(self.buffer_name)
         self.assertTrue(consumer.connect())
 
-        # No data written yet, should timeout
-        start_time = time.time()
-        buffer_info = consumer.wait_for_ready_buffer(timeout=0.2)
-        end_time = time.time()
+        try:
+            # No data written yet, should timeout
+            start_time = time.time()
+            buffer_info = consumer.wait_for_ready_buffer(timeout=0.2)
+            end_time = time.time()
 
-        self.assertIsNone(buffer_info, "Should return None on timeout")
-        self.assertGreaterEqual(end_time - start_time, 0.15)  # Should have waited
-        self.assertLess(end_time - start_time, 0.5)  # But not too long
+            self.assertIsNone(buffer_info, "Should return None on timeout")
+            self.assertGreaterEqual(end_time - start_time, 0.15)  # Should have waited
+            self.assertLess(end_time - start_time, 0.5)  # But not too long
+        finally:
+            cleanup_consumer(consumer)
 
     def test_cleanup(self):
         """Test proper cleanup of resources."""
@@ -530,6 +548,7 @@ class TestMultiprocessCommunication(unittest.TestCase):
             self.assertLess(end_time - start_time, 0.5, "Should not wait too long")
 
         finally:
+            cleanup_consumer(consumer)
             producer.cleanup()
 
     def test_buffer_release_mechanics(self):
@@ -567,6 +586,7 @@ class TestMultiprocessCommunication(unittest.TestCase):
             self.assertEqual(status["read_index"], -1, "Read index should be cleared after release")
 
         finally:
+            cleanup_consumer(consumer)
             producer.cleanup()
 
     @unittest.skip("Multiprocess communication test can be flaky in CI environments")
@@ -643,6 +663,7 @@ class TestMultiprocessCommunication(unittest.TestCase):
                 self.assertAlmostEqual(actual, expected, places=6, msg=f"Frame {i} timestamp mismatch")
 
         finally:
+            cleanup_consumer(consumer)
             producer.cleanup()
 
     @unittest.skip("Multiprocess communication test can be flaky in CI environments")
@@ -734,6 +755,7 @@ class TestMultiprocessCommunication(unittest.TestCase):
             self.assertLess(abs(metadata.presentation_timestamp - write_time), 0.1)
 
         finally:
+            cleanup_consumer(consumer)
             producer.cleanup()
 
     def test_metadata_storage_with_resolution(self):
@@ -776,6 +798,7 @@ class TestMultiprocessCommunication(unittest.TestCase):
             self.assertEqual(metadata.source_height, 960)
 
         finally:
+            cleanup_consumer(consumer)
             producer.cleanup()
 
     def test_metadata_persistence_across_processes(self):
@@ -818,13 +841,8 @@ class TestMultiprocessCommunication(unittest.TestCase):
             self.assertEqual(read_metadata.source_height, test_height)
             self.assertEqual(read_metadata.presentation_timestamp, test_timestamp)
 
-            # Clean up consumer buffer connection
-            consumer_buffer._shared_memory.clear()
-            consumer_buffer._metadata_memory = None
-            consumer_buffer._control_memory = None
-            consumer_buffer._initialized = False
-
         finally:
+            cleanup_consumer(consumer_buffer)
             ring_buffer.cleanup()
 
 
@@ -840,6 +858,8 @@ class TestProducerConsumerSubclasses(unittest.TestCase):
 
     def tearDown(self):
         """Clean up after tests."""
+        if hasattr(self, "consumer"):
+            cleanup_consumer(self.consumer)
         if hasattr(self, "producer"):
             self.producer.cleanup()
 

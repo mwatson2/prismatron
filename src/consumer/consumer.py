@@ -297,6 +297,7 @@ class ConsumerProcess:
         self._optimization_thread_heartbeat = 0.0
         self._thread_monitor_interval = 5.0  # Check thread health every 5 seconds
         self._thread_monitor_thread: Optional[threading.Thread] = None
+        self._thread_monitor_shutdown_event = threading.Event()  # Signal for graceful shutdown
         self._last_thread_check = 0.0
 
         # Batch processing configuration
@@ -670,6 +671,9 @@ class ConsumerProcess:
 
             # Signal WLED reconnection thread to stop
             self._wled_reconnection_event.set()
+
+            # Signal thread monitor to stop
+            self._thread_monitor_shutdown_event.set()
 
             # Stop audio beat analyzer if running
             if self._audio_beat_analyzer and self._audio_analysis_running:
@@ -1267,12 +1271,14 @@ class ConsumerProcess:
 
                 self._last_thread_check = current_time
 
-                # Sleep for monitor interval
-                time.sleep(self._thread_monitor_interval)
+                # Wait for shutdown event or monitor interval
+                if self._thread_monitor_shutdown_event.wait(timeout=self._thread_monitor_interval):
+                    break  # Shutdown requested
 
             except Exception as e:
                 logger.error(f"Error in thread monitor loop: {e}", exc_info=True)
-                time.sleep(1.0)
+                if self._thread_monitor_shutdown_event.wait(timeout=1.0):
+                    break  # Shutdown requested
 
         logger.info("Thread monitor ended")
 
@@ -2425,13 +2431,13 @@ class ConsumerProcess:
             if hasattr(self, "_timing_logger") and self._timing_logger:
                 self._timing_logger.stop_logging()
 
-            if hasattr(self, "_wled_client"):
+            if hasattr(self, "_wled_client") and self._wled_client:
                 self._wled_client.disconnect()
 
-            if hasattr(self, "_led_buffer"):
+            if hasattr(self, "_led_buffer") and self._led_buffer:
                 self._led_buffer.clear()
 
-            if hasattr(self, "_frame_consumer"):
+            if hasattr(self, "_frame_consumer") and self._frame_consumer:
                 self._frame_consumer.cleanup()
 
             logger.debug("Consumer process cleanup completed")

@@ -5,6 +5,7 @@ This module tests the integration of audio beat detection functionality
 with the consumer process, including lifecycle management and control state updates.
 """
 
+import signal
 import time
 from unittest.mock import MagicMock, Mock, PropertyMock, patch
 
@@ -12,6 +13,16 @@ import pytest
 
 from src.consumer.audio_beat_analyzer import BeatEvent
 from src.core.control_state import ControlState, SystemStatus
+
+
+@pytest.fixture(autouse=True)
+def restore_signal_handlers():
+    """Save and restore signal handlers around each test."""
+    original_sigint = signal.getsignal(signal.SIGINT)
+    original_sigterm = signal.getsignal(signal.SIGTERM)
+    yield
+    signal.signal(signal.SIGINT, original_sigint)
+    signal.signal(signal.SIGTERM, original_sigterm)
 
 
 def _setup_mock_renderer(mock_create_renderer):
@@ -200,6 +211,9 @@ class TestConsumerAudioIntegration:
         assert success is True
         mock_audio_instance.start_analysis.assert_called_once()
 
+        # Clean up - stop the consumer to terminate threads
+        consumer.stop()
+
     @patch("src.consumer.consumer.FrameConsumer")
     @patch("src.consumer.consumer.ControlState")
     @patch("src.consumer.consumer.LEDOptimizer")
@@ -237,6 +251,9 @@ class TestConsumerAudioIntegration:
 
         # Verify audio start was attempted
         mock_audio_instance.start_analysis.assert_called_once()
+
+        # Clean up - stop the consumer to terminate threads
+        consumer.stop()
 
     # NOTE: test_consumer_stop_with_audio and test_consumer_stop_audio_failure were removed -
     # implementation changed: audio stop is now conditional on _audio_analysis_running flag
