@@ -29,7 +29,7 @@ class TestSineWaveVisualizer:
     def test_wave_generation(self):
         """Test that sine waves are visible."""
         effect = SineWaveVisualizer(width=100, height=100)
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Should have wave patterns
         assert frame.max() > 0
@@ -38,10 +38,10 @@ class TestSineWaveVisualizer:
     def test_wave_frequency(self):
         """Test different wave frequencies."""
         effect_low = SineWaveVisualizer(width=100, height=50, config={"frequency": 0.5})
-        frame_low = effect_low.generate_frame()
+        frame_low = effect_low.generate_frame(0.0)
 
         effect_high = SineWaveVisualizer(width=100, height=50, config={"frequency": 5.0})
-        frame_high = effect_high.generate_frame()
+        frame_high = effect_high.generate_frame(0.0)
 
         # Higher frequency should have more oscillations
         # Count zero crossings in a horizontal line
@@ -61,10 +61,10 @@ class TestSineWaveVisualizer:
     def test_wave_amplitude(self):
         """Test different wave amplitudes."""
         effect_small = SineWaveVisualizer(width=100, height=100, config={"amplitude": 0.3})
-        frame_small = effect_small.generate_frame()
+        frame_small = effect_small.generate_frame(0.0)
 
         effect_large = SineWaveVisualizer(width=100, height=100, config={"amplitude": 1.0})
-        frame_large = effect_large.generate_frame()
+        frame_large = effect_large.generate_frame(0.0)
 
         # Larger amplitude should have greater variation
         assert frame_large.std() >= frame_small.std()
@@ -75,7 +75,7 @@ class TestSineWaveVisualizer:
 
         for direction in directions:
             effect = SineWaveVisualizer(width=80, height=80, config={"direction": direction})
-            frame = effect.generate_frame()
+            frame = effect.generate_frame(0.0)
 
             # Each direction should produce valid waves
             assert frame.shape == (80, 80, 3)
@@ -86,9 +86,8 @@ class TestSineWaveVisualizer:
         effect = SineWaveVisualizer(width=80, height=80, config={"speed": 3.0})
 
         frames = []
-        for _ in range(4):
-            frames.append(effect.generate_frame())
-            time.sleep(0.05)
+        for i in range(4):
+            frames.append(effect.generate_frame(i * 0.1))
 
         # Waves should animate
         for i in range(1, len(frames)):
@@ -100,7 +99,7 @@ class TestSineWaveVisualizer:
             width=100, height=100, config={"wave_count": 3, "frequencies": [1.0, 2.0, 0.5], "phases": [0.0, 0.5, 1.0]}
         )
 
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Multiple waves should create more complex patterns
         # Should still be valid output
@@ -114,7 +113,7 @@ class TestPlasmaEffect:
     def test_plasma_generation(self):
         """Test that plasma patterns are generated."""
         effect = PlasmaEffect(width=100, height=100)
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Should have smooth, continuous patterns
         assert frame.max() > 0
@@ -123,7 +122,7 @@ class TestPlasmaEffect:
     def test_plasma_smoothness(self):
         """Test that plasma has smooth gradients."""
         effect = PlasmaEffect(width=80, height=80)
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Check smoothness by comparing neighboring pixels
         dx = np.abs(np.diff(frame[:, :, 0], axis=1))
@@ -136,10 +135,10 @@ class TestPlasmaEffect:
     def test_plasma_complexity(self):
         """Test different complexity levels."""
         effect_simple = PlasmaEffect(width=80, height=80, config={"complexity": 0.2})
-        frame_simple = effect_simple.generate_frame()
+        frame_simple = effect_simple.generate_frame(0.0)
 
         effect_complex = PlasmaEffect(width=80, height=80, config={"complexity": 1.0})
-        frame_complex = effect_complex.generate_frame()
+        frame_complex = effect_complex.generate_frame(0.0)
 
         # More complex should have more variation
         assert frame_complex.std() >= frame_simple.std() * 0.8
@@ -148,9 +147,8 @@ class TestPlasmaEffect:
         """Test plasma animation."""
         effect = PlasmaEffect(width=60, height=60, config={"speed": 2.0})
 
-        frame1 = effect.generate_frame()
-        time.sleep(0.1)
-        frame2 = effect.generate_frame()
+        frame1 = effect.generate_frame(0.0)
+        frame2 = effect.generate_frame(0.1)
 
         # Should animate smoothly
         assert not np.array_equal(frame1, frame2)
@@ -165,7 +163,7 @@ class TestPlasmaEffect:
 
         for mode in modes:
             effect = PlasmaEffect(width=60, height=60, config={"color_mode": mode})
-            frame = effect.generate_frame()
+            frame = effect.generate_frame(0.0)
 
             # Each mode should produce valid output
             assert frame.shape == (60, 60, 3)
@@ -174,10 +172,10 @@ class TestPlasmaEffect:
     def test_plasma_scale(self):
         """Test different plasma scales."""
         effect_fine = PlasmaEffect(width=100, height=100, config={"scale": 0.1})
-        frame_fine = effect_fine.generate_frame()
+        frame_fine = effect_fine.generate_frame(0.0)
 
         effect_coarse = PlasmaEffect(width=100, height=100, config={"scale": 1.0})
-        frame_coarse = effect_coarse.generate_frame()
+        frame_coarse = effect_coarse.generate_frame(0.0)
 
         # Different scales should produce different patterns
         assert frame_fine.shape == frame_coarse.shape == (100, 100, 3)
@@ -190,7 +188,7 @@ class TestWaterRipples:
     def test_ripple_generation(self):
         """Test that ripples are generated."""
         effect = WaterRipples(width=100, height=100)
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Should have ripple patterns
         assert frame.max() > 0
@@ -199,7 +197,7 @@ class TestWaterRipples:
     def test_ripple_sources(self):
         """Test multiple ripple sources."""
         effect = WaterRipples(width=100, height=100, config={"ripple_count": 5})
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Multiple sources should create interference patterns
         assert frame.shape == (100, 100, 3)
@@ -210,9 +208,8 @@ class TestWaterRipples:
         effect = WaterRipples(width=80, height=80, config={"wave_speed": 3.0})
 
         frames = []
-        for _ in range(5):
-            frames.append(effect.generate_frame())
-            time.sleep(0.04)
+        for i in range(5):
+            frames.append(effect.generate_frame(i * 0.1))
 
         # Ripples should propagate outward
         # Look for expanding patterns
@@ -227,10 +224,10 @@ class TestWaterRipples:
     def test_ripple_frequency(self):
         """Test ripple frequency/wavelength."""
         effect_short = WaterRipples(width=100, height=100, config={"wavelength": 5.0})
-        frame_short = effect_short.generate_frame()
+        frame_short = effect_short.generate_frame(0.0)
 
         effect_long = WaterRipples(width=100, height=100, config={"wavelength": 20.0})
-        frame_long = effect_long.generate_frame()
+        frame_long = effect_long.generate_frame(0.0)
 
         # Different wavelengths should create different patterns
         assert frame_short.shape == frame_long.shape == (100, 100, 3)
@@ -239,10 +236,10 @@ class TestWaterRipples:
     def test_ripple_damping(self):
         """Test ripple damping/decay."""
         effect_nodamp = WaterRipples(width=100, height=100, config={"damping": 0.0})
-        frame_nodamp = effect_nodamp.generate_frame()
+        frame_nodamp = effect_nodamp.generate_frame(0.0)
 
         effect_damp = WaterRipples(width=100, height=100, config={"damping": 0.8})
-        frame_damp = effect_damp.generate_frame()
+        frame_damp = effect_damp.generate_frame(0.0)
 
         # Both should produce valid ripples
         assert frame_nodamp.max() > 0
@@ -251,7 +248,7 @@ class TestWaterRipples:
     def test_water_color(self):
         """Test water color effects."""
         effect = WaterRipples(width=80, height=80, config={"water_color": [0, 100, 200]})
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Should have bluish tint for water
         blue_channel = frame[:, :, 2].mean()
@@ -267,7 +264,7 @@ class TestLissajousCurves:
     def test_curve_generation(self):
         """Test that Lissajous curves are drawn."""
         effect = LissajousCurves(width=100, height=100)
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Should have curve patterns
         assert frame.max() > 0
@@ -277,11 +274,11 @@ class TestLissajousCurves:
         """Test different frequency ratios."""
         # Simple 1:1 ratio
         effect_1_1 = LissajousCurves(width=100, height=100, config={"freq_x": 1.0, "freq_y": 1.0})
-        frame_1_1 = effect_1_1.generate_frame()
+        frame_1_1 = effect_1_1.generate_frame(0.0)
 
         # Complex 3:2 ratio
         effect_3_2 = LissajousCurves(width=100, height=100, config={"freq_x": 3.0, "freq_y": 2.0})
-        frame_3_2 = effect_3_2.generate_frame()
+        frame_3_2 = effect_3_2.generate_frame(0.0)
 
         # Both should produce curves
         assert frame_1_1.max() > 0
@@ -290,10 +287,10 @@ class TestLissajousCurves:
     def test_phase_difference(self):
         """Test phase difference effects."""
         effect_0 = LissajousCurves(width=100, height=100, config={"phase_shift": 0.0})
-        frame_0 = effect_0.generate_frame()
+        frame_0 = effect_0.generate_frame(0.0)
 
         effect_90 = LissajousCurves(width=100, height=100, config={"phase_shift": np.pi / 2})
-        frame_90 = effect_90.generate_frame()
+        frame_90 = effect_90.generate_frame(0.0)
 
         # Different phases should produce different curves
         assert frame_0.shape == frame_90.shape == (100, 100, 3)
@@ -308,9 +305,8 @@ class TestLissajousCurves:
         effect = LissajousCurves(width=80, height=80, config={"animation_speed": 5.0})
 
         frames = []
-        for _ in range(4):
-            frames.append(effect.generate_frame())
-            time.sleep(0.05)
+        for i in range(4):
+            frames.append(effect.generate_frame(i * 0.1))
 
         # Curves should evolve over time
         for i in range(1, len(frames)):
@@ -328,7 +324,7 @@ class TestLissajousCurves:
             },
         )
 
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Multiple curves should create complex overlapping patterns
         assert frame.shape == (100, 100, 3)
@@ -341,10 +337,10 @@ class TestLissajousCurves:
     def test_curve_thickness(self):
         """Test curve line thickness."""
         effect_thin = LissajousCurves(width=100, height=100, config={"line_thickness": 1})
-        frame_thin = effect_thin.generate_frame()
+        frame_thin = effect_thin.generate_frame(0.0)
 
         effect_thick = LissajousCurves(width=100, height=100, config={"line_thickness": 5})
-        frame_thick = effect_thick.generate_frame()
+        frame_thick = effect_thick.generate_frame(0.0)
 
         # Thicker lines should cover more pixels
         thin_pixels = (frame_thin.max(axis=2) > 100).sum()
@@ -358,9 +354,8 @@ class TestLissajousCurves:
 
         # Generate sequence of frames
         frames = []
-        for _ in range(5):
-            frames.append(effect.generate_frame())
-            time.sleep(0.02)
+        for i in range(5):
+            frames.append(effect.generate_frame(i * 0.05))
 
         # With persistence, previous curve positions should still be visible
         # Check if any pixels maintain brightness across frames

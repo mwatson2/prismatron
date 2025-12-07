@@ -100,8 +100,8 @@ def test_planar_output_optimization():
     print("TESTING PLANAR OUTPUT OPTIMIZATION")
     print("=" * 70)
 
-    # Load the 2624 LED synthetic patterns from fixtures
-    pattern_file = Path(__file__).parent / "fixtures" / "synthetic_2624_uint8.npz"
+    # Load the 2624 LED synthetic patterns from production patterns directory
+    pattern_file = Path("/mnt/prismatron/patterns/synthetic_2624_uint8.npz")
 
     if not pattern_file.exists():
         pytest.skip(f"Pattern file not found: {pattern_file}")
@@ -218,8 +218,8 @@ def test_frame_optimizer_integration():
     # Import frame optimizer functions
     from utils.frame_optimizer import _calculate_atb
 
-    # Load the same data from fixtures
-    pattern_file = Path(__file__).parent / "fixtures" / "synthetic_2624_uint8.npz"
+    # Load the same data from production patterns directory
+    pattern_file = Path("/mnt/prismatron/patterns/synthetic_2624_uint8.npz")
 
     if not pattern_file.exists():
         pytest.skip(f"Pattern file not found: {pattern_file}")

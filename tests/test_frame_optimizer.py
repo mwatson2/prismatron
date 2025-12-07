@@ -77,14 +77,14 @@ class TestFrameOptimizer:
         """
         from pathlib import Path
 
-        # Load the patterns based on precision from fixtures directory
-        fixtures_dir = Path(__file__).parent / "fixtures"
+        # Load the patterns based on precision from production patterns directory
+        patterns_dir = Path("/mnt/prismatron/patterns")
         if precision == "fp16":
-            pattern_path = fixtures_dir / "synthetic_2624_fp16.npz"
+            pattern_path = patterns_dir / "synthetic_2624_fp16.npz"
         elif precision == "fp32":
-            pattern_path = fixtures_dir / "synthetic_2624_fp32.npz"
+            pattern_path = patterns_dir / "synthetic_2624_fp32.npz"
         elif precision == "uint8":
-            pattern_path = fixtures_dir / "synthetic_2624_uint8.npz"
+            pattern_path = patterns_dir / "synthetic_2624_uint8.npz"
         else:
             raise ValueError(f"Invalid precision: {precision}. Must be 'fp16', 'fp32', or 'uint8'")
 
@@ -125,14 +125,14 @@ class TestFrameOptimizer:
         """
         from pathlib import Path
 
-        # Load the patterns based on precision from fixtures directory
-        fixtures_dir = Path(__file__).parent / "fixtures"
+        # Load the patterns based on precision from production patterns directory
+        patterns_dir = Path("/mnt/prismatron/patterns")
         if precision == "fp16":
-            pattern_path = fixtures_dir / "synthetic_2624_fp16.npz"
+            pattern_path = patterns_dir / "synthetic_2624_fp16.npz"
         elif precision == "fp32":
-            pattern_path = fixtures_dir / "synthetic_2624_fp32.npz"
+            pattern_path = patterns_dir / "synthetic_2624_fp32.npz"
         elif precision == "uint8":
-            pattern_path = fixtures_dir / "synthetic_2624_uint8.npz"
+            pattern_path = patterns_dir / "synthetic_2624_uint8.npz"
         else:
             raise ValueError(f"Invalid precision: {precision}. Must be 'fp16', 'fp32', or 'uint8'")
 

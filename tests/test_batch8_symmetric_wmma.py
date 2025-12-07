@@ -32,6 +32,35 @@ except ImportError:
 from utils.batch_symmetric_diagonal_ata_matrix import BatchSymmetricDiagonalATAMatrix
 
 
+# Fixtures for test matrices
+@pytest.fixture
+def small_matrix_8frame():
+    """Create small 8-frame test matrix (64 LEDs, 4x4 blocks)."""
+    led_count = 64  # 4x4 blocks of 16x16
+    crop_size = 64
+    batch_size = 8
+
+    matrix = BatchSymmetricDiagonalATAMatrix(
+        led_count=led_count, crop_size=crop_size, batch_size=batch_size, output_dtype=cupy.float32
+    )
+
+    return matrix
+
+
+@pytest.fixture
+def medium_matrix_8frame():
+    """Create medium 8-frame test matrix (320 LEDs, 20x20 blocks)."""
+    led_count = 320  # 20x20 blocks of 16x16
+    crop_size = 64
+    batch_size = 8
+
+    matrix = BatchSymmetricDiagonalATAMatrix(
+        led_count=led_count, crop_size=crop_size, batch_size=batch_size, output_dtype=cupy.float32
+    )
+
+    return matrix
+
+
 class TestBatch8SymmetricWMMA:
     """Test suite for 8-frame batch symmetric WMMA operations."""
 
@@ -110,7 +139,7 @@ class TestBatch8SymmetricWMMA:
         input_batch = self.create_test_input_batch(matrix.led_count, batch_size=8)
 
         # Perform 8-frame batch multiplication
-        result = matrix.multiply_batch8_3d(input_batch, optimized_kernel=False, debug_logging=True)
+        result = matrix.multiply_batch8_3d(input_batch, debug_logging=True)
 
         # Validate output shape
         assert result.shape == (8, 3, matrix.led_count)
@@ -134,7 +163,7 @@ class TestBatch8SymmetricWMMA:
         input_batch = self.create_test_input_batch(matrix.led_count, batch_size=8)
 
         # Process with 8-frame batch
-        result_8frame = matrix.multiply_batch8_3d(input_batch, optimized_kernel=False, debug_logging=False)
+        result_8frame = matrix.multiply_batch8_3d(input_batch, debug_logging=False)
 
         # CPU reference: for identity matrix, output should equal input (A*x = x)
         expected_output = cupy.asnumpy(input_batch)
@@ -159,10 +188,10 @@ class TestBatch8SymmetricWMMA:
         input_batch = self.create_test_input_batch(matrix.led_count, batch_size=8)
 
         # Use general multiply_batch_3d method (should route to 8-frame automatically)
-        result_auto = matrix.multiply_batch_3d(input_batch, optimized_kernel=False, debug_logging=True)
+        result_auto = matrix.multiply_batch_3d(input_batch, debug_logging=True)
 
         # Use explicit 8-frame method
-        result_explicit = matrix.multiply_batch8_3d(input_batch, optimized_kernel=False, debug_logging=False)
+        result_explicit = matrix.multiply_batch8_3d(input_batch, debug_logging=False)
 
         # Results should be identical
         max_diff = cupy.max(cupy.abs(result_auto - result_explicit))
@@ -239,7 +268,7 @@ class TestBatch8SymmetricWMMA:
 
         # Perform 8-frame batch multiplication
         start_time = time.time()
-        result = matrix.multiply_batch8_3d(input_batch, optimized_kernel=False, debug_logging=True)
+        result = matrix.multiply_batch8_3d(input_batch, debug_logging=True)
         elapsed_time = time.time() - start_time
 
         # Validate output
@@ -249,6 +278,7 @@ class TestBatch8SymmetricWMMA:
         print(f"Medium matrix (320 LEDs) test passed in {elapsed_time*1000:.2f}ms")
         print(f"Result shape: {result.shape}, non-zero sum: {cupy.sum(cupy.abs(result)):.6f}")
 
+    @pytest.mark.skip(reason="_sequential_8frame_fallback method removed from API")
     def test_8frame_performance_comparison(self, medium_matrix_8frame):
         """Compare 8-frame vs sequential performance."""
         matrix = medium_matrix_8frame
@@ -261,7 +291,7 @@ class TestBatch8SymmetricWMMA:
 
         # Warmup
         for _ in range(3):
-            _ = matrix.multiply_batch8_3d(input_batch, optimized_kernel=False, debug_logging=False)
+            _ = matrix.multiply_batch8_3d(input_batch, debug_logging=False)
             _ = matrix._sequential_8frame_fallback(input_batch, debug_logging=False)
 
         cupy.cuda.Stream.null.synchronize()
@@ -270,7 +300,7 @@ class TestBatch8SymmetricWMMA:
         num_trials = 10
         start_time = time.time()
         for _ in range(num_trials):
-            result_8frame = matrix.multiply_batch8_3d(input_batch, optimized_kernel=False, debug_logging=False)
+            result_8frame = matrix.multiply_batch8_3d(input_batch, debug_logging=False)
         cupy.cuda.Stream.null.synchronize()
         time_8frame = (time.time() - start_time) / num_trials
 

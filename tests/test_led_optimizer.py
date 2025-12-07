@@ -25,8 +25,8 @@ from src.consumer.led_optimizer import LEDOptimizer, OptimizationResult
 class TestLEDOptimizer:
     """Test suite for LEDOptimizer class."""
 
-    # Path to patterns in fixtures directory
-    REAL_PATTERNS_PATH = str(Path(__file__).parent / "fixtures" / "synthetic_2624_fp32.npz")
+    # Path to patterns in production patterns directory
+    REAL_PATTERNS_PATH = "/mnt/prismatron/patterns/synthetic_2624_fp32.npz"
 
     def setup_method(self):
         """Setup test fixtures."""

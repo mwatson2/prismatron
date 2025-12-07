@@ -229,7 +229,7 @@ class TestAllEffects:
         effect_class = effect_classes[effect_name]
         effect = effect_class(width=32, height=32)
 
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         assert frame is not None
         assert isinstance(frame, np.ndarray)
@@ -258,7 +258,7 @@ class TestAllEffects:
 
         # Generate more frames for probabilistic effects
         num_frames = 15 if effect_name in ["Fireworks", "Lightning", "DigitalRain"] else 3
-        frames = [effect.generate_frame() for _ in range(num_frames)]
+        frames = [effect.generate_frame(i * 0.1) for i in range(num_frames)]
 
         # At least one frame should have non-zero content
         has_content = any(frame.max() > 0 for frame in frames)
@@ -276,9 +276,8 @@ class TestAllEffects:
         effect_class = effect_classes[effect_name]
         effect = effect_class(width=24, height=24, config={"speed": 2.0})
 
-        frame1 = effect.generate_frame()
-        time.sleep(0.1)
-        frame2 = effect.generate_frame()
+        frame1 = effect.generate_frame(0.0)
+        frame2 = effect.generate_frame(0.1)
 
         # Frames should be different OR at least valid
         frames_different = not np.array_equal(frame1, frame2)
@@ -298,7 +297,7 @@ class TestAllEffects:
         effect.update_config({"test_param": 123})
 
         # Should still work after config update
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
         assert frame.shape == (32, 32, 3)
 
     def test_reset_functionality(self, effect_name):
@@ -310,14 +309,14 @@ class TestAllEffects:
         effect = effect_class(width=32, height=32)
 
         # Generate some frames
-        effect.generate_frame()
-        effect.generate_frame()
+        effect.generate_frame(0.0)
+        effect.generate_frame(0.0)
 
         # Reset
         effect.reset()
 
         # Should still work after reset
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
         assert frame.shape == (32, 32, 3)
 
 
@@ -328,7 +327,7 @@ class TestSpecificEffects:
     def test_rainbow_sweep_colors(self):
         """Test that RainbowSweep produces a variety of colors."""
         effect = effect_classes["RainbowSweep"](width=64, height=64)
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Should have variation in color channels
         assert frame.std() > 10
@@ -343,7 +342,7 @@ class TestSpecificEffects:
         effect = effect_classes["FireSimulation"](width=64, height=64)
 
         # Generate a few frames to get fire going
-        frames = [effect.generate_frame() for _ in range(5)]
+        frames = [effect.generate_frame(i * 0.1) for i in range(5)]
 
         # Find the frame with most activity
         brightest_frame = max(frames, key=lambda f: f.mean())
@@ -361,7 +360,7 @@ class TestSpecificEffects:
         """Test that Starfield has bright points."""
         effect = effect_classes["Starfield"](width=64, height=64, config={"star_count": 100})
 
-        frames = [effect.generate_frame() for _ in range(5)]
+        frames = [effect.generate_frame(i * 0.1) for i in range(5)]
 
         # Should have some bright pixels (stars)
         max_brightness = max(frame.max() for frame in frames)
@@ -371,7 +370,7 @@ class TestSpecificEffects:
     def test_plasma_smoothness(self):
         """Test that PlasmaEffect creates smooth patterns."""
         effect = effect_classes["PlasmaEffect"](width=64, height=64)
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Check smoothness by comparing neighboring pixels
         if frame.max() > 0:

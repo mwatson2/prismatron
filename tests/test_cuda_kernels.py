@@ -118,7 +118,9 @@ def mixed_sparse_tensor():
     )
 
     # Generate LED positions with spatial Morton ordering for cache locality
-    led_positions = generate_spatially_ordered_positions(led_count, height, width, block_size, seed=42)
+    led_positions = generate_spatially_ordered_positions(
+        led_count, height, width, block_size, seed=42, align_x_to_4=True
+    )
 
     # Generate realistic diffusion patterns with spatially ordered placement
     np.random.seed(42)  # For reproducible results
@@ -219,7 +221,9 @@ def large_mixed_sparse_tensor():
     # Generate LED positions with spatial Morton ordering for cache locality
     logger.info(f"Generating large tensor with {led_count} LEDs for performance testing...")
 
-    led_positions = generate_spatially_ordered_positions(led_count, height, width, block_size, seed=42)
+    led_positions = generate_spatially_ordered_positions(
+        led_count, height, width, block_size, seed=42, align_x_to_4=True
+    )
 
     # Generate realistic diffusion patterns with spatially ordered placement
     np.random.seed(42)  # For reproducible results
@@ -759,7 +763,9 @@ class TestCudaKernels:
             )
 
             # Generate LED positions with spatial Morton ordering for cache locality
-            led_positions = generate_spatially_ordered_positions(led_count, height, width, block_size, seed=42)
+            led_positions = generate_spatially_ordered_positions(
+                led_count, height, width, block_size, seed=42, align_x_to_4=True
+            )
 
             # Generate test patterns for this block size with Morton ordering
             np.random.seed(42)  # Consistent patterns

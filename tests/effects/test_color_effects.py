@@ -30,7 +30,7 @@ class TestRainbowSweep:
     def test_horizontal_sweep(self):
         """Test horizontal rainbow sweep."""
         effect = RainbowSweep(width=100, height=50, config={"direction": "horizontal"})
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Should have horizontal color variation
         left_colors = frame[:, :10, :].mean(axis=(0, 1))
@@ -43,7 +43,7 @@ class TestRainbowSweep:
     def test_vertical_sweep(self):
         """Test vertical rainbow sweep."""
         effect = RainbowSweep(width=100, height=50, config={"direction": "vertical"})
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Should have vertical color variation
         top_colors = frame[:10, :, :].mean(axis=(0, 1))
@@ -56,7 +56,7 @@ class TestRainbowSweep:
     def test_radial_sweep(self):
         """Test radial rainbow sweep."""
         effect = RainbowSweep(width=100, height=100, config={"direction": "radial"})
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Center should be different from edges
         center = frame[45:55, 45:55, :].mean(axis=(0, 1))
@@ -75,7 +75,7 @@ class TestRainbowSweep:
     def test_diagonal_sweep(self):
         """Test diagonal rainbow sweep."""
         effect = RainbowSweep(width=100, height=100, config={"direction": "diagonal"})
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Top-left vs bottom-right should be different
         tl = frame[:20, :20, :].mean(axis=(0, 1))
@@ -88,10 +88,10 @@ class TestRainbowSweep:
         """Test saturation parameter."""
         # Low saturation should produce more muted colors
         effect_low = RainbowSweep(width=50, height=50, config={"saturation": 0.2})
-        frame_low = effect_low.generate_frame()
+        frame_low = effect_low.generate_frame(0.0)
 
         effect_high = RainbowSweep(width=50, height=50, config={"saturation": 1.0})
-        frame_high = effect_high.generate_frame()
+        frame_high = effect_high.generate_frame(0.0)
 
         # High saturation should have more vivid colors (higher std deviation)
         assert frame_high.std() > frame_low.std()
@@ -99,17 +99,17 @@ class TestRainbowSweep:
     def test_brightness_control(self):
         """Test brightness parameter."""
         effect_dark = RainbowSweep(width=50, height=50, config={"brightness": 0.3})
-        frame_dark = effect_dark.generate_frame()
+        frame_dark = effect_dark.generate_frame(0.0)
 
         effect_bright = RainbowSweep(width=50, height=50, config={"brightness": 1.0})
-        frame_bright = effect_bright.generate_frame()
+        frame_bright = effect_bright.generate_frame(0.0)
 
         assert frame_bright.mean() > frame_dark.mean()
 
     def test_wave_width(self):
         """Test wave width parameter (number of rainbows on screen)."""
         effect_narrow = RainbowSweep(width=100, height=50, config={"wave_width": 3.0})
-        frame_narrow = effect_narrow.generate_frame()
+        frame_narrow = effect_narrow.generate_frame(0.0)
 
         # With higher wave_width, should see more color transitions
         # Count approximate color transitions along a row
@@ -125,9 +125,9 @@ class TestRainbowSweep:
         """Test animation speed parameter."""
         effect = RainbowSweep(width=50, height=50, config={"speed": 5.0})
 
-        frame1 = effect.generate_frame()
+        frame1 = effect.generate_frame(0.0)
         time.sleep(0.1)
-        frame2 = effect.generate_frame()
+        frame2 = effect.generate_frame(0.1)
 
         # Frames should be different due to animation
         assert not np.array_equal(frame1, frame2)
@@ -142,13 +142,13 @@ class TestColorBreathe:
 
     def test_breathing_animation(self):
         """Test that brightness pulses over time."""
-        effect = ColorBreathe(width=50, height=50, config={"breathe_rate": 10.0, "base_color": [255, 0, 0]})
+        # Use 1 Hz rate and sample at 0.1 second intervals to catch multiple phases
+        effect = ColorBreathe(width=50, height=50, config={"breathe_rate": 1.0, "base_color": [255, 0, 0]})
 
         brightnesses = []
-        for _ in range(10):
-            frame = effect.generate_frame()
+        for i in range(10):
+            frame = effect.generate_frame(i * 0.1)  # 0.0 to 0.9 seconds, covers almost full cycle
             brightnesses.append(frame.mean())
-            time.sleep(0.05)
 
         # Should see variation in brightness (breathing)
         assert max(brightnesses) > min(brightnesses) + 10
@@ -157,13 +157,13 @@ class TestColorBreathe:
         """Test different base colors."""
         # Test red
         effect_red = ColorBreathe(width=30, height=30, config={"base_color": [255, 0, 0]})
-        frame_red = effect_red.generate_frame()
+        frame_red = effect_red.generate_frame(0.0)
         assert frame_red[:, :, 0].mean() > frame_red[:, :, 1].mean()  # More red than green
         assert frame_red[:, :, 0].mean() > frame_red[:, :, 2].mean()  # More red than blue
 
         # Test blue
         effect_blue = ColorBreathe(width=30, height=30, config={"base_color": [0, 0, 255]})
-        frame_blue = effect_blue.generate_frame()
+        frame_blue = effect_blue.generate_frame(0.0)
         assert frame_blue[:, :, 2].mean() > frame_blue[:, :, 0].mean()  # More blue than red
         assert frame_blue[:, :, 2].mean() > frame_blue[:, :, 1].mean()  # More blue than green
 
@@ -177,9 +177,8 @@ class TestColorBreathe:
 
         # Collect frames over a breathing cycle
         frames = []
-        for _ in range(20):
-            frames.append(effect.generate_frame())
-            time.sleep(0.025)
+        for i in range(20):
+            frames.append(effect.generate_frame(i * 0.025))
 
         min_brightness = min(f.mean() for f in frames)
         max_brightness = max(f.mean() for f in frames)
@@ -193,14 +192,13 @@ class TestColorBreathe:
         effect = ColorBreathe(
             width=40,
             height=40,
-            config={"base_color": [255, 0, 0], "color_shift": True, "shift_amount": 0.2, "breathe_rate": 10.0},
+            config={"base_color": [255, 0, 0], "color_shift": True, "shift_amount": 0.2, "breathe_rate": 1.0},
         )
 
-        # Collect frames
+        # Collect frames over a full cycle
         frames = []
-        for _ in range(10):
-            frames.append(effect.generate_frame())
-            time.sleep(0.05)
+        for i in range(10):
+            frames.append(effect.generate_frame(i * 0.1))
 
         # With color shift, hue should vary
         hues = []
@@ -222,7 +220,7 @@ class TestGradientFlow:
     def test_gradient_creation(self):
         """Test that gradients are created properly."""
         effect = GradientFlow(width=100, height=50)
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Should have smooth color transitions
         # Check horizontal gradient smoothness
@@ -242,7 +240,7 @@ class TestGradientFlow:
             height=50,
             config={"color_stops": [[255, 0, 0], [0, 255, 0], [0, 0, 255], [0, 0, 255]], "flow_speed": 0},
         )
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Should transition through multiple colors
         left = frame[:, 5:20, :].mean(axis=(0, 1))  # Red segment (0-25%)
@@ -258,9 +256,8 @@ class TestGradientFlow:
         """Test that gradient flows/animates over time."""
         effect = GradientFlow(width=80, height=40, config={"flow_speed": 2.0})
 
-        frame1 = effect.generate_frame()
-        time.sleep(0.1)
-        frame2 = effect.generate_frame()
+        frame1 = effect.generate_frame(0.0)
+        frame2 = effect.generate_frame(0.1)
 
         # Frames should be different (flowing)
         assert not np.array_equal(frame1, frame2)
@@ -282,9 +279,8 @@ class TestColorWipe:
 
         # Get frames at different times
         frames = []
-        for _ in range(5):
-            frames.append(effect.generate_frame())
-            time.sleep(0.1)
+        for i in range(5):
+            frames.append(effect.generate_frame(i * 0.1))
 
         # Should see color transition (with deterministic seeding, check for any color variation)
         has_color_variation = False
@@ -308,7 +304,7 @@ class TestColorWipe:
                 width=60, height=60, config={"direction": direction, "colors": [[255, 255, 0], [255, 0, 255]]}
             )
 
-            frame = effect.generate_frame()
+            frame = effect.generate_frame(0.0)
 
             # Should have two distinct color regions
             unique_colors = np.unique(frame.reshape(-1, 3), axis=0)
@@ -327,12 +323,11 @@ class TestColorWipe:
 
         # Generate several frames to see color transitions
         seen_colors = set()
-        for _ in range(10):
-            frame = effect.generate_frame()
+        for i in range(10):
+            frame = effect.generate_frame(i * 0.1)
             # Sample center pixel color
             color = tuple(frame[25, 50, :])
             seen_colors.add(color)
-            time.sleep(0.1)
 
         # Should see multiple different colors over time
         assert len(seen_colors) > 1

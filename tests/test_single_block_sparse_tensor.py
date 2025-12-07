@@ -154,7 +154,7 @@ def test_memory_efficiency():
         channel_idx = i % channels
 
         row = cp.random.randint(0, height - block_size)
-        col = cp.random.randint(0, width - block_size)
+        col = (cp.random.randint(0, (width - block_size) // 4) * 4).item()  # Align to multiple of 4
         values = cp.random.rand(block_size, block_size).astype(cp.float32)
 
         tensor.set_block(batch_idx, channel_idx, row, col, values)
@@ -236,12 +236,12 @@ def test_save_load():
     # Create original tensor with some data
     original = SingleBlockMixedSparseTensor(8, 2, 40, 50, 8)
 
-    # Set some blocks with known values
+    # Set some blocks with known values (col must be multiple of 4)
     test_data = [
-        (0, 0, 5, 10, cp.ones((8, 8), dtype=cp.float32) * 1.5),
+        (0, 0, 5, 8, cp.ones((8, 8), dtype=cp.float32) * 1.5),
         (1, 1, 15, 20, cp.ones((8, 8), dtype=cp.float32) * 2.5),
-        (3, 0, 25, 5, cp.ones((8, 8), dtype=cp.float32) * 3.5),
-        (7, 1, 10, 35, cp.ones((8, 8), dtype=cp.float32) * 4.5),
+        (3, 0, 25, 4, cp.ones((8, 8), dtype=cp.float32) * 3.5),
+        (7, 1, 10, 32, cp.ones((8, 8), dtype=cp.float32) * 4.5),
     ]
 
     for batch_idx, channel_idx, row, col, values in test_data:
@@ -357,14 +357,14 @@ def test_to_dense_patterns():
 
     tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size)
 
-    # Set blocks with known values and positions
+    # Set blocks with known values and positions (col must be multiple of 4)
     test_cases = [
-        (0, 0, 10, 15, cp.ones((8, 8), dtype=cp.float32) * 2.0),  # LED 0, Red
-        (0, 1, 20, 25, cp.ones((8, 8), dtype=cp.float32) * 3.0),  # LED 0, Green
-        (1, 0, 5, 30, cp.ones((8, 8), dtype=cp.float32) * 4.0),  # LED 1, Red
-        (1, 1, 35, 10, cp.ones((8, 8), dtype=cp.float32) * 5.0),  # LED 1, Green
-        (2, 0, 25, 45, cp.ones((8, 8), dtype=cp.float32) * 6.0),  # LED 2, Red
-        (2, 1, 15, 5, cp.ones((8, 8), dtype=cp.float32) * 7.0),  # LED 2, Green
+        (0, 0, 10, 16, cp.ones((8, 8), dtype=cp.float32) * 2.0),  # LED 0, Red
+        (0, 1, 20, 24, cp.ones((8, 8), dtype=cp.float32) * 3.0),  # LED 0, Green
+        (1, 0, 5, 28, cp.ones((8, 8), dtype=cp.float32) * 4.0),  # LED 1, Red
+        (1, 1, 35, 8, cp.ones((8, 8), dtype=cp.float32) * 5.0),  # LED 1, Green
+        (2, 0, 25, 44, cp.ones((8, 8), dtype=cp.float32) * 6.0),  # LED 2, Red
+        (2, 1, 15, 4, cp.ones((8, 8), dtype=cp.float32) * 7.0),  # LED 2, Green
     ]
 
     for batch_idx, channel_idx, row, col, values in test_cases:
@@ -407,13 +407,13 @@ def test_get_block_summary():
 
     tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size)
 
-    # Set blocks with known values at different positions
+    # Set blocks with known values at different positions (col must be multiple of 4)
     test_data = [
         (0, 0, 10, 20, 1.0),  # LED 0, Red
-        (0, 1, 15, 25, 2.0),  # LED 0, Green
+        (0, 1, 15, 24, 2.0),  # LED 0, Green
         (1, 2, 30, 40, 3.0),  # LED 1, Blue
-        (2, 0, 5, 5, 4.0),  # LED 2, Red
-        (3, 1, 50, 50, 5.0),  # LED 3, Green
+        (2, 0, 5, 4, 4.0),  # LED 2, Red
+        (3, 1, 50, 48, 5.0),  # LED 3, Green
     ]
 
     for batch_idx, channel_idx, row, col, value in test_data:
@@ -483,11 +483,11 @@ def test_extract_pattern():
 
     tensor = SingleBlockMixedSparseTensor(batch_size, channels, height, width, block_size)
 
-    # Set specific patterns
+    # Set specific patterns (col must be multiple of 4)
     test_cases = [
-        (0, 0, 5, 10, 2.5),  # LED 0, Red
-        (1, 1, 20, 30, 7.8),  # LED 1, Green
-        (2, 0, 15, 5, 1.2),  # LED 2, Red
+        (0, 0, 5, 8, 2.5),  # LED 0, Red
+        (1, 1, 20, 28, 7.8),  # LED 1, Green
+        (2, 0, 15, 4, 1.2),  # LED 2, Red
     ]
 
     for batch_idx, channel_idx, row, col, value in test_cases:
@@ -546,7 +546,7 @@ def test_enhancement_methods_consistency():
         for channel_idx in range(channels):
             if np.random.random() > 0.3:  # Set ~70% of blocks
                 row = np.random.randint(0, height - block_size)
-                col = np.random.randint(0, width - block_size)
+                col = np.random.randint(0, (width - block_size) // 4) * 4  # Align to multiple of 4
                 intensity = np.random.uniform(0.1, 1.0)
                 values = cp.ones((block_size, block_size), dtype=cp.float32) * intensity
                 tensor.set_block(batch_idx, channel_idx, row, col, values)
@@ -600,8 +600,8 @@ def test_dtype_support(dtype):
         test_value = 128
         values = cp.ones((8, 8), dtype=dtype) * test_value
 
-    # Test setting blocks with correct dtype
-    tensor.set_block(0, 0, 5, 10, values)
+    # Test setting blocks with correct dtype (col must be multiple of 4)
+    tensor.set_block(0, 0, 5, 8, values)
 
     # Verify block was set correctly
     block_info = tensor.get_block_info(0, 0)
@@ -626,7 +626,7 @@ def test_dtype_validation():
 
     try:
         wrong_dtype_values = cp.ones((8, 8), dtype=cp.uint8)
-        tensor.set_block(0, 0, 5, 10, wrong_dtype_values)
+        tensor.set_block(0, 0, 5, 8, wrong_dtype_values)  # col must be multiple of 4
         raise AssertionError("Should have raised ValueError for dtype mismatch")
     except ValueError:
         pass
@@ -661,7 +661,7 @@ def test_file_io_with_dtype():
 
         for i, test_value in enumerate(test_values):
             values = cp.ones((8, 8), dtype=dtype) * test_value
-            original.set_block(i, 0, 5 + i * 5, 10, values)
+            original.set_block(i, 0, 5 + i * 5, 8, values)  # col must be multiple of 4
 
         # Save to dict
         data_dict = original.to_dict()

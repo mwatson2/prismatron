@@ -165,7 +165,7 @@ class TestAllEffects:
         width, height = 160, 80
         effect = effect_class(width=width, height=height)
 
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         assert frame is not None
         assert isinstance(frame, np.ndarray)
@@ -176,7 +176,7 @@ class TestAllEffects:
         """Test that frame pixel values are in valid range [0, 255]."""
         effect = effect_class(width=64, height=32)
 
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         assert frame.min() >= 0
         assert frame.max() <= 255
@@ -186,7 +186,7 @@ class TestAllEffects:
         effect = effect_class(width=64, height=32)
 
         # Generate a few frames to account for effects that might start dark
-        frames = [effect.generate_frame() for _ in range(5)]
+        frames = [effect.generate_frame(i * 0.1) for i in range(5)]
 
         # At least one frame should have non-zero pixels
         has_nonzero = any(frame.max() > 0 for frame in frames)
@@ -197,7 +197,7 @@ class TestAllEffects:
         effect = effect_class(width=64, height=32)
 
         # Generate several frames
-        frames = [effect.generate_frame() for _ in range(10)]
+        frames = [effect.generate_frame(i * 0.1) for i in range(10)]
 
         # Check that at least one frame has variation
         has_variation = False
@@ -218,12 +218,11 @@ class TestAllEffects:
         """Test that consecutive frames are different (animation works)."""
         effect = effect_class(width=32, height=32)
 
-        # Generate multiple frames with small time delays
+        # Generate multiple frames with explicit time values
         frames = []
         for i in range(5):
-            frame = effect.generate_frame()
+            frame = effect.generate_frame(i * 0.1)
             frames.append(frame)
-            time.sleep(0.01)  # Small delay to simulate time passing
 
         # Check that frames are not all identical
         all_identical = True
@@ -237,8 +236,7 @@ class TestAllEffects:
         # Generate more frames if needed
         if all_identical:
             for i in range(10):
-                time.sleep(0.05)
-                frame = effect.generate_frame()
+                frame = effect.generate_frame((5 + i) * 0.1)
                 if not np.array_equal(frame, reference):
                     all_identical = False
                     break
@@ -252,7 +250,7 @@ class TestAllEffects:
         assert effect.frame_count == 0
 
         for i in range(5):
-            effect.generate_frame()
+            effect.generate_frame(i * 0.1)
             assert effect.frame_count == i + 1
 
     def test_reset_functionality(self, effect_class):
@@ -260,17 +258,17 @@ class TestAllEffects:
         effect = effect_class(width=32, height=32)
 
         # Generate some frames
-        for _ in range(5):
-            effect.generate_frame()
+        for i in range(5):
+            effect.generate_frame(i * 0.1)
 
         assert effect.frame_count == 5
-        old_start_time = effect.start_time
 
-        time.sleep(0.01)
         effect.reset()
 
         assert effect.frame_count == 0
-        assert effect.start_time > old_start_time
+        # Effect should still work after reset
+        frame = effect.generate_frame(0.0)
+        assert frame.shape == (32, 32, 3)
 
     def test_config_update(self, effect_class):
         """Test that configuration can be updated."""
@@ -285,21 +283,17 @@ class TestAllEffects:
         assert effect.config["test_param"] == 123
 
         # Effect should still work after config update
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
         assert frame.shape == (32, 32, 3)
 
     def test_time_tracking(self, effect_class):
-        """Test that elapsed time is tracked correctly."""
+        """Test that get_time returns the presentation_time."""
         effect = effect_class(width=32, height=32)
 
-        initial_time = effect.get_time()
-        assert initial_time >= 0
-
-        time.sleep(0.1)
-
-        later_time = effect.get_time()
-        assert later_time > initial_time
-        assert later_time >= 0.1  # Should be at least 0.1 seconds
+        # get_time now returns the presentation_time passed to it
+        assert effect.get_time(0.0) == 0.0
+        assert effect.get_time(0.5) == 0.5
+        assert effect.get_time(1.0) == 1.0
 
 
 class TestSpecificEffectBehaviors:
@@ -308,7 +302,7 @@ class TestSpecificEffectBehaviors:
     def test_rainbow_sweep_produces_colors(self):
         """Test that RainbowSweep produces a variety of colors."""
         effect = RainbowSweep(width=100, height=100)
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Should have variation in all color channels
         assert frame[:, :, 0].std() > 10  # Red channel
@@ -317,14 +311,13 @@ class TestSpecificEffectBehaviors:
 
     def test_color_breathe_pulses(self):
         """Test that ColorBreathe creates pulsing intensity."""
-        effect = ColorBreathe(width=50, height=50, config={"breathe_rate": 10.0})
+        # Use 1 Hz rate and sample over a full cycle
+        effect = ColorBreathe(width=50, height=50, config={"breathe_rate": 1.0})
 
         intensities = []
-        for _ in range(10):
-            frame = effect.generate_frame()
-            # Measure average intensity
+        for i in range(10):
+            frame = effect.generate_frame(i * 0.1)  # 0.0 to 0.9 seconds
             intensities.append(frame.mean())
-            time.sleep(0.05)
 
         # Intensity should vary (pulsing)
         assert max(intensities) > min(intensities) + 5
@@ -334,8 +327,8 @@ class TestSpecificEffectBehaviors:
         effect = Starfield(width=100, height=100)
 
         # Generate a few frames to ensure stars appear
-        for _ in range(5):
-            frame = effect.generate_frame()
+        for i in range(5):
+            frame = effect.generate_frame(i * 0.1)
             # Should have some bright pixels (stars)
             if frame.max() > 100:
                 break
@@ -347,8 +340,8 @@ class TestSpecificEffectBehaviors:
         effect = FireSimulation(width=64, height=64)
 
         # Generate several frames
-        for _ in range(5):
-            frame = effect.generate_frame()
+        for i in range(5):
+            frame = effect.generate_frame(i * 0.1)
             # Fire should have more red than blue
             red_mean = frame[:, :, 0].mean()
             blue_mean = frame[:, :, 2].mean()
@@ -364,8 +357,8 @@ class TestSpecificEffectBehaviors:
 
         # Generate frames until we see vertical patterns
         found_vertical = False
-        for _ in range(10):
-            frame = effect.generate_frame()
+        for i in range(10):
+            frame = effect.generate_frame(i * 0.1)
 
             # Check for vertical continuity (columns with similar values)
             for col in range(frame.shape[1]):
@@ -382,7 +375,7 @@ class TestSpecificEffectBehaviors:
     def test_plasma_effect_smooth_gradients(self):
         """Test that PlasmaEffect creates smooth gradients."""
         effect = PlasmaEffect(width=64, height=64)
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Plasma should have smooth gradients (low high-frequency noise)
         # Check by comparing neighboring pixels
@@ -399,10 +392,9 @@ class TestSpecificEffectBehaviors:
 
         # Generate many frames to catch a lightning strike
         max_brightness = 0
-        for _ in range(20):
-            frame = effect.generate_frame()
+        for i in range(20):
+            frame = effect.generate_frame(i * 0.05)
             max_brightness = max(max_brightness, frame.max())
-            time.sleep(0.01)
 
         # Should have at least one bright flash
         assert max_brightness > 200
@@ -410,7 +402,7 @@ class TestSpecificEffectBehaviors:
     def test_voronoi_cells_has_regions(self):
         """Test that VoronoiCells creates distinct regions."""
         effect = VoronoiCells(width=64, height=64)
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Should have distinct regions (not completely smooth)
         # Check for edges between cells

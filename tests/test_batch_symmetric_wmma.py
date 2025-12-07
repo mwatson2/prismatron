@@ -74,13 +74,13 @@ def verify_correctness(symmetric_matrix, batch_matrix, test_input, tolerance=1e-
     sequential_results = []
     for frame_idx in range(batch_size):
         frame_input = test_input[frame_idx]  # Shape: (3, led_count)
-        result = symmetric_matrix.multiply_3d(frame_input, use_custom_kernel=True, optimized_kernel=True)
+        result = symmetric_matrix.multiply_3d(frame_input, use_custom_kernel=True)
         sequential_results.append(result)
 
     sequential_batch = cp.stack(sequential_results, axis=0)
 
     # Batch processing
-    batch_result = batch_matrix.multiply_batch_3d(test_input, optimized_kernel=False, debug_logging=False)
+    batch_result = batch_matrix.multiply_batch_3d(test_input, debug_logging=False)
 
     # Compare results
     sequential_cpu = cp.asnumpy(sequential_batch)
@@ -251,8 +251,8 @@ class TestBatchSymmetricWMMA:
         led_count = 64
         num_diagonals = 21
 
-        # Test different batch sizes
-        for batch_size in [4, 8, 16]:
+        # Test different batch sizes (only 8 and 16 supported for tensor cores)
+        for batch_size in [8, 16]:
             regular_matrix = create_test_matrix(led_count, num_diagonals)
             symmetric_matrix = SymmetricDiagonalATAMatrix.from_diagonal_ata_matrix(regular_matrix)
             batch_matrix = BatchSymmetricDiagonalATAMatrix.from_diagonal_ata_matrix(
@@ -313,7 +313,7 @@ class TestBatchSymmetricWMMA:
         from utils.kernels.precompiled_mma_kernel import PrecompiledBatchSymmetricWMMAMatMul
 
         try:
-            kernel = PrecompiledBatchSymmetricWMMAMatMul(use_optimized=False)
+            kernel = PrecompiledBatchSymmetricWMMAMatMul()
             assert kernel is not None, "Failed to create WMMA kernel instance"
         except Exception as e:
             pytest.fail(f"WMMA kernel initialization failed: {e}")
@@ -348,7 +348,7 @@ class TestBatchWMMAPerformance:
 
         for frame_idx in range(batch_size):
             frame_input = test_input_gpu[frame_idx]
-            _ = symmetric_matrix.multiply_3d(frame_input, use_custom_kernel=True, optimized_kernel=True)
+            _ = symmetric_matrix.multiply_3d(frame_input, use_custom_kernel=True)
 
         cp.cuda.Stream.null.synchronize()
         sequential_time = time.time() - start_time
@@ -357,7 +357,7 @@ class TestBatchWMMAPerformance:
         cp.cuda.Stream.null.synchronize()
         start_time = time.time()
 
-        _ = batch_matrix.multiply_batch_3d(test_input_gpu, optimized_kernel=False, debug_logging=False)
+        _ = batch_matrix.multiply_batch_3d(test_input_gpu, debug_logging=False)
 
         cp.cuda.Stream.null.synchronize()
         batch_time = time.time() - start_time

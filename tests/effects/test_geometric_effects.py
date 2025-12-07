@@ -24,7 +24,7 @@ class TestRotatingShapes:
     def test_shape_generation(self):
         """Test that shapes are generated."""
         effect = RotatingShapes(width=100, height=100)
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Should have non-zero content
         assert frame.max() > 0
@@ -35,9 +35,8 @@ class TestRotatingShapes:
         effect = RotatingShapes(width=80, height=80, config={"rotation_speed": 5.0})
 
         frames = []
-        for _ in range(5):
-            frames.append(effect.generate_frame())
-            time.sleep(0.05)
+        for i in range(5):
+            frames.append(effect.generate_frame(i * 0.1))
 
         # Frames should be different due to rotation
         differences = []
@@ -51,10 +50,10 @@ class TestRotatingShapes:
     def test_shape_count(self):
         """Test different numbers of shapes."""
         effect_few = RotatingShapes(width=100, height=100, config={"shape_count": 2})
-        frame_few = effect_few.generate_frame()
+        frame_few = effect_few.generate_frame(0.0)
 
         effect_many = RotatingShapes(width=100, height=100, config={"shape_count": 10})
-        frame_many = effect_many.generate_frame()
+        frame_many = effect_many.generate_frame(0.0)
 
         # More shapes should generally mean more complex image (higher entropy)
         # Count non-background pixels
@@ -70,7 +69,7 @@ class TestRotatingShapes:
 
         for shape_type in shape_types:
             effect = RotatingShapes(width=80, height=80, config={"shape_type": shape_type})
-            frame = effect.generate_frame()
+            frame = effect.generate_frame(0.0)
 
             # Each shape type should produce non-zero output
             assert frame.max() > 0
@@ -83,7 +82,7 @@ class TestKaleidoscope:
     def test_symmetry(self):
         """Test that kaleidoscope has rotational symmetry."""
         effect = Kaleidoscope(width=100, height=100, config={"segments": 6})
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Convert to grayscale for easier comparison
         gray = frame.mean(axis=2)
@@ -113,7 +112,7 @@ class TestKaleidoscope:
         """Test different numbers of kaleidoscope segments."""
         for segments in [4, 6, 8, 12]:
             effect = Kaleidoscope(width=80, height=80, config={"segments": segments})
-            frame = effect.generate_frame()
+            frame = effect.generate_frame(0.0)
 
             # Should produce valid output for any segment count
             assert frame.shape == (80, 80, 3)
@@ -123,9 +122,8 @@ class TestKaleidoscope:
         """Test kaleidoscope animation."""
         effect = Kaleidoscope(width=60, height=60, config={"rotation_speed": 3.0})
 
-        frame1 = effect.generate_frame()
-        time.sleep(0.1)
-        frame2 = effect.generate_frame()
+        frame1 = effect.generate_frame(0.0)
+        frame2 = effect.generate_frame(0.1)
 
         # Should animate over time
         assert not np.array_equal(frame1, frame2)
@@ -133,10 +131,10 @@ class TestKaleidoscope:
     def test_complexity(self):
         """Test pattern complexity parameter."""
         effect_simple = Kaleidoscope(width=80, height=80, config={"complexity": 0.2})
-        frame_simple = effect_simple.generate_frame()
+        frame_simple = effect_simple.generate_frame(0.0)
 
         effect_complex = Kaleidoscope(width=80, height=80, config={"complexity": 1.0})
-        frame_complex = effect_complex.generate_frame()
+        frame_complex = effect_complex.generate_frame(0.0)
 
         # More complex should have more variation
         assert frame_complex.std() >= frame_simple.std() * 0.8
@@ -148,7 +146,7 @@ class TestSpirals:
     def test_spiral_generation(self):
         """Test that spirals are visible."""
         effect = Spirals(width=100, height=100)
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Should have spiral patterns radiating from center
         # Check for radial variation
@@ -160,10 +158,10 @@ class TestSpirals:
     def test_spiral_count(self):
         """Test different numbers of spiral arms."""
         effect_few = Spirals(width=80, height=80, config={"arm_count": 2})
-        frame_few = effect_few.generate_frame()
+        frame_few = effect_few.generate_frame(0.0)
 
         effect_many = Spirals(width=80, height=80, config={"arm_count": 8})
-        frame_many = effect_many.generate_frame()
+        frame_many = effect_many.generate_frame(0.0)
 
         # Both should produce valid spirals
         assert frame_few.max() > 0
@@ -174,9 +172,8 @@ class TestSpirals:
         effect = Spirals(width=80, height=80, config={"rotation_speed": 5.0})
 
         frames = []
-        for _ in range(4):
-            frames.append(effect.generate_frame())
-            time.sleep(0.05)
+        for i in range(4):
+            frames.append(effect.generate_frame(i * 0.1))
 
         # Should see rotation
         for i in range(1, len(frames)):
@@ -185,10 +182,10 @@ class TestSpirals:
     def test_spiral_tightness(self):
         """Test spiral tightness parameter."""
         effect_loose = Spirals(width=100, height=100, config={"tightness": 0.2})
-        frame_loose = effect_loose.generate_frame()
+        frame_loose = effect_loose.generate_frame(0.0)
 
         effect_tight = Spirals(width=100, height=100, config={"tightness": 1.0})
-        frame_tight = effect_tight.generate_frame()
+        frame_tight = effect_tight.generate_frame(0.0)
 
         # Both should produce valid output
         assert frame_loose.shape == (100, 100, 3)
@@ -208,10 +205,10 @@ class TestSpirals:
     def test_spiral_direction(self):
         """Test clockwise vs counter-clockwise spirals."""
         effect_cw = Spirals(width=80, height=80, config={"direction": "clockwise"})
-        frame_cw = effect_cw.generate_frame()
+        frame_cw = effect_cw.generate_frame(0.0)
 
         effect_ccw = Spirals(width=80, height=80, config={"direction": "counter-clockwise"})
-        frame_ccw = effect_ccw.generate_frame()
+        frame_ccw = effect_ccw.generate_frame(0.0)
 
         # Both should produce valid but potentially different patterns
         assert frame_cw.shape == (80, 80, 3)
@@ -224,7 +221,7 @@ class TestMandala:
     def test_mandala_symmetry(self):
         """Test that mandala has radial symmetry."""
         effect = Mandala(width=100, height=100, config={"symmetry": 8})
-        frame = effect.generate_frame()
+        frame = effect.generate_frame(0.0)
 
         # Should have radial symmetry from center
         # Test by comparing regions at same radius
@@ -253,10 +250,10 @@ class TestMandala:
     def test_mandala_layers(self):
         """Test different numbers of mandala layers."""
         effect_simple = Mandala(width=80, height=80, config={"layers": 2})
-        frame_simple = effect_simple.generate_frame()
+        frame_simple = effect_simple.generate_frame(0.0)
 
         effect_complex = Mandala(width=80, height=80, config={"layers": 6})
-        frame_complex = effect_complex.generate_frame()
+        frame_complex = effect_complex.generate_frame(0.0)
 
         # More layers should create more complex patterns
         assert frame_simple.std() > 0
@@ -267,9 +264,8 @@ class TestMandala:
         effect = Mandala(width=80, height=80, config={"evolution_speed": 2.0})
 
         frames = []
-        for _ in range(4):
-            frames.append(effect.generate_frame())
-            time.sleep(0.05)
+        for i in range(4):
+            frames.append(effect.generate_frame(i * 0.1))
 
         # Pattern should evolve over time
         changes = []
@@ -285,7 +281,7 @@ class TestMandala:
 
         for scheme in schemes:
             effect = Mandala(width=60, height=60, config={"color_scheme": scheme})
-            frame = effect.generate_frame()
+            frame = effect.generate_frame(0.0)
 
             # Each scheme should produce valid output
             assert frame.shape == (60, 60, 3)
@@ -294,10 +290,10 @@ class TestMandala:
     def test_mandala_detail_level(self):
         """Test detail level parameter."""
         effect_low = Mandala(width=100, height=100, config={"detail": 0.2})
-        frame_low = effect_low.generate_frame()
+        frame_low = effect_low.generate_frame(0.0)
 
         effect_high = Mandala(width=100, height=100, config={"detail": 1.0})
-        frame_high = effect_high.generate_frame()
+        frame_high = effect_high.generate_frame(0.0)
 
         # Higher detail might have more fine structure (higher frequency content)
         # Use edge detection as proxy for detail
