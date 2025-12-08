@@ -11,9 +11,10 @@ import time
 from pathlib import Path
 from typing import Tuple
 
-import cupy as cp
 import numpy as np
 import pytest
+
+cp = pytest.importorskip("cupy")
 import scipy.sparse as sp
 
 sys.path.append(str(Path(__file__).parent.parent))

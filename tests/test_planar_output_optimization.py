@@ -9,10 +9,11 @@ produces the same results as the old transpose approach, but with better memory 
 import sys
 from pathlib import Path
 
-import cupy as cp
 import numpy as np
 import pytest
 from PIL import Image
+
+cp = pytest.importorskip("cupy")
 
 sys.path.append(str(Path(__file__).parent.parent / "src"))
 

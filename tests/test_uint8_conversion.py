@@ -15,10 +15,7 @@ import pytest
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-try:
-    import cupy as cp
-except ImportError:
-    cp = np  # Fallback for CPU testing
+cp = pytest.importorskip("cupy")
 
 from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 

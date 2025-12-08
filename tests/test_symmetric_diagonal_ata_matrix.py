@@ -19,12 +19,7 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
-try:
-    import cupy as cp
-
-    CUPY_AVAILABLE = True
-except ImportError:
-    CUPY_AVAILABLE = False
+cp = pytest.importorskip("cupy")
 
 from src.utils.diagonal_ata_matrix import DiagonalATAMatrix
 from src.utils.symmetric_diagonal_ata_matrix import SymmetricDiagonalATAMatrix
@@ -34,7 +29,7 @@ from src.utils.symmetric_diagonal_ata_matrix import SymmetricDiagonalATAMatrix
 def cuda_cleanup():
     """Ensure clean CUDA state before and after each test."""
     # Clear CUDA memory and reset state before test
-    if CUPY_AVAILABLE and cp.cuda.is_available():
+    if cp.cuda.is_available():
         try:
             cp.cuda.Device().synchronize()
             cp.get_default_memory_pool().free_all_blocks()
@@ -49,7 +44,7 @@ def cuda_cleanup():
     yield  # Run the test
 
     # Clean up after test
-    if CUPY_AVAILABLE and cp.cuda.is_available():
+    if cp.cuda.is_available():
         try:
             cp.cuda.Device().synchronize()
             cp.get_default_memory_pool().free_all_blocks()

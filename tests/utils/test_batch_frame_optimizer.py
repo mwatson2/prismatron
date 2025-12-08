@@ -14,18 +14,7 @@ import pytest
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-# Check if CuPy is available
-try:
-    import cupy as cp
-
-    CUPY_AVAILABLE = True
-except ImportError:
-    CUPY_AVAILABLE = False
-    cp = None
-
-
-# Skip all tests if CuPy not available
-pytestmark = pytest.mark.skipif(not CUPY_AVAILABLE, reason="CuPy not available")
+cp = pytest.importorskip("cupy")
 
 
 # =============================================================================
@@ -36,9 +25,6 @@ pytestmark = pytest.mark.skipif(not CUPY_AVAILABLE, reason="CuPy not available")
 @pytest.fixture
 def sample_target_frames():
     """Create sample target frames on GPU."""
-    if not CUPY_AVAILABLE:
-        pytest.skip("CuPy not available")
-
     # Create 8 random frames in planar format (8, 3, 480, 800) uint8
     frames = cp.random.randint(0, 256, (8, 3, 480, 800), dtype=cp.uint8)
     return frames
@@ -47,9 +33,6 @@ def sample_target_frames():
 @pytest.fixture
 def sample_target_frames_16():
     """Create sample target frames on GPU for 16-frame batch."""
-    if not CUPY_AVAILABLE:
-        pytest.skip("CuPy not available")
-
     frames = cp.random.randint(0, 256, (16, 3, 480, 800), dtype=cp.uint8)
     return frames
 

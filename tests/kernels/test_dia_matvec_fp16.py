@@ -15,29 +15,22 @@ import pytest
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-# CuPy imports - conditionally available
-try:
-    import cupy as cp
-    import cupyx.scipy.sparse as cusp
-    import scipy.sparse as sp
+cp = pytest.importorskip("cupy")
+import cupyx.scipy.sparse as cusp
+import scipy.sparse as sp
 
-    from src.utils.kernels.dia_matvec import (
-        CustomDIA3DMatVec,
-        CustomDIAMatVec,
-    )
-    from src.utils.kernels.dia_matvec_fp16 import (
-        CustomDIA3DMatVecFP16,
-        CustomDIAMatVecFP16,
-    )
-
-    CUDA_AVAILABLE = True
-except ImportError:
-    CUDA_AVAILABLE = False
+from src.utils.kernels.dia_matvec import (
+    CustomDIA3DMatVec,
+    CustomDIAMatVec,
+)
+from src.utils.kernels.dia_matvec_fp16 import (
+    CustomDIA3DMatVecFP16,
+    CustomDIAMatVecFP16,
+)
 
 logger = logging.getLogger(__name__)
 
 
-@pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
 class TestDIAMatVecFP16Kernel:
     """Test suite for FP16 output DIA matrix-vector multiplication kernels."""
 

@@ -14,23 +14,16 @@ import pytest
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-# CuPy imports - conditionally available
-try:
-    import cupy as cp
+cp = pytest.importorskip("cupy")
 
-    from src.utils.kernels.compute_optimized_3d import (
-        cuda_transpose_dot_product_3d_compute_optimized,
-        get_compute_optimized_3d_kernel,
-    )
-
-    CUDA_AVAILABLE = True
-except ImportError:
-    CUDA_AVAILABLE = False
+from src.utils.kernels.compute_optimized_3d import (
+    cuda_transpose_dot_product_3d_compute_optimized,
+    get_compute_optimized_3d_kernel,
+)
 
 logger = logging.getLogger(__name__)
 
 
-@pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
 class TestComputeOptimized3DKernel:
     """Test suite for FP32 compute-optimized 3D kernels."""
 

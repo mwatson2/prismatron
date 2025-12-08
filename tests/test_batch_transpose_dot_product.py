@@ -9,8 +9,10 @@ different output layout formats.
 import logging
 import unittest
 
-import cupy as cp
 import numpy as np
+import pytest
+
+cp = pytest.importorskip("cupy")
 
 from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 

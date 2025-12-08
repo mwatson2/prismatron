@@ -14,31 +14,24 @@ import pytest
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-# CuPy imports - conditionally available
-try:
-    import cupy as cp
-    import cupyx.scipy.sparse as cusp
-    import scipy.sparse as sp
+cp = pytest.importorskip("cupy")
+import cupyx.scipy.sparse as cusp
+import scipy.sparse as sp
 
-    from src.utils.kernels import (  # 3D kernels; DIA kernels
-        CustomDIA3DMatVec,
-        CustomDIA3DMatVecFP16,
-        CustomDIAMatVec,
-        CustomDIAMatVecFP16,
-        cuda_transpose_dot_product_3d_compute_optimized,
-        cuda_transpose_dot_product_3d_compute_optimized_fp16,
-        cuda_transpose_dot_product_3d_compute_optimized_int8,
-        cuda_transpose_dot_product_3d_compute_optimized_int8_fp16,
-    )
-
-    CUDA_AVAILABLE = True
-except ImportError:
-    CUDA_AVAILABLE = False
+from src.utils.kernels import (  # 3D kernels; DIA kernels
+    CustomDIA3DMatVec,
+    CustomDIA3DMatVecFP16,
+    CustomDIAMatVec,
+    CustomDIAMatVecFP16,
+    cuda_transpose_dot_product_3d_compute_optimized,
+    cuda_transpose_dot_product_3d_compute_optimized_fp16,
+    cuda_transpose_dot_product_3d_compute_optimized_int8,
+    cuda_transpose_dot_product_3d_compute_optimized_int8_fp16,
+)
 
 logger = logging.getLogger(__name__)
 
 
-@pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
 @pytest.mark.skip(reason="CUDA memory alignment errors - requires kernel architecture fixes")
 class TestKernelIntegration:
     """Integration test suite for all kernel variants."""

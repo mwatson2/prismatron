@@ -16,16 +16,7 @@ sys.path.insert(0, str(project_root / "src"))
 import numpy as np
 import pytest
 
-try:
-    import cupy
-
-    print(f"CUDA available: {cupy.cuda.runtime.runtimeGetVersion()}")
-    GPU_AVAILABLE = True
-except ImportError:
-    print("CUDA not available")
-    GPU_AVAILABLE = False
-    # Don't exit in test mode
-    cupy = None
+cupy = pytest.importorskip("cupy")
 
 
 def create_test_diagonal_ata_matrix(led_count: int, channels: int = 3):
@@ -104,7 +95,6 @@ def compute_individual_matvec(block_data, block_offsets, input_vectors, led_bloc
     return np.stack(results, axis=0)  # (batch_size, channels, padded_leds)
 
 
-@pytest.mark.skipif(not GPU_AVAILABLE, reason="CUDA not available")
 def test_8frame_correctness():
     """Test 8-frame vertical pair WMMA correctness."""
     print("\n=== Testing 8-Frame Vertical Pair WMMA Correctness ===")
@@ -204,10 +194,6 @@ def test_8frame_correctness():
 
 
 if __name__ == "__main__":
-    if not GPU_AVAILABLE:
-        print("GPU required for testing")
-        sys.exit(1)
-
     success = test_8frame_correctness()
 
     if success:

@@ -21,13 +21,7 @@ import pytest
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
-try:
-    import cupy
-
-    CUDA_AVAILABLE = True
-except ImportError:
-    CUDA_AVAILABLE = False
-    cupy = np  # Fallback
+cupy = pytest.importorskip("cupy")
 
 from utils.batch_symmetric_diagonal_ata_matrix import BatchSymmetricDiagonalATAMatrix
 
@@ -309,10 +303,6 @@ class TestBatch8SymmetricWMMA:
 def run_8frame_tests():
     """Run all 8-frame tests directly."""
     print("Running 8-frame batch WMMA tests...")
-
-    if not CUDA_AVAILABLE:
-        print("CUDA not available - skipping tests")
-        return
 
     test_suite = TestBatch8SymmetricWMMA()
 

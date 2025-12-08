@@ -13,20 +13,14 @@ import pytest
 
 from src.utils.performance_timing import PerformanceTiming
 
-# CuPy imports - conditionally available
-try:
-    import cupy as cp
+cp = pytest.importorskip("cupy")
 
-    from src.utils.cuda_kernels import (
-        cuda_transpose_dot_product_3d_compute_optimized,
-        cuda_transpose_dot_product_3d_compute_optimized_int8,
-        cuda_transpose_dot_product_3d_compute_optimized_int8_experimental,
-    )
-    from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
-
-    CUDA_AVAILABLE = True
-except ImportError:
-    CUDA_AVAILABLE = False
+from src.utils.cuda_kernels import (
+    cuda_transpose_dot_product_3d_compute_optimized,
+    cuda_transpose_dot_product_3d_compute_optimized_int8,
+    cuda_transpose_dot_product_3d_compute_optimized_int8_experimental,
+)
+from src.utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 
 logger = logging.getLogger(__name__)
 
@@ -306,7 +300,6 @@ def large_mixed_sparse_tensor_aligned():
     return tensor
 
 
-@pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
 class TestCudaKernels:
     """Test class for CUDA kernel functionality and performance."""
 
@@ -1192,9 +1185,4 @@ class TestCudaKernels:
         logger.info(f"Experimental kernel: {len(int8_experimental_times)} measurements")
 
 
-@pytest.mark.skipif(CUDA_AVAILABLE, reason="Testing CUDA unavailable case")
-def test_cuda_not_available():
-    """Test behavior when CUDA is not available."""
-    # This test runs when CUDA is not available
-    # Just ensure we can import the test module without errors
-    assert not CUDA_AVAILABLE
+# Note: test_cuda_not_available was removed - with importorskip, module is skipped entirely when CuPy unavailable

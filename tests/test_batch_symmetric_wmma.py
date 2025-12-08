@@ -15,12 +15,7 @@ import pytest
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-try:
-    import cupy as cp
-
-    CUPY_AVAILABLE = True
-except ImportError:
-    CUPY_AVAILABLE = False
+cp = pytest.importorskip("cupy")
 
 from utils.batch_symmetric_diagonal_ata_matrix import BatchSymmetricDiagonalATAMatrix
 from utils.diagonal_ata_matrix import DiagonalATAMatrix
@@ -59,9 +54,8 @@ def create_test_matrix(led_count, num_diagonals):
     ata_matrix.nnz = np.count_nonzero(dia_data_cpu)
 
     # Convert to GPU
-    if CUPY_AVAILABLE:
-        ata_matrix.dia_data_gpu = cp.asarray(dia_data_cpu)
-        ata_matrix.dia_offsets_gpu = cp.asarray(offsets, dtype=cp.int32)
+    ata_matrix.dia_data_gpu = cp.asarray(dia_data_cpu)
+    ata_matrix.dia_offsets_gpu = cp.asarray(offsets, dtype=cp.int32)
 
     return ata_matrix
 
@@ -94,7 +88,6 @@ def verify_correctness(symmetric_matrix, batch_matrix, test_input, tolerance=1e-
     return {"max_diff": max_diff, "mean_diff": mean_diff, "rel_diff": rel_diff, "success": max_diff < tolerance}
 
 
-@pytest.mark.skipif(not CUPY_AVAILABLE, reason="CuPy not available")
 class TestBatchSymmetricWMMA:
     """Test suite for BatchSymmetricDiagonalATAMatrix WMMA implementation."""
 
@@ -319,7 +312,6 @@ class TestBatchSymmetricWMMA:
             pytest.fail(f"WMMA kernel initialization failed: {e}")
 
 
-@pytest.mark.skipif(not CUPY_AVAILABLE, reason="CuPy not available")
 class TestBatchWMMAPerformance:
     """Performance-focused tests for batch WMMA implementation."""
 

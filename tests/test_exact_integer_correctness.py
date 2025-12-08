@@ -15,16 +15,7 @@ sys.path.insert(0, str(project_root / "src"))
 import numpy as np
 import pytest
 
-try:
-    import cupy
-
-    print(f"CUDA available: {cupy.cuda.runtime.runtimeGetVersion()}")
-    GPU_AVAILABLE = True
-except ImportError:
-    print("CUDA not available")
-    GPU_AVAILABLE = False
-    # Don't exit in test mode
-    cupy = None
+cupy = pytest.importorskip("cupy")
 
 
 def create_integer_ata_matrix(led_count=64, channels=3, num_diagonals=1, max_value=7):
@@ -95,7 +86,6 @@ def create_integer_input_batch(batch_size=8, channels=3, led_count=64, max_value
     return input_batch
 
 
-@pytest.mark.skipif(not GPU_AVAILABLE, reason="CUDA not available")
 def test_integer_correctness(num_diagonals=1, test_name=""):
     """Test WMMA kernel against dense numpy with exact integer arithmetic."""
     print(f"\n=== Testing {test_name} ({num_diagonals} diagonal{'s' if num_diagonals > 1 else ''}) ===")
@@ -262,9 +252,5 @@ def run_all_integer_tests():
 
 
 if __name__ == "__main__":
-    if not GPU_AVAILABLE:
-        print("GPU required for testing")
-        sys.exit(1)
-
     success = run_all_integer_tests()
     sys.exit(0 if success else 1)
