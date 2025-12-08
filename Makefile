@@ -6,7 +6,7 @@
 # Project paths
 PROJECT_DIR := $(shell pwd)
 FRONTEND_DIR := $(PROJECT_DIR)/src/web/frontend
-DATA_DIR := /mnt/prismatron
+DATA_DIR ?= /mnt/prismatron
 SCRIPTS_DIR := $(PROJECT_DIR)/scripts
 TOOLS_DIR := $(PROJECT_DIR)/tools
 VENV := $(PROJECT_DIR)/env/bin
@@ -79,7 +79,7 @@ matrices: ## Compute ATA matrices from captured patterns
 # Data Directory Setup
 # =============================================================================
 
-setup: ## Setup data directories and initialize config
+setup: ## Setup data directories and initialize config (DATA_DIR=/path)
 	@echo "Setting up Prismatron data directories..."
 	@echo ""
 	@if [ ! -d "$(DATA_DIR)" ]; then \

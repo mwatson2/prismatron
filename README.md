@@ -5,9 +5,9 @@ A real-time LED display optimization system that captures diffusion patterns fro
 ## Hardware Requirements
 
 - **NVIDIA Jetson Orin Nano** (8GB) - Primary compute platform
-- **WLED Controller** - ESP32-based LED controller with DDP protocol support
+- **WLED Controller** - LED controller with DDP protocol support (e.g. WLED platforms such as QuinLED)
 - **USB Camera** - For diffusion pattern capture and calibration
-- **LED Array** - Up to 2600 diffused RGB LEDs
+- **LED Array** - Tested to 3200 with Jetson Orin Nano
 
 ## Project Structure
 
@@ -51,16 +51,22 @@ Key dependencies:
 ### 3. Setup Data Directories
 
 ```bash
+# Default location: /mnt/prismatron
 make setup
+
+# Custom location
+make setup DATA_DIR=/path/to/data
 ```
 
-This creates the runtime data directory at `/mnt/prismatron/` with:
+This creates the runtime data directory with:
 - `config/` - Configuration files
 - `patterns/` - Captured diffusion patterns
 - `media/` - Video/image content
 - `playlists/` - Content playlists
 - `uploads/` - User uploads
 - `logs/` - Runtime logs
+
+The `DATA_DIR` variable can be passed to any make command that uses data paths (e.g., `capture`, `matrices`, `run`).
 
 ## Make Commands
 
@@ -70,7 +76,7 @@ Run `make help` to see all available commands:
 
 | Command | Description |
 |---------|-------------|
-| `make setup` | Create data directories and initialize config |
+| `make setup [DATA_DIR=path]` | Create data directories and initialize config |
 | `make frontend` | Build the React web frontend |
 | `make install-service` | Install systemd user service (includes dummy display) |
 | `make uninstall-service` | Remove systemd user service |
