@@ -247,10 +247,10 @@ make frontend
 ### Memory Optimization
 
 - Uses uint8 pattern storage (75% memory reduction vs float32)
-- Sparse CSC matrices for diffusion patterns
-- Symmetric diagonal ATA matrices for efficient computation
+- Custom mixed sparse tensor for diffusion patterns
+- Custom symmetric block diagonal for ATA matrices
 - Designed for 8GB Jetson Orin Nano constraints
 
 ## License
 
-Proprietary - All rights reserved
+See LICENSE.txt
