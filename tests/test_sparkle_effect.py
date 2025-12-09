@@ -17,6 +17,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import numpy as np
 import pytest
 
+pytest.importorskip("cupy")
+
 from src.consumer.led_effect import SparkleEffect, SparkleSet
 
 

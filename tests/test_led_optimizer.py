@@ -18,6 +18,8 @@ import pytest
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+pytest.importorskip("cupy")
+
 from src.const import FRAME_HEIGHT, FRAME_WIDTH
 from src.consumer.led_optimizer import LEDOptimizer, OptimizationResult
 

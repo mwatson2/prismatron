@@ -11,6 +11,8 @@ from unittest.mock import MagicMock, Mock, PropertyMock, patch
 
 import pytest
 
+pytest.importorskip("cupy")
+
 from src.consumer.audio_beat_analyzer import BeatEvent
 from src.core.control_state import ControlState, SystemStatus
 

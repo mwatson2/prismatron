@@ -18,6 +18,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import numpy as np
 import pytest
 
+pytest.importorskip("cupy")
+
 from src.consumer.audio_beat_analyzer import AudioBeatAnalyzer, AudioState
 from src.consumer.frame_renderer import FrameRenderer
 from src.core.control_state import ControlState, SystemStatus
