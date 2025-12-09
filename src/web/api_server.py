@@ -1427,7 +1427,9 @@ async def preview_broadcast_task():
                 # Audio metrics
                 audio_level_value = 0.0
                 agc_gain_db_value = 0.0
+                current_bpm_value = 120.0
                 last_beat_time_value = 0.0
+                last_downbeat_time_value = 0.0
                 beat_intensity_value = 0.0
                 beat_confidence_value = 0.0
                 if control_state:
@@ -1446,7 +1448,9 @@ async def preview_broadcast_task():
                     # Get audio metrics for visualizer
                     audio_level_value = system_status_for_index.get("audio_level", 0.0)
                     agc_gain_db_value = system_status_for_index.get("agc_gain_db", 0.0)
+                    current_bpm_value = system_status_for_index.get("current_bpm", 120.0)
                     last_beat_time_value = system_status_for_index.get("last_beat_time", 0.0)
+                    last_downbeat_time_value = system_status_for_index.get("last_downbeat_time", 0.0)
                     beat_intensity_value = system_status_for_index.get("audio_intensity", 0.0)
                     beat_confidence_value = system_status_for_index.get("beat_confidence", 0.0)
 
@@ -1540,7 +1544,9 @@ async def preview_broadcast_task():
                     # Audio visualizer metrics
                     "audio_level": audio_level_value,
                     "agc_gain_db": agc_gain_db_value,
+                    "current_bpm": current_bpm_value,
                     "last_beat_time": last_beat_time_value,
+                    "last_downbeat_time": last_downbeat_time_value,
                     "beat_intensity": beat_intensity_value,
                     "beat_confidence": beat_confidence_value,
                     "timestamp": current_time,

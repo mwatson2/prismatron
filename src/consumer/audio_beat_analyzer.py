@@ -94,6 +94,7 @@ class AudioState:
     last_beat_time: float = 0.0
     last_beat_wallclock_time: float = 0.0  # Wall-clock time of last beat for effects
     last_downbeat_time: float = 0.0
+    last_downbeat_wallclock_time: float = 0.0  # Wall-clock time of last downbeat for timing
     beat_count: int = 0
     downbeat_count: int = 0
     beats_per_measure: int = 4
@@ -1097,6 +1098,15 @@ class AudioBeatAnalyzer:
                     )
                 if is_drop:
                     self.audio_state.last_drop_time = current_time
+                    # The drop occurs ON a downbeat - set downbeat to last beat time
+                    if self.audio_state.last_beat_wallclock_time > 0:
+                        self.audio_state.last_downbeat_wallclock_time = self.audio_state.last_beat_wallclock_time
+                        self.audio_state.last_downbeat_time = self.audio_state.last_beat_time
+                        self.audio_state.downbeat_count += 1
+                        logger.info(
+                            f"🥁 DOWNBEAT: Drop detected - syncing to last beat "
+                            f"(beat_time={self.audio_state.last_beat_wallclock_time:.3f})"
+                        )
                     logger.info(
                         f"DROP detected: intensity={builddrop_result['buildup_intensity']:.2f}, "
                         f"bass={builddrop_result['bass_energy']:.4f}"
@@ -1294,7 +1304,7 @@ class AudioBeatAnalyzer:
 
         Args:
             beat_timestamp: Beat time in audio timeline (seconds)
-            downbeat_prob: Probability of downbeat (>0.5 = downbeat)
+            downbeat_prob: Probability of downbeat (unused - we use timing-based detection)
             system_time: Wall-clock time when beat was detected
             intensity: Beat intensity from accumulated bass energy (0.0-1.0)
         """
@@ -1307,11 +1317,44 @@ class AudioBeatAnalyzer:
         self.audio_state.last_beat_time = beat_timestamp
         self.audio_state.last_beat_wallclock_time = system_time  # Store wall-clock time for effects
 
-        # For Aubio, we simplified downbeat detection (downbeat_prob < 0.5 = regular beat)
-        is_downbeat = downbeat_prob > 0.5
+        # Timing-based downbeat detection:
+        # (a) First beat detected
+        # (b) Beat approximately 4 beats from last downbeat based on BPM
+        # Note: Drop-synced downbeats are handled in _on_audio_chunk when drop is detected
+        is_downbeat = False
+
+        # (a) First beat ever
+        if self.audio_state.downbeat_count == 0:
+            is_downbeat = True
+            logger.info("🥁 DOWNBEAT: First beat detected")
+
+        # (b) Approximately 4 beats from last downbeat based on BPM
+        if not is_downbeat and self.audio_state.current_bpm > 0:
+            beat_duration = 60.0 / self.audio_state.current_bpm
+            four_beat_duration = beat_duration * self.audio_state.beats_per_measure
+            last_downbeat_wallclock = getattr(self.audio_state, "last_downbeat_wallclock_time", 0)
+
+            if last_downbeat_wallclock > 0:
+                time_since_downbeat = system_time - last_downbeat_wallclock
+                # Check if we're close to a multiple of 4 beats (within 35% tolerance)
+                # Higher tolerance accounts for BPM drift and beat detection jitter
+                tolerance = beat_duration * 0.35
+                remainder = time_since_downbeat % four_beat_duration
+                # Check if remainder is close to 0 or close to four_beat_duration
+                # and ensure at least 3 beats have passed to avoid false positives
+                near_measure_boundary = remainder < tolerance or (four_beat_duration - remainder) < tolerance
+                if near_measure_boundary and time_since_downbeat > beat_duration * 3:
+                    is_downbeat = True
+                    beats_elapsed = round(time_since_downbeat / beat_duration)
+                    logger.debug(
+                        f"🥁 DOWNBEAT: ~{beats_elapsed} beats since last "
+                        f"({time_since_downbeat:.3f}s, 4-beat={four_beat_duration:.3f}s)"
+                    )
+
         if is_downbeat:
             self.audio_state.downbeat_count += 1
             self.audio_state.last_downbeat_time = beat_timestamp
+            self.audio_state.last_downbeat_wallclock_time = system_time
 
         # Update BPM calculation
         bpm, confidence = self.bpm_calculator.update_beat(beat_timestamp)

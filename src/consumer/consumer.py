@@ -459,9 +459,9 @@ class ConsumerProcess:
                 audio_intensity=beat_event.intensity,
             )
 
-            # Update downbeat time if this is a downbeat
+            # Update downbeat time if this is a downbeat (use system_time for frontend EventLight)
             if beat_event.is_downbeat:
-                self._control_state.update_status(last_downbeat_time=beat_event.timestamp)
+                self._control_state.update_status(last_downbeat_time=beat_event.system_time)
 
             # Log ControlState write completion
             callback_end_time = time.time()

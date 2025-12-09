@@ -272,6 +272,130 @@ const DecayingMeter = ({
 }
 
 /**
+ * BPMSpeedometer - Speedometer-style BPM display with arc gauge
+ */
+const BPMSpeedometer = ({ bpm, minBpm = 60, maxBpm = 180 }) => {
+  // Clamp BPM to range
+  const clampedBpm = Math.max(minBpm, Math.min(maxBpm, bpm))
+
+  // Calculate angle (-180 = left, 0 = right for a semi-circle)
+  const normalizedValue = (clampedBpm - minBpm) / (maxBpm - minBpm)
+  const angle = -180 + (normalizedValue * 180) // -180 to 0 degrees (matches arc)
+
+  // SVG dimensions
+  const size = 80
+  const strokeWidth = 6
+  const radius = (size - strokeWidth) / 2
+  const center = size / 2
+
+  // Arc path for background (semi-circle from left to right)
+  const createArc = (startAngle, endAngle) => {
+    const startRad = (startAngle * Math.PI) / 180
+    const endRad = (endAngle * Math.PI) / 180
+    const x1 = center + radius * Math.cos(startRad)
+    const y1 = center + radius * Math.sin(startRad)
+    const x2 = center + radius * Math.cos(endRad)
+    const y2 = center + radius * Math.sin(endRad)
+    const largeArc = endAngle - startAngle > 180 ? 1 : 0
+    return `M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2}`
+  }
+
+  // Needle endpoint
+  const needleLength = radius - 8
+  const needleAngle = (angle * Math.PI) / 180
+  const needleX = center + needleLength * Math.cos(needleAngle)
+  const needleY = center + needleLength * Math.sin(needleAngle)
+
+  // Color based on BPM (slower = cooler, faster = warmer)
+  const getColor = () => {
+    if (bpm < 90) return '#22d3ee' // cyan
+    if (bpm < 120) return '#a3e635' // lime
+    if (bpm < 140) return '#facc15' // yellow
+    if (bpm < 160) return '#fb923c' // orange
+    return '#f87171' // red
+  }
+
+  return (
+    <div className="flex flex-col items-center">
+      {/* Speedometer arc */}
+      <svg width={size} height={size / 2} viewBox={`0 0 ${size} ${size / 2}`}>
+        {/* Background arc */}
+        <path
+          d={createArc(-180, 0)}
+          fill="none"
+          stroke="#333"
+          strokeWidth={strokeWidth}
+          strokeLinecap="round"
+        />
+
+        {/* Colored progress arc */}
+        <path
+          d={createArc(-180, -180 + normalizedValue * 180)}
+          fill="none"
+          stroke={getColor()}
+          strokeWidth={strokeWidth}
+          strokeLinecap="round"
+          style={{ filter: `drop-shadow(0 0 4px ${getColor()})` }}
+        />
+
+        {/* Tick marks */}
+        {[60, 90, 120, 150, 180].map((tick) => {
+          const tickNorm = (tick - minBpm) / (maxBpm - minBpm)
+          const tickAngle = (-180 + tickNorm * 180) * Math.PI / 180
+          const innerR = radius - strokeWidth / 2 - 4
+          const outerR = radius - strokeWidth / 2 - 8
+          return (
+            <line
+              key={tick}
+              x1={center + innerR * Math.cos(tickAngle)}
+              y1={center + innerR * Math.sin(tickAngle)}
+              x2={center + outerR * Math.cos(tickAngle)}
+              y2={center + outerR * Math.sin(tickAngle)}
+              stroke="#666"
+              strokeWidth={1}
+            />
+          )
+        })}
+
+        {/* Needle */}
+        <line
+          x1={center}
+          y1={center}
+          x2={needleX}
+          y2={needleY}
+          stroke={getColor()}
+          strokeWidth={2}
+          strokeLinecap="round"
+          style={{
+            filter: `drop-shadow(0 0 3px ${getColor()})`,
+            transition: 'all 0.15s ease-out'
+          }}
+        />
+
+        {/* Center dot */}
+        <circle
+          cx={center}
+          cy={center}
+          r={4}
+          fill={getColor()}
+          style={{ filter: `drop-shadow(0 0 3px ${getColor()})` }}
+        />
+      </svg>
+      {/* BPM value - separate from arc with spacing */}
+      <div
+        className="text-sm font-mono font-bold mt-1"
+        style={{ color: getColor(), textShadow: `0 0 4px ${getColor()}` }}
+      >
+        {Math.round(bpm)}
+      </div>
+      <div className="text-[10px] font-mono text-metal-silver font-bold -mt-0.5">
+        BPM
+      </div>
+    </div>
+  )
+}
+
+/**
  * EventLight - Circular indicator that lights up on events and fades over time
  */
 const EventLight = ({ label, lastEventTime, color, fadeMs = 1000 }) => {
@@ -316,6 +440,11 @@ const EventLight = ({ label, lastEventTime, color, fadeMs = 1000 }) => {
       border: 'border-lime-400',
       text: 'text-lime-400',
     },
+    purple: {
+      rgb: '192, 132, 252',
+      border: 'border-purple-400',
+      text: 'text-purple-400',
+    },
   }
 
   const cfg = colorConfig[color] || colorConfig.cyan
@@ -358,12 +487,14 @@ const AudioVisualizer = ({ systemStatus }) => {
   const {
     audio_level = 0.0,
     agc_gain_db = 0.0,
+    current_bpm = 120.0,
     last_beat_time = 0.0,
     beat_intensity = 0.0,
     beat_confidence = 0.0,
     buildup_intensity = 0.0,
     last_cut_time = 0.0,
     last_drop_time = 0.0,
+    last_downbeat_time = 0.0,
   } = systemStatus
 
   // Normalize AGC gain for display (-20dB to +20dB range -> 0 to 1)
@@ -371,82 +502,95 @@ const AudioVisualizer = ({ systemStatus }) => {
 
   return (
     <div className="retro-container">
-      <h3 className="text-sm font-retro text-neon-cyan mb-3">
-        AUDIO ANALYZER
-      </h3>
+      {/* Two-column layout */}
+      <div className="flex gap-4">
+        {/* Left column: Title and meters */}
+        <div className="flex-1">
+          <h3 className="text-sm font-retro text-neon-cyan mb-3">
+            AUDIO ANALYZER
+          </h3>
+          <div className="flex items-end justify-between gap-2">
+            {/* Audio Level - continuous with peak */}
+            <AudioMeter
+              value={audio_level}
+              label="LEVEL"
+              color="green"
+              maxValue={0.5}
+              unit="%"
+              trackPeak={true}
+              peakDecayMs={2000}
+            />
 
-      {/* Main visualization: 5 meters + event lights */}
-      <div className="flex items-end justify-between gap-2">
-        {/* Audio Level - continuous with peak */}
-        <AudioMeter
-          value={audio_level}
-          label="LEVEL"
-          color="green"
-          maxValue={0.5}
-          unit="%"
-          trackPeak={true}
-          peakDecayMs={2000}
-        />
+            {/* AGC Gain - continuous, no peak */}
+            <AudioMeter
+              value={normalizedAgcGain}
+              label="AGC"
+              color="purple"
+              maxValue={1.0}
+              unit="dB"
+              trackPeak={false}
+            />
 
-        {/* AGC Gain - continuous, no peak */}
-        <AudioMeter
-          value={normalizedAgcGain}
-          label="AGC"
-          color="purple"
-          maxValue={1.0}
-          unit="dB"
-          trackPeak={false}
-        />
+            {/* Beat Intensity - decaying with peak */}
+            <DecayingMeter
+              value={beat_intensity}
+              lastEventTime={last_beat_time}
+              label="BEAT"
+              color="yellow"
+              decayMs={250}
+              trackPeak={true}
+              peakDecayMs={2000}
+            />
 
-        {/* Beat Intensity - decaying with peak */}
-        <DecayingMeter
-          value={beat_intensity}
-          lastEventTime={last_beat_time}
-          label="BEAT"
-          color="yellow"
-          decayMs={250}
-          trackPeak={true}
-          peakDecayMs={2000}
-        />
+            {/* Beat Confidence - decaying with peak */}
+            <DecayingMeter
+              value={beat_confidence}
+              lastEventTime={last_beat_time}
+              label="CONF"
+              color="orange"
+              decayMs={250}
+              trackPeak={true}
+              peakDecayMs={2000}
+            />
 
-        {/* Beat Confidence - decaying with peak */}
-        <DecayingMeter
-          value={beat_confidence}
-          lastEventTime={last_beat_time}
-          label="CONF"
-          color="orange"
-          decayMs={250}
-          trackPeak={true}
-          peakDecayMs={2000}
-        />
+            {/* Build-up intensity - continuous, no peak */}
+            <AudioMeter
+              value={buildup_intensity}
+              label="BUILD"
+              color="dynamic"
+              maxValue={1.5}
+              unit="%"
+              trackPeak={false}
+            />
+          </div>
+        </div>
 
-        {/* Build-up intensity - continuous, no peak */}
-        <AudioMeter
-          value={buildup_intensity}
-          label="BUILD"
-          color="dynamic"
-          maxValue={1.5}
-          unit="%"
-          trackPeak={false}
-        />
+        {/* Right column: Speedometer and event lights */}
+        <div className="flex flex-col items-center justify-between pt-4">
+          <BPMSpeedometer bpm={current_bpm} />
+          <div className="flex gap-2">
+            <EventLight
+              label="DOWN"
+              lastEventTime={last_downbeat_time}
+              color="purple"
+              fadeMs={500}
+            />
 
-        {/* Spacer */}
-        <div className="w-2" />
+            <EventLight
+              label="CUT"
+              lastEventTime={last_cut_time}
+              color="cyan"
+              fadeMs={1000}
+            />
 
-        {/* Event lights */}
-        <EventLight
-          label="CUT"
-          lastEventTime={last_cut_time}
-          color="cyan"
-          fadeMs={1000}
-        />
-
-        <EventLight
-          label="DROP"
-          lastEventTime={last_drop_time}
-          color="lime"
-          fadeMs={1000}
-        />
+            <EventLight
+              label="DROP"
+              lastEventTime={last_drop_time}
+              color="lime"
+              fadeMs={1000}
+            />
+          </div>
+        </div>
       </div>
     </div>
   )
