@@ -40,7 +40,7 @@ jobs:
           pip install numpy scipy pillow opencv-python-headless pyyaml
           pip install networkx sympy matplotlib psutil structlog
           pip install pyserial requests jinja2
-          pip install fastapi uvicorn websockets pydantic python-multipart aiofiles
+          pip install fastapi uvicorn websockets pydantic python-multipart aiofiles httpx
 
       - name: Run tests
         run: |
