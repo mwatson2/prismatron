@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import MagicMock, Mock, patch
 
 import numpy as np
+import pytest
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -165,6 +166,7 @@ class TestVideoSource(unittest.TestCase):
     # and test_hardware_acceleration_detection_nvmpi_h264 were removed - implementation now uses
     # nvv4l2dec as preferred decoder on Jetson platform
 
+    @pytest.mark.hardware
     @patch("subprocess.run")
     def test_hardware_acceleration_detection_nvv4l2dec_h264(self, mock_subprocess):
         """Test Jetson NVV4L2DEC hardware acceleration detection for H.264."""

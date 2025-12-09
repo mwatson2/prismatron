@@ -23,6 +23,8 @@ import pytest
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+pytest.importorskip("cupy")
+
 # Skip the TestClient-based tests if cv2 import fails
 try:
     # Try importing to check if cv2 is working
