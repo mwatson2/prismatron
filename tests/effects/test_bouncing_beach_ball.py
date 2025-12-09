@@ -14,6 +14,8 @@ import pytest
 # Add parent directory to path for tests
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+pytest.importorskip("cupy")
+
 from src.producer.effects.geometric_effects import BouncingBeachBall
 
 

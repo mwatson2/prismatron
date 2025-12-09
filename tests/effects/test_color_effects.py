@@ -15,6 +15,8 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+pytest.importorskip("cupy")
+
 # Import effects
 from src.producer.effects.color_effects import (
     ColorBreathe,

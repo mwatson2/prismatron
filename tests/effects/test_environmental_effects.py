@@ -15,6 +15,8 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+pytest.importorskip("cupy")
+
 from src.producer.effects.environmental_effects import AuroraBorealis, FireSimulation, Lightning
 
 
