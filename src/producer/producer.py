@@ -490,7 +490,8 @@ class ProducerProcess:
                 logger.warning("Producer failed to connect to playlist synchronization service - using fallback")
 
             # Create content preparer for seamless transitions (timer-based, no polling thread)
-            self._content_preparer = ContentPreparer(self._playlist, lookahead_seconds=2.0)
+            # 5s lookahead gives enough buffer for downbeat transition truncation
+            self._content_preparer = ContentPreparer(self._playlist, lookahead_seconds=5.0)
             logger.info("Content preparer initialized")
 
             logger.info("Producer process initialized successfully")
