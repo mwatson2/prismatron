@@ -1,3 +1,8 @@
+[![CI](https://github.com/mwatson2/prismatron/workflows/CI/badge.svg)](https://github.com/mwatson2/prismatron/actions?query=workflow%3ACI)
+[![Coverage](https://codecov.io/github/mwatson2/prismatron/coverage.svg?branch=main)](https://codecov.io/github/mwatson2/prismatron?branch=main)
+[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://github.com/pre-commit/pre-commit)
+[![black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+
 # Prismatron LED Display System
 
 A real-time LED display optimization system that captures diffusion patterns from physical LEDs and uses sparse matrix optimization to reproduce video content on diffused LED arrays.
