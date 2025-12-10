@@ -25,6 +25,10 @@ const AudioReactivePanel = () => {
   const [audioReactiveEnabled, setAudioReactiveEnabled] = useState(false)
   const [audioReactiveLoading, setAudioReactiveLoading] = useState(false)
 
+  // Transition on downbeat setting
+  const [transitionOnDownbeat, setTransitionOnDownbeat] = useState(false)
+  const [transitionOnDownbeatLoading, setTransitionOnDownbeatLoading] = useState(false)
+
   // Global settings
   const [testTriggerInterval, setTestTriggerInterval] = useState(2.0)
 
@@ -63,7 +67,20 @@ const AudioReactivePanel = () => {
   // Initial fetch on mount
   useEffect(() => {
     fetchAudioReactiveSettings()
+    fetchTransitionOnDownbeat()
   }, [])
+
+  const fetchTransitionOnDownbeat = async () => {
+    try {
+      const response = await fetch('/api/settings/transition-on-downbeat')
+      if (response.ok) {
+        const data = await response.json()
+        setTransitionOnDownbeat(data.enabled || false)
+      }
+    } catch (error) {
+      console.error('Failed to fetch transition-on-downbeat setting:', error)
+    }
+  }
 
   // Listen for WebSocket updates
   useEffect(() => {
@@ -141,6 +158,24 @@ const AudioReactivePanel = () => {
       console.error('Failed to update audio reactive setting:', error)
     } finally {
       setAudioReactiveLoading(false)
+    }
+  }
+
+  const updateTransitionOnDownbeat = async (enabled) => {
+    setTransitionOnDownbeatLoading(true)
+    try {
+      const response = await fetch('/api/settings/transition-on-downbeat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled })
+      })
+      if (response.ok) {
+        setTransitionOnDownbeat(enabled)
+      }
+    } catch (error) {
+      console.error('Failed to update transition-on-downbeat setting:', error)
+    } finally {
+      setTransitionOnDownbeatLoading(false)
     }
   }
 
@@ -513,23 +548,45 @@ const AudioReactivePanel = () => {
             {/* Global Settings */}
             <div className="pl-4 border-l-2 border-neon-cyan border-opacity-30">
               <h4 className="text-sm font-retro text-neon-orange mb-3">GLOBAL SETTINGS</h4>
-              <div className="space-y-2">
-                <label className="block text-xs text-metal-silver font-mono">
-                  TEST TRIGGER INTERVAL ({testTriggerInterval.toFixed(1)}s)
-                </label>
-                <input
-                  type="range"
-                  min="0.5"
-                  max="10"
-                  step="0.5"
-                  value={testTriggerInterval}
-                  onChange={(e) => {
-                    const val = parseFloat(e.target.value)
-                    setTestTriggerInterval(val)
-                    updateServerConfig({ test_interval: val })
-                  }}
-                  className="w-full h-2 bg-dark-700 rounded-lg appearance-none cursor-pointer slider-track"
-                />
+              <div className="space-y-4">
+                {/* Transition on Downbeat Toggle */}
+                <div className="flex items-center justify-between bg-dark-800 rounded-retro p-3">
+                  <div>
+                    <span className="text-xs text-metal-silver font-mono">Transition on Downbeat</span>
+                    <p className="text-xs text-metal-silver opacity-50 mt-0.5">Sync playlist transitions to downbeats</p>
+                  </div>
+                  <button
+                    onClick={() => updateTransitionOnDownbeat(!transitionOnDownbeat)}
+                    disabled={transitionOnDownbeatLoading}
+                    className={`px-4 py-1 rounded-retro text-xs font-retro font-bold transition-all duration-200 ${
+                      transitionOnDownbeat
+                        ? 'bg-neon-cyan bg-opacity-20 text-neon-cyan border border-neon-cyan border-opacity-50'
+                        : 'bg-dark-700 text-metal-silver border border-metal-silver border-opacity-30'
+                    } ${transitionOnDownbeatLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    {transitionOnDownbeatLoading ? '...' : transitionOnDownbeat ? 'ON' : 'OFF'}
+                  </button>
+                </div>
+
+                {/* Test Trigger Interval */}
+                <div className="space-y-2">
+                  <label className="block text-xs text-metal-silver font-mono">
+                    TEST TRIGGER INTERVAL ({testTriggerInterval.toFixed(1)}s)
+                  </label>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="10"
+                    step="0.5"
+                    value={testTriggerInterval}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value)
+                      setTestTriggerInterval(val)
+                      updateServerConfig({ test_interval: val })
+                    }}
+                    className="w-full h-2 bg-dark-700 rounded-lg appearance-none cursor-pointer slider-track"
+                  />
+                </div>
               </div>
             </div>
 

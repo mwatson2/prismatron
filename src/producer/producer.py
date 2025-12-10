@@ -771,6 +771,30 @@ class ProducerProcess:
                 if self._frames_produced == 0:
                     logger.debug(f"Got first frame from {self._current_item.filepath}")
 
+                # Check if frame should be dropped for downbeat transition timing
+                local_timestamp = frame_data.presentation_timestamp or 0.0
+                if self._should_drop_frame_for_downbeat_transition(local_timestamp):
+                    # Frame is after the last downbeat - end content item to transition on downbeat
+                    current_item_name = (
+                        os.path.basename(self._current_item.filepath) if self._current_item else "unknown"
+                    )
+                    logger.info(f"🎵 Ending content early for downbeat transition: {current_item_name}")
+
+                    # Mark as finished and advance to next
+                    self._content_finished_processed = True
+                    self._content_finished_time = time.time()
+                    self._waiting_for_sync_response = True
+                    self._advance_to_next_content()
+
+                    # Clean up current source
+                    if self._current_source:
+                        self._current_source.cleanup()
+                        self._current_source = None
+                        self._current_item = None
+                        self._logged_downbeat_drop = False  # Reset for next item
+                        logger.debug("Cleaned up content source for downbeat transition")
+                    return
+
                 # Render frame to shared memory
                 if self._render_frame_to_buffer(frame_data):
                     self._frames_produced += 1
@@ -1559,6 +1583,117 @@ class ProducerProcess:
 
         except Exception as e:
             logger.error(f"Failed to update statistics: {e}")
+
+    def _should_drop_frame_for_downbeat_transition(self, local_timestamp: float) -> bool:
+        """
+        Check if frame should be dropped to time playlist transition to downbeat.
+
+        When enabled, this feature drops frames near the end of a content item
+        that would render after the last downbeat, ensuring the next item starts
+        on a downbeat for musical synchronization.
+
+        The algorithm:
+        1. Get timing data from control state (last_downbeat_time, BPM, wallclock_delta)
+        2. Calculate when this frame will be rendered in wall-clock time
+        3. Calculate the last downbeat that will occur during this content item
+        4. If frame renders after that last downbeat, drop it
+
+        Args:
+            local_timestamp: Frame's presentation timestamp within the current item
+
+        Returns:
+            True if frame should be dropped (past last downbeat), False otherwise
+        """
+        try:
+            # Check if feature is enabled via control state
+            status = self._control_state.get_status()
+            if not status:
+                return False
+
+            if not status.transition_on_downbeat_enabled:
+                return False
+
+            # Get timing data from control state
+            wallclock_delta = status.wallclock_delta
+            current_bpm = status.current_bpm
+            last_downbeat_time = status.last_downbeat_time
+
+            # Validate timing data is available
+            if wallclock_delta is None:
+                # wallclock_delta not yet established by renderer
+                return False
+
+            if current_bpm <= 0:
+                # No valid BPM detected
+                return False
+
+            if last_downbeat_time <= 0:
+                # No downbeat detected yet
+                return False
+
+            # Get current item duration
+            if not self._current_item:
+                return False
+
+            item_duration = self._current_item.get_effective_duration()
+            if item_duration <= 0:
+                return False
+
+            # Calculate when this frame will be rendered in wall-clock time
+            global_timestamp = self._current_item_global_offset + local_timestamp
+            frame_render_time = global_timestamp + wallclock_delta
+
+            # Calculate item start and end in wall-clock time
+            item_start_realtime = self._current_item_global_offset + wallclock_delta
+            item_end_realtime = item_start_realtime + item_duration
+
+            # Calculate bar interval (4 beats per bar, assuming 4/4 time)
+            bar_interval = (60.0 / current_bpm) * 4
+
+            # Project forward from last_downbeat_time to find the last downbeat
+            # that occurs BEFORE item_end_realtime
+            # Start from last known downbeat and step forward
+            current_downbeat = last_downbeat_time
+
+            # First, if current_downbeat is before item start, step forward to first downbeat in item
+            while current_downbeat < item_start_realtime:
+                current_downbeat += bar_interval
+
+            # Now step forward to find the last downbeat before item end
+            last_downbeat_in_item = None
+            while current_downbeat < item_end_realtime:
+                last_downbeat_in_item = current_downbeat
+                current_downbeat += bar_interval
+
+            # If no downbeat found in item (item shorter than one bar), don't drop
+            if last_downbeat_in_item is None:
+                return False
+
+            # Check if this frame renders after the last downbeat
+            if frame_render_time > last_downbeat_in_item:
+                # Calculate how much time is left in the item
+                time_remaining = item_end_realtime - frame_render_time
+                time_after_downbeat = frame_render_time - last_downbeat_in_item
+
+                # Log the decision (first time per item)
+                if not hasattr(self, "_logged_downbeat_drop") or not self._logged_downbeat_drop:
+                    logger.info(
+                        f"🎵 Dropping frame for downbeat transition: "
+                        f"frame_time={frame_render_time:.3f}s, "
+                        f"last_downbeat={last_downbeat_in_item:.3f}s, "
+                        f"time_after_downbeat={time_after_downbeat*1000:.0f}ms, "
+                        f"time_remaining={time_remaining*1000:.0f}ms, "
+                        f"BPM={current_bpm:.1f}"
+                    )
+                    self._logged_downbeat_drop = True
+
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Error checking downbeat transition: {e}")
+            return False
 
     def get_producer_stats(self) -> Dict[str, Any]:
         """

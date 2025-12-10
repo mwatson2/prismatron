@@ -1176,6 +1176,10 @@ class FrameRenderer:
         self.first_frame_timestamp = first_timestamp
         self.first_frame_received = True
 
+        # Store in control state for producer to use (for downbeat transition timing)
+        if self._control_state:
+            self._control_state.update_status(wallclock_delta=self.wallclock_delta)
+
         logger.info(
             f"Established wallclock delta: {self.wallclock_delta:.3f}s "
             f"(first frame delay: {self.first_frame_delay:.3f}s)"
@@ -1216,6 +1220,9 @@ class FrameRenderer:
                 self.wallclock_delta = current_wallclock - frame_timestamp
                 # Reset pause time since we're resetting the timeline
                 self.total_pause_time = 0.0
+                # Store updated delta in control state for producer
+                if self._control_state:
+                    self._control_state.update_status(wallclock_delta=self.wallclock_delta)
                 logger.info(f"New wallclock delta: {self.wallclock_delta:.3f}s")
 
         # Calculate target wallclock time with pause compensation

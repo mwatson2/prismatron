@@ -139,6 +139,14 @@ class SystemStatus:
     led_buffer_frames: int = 0
     led_buffer_capacity: int = 0
 
+    # Timing synchronization for producer/consumer coordination
+    # wallclock_delta: wallclock_time = frame_timestamp + wallclock_delta
+    wallclock_delta: Optional[float] = None
+
+    # Playlist transition timing option
+    # When enabled, content items end on the last downbeat to sync with music
+    transition_on_downbeat_enabled: bool = False
+
 
 class ControlState:
     """

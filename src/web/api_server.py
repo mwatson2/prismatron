@@ -3425,6 +3425,58 @@ async def set_audio_source(request: AudioSourceRequest):
 
 
 # ========================================================================================
+# Transition on Downbeat Setting
+# ========================================================================================
+
+
+class TransitionOnDownbeatRequest(BaseModel):
+    """Request model for transition-on-downbeat setting."""
+
+    enabled: bool = Field(..., description="When enabled, playlist transitions are timed to downbeats")
+
+
+@app.get("/api/settings/transition-on-downbeat")
+async def get_transition_on_downbeat():
+    """Get transition-on-downbeat setting (sync playlist transitions to downbeats)."""
+    try:
+        enabled = False  # Default to disabled
+
+        if control_state:
+            try:
+                status = control_state.get_status()
+                if status:
+                    enabled = getattr(status, "transition_on_downbeat_enabled", False)
+            except Exception as e:
+                logger.warning(f"Failed to get transition-on-downbeat status: {e}")
+
+        return {"enabled": enabled}
+
+    except Exception as e:
+        logger.error(f"Failed to get transition-on-downbeat setting: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/settings/transition-on-downbeat")
+async def set_transition_on_downbeat(request: TransitionOnDownbeatRequest):
+    """Set transition-on-downbeat setting."""
+    try:
+        # Update in control state if available
+        if control_state:
+            control_state.update_status(transition_on_downbeat_enabled=request.enabled)
+            logger.info(f"Updated transition-on-downbeat to {request.enabled}")
+        else:
+            logger.warning("Control state not available - transition-on-downbeat setting not updated")
+
+        await manager.broadcast({"type": "transition_on_downbeat_changed", "enabled": request.enabled})
+
+        return {"enabled": request.enabled, "status": "updated"}
+
+    except Exception as e:
+        logger.error(f"Failed to set transition-on-downbeat: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# ========================================================================================
 # Audio Reactive Trigger Configuration (New Framework)
 # ========================================================================================
 
