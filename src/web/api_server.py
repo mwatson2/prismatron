@@ -1131,6 +1131,12 @@ async def startup_event():
                 control_state.update_status(use_audio_test_file=use_test_file)
                 source_name = "test file" if use_test_file else "live microphone"
                 logger.info(f"Loaded audio source setting from disk: {source_name}")
+
+            # Load transition-on-downbeat setting if present
+            if "transition_on_downbeat" in saved_config:
+                transition_on_downbeat = saved_config["transition_on_downbeat"]
+                control_state.update_status(transition_on_downbeat_enabled=transition_on_downbeat)
+                logger.info(f"Loaded transition-on-downbeat setting from disk: {transition_on_downbeat}")
         except Exception as e:
             logger.error(f"Failed to apply saved audio config to control state: {e}")
 
@@ -3466,6 +3472,12 @@ async def set_transition_on_downbeat(request: TransitionOnDownbeatRequest):
             logger.info(f"Updated transition-on-downbeat to {request.enabled}")
         else:
             logger.warning("Control state not available - transition-on-downbeat setting not updated")
+
+        # Persist to audio_config.json
+        saved_config = load_audio_config() or {}
+        saved_config["transition_on_downbeat"] = request.enabled
+        save_audio_config(saved_config)
+        logger.info(f"Saved transition-on-downbeat setting to disk: {request.enabled}")
 
         await manager.broadcast({"type": "transition_on_downbeat_changed", "enabled": request.enabled})
 
