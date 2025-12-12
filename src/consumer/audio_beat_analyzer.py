@@ -1001,6 +1001,14 @@ class AudioBeatAnalyzer:
 
         logger.info("Audio beat analysis stopped")
 
+    def __del__(self):
+        """Cleanup when garbage collected - ensure threads are stopped."""
+        try:
+            if hasattr(self, "running") and self.running:
+                self.stop_analysis()
+        except Exception:
+            pass  # Suppress errors during GC
+
     def _on_audio_chunk(self, audio_chunk: np.ndarray, timestamp: float):
         """
         Callback for processing audio chunks from AudioCapture.

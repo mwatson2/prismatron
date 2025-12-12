@@ -314,6 +314,15 @@ class ConsumerProcess:
 
     def _init_audio_beat_analyzer(self) -> None:
         """Initialize or reinitialize audio beat analyzer with current settings."""
+        # Defensive cleanup: ensure any existing analyzer is fully stopped
+        if self._audio_beat_analyzer is not None:
+            try:
+                self._audio_beat_analyzer.stop_analysis()
+                logger.info("Stopped previous audio beat analyzer before reinitialization")
+            except Exception as e:
+                logger.warning(f"Error stopping previous audio analyzer: {e}")
+            self._audio_beat_analyzer = None
+
         # Create AudioConfig based on current audio source setting
         if self._use_audio_test_file:
             audio_config = AudioConfig(
@@ -383,6 +392,22 @@ class ConsumerProcess:
                 # Update setting and reinitialize analyzer
                 self._use_audio_test_file = use_test_file
                 self._init_audio_beat_analyzer()
+
+                # Update frame renderer's reference to the new audio analyzer
+                if self._frame_renderer and self._audio_beat_analyzer:
+                    self._frame_renderer._audio_beat_analyzer = self._audio_beat_analyzer
+                    # Reset one-time log flags so they can log with the new analyzer state
+                    for flag in [
+                        "_logged_beat_check_called",
+                        "_logged_no_audio_components",
+                        "_logged_audio_reactive_disabled",
+                        "_logged_audio_not_enabled",
+                        "_logged_beat_state_inactive",
+                        "_logged_no_bpm",
+                    ]:
+                        if hasattr(self._frame_renderer, flag):
+                            delattr(self._frame_renderer, flag)
+                    logger.info("Updated frame renderer with new audio analyzer reference")
 
                 # Restart analysis if it should be running
                 if status.audio_reactive_enabled and self._audio_beat_analyzer:
