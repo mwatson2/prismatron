@@ -147,6 +147,14 @@ class SystemStatus:
     # When enabled, content items end on the last downbeat to sync with music
     transition_on_downbeat_enabled: bool = False
 
+    # Audio recording control (for capturing processed microphone audio)
+    audio_recording_requested: bool = False  # Set to True to trigger recording
+    audio_recording_duration: float = 60.0  # Duration in seconds
+    audio_recording_output_path: str = ""  # Output file path
+    audio_recording_in_progress: bool = False  # True while recording
+    audio_recording_progress: float = 0.0  # Recording progress 0.0-1.0
+    audio_recording_status: str = ""  # Status message (e.g., "recording", "complete", "error")
+
 
 class ControlState:
     """

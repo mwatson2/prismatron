@@ -36,6 +36,14 @@ const SettingsPage = () => {
   const [audioLoading, setAudioLoading] = useState(false)
   const [audioMessage, setAudioMessage] = useState(null)
 
+  // Audio recording state
+  const [audioRecording, setAudioRecording] = useState({
+    isRecording: false,
+    progress: 0,
+    status: '',
+    outputFilename: null
+  })
+
   useEffect(() => {
     fetchSettings()
     fetchNetworkStatus()
@@ -274,6 +282,79 @@ const SettingsPage = () => {
     } finally {
       setAudioLoading(false)
     }
+  }
+
+  // Audio recording functions
+  const startAudioRecording = async () => {
+    if (audioSource.useTestFile) {
+      setAudioMessage({ type: 'error', message: 'Switch to microphone mode first to record audio' })
+      return
+    }
+
+    setAudioRecording(prev => ({ ...prev, isRecording: true, progress: 0, status: 'starting' }))
+    setAudioMessage(null)
+
+    try {
+      const response = await fetch('/api/settings/audio-recording/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ duration_seconds: 60 })
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setAudioRecording(prev => ({
+          ...prev,
+          status: 'recording',
+          outputFilename: data.output_filename
+        }))
+        // Start polling for progress
+        pollRecordingStatus()
+      } else {
+        const error = await response.json()
+        setAudioRecording({ isRecording: false, progress: 0, status: '', outputFilename: null })
+        setAudioMessage({ type: 'error', message: error.detail || 'Failed to start recording' })
+      }
+    } catch (error) {
+      console.error('Failed to start audio recording:', error)
+      setAudioRecording({ isRecording: false, progress: 0, status: '', outputFilename: null })
+      setAudioMessage({ type: 'error', message: 'Failed to start recording' })
+    }
+  }
+
+  const pollRecordingStatus = async () => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const response = await fetch('/api/settings/audio-recording/status')
+        if (response.ok) {
+          const data = await response.json()
+          setAudioRecording(prev => ({
+            ...prev,
+            isRecording: data.is_recording,
+            progress: data.progress,
+            status: data.status
+          }))
+
+          // Stop polling when recording is complete
+          if (!data.is_recording && data.status === 'complete') {
+            clearInterval(pollInterval)
+            setAudioMessage({
+              type: 'success',
+              message: `Recording saved: ${audioRecording.outputFilename || 'mic_capture.wav'}`
+            })
+            setTimeout(() => setAudioMessage(null), 5000)
+          } else if (!data.is_recording && data.status.startsWith('error')) {
+            clearInterval(pollInterval)
+            setAudioMessage({ type: 'error', message: data.status })
+          }
+        }
+      } catch (error) {
+        console.error('Failed to poll recording status:', error)
+      }
+    }, 500) // Poll every 500ms
+
+    // Safety timeout - stop polling after 5 minutes
+    setTimeout(() => clearInterval(pollInterval), 5 * 60 * 1000)
   }
 
   // System management functions
@@ -710,6 +791,48 @@ const SettingsPage = () => {
               </button>
             </div>
           </div>
+
+          {/* Audio Recording (Microphone mode only) */}
+          {!audioSource.useTestFile && (
+            <div>
+              <label className="block text-sm font-retro text-neon-cyan mb-2">
+                CAPTURE AUDIO
+              </label>
+              <p className="text-xs text-metal-silver font-mono mb-3">
+                Record 60s of processed audio (with AGC and bass boost) for offline analysis
+              </p>
+
+              {audioRecording.isRecording ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-3 bg-dark-700 rounded-retro overflow-hidden">
+                      <div
+                        className="h-full bg-neon-pink transition-all duration-300"
+                        style={{ width: `${audioRecording.progress * 100}%` }}
+                      />
+                    </div>
+                    <span className="text-neon-pink font-mono text-sm w-12 text-right">
+                      {Math.round(audioRecording.progress * 100)}%
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-neon-pink rounded-full animate-pulse" />
+                    <span className="text-xs font-mono text-neon-pink">
+                      Recording... {Math.round(audioRecording.progress * 60)}s / 60s
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={startAudioRecording}
+                  className="retro-button px-4 py-2 text-neon-pink text-sm font-retro font-bold flex items-center gap-2 hover:bg-neon-pink hover:bg-opacity-10 transition-colors"
+                >
+                  <MicrophoneIcon className="w-4 h-4" />
+                  RECORD 60s AUDIO
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Audio Status Message */}
           {audioMessage && (

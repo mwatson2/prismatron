@@ -7,11 +7,12 @@ All runtime data is stored outside the source tree.
 Directory structure with PRISMATRON_ROOT=/mnt/prismatron:
     /mnt/prismatron/config/       - Configuration files
     /mnt/prismatron/logs/         - Log files
-    /mnt/prismatron/media/        - Media files
+    /mnt/prismatron/media/        - Media files (images/videos for display)
     /mnt/prismatron/uploads/      - User uploads
     /mnt/prismatron/playlists/    - Playlist definitions
     /mnt/prismatron/patterns/     - Diffusion pattern files
     /mnt/prismatron/conversions/  - Temporary video conversions (cache)
+    /mnt/prismatron/captures/     - Audio recordings from microphone
 
 Environment variable:
     PRISMATRON_ROOT - Base directory for all data (default: ~/.local/share/prismatron)
@@ -38,6 +39,7 @@ UPLOADS_DIR = ROOT_DIR / "uploads"
 PLAYLISTS_DIR = ROOT_DIR / "playlists"
 PATTERNS_DIR = ROOT_DIR / "patterns"
 TEMP_CONVERSIONS_DIR = ROOT_DIR / "conversions"
+CAPTURES_DIR = ROOT_DIR / "captures"  # Audio recordings from microphone
 
 # Config files
 AUDIO_CONFIG_FILE = CONFIG_DIR / "audio_config.json"
@@ -51,6 +53,7 @@ _ALL_DIRS = [
     PLAYLISTS_DIR,
     PATTERNS_DIR,
     TEMP_CONVERSIONS_DIR,
+    CAPTURES_DIR,
 ]
 
 

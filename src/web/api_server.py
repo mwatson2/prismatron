@@ -759,6 +759,7 @@ UPLOADS_PLAYLIST_MAX_ITEMS = 8
 # File storage paths - imported from centralized paths module
 from src.paths import (
     AUDIO_CONFIG_FILE,
+    CAPTURES_DIR,
     MEDIA_DIR,
     PLAYLISTS_DIR,
     TEMP_CONVERSIONS_DIR,
@@ -3427,6 +3428,107 @@ async def set_audio_source(request: AudioSourceRequest):
 
     except Exception as e:
         logger.error(f"Failed to set audio source: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# ========================================================================================
+# Audio Recording (Capture processed microphone audio to WAV file)
+# ========================================================================================
+
+
+class AudioRecordingRequest(BaseModel):
+    """Request model for starting audio recording."""
+
+    duration_seconds: float = Field(60.0, ge=1.0, le=300.0, description="Recording duration in seconds (1-300)")
+
+
+class AudioRecordingStatusResponse(BaseModel):
+    """Response model for audio recording status."""
+
+    is_recording: bool = Field(..., description="Whether recording is in progress")
+    progress: float = Field(..., description="Recording progress (0.0-1.0)")
+    status: str = Field(..., description="Status message")
+    output_path: Optional[str] = Field(None, description="Output file path when complete")
+
+
+@app.get("/api/settings/audio-recording/status")
+async def get_audio_recording_status():
+    """Get current audio recording status."""
+    try:
+        if control_state:
+            status = control_state.get_status()
+            if status:
+                return AudioRecordingStatusResponse(
+                    is_recording=getattr(status, "audio_recording_in_progress", False),
+                    progress=getattr(status, "audio_recording_progress", 0.0),
+                    status=getattr(status, "audio_recording_status", ""),
+                    output_path=getattr(status, "audio_recording_output_path", None),
+                )
+
+        return AudioRecordingStatusResponse(
+            is_recording=False,
+            progress=0.0,
+            status="control state unavailable",
+            output_path=None,
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to get audio recording status: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/settings/audio-recording/start")
+async def start_audio_recording(request: AudioRecordingRequest):
+    """Start recording processed audio from microphone to a WAV file.
+
+    The recorded audio is captured AFTER AGC and bass boost processing,
+    representing the audio signal as it is processed by the system.
+    This is useful for offline analysis and tuning.
+    """
+    try:
+        if not control_state:
+            raise HTTPException(status_code=503, detail="Control state not available")
+
+        # Check current status
+        status = control_state.get_status()
+        if status and getattr(status, "audio_recording_in_progress", False):
+            raise HTTPException(status_code=409, detail="Recording already in progress")
+
+        # Check if we're in file mode (can't record)
+        if status and getattr(status, "use_audio_test_file", True):
+            raise HTTPException(
+                status_code=400, detail="Cannot record in file playback mode. Switch to microphone first."
+            )
+
+        # Generate output path with timestamp
+        from datetime import datetime
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_filename = f"mic_capture_{timestamp}.wav"
+        output_path = CAPTURES_DIR / output_filename
+
+        # Request recording via control state
+        control_state.update_status(
+            audio_recording_requested=True,
+            audio_recording_duration=request.duration_seconds,
+            audio_recording_output_path=str(output_path),
+            audio_recording_progress=0.0,
+            audio_recording_status="starting",
+        )
+
+        logger.info(f"Requested audio recording: duration={request.duration_seconds}s, output={output_path}")
+
+        return {
+            "status": "recording_started",
+            "duration_seconds": request.duration_seconds,
+            "output_path": str(output_path),
+            "output_filename": output_filename,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to start audio recording: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

@@ -459,8 +459,96 @@ class ConsumerProcess:
                 except Exception as e:
                     logger.debug(f"Failed to update audio stats: {e}")
 
+            # Check for audio recording request
+            self._check_audio_recording_request(status)
+
         except Exception as e:
             logger.warning(f"Error updating audio reactive state: {e}")
+
+    def _check_audio_recording_request(self, status):
+        """Check for and handle audio recording requests from control state."""
+        try:
+            # Check if a recording was requested
+            if not getattr(status, "audio_recording_requested", False):
+                # Update recording progress if a recording is in progress
+                if self._audio_beat_analyzer and self._audio_beat_analyzer.audio_capture:
+                    if self._audio_beat_analyzer.audio_capture.is_recording:
+                        recording_status = self._audio_beat_analyzer.audio_capture.get_recording_status()
+                        self._control_state.update_status(
+                            audio_recording_in_progress=True,
+                            audio_recording_progress=recording_status.get("progress", 0.0),
+                        )
+                    elif getattr(status, "audio_recording_in_progress", False):
+                        # Recording just finished - update status
+                        self._control_state.update_status(
+                            audio_recording_in_progress=False,
+                            audio_recording_progress=1.0,
+                            audio_recording_status="complete",
+                        )
+                return
+
+            # Recording requested - check if audio capture is available
+            if not self._audio_beat_analyzer or not self._audio_beat_analyzer.audio_capture:
+                logger.error("Cannot start recording - audio capture not available")
+                self._control_state.update_status(
+                    audio_recording_requested=False,
+                    audio_recording_status="error: audio capture not available",
+                )
+                return
+
+            audio_capture = self._audio_beat_analyzer.audio_capture
+
+            # Check if already recording
+            if audio_capture.is_recording:
+                logger.warning("Recording already in progress")
+                self._control_state.update_status(audio_recording_requested=False)
+                return
+
+            # Check if in file mode (can't record in file playback mode)
+            if audio_capture.file_mode:
+                logger.error("Cannot record in file playback mode - switch to microphone first")
+                self._control_state.update_status(
+                    audio_recording_requested=False,
+                    audio_recording_status="error: cannot record in file mode",
+                )
+                return
+
+            # Get recording parameters
+            duration = getattr(status, "audio_recording_duration", 60.0)
+            output_path = getattr(status, "audio_recording_output_path", "")
+
+            if not output_path:
+                logger.error("No output path specified for recording")
+                self._control_state.update_status(
+                    audio_recording_requested=False,
+                    audio_recording_status="error: no output path specified",
+                )
+                return
+
+            # Start recording
+            from pathlib import Path
+
+            if audio_capture.start_recording(duration, Path(output_path)):
+                logger.info(f"Started audio recording: duration={duration}s, output={output_path}")
+                self._control_state.update_status(
+                    audio_recording_requested=False,  # Clear the request
+                    audio_recording_in_progress=True,
+                    audio_recording_progress=0.0,
+                    audio_recording_status="recording",
+                )
+            else:
+                logger.error("Failed to start audio recording")
+                self._control_state.update_status(
+                    audio_recording_requested=False,
+                    audio_recording_status="error: failed to start recording",
+                )
+
+        except Exception as e:
+            logger.error(f"Error checking audio recording request: {e}")
+            self._control_state.update_status(
+                audio_recording_requested=False,
+                audio_recording_status=f"error: {e}",
+            )
 
     def _on_beat_detected(self, beat_event: BeatEvent):
         """Handle detected beat events and update control state"""

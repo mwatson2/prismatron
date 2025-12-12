@@ -345,6 +345,16 @@ class AudioCapture:
         self.start_time = 0.0
         self.dropped_callbacks = 0
 
+        # Recording state (for capturing processed audio to WAV file)
+        self._recording_lock = threading.Lock()
+        self._is_recording = False
+        self._recording_buffer: list[np.ndarray] = []
+        self._recording_start_time = 0.0
+        self._recording_duration = 0.0
+        self._recording_output_path: Optional[Path] = None
+        self._recording_samples_target = 0
+        self._recording_samples_collected = 0
+
         # Initialize AGC if configured (only for live mode)
         self.agc: Optional[AutomaticGainControl] = None
         if not self.file_mode and self.config.agc is not None:
@@ -510,6 +520,9 @@ class AudioCapture:
             # Apply bass boost EQ if enabled (after AGC to boost normalized signal)
             if self.bass_boost is not None:
                 audio_chunk = self.bass_boost.process(audio_chunk)
+
+            # Collect sample for recording if active (after all processing)
+            self._collect_recording_sample(audio_chunk)
 
             # Update statistics
             self.total_samples_captured += len(audio_chunk)
@@ -767,6 +780,159 @@ class AudioCapture:
             stats["agc"] = self.agc.get_statistics()
 
         return stats
+
+    def start_recording(self, duration_seconds: float, output_path: Path) -> bool:
+        """
+        Start recording processed audio to a WAV file.
+
+        Records audio after AGC and bass boost processing, allowing offline
+        analysis of the processed audio signal.
+
+        Args:
+            duration_seconds: Recording duration in seconds
+            output_path: Path to output WAV file
+
+        Returns:
+            True if recording started successfully, False if already recording or not capturing
+        """
+        if not self.is_capturing:
+            logger.error("Cannot start recording - audio capture not running")
+            return False
+
+        if self.file_mode:
+            logger.error("Cannot record in file playback mode")
+            return False
+
+        with self._recording_lock:
+            if self._is_recording:
+                logger.warning("Recording already in progress")
+                return False
+
+            self._recording_buffer = []
+            self._recording_start_time = time.time()
+            self._recording_duration = duration_seconds
+            self._recording_output_path = Path(output_path)
+            self._recording_samples_target = int(duration_seconds * self.config.sample_rate)
+            self._recording_samples_collected = 0
+            self._is_recording = True
+
+            logger.info(
+                f"Started recording: duration={duration_seconds}s, "
+                f"target_samples={self._recording_samples_target}, "
+                f"output={output_path}"
+            )
+            return True
+
+    def _collect_recording_sample(self, audio_chunk: np.ndarray) -> None:
+        """
+        Collect audio chunk for recording (called from capture callback).
+
+        Args:
+            audio_chunk: Processed audio chunk to record
+        """
+        with self._recording_lock:
+            if not self._is_recording:
+                return
+
+            # Calculate how many samples we still need
+            samples_needed = self._recording_samples_target - self._recording_samples_collected
+
+            if samples_needed <= 0:
+                # Recording complete - finalize in background
+                self._is_recording = False
+                # Use thread pool to avoid blocking the audio callback
+                self.callback_executor.submit(self._finalize_recording)
+                return
+
+            # Collect the chunk (or partial chunk if near the end)
+            if len(audio_chunk) <= samples_needed:
+                self._recording_buffer.append(audio_chunk.copy())
+                self._recording_samples_collected += len(audio_chunk)
+            else:
+                # Only take what we need
+                self._recording_buffer.append(audio_chunk[:samples_needed].copy())
+                self._recording_samples_collected += samples_needed
+                self._is_recording = False
+                self.callback_executor.submit(self._finalize_recording)
+
+    def _finalize_recording(self) -> None:
+        """Write recorded audio buffer to WAV file."""
+        with self._recording_lock:
+            if not self._recording_buffer:
+                logger.warning("No audio data to write")
+                return
+
+            output_path = self._recording_output_path
+            buffer = self._recording_buffer
+            sample_rate = self.config.sample_rate
+
+            # Clear buffer reference (but keep local copy for writing)
+            self._recording_buffer = []
+
+        try:
+            # Concatenate all chunks
+            audio_data = np.concatenate(buffer)
+
+            # Convert float32 [-1, 1] to int16 for WAV
+            audio_int16 = (audio_data * 32767).astype(np.int16)
+
+            # Ensure output directory exists
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Write WAV file
+            with wave.open(str(output_path), "wb") as wav_file:
+                wav_file.setnchannels(1)  # Mono
+                wav_file.setsampwidth(2)  # 16-bit
+                wav_file.setframerate(sample_rate)
+                wav_file.writeframes(audio_int16.tobytes())
+
+            duration = len(audio_data) / sample_rate
+            logger.info(
+                f"Recording saved: {output_path}, "
+                f"duration={duration:.1f}s, "
+                f"samples={len(audio_data)}, "
+                f"size={output_path.stat().st_size / 1024:.1f}KB"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to write recording: {e}", exc_info=True)
+
+    def get_recording_status(self) -> dict:
+        """
+        Get current recording status.
+
+        Returns:
+            Dictionary with recording state and progress
+        """
+        with self._recording_lock:
+            if self._is_recording:
+                elapsed = time.time() - self._recording_start_time
+                progress = min(1.0, self._recording_samples_collected / max(1, self._recording_samples_target))
+                return {
+                    "is_recording": True,
+                    "elapsed_seconds": elapsed,
+                    "duration_seconds": self._recording_duration,
+                    "progress": progress,
+                    "samples_collected": self._recording_samples_collected,
+                    "samples_target": self._recording_samples_target,
+                    "output_path": str(self._recording_output_path) if self._recording_output_path else None,
+                }
+            else:
+                return {
+                    "is_recording": False,
+                    "elapsed_seconds": 0.0,
+                    "duration_seconds": 0.0,
+                    "progress": 0.0,
+                    "samples_collected": 0,
+                    "samples_target": 0,
+                    "output_path": None,
+                }
+
+    @property
+    def is_recording(self) -> bool:
+        """Check if recording is in progress."""
+        with self._recording_lock:
+            return self._is_recording
 
 
 # Example usage
