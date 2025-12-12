@@ -1,6 +1,7 @@
 [![CI](https://github.com/mwatson2/prismatron/workflows/CI/badge.svg)](https://github.com/mwatson2/prismatron/actions?query=workflow%3ACI)
 [![Coverage](https://codecov.io/github/mwatson2/prismatron/branch/main/graph/badge.svg?token=1YYVB2YHFG)](https://codecov.io/github/mwatson2/prismatron)
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://github.com/pre-commit/pre-commit)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 # Prismatron LED Display System
