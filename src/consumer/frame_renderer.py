@@ -1208,15 +1208,31 @@ class FrameRenderer:
 
         if not self.first_frame_received:
             self.establish_wallclock_delta(frame_timestamp)
-        elif is_first_frame_of_new_item:
-            # First frame of a new item - check if we need to adjust timeline
+        else:
+            # Check for timestamp discontinuity (can happen after frame drop cascades
+            # or at new playlist item boundaries)
             current_wallclock = time.time()
             test_target = frame_timestamp + self.get_adjusted_wallclock_delta()
             lateness = current_wallclock - test_target
 
-            if lateness > 0.05:  # If more than 50ms late
-                # Adjust the wallclock delta to make this frame on-time
-                logger.warning(f"🎬 Adjusting timeline for new playlist item - frame was {lateness*1000:.1f}ms late")
+            # Detect large discontinuities - either very late (>50ms) or very early (>500ms)
+            # Early discontinuities happen when frames are dropped and the LED buffer
+            # drains old frames while new frames with much later timestamps arrive
+            needs_timeline_adjustment = False
+            discontinuity_reason = ""
+
+            if lateness > 0.05:  # More than 50ms late
+                needs_timeline_adjustment = True
+                discontinuity_reason = f"late by {lateness*1000:.1f}ms"
+            elif lateness < -0.5:  # More than 500ms early - timestamp jumped forward
+                needs_timeline_adjustment = True
+                discontinuity_reason = f"early by {-lateness*1000:.1f}ms (timestamp discontinuity)"
+
+            if needs_timeline_adjustment:
+                if is_first_frame_of_new_item:
+                    logger.warning(f"🎬 Adjusting timeline for new playlist item - frame was {discontinuity_reason}")
+                else:
+                    logger.warning(f"⚡ Adjusting timeline after discontinuity - frame was {discontinuity_reason}")
                 self.wallclock_delta = current_wallclock - frame_timestamp
                 # Reset pause time since we're resetting the timeline
                 self.total_pause_time = 0.0
@@ -1269,6 +1285,14 @@ class FrameRenderer:
                 wait_time = -time_diff
                 self.early_frames += 1
                 self.total_wait_time += wait_time
+
+                # Log warning for significantly early frames (>1s) which may indicate timeline issues
+                if wait_time > 1.0:
+                    logger.warning(
+                        f"⏳ Frame is {wait_time*1000:.0f}ms early - waiting. "
+                        f"frame_ts={frame_timestamp:.3f}, target_wall={target_wallclock:.3f}, "
+                        f"current_wall={current_wallclock:.3f}"
+                    )
 
                 time.sleep(wait_time)
                 self._send_to_outputs(led_values, metadata)

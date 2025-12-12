@@ -781,6 +781,17 @@ class ProducerProcess:
                     )
                     logger.info(f"🎵 Ending content early for downbeat transition: {current_item_name}")
 
+                    # Calculate truncated duration: content played up to this point
+                    # local_timestamp is the timestamp of the frame we're dropping, which equals
+                    # the end time of the last rendered frame (previous frame ends when this one starts)
+                    truncated_duration = local_timestamp
+                    self._accumulated_duration += truncated_duration
+                    logger.debug(
+                        f"Downbeat transition: truncated duration {truncated_duration:.3f}s, "
+                        f"accumulated total now {self._accumulated_duration:.3f}s"
+                    )
+                    self._last_frame_duration = None  # Reset for next item
+
                     # Mark as finished and advance to next
                     self._content_finished_processed = True
                     self._content_finished_time = time.time()
