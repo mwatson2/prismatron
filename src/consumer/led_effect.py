@@ -106,6 +106,8 @@ class TemplateEffectFactory:
         loop: bool = False,
         add_multiplier: float = 0.4,
         color_thieving: bool = False,
+        intensity_decay: str = "none",
+        decay_power: float = 2.0,
         **kwargs,
     ) -> "TemplateEffect":
         """
@@ -120,6 +122,8 @@ class TemplateEffectFactory:
             loop: Whether to loop the template when it reaches the end
             add_multiplier: Multiplier for additive component in 'addboost' mode [0, 1+]
             color_thieving: Whether to extract color from input LEDs using first template frame
+            intensity_decay: Intensity decay mode ("none", "linear", "exponential")
+            decay_power: Controls decay speed for exponential mode (higher = faster decay)
             **kwargs: Additional parameters passed to TemplateEffect
 
         Returns:
@@ -136,6 +140,8 @@ class TemplateEffectFactory:
             loop=loop,
             add_multiplier=add_multiplier,
             color_thieving=color_thieving,
+            intensity_decay=intensity_decay,
+            decay_power=decay_power,
             **kwargs,
         )
 
@@ -288,7 +294,15 @@ class TemplateEffect(LedEffect):
 
     The template frames are distributed evenly across the specified duration.
     On each apply() call, the frame closest in time to the current moment is selected.
+
+    Supports intensity decay modes for beat-synchronized effects:
+    - "none": Constant intensity throughout the effect
+    - "linear": intensity * (1 - progress)
+    - "exponential": intensity * (1 - progress)^decay_power
     """
+
+    # Minimum luminance threshold for color thieving (below this, use white)
+    COLOR_THIEVING_MIN_LUMINANCE = 0.05
 
     def __init__(
         self,
@@ -300,6 +314,8 @@ class TemplateEffect(LedEffect):
         loop: bool = False,
         add_multiplier: float = 0.4,
         color_thieving: bool = False,
+        intensity_decay: str = "none",
+        decay_power: float = 2.0,
         **kwargs,
     ):
         """
@@ -320,6 +336,11 @@ class TemplateEffect(LedEffect):
             loop: Whether to loop the template when it reaches the end
             add_multiplier: Multiplier for additive component in 'addboost' mode [0, 1+]
             color_thieving: Whether to extract color from input LEDs using first template frame
+            intensity_decay: Intensity decay mode ("none", "linear", "exponential")
+                - "none": Constant intensity throughout
+                - "linear": Decays linearly from intensity to 0
+                - "exponential": Decays as (1-progress)^decay_power for punchier beat sync
+            decay_power: Controls exponential decay speed (higher = faster initial decay)
             **kwargs: Additional parameters passed to base class
         """
         # Set duration (None if looping infinitely)
@@ -334,6 +355,8 @@ class TemplateEffect(LedEffect):
         self.loop = loop
         self.add_multiplier = add_multiplier
         self.color_thieving = color_thieving
+        self.intensity_decay = intensity_decay
+        self.decay_power = decay_power
         self.num_frames = template.shape[0]
 
         # Color thieving state
@@ -343,10 +366,42 @@ class TemplateEffect(LedEffect):
         if self.template.ndim != 2:
             raise ValueError(f"Template must be 2D (frames, leds), got shape {self.template.shape}")
 
+        # Validate intensity_decay
+        if intensity_decay not in ("none", "linear", "exponential"):
+            logger.warning(f"Unknown intensity_decay '{intensity_decay}', using 'none'")
+            self.intensity_decay = "none"
+
+        decay_info = f", decay={intensity_decay}" if intensity_decay != "none" else ""
+        if intensity_decay == "exponential":
+            decay_info += f" (power={decay_power})"
+
         logger.info(
             f"Created TemplateEffect: {self.num_frames} frames over {duration:.2f}s, "
-            f"blend={blend_mode}, intensity={intensity:.2f}, loop={loop}, color_thieving={color_thieving}"
+            f"blend={blend_mode}, intensity={intensity:.2f}, loop={loop}, "
+            f"color_thieving={color_thieving}{decay_info}"
         )
+
+    def _get_effective_intensity(self, progress: float) -> float:
+        """
+        Calculate effective intensity based on progress and decay mode.
+
+        Args:
+            progress: Effect progress from 0.0 to 1.0
+
+        Returns:
+            Effective intensity value
+        """
+        if self.intensity_decay == "none":
+            return self.intensity
+        elif self.intensity_decay == "linear":
+            # Linear decay: intensity * (1 - progress)
+            return self.intensity * (1.0 - progress)
+        elif self.intensity_decay == "exponential":
+            # Exponential decay: intensity * (1 - progress)^decay_power
+            # Higher decay_power = faster initial decay, more "punchy"
+            return self.intensity * ((1.0 - progress) ** self.decay_power)
+        else:
+            return self.intensity
 
     def apply(self, led_values: np.ndarray, current_time: float) -> bool:
         """
@@ -407,39 +462,31 @@ class TemplateEffect(LedEffect):
                 # Weighted average for each RGB channel
                 weighted_rgb = np.sum(led_values * first_frame[:, np.newaxis], axis=0) / total_weight
 
-                # Convert RGB to XYZ colorspace
-                # Using sRGB to XYZ conversion matrix (D65 illuminant)
+                # Calculate luminance using standard coefficients (same as Y in XYZ)
+                # Y = 0.2126*R + 0.7152*G + 0.0722*B
                 rgb_normalized = weighted_rgb / 255.0
-                xyz_matrix = np.array(
-                    [
-                        [0.4124564, 0.3575761, 0.1804375],
-                        [0.2126729, 0.7151522, 0.0721750],
-                        [0.0193339, 0.1191920, 0.9503041],
-                    ]
-                )
-                xyz = xyz_matrix @ rgb_normalized
+                luminance = 0.2126 * rgb_normalized[0] + 0.7152 * rgb_normalized[1] + 0.0722 * rgb_normalized[2]
 
-                # Clamp Y (luminance) to 1.0
-                xyz[1] = min(xyz[1], 1.0)
+                # If luminance is too low (dark/black), use white instead
+                # This ensures the visualization is always visible
+                if luminance < self.COLOR_THIEVING_MIN_LUMINANCE:
+                    self.thieved_color = np.array([255.0, 255.0, 255.0])
+                    logger.info(f"Color thieving: extracted color too dark (luminance={luminance:.3f}), using white")
+                else:
+                    # Boost luminance to 1.0 while preserving chromaticity
+                    # Scale RGB proportionally so the brightest channel hits 255
+                    max_channel = np.max(rgb_normalized)
+                    if max_channel > 0:
+                        # Scale to make max channel = 1.0 (preserves hue, maximizes brightness)
+                        self.thieved_color = (rgb_normalized / max_channel) * 255.0
+                    else:
+                        self.thieved_color = np.array([255.0, 255.0, 255.0])
 
-                # Convert XYZ back to RGB
-                xyz_to_rgb_matrix = np.array(
-                    [
-                        [3.2404542, -1.5371385, -0.4985314],
-                        [-0.9692660, 1.8760108, 0.0415560],
-                        [0.0556434, -0.2040259, 1.0572252],
-                    ]
-                )
-                rgb_normalized_clamped = xyz_to_rgb_matrix @ xyz
-
-                # Clamp to valid RGB range and convert back to [0, 255]
-                rgb_normalized_clamped = np.clip(rgb_normalized_clamped, 0.0, 1.0)
-                self.thieved_color = rgb_normalized_clamped * 255.0
-
-                logger.info(
-                    f"Color thieving: extracted color RGB=({self.thieved_color[0]:.1f}, "
-                    f"{self.thieved_color[1]:.1f}, {self.thieved_color[2]:.1f})"
-                )
+                    logger.info(
+                        f"Color thieving: extracted color RGB=({self.thieved_color[0]:.1f}, "
+                        f"{self.thieved_color[1]:.1f}, {self.thieved_color[2]:.1f}), "
+                        f"original_luminance={luminance:.3f}"
+                    )
             else:
                 # No weight in first frame, use white
                 self.thieved_color = np.array([255.0, 255.0, 255.0])
@@ -451,9 +498,12 @@ class TemplateEffect(LedEffect):
             # RGB format: broadcast template to all channels
             template_rgb = template_frame[:, np.newaxis]  # (led_count, 1)
 
+            # Calculate effective intensity based on decay mode
+            effective_intensity = self._get_effective_intensity(progress)
+
             if self.blend_mode == "alpha":
                 # Alpha blend: led = led * (1 - alpha) + template * alpha
-                alpha = self.intensity
+                alpha = effective_intensity
                 led_values[:] = led_values * (1 - alpha) + template_rgb * alpha
 
             elif self.blend_mode == "add":
@@ -462,19 +512,19 @@ class TemplateEffect(LedEffect):
                 if self.color_thieving and self.thieved_color is not None:
                     # Multiply template by thieved color (broadcast across LEDs)
                     colored_template = template_rgb * self.thieved_color[np.newaxis, :] / 255.0
-                    led_values[:] = np.clip(led_values + colored_template * self.intensity, 0, 255)
+                    led_values[:] = np.clip(led_values + colored_template * effective_intensity, 0, 255)
                 else:
-                    led_values[:] = np.clip(led_values + template_rgb * self.intensity, 0, 255)
+                    led_values[:] = np.clip(led_values + template_rgb * effective_intensity, 0, 255)
 
             elif self.blend_mode == "multiply":
                 # Multiplicative blend: led = led * (template * intensity)
                 # Normalize template to [0, 1] for multiplication
                 template_normalized = template_rgb / 255.0
-                led_values[:] = led_values * (template_normalized * self.intensity)
+                led_values[:] = led_values * (template_normalized * effective_intensity)
 
             elif self.blend_mode == "replace":
                 # Direct replacement: led = template * intensity
-                led_values[:] = template_rgb * self.intensity
+                led_values[:] = template_rgb * effective_intensity
 
             elif self.blend_mode == "boost":
                 # Boost blend: led = led * (1 + intensity * template_normalized)
@@ -482,7 +532,7 @@ class TemplateEffect(LedEffect):
                 # This boosts the LED value proportionally to the template value
                 # intensity parameter 'a' controls the boost strength
                 template_normalized = template_rgb / 255.0
-                led_values[:] = np.clip(led_values * (1.0 + self.intensity * template_normalized), 0, 255)
+                led_values[:] = np.clip(led_values * (1.0 + effective_intensity * template_normalized), 0, 255)
 
             elif self.blend_mode == "addboost":
                 # Combined boost and add blend:
@@ -490,7 +540,7 @@ class TemplateEffect(LedEffect):
                 # Then apply add: led = led + template * add_multiplier
                 # With color thieving: add component uses thieved color
                 template_normalized = template_rgb / 255.0
-                boosted = led_values * (1.0 + self.intensity * template_normalized)
+                boosted = led_values * (1.0 + effective_intensity * template_normalized)
 
                 if self.color_thieving and self.thieved_color is not None:
                     # Multiply template by thieved color for additive component
@@ -501,7 +551,7 @@ class TemplateEffect(LedEffect):
 
             else:
                 logger.warning(f"Unknown blend mode: {self.blend_mode}, using alpha")
-                alpha = self.intensity
+                alpha = effective_intensity
                 led_values[:] = led_values * (1 - alpha) + template_rgb * alpha
 
         else:
@@ -520,6 +570,8 @@ class TemplateEffect(LedEffect):
                 "template_duration": self.template_duration,
                 "blend_mode": self.blend_mode,
                 "intensity": self.intensity,
+                "intensity_decay": self.intensity_decay,
+                "decay_power": self.decay_power,
                 "loop": self.loop,
                 "color_thieving": self.color_thieving,
                 "thieved_color": self.thieved_color.tolist() if self.thieved_color is not None else None,

@@ -1490,10 +1490,14 @@ class ConsumerProcess:
 
                         # Enhanced diagnostic logging when we detect a cascade
                         if self._consecutive_late_drops >= self._late_drop_cascade_threshold:
-                            lateness_growth = lateness_ms - self._first_late_drop_lateness
+                            lateness_change = lateness_ms - self._first_late_drop_lateness
+                            if lateness_change >= 0:
+                                change_desc = f"lateness grew by {lateness_change:.1f}ms"
+                            else:
+                                change_desc = f"lateness improved by {-lateness_change:.1f}ms"
                             logger.warning(
                                 f"🔥 FRAME DROP CASCADE DETECTED: {self._consecutive_late_drops} consecutive drops, "
-                                f"lateness grew by {lateness_growth:.1f}ms (from {self._first_late_drop_lateness:.1f}ms to {lateness_ms:.1f}ms)"
+                                f"{change_desc} (from {self._first_late_drop_lateness:.1f}ms to {lateness_ms:.1f}ms)"
                             )
 
                             # Log diagnostic information about what might be consuming CPU

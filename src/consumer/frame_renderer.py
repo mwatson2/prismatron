@@ -1517,6 +1517,8 @@ class FrameRenderer:
                     intensity=params.get("intensity", 2.0),
                     add_multiplier=params.get("add_multiplier", 0.4),
                     color_thieving=params.get("color_thieving", False),
+                    intensity_decay=params.get("intensity_decay", "none"),
+                    decay_power=params.get("decay_power", 2.0),
                 )
             else:
                 logger.warning(f"Unknown event effect class: {effect_class}")
