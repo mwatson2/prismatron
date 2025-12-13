@@ -386,7 +386,7 @@ class EffectSourceManager:
         Returns:
             Created EffectSource
         """
-        source = EffectSource(width, height, fps)
+        source = EffectSource("{}", width, height, fps)
         self.sources[source_id] = source
 
         if self.current_source_id is None:

@@ -262,7 +262,7 @@ class GlitchArt(BaseEffect):
         if self.frame_count % 3 == 0:  # Every 3rd frame, add slight noise
             noise_mask = np.random.random((self.height, self.width)) < 0.01  # 1% noise
             if np.any(noise_mask):
-                frame[noise_mask] = np.random.randint(0, 255, (np.sum(noise_mask), 3))
+                frame[noise_mask] = np.random.randint(0, 255, (int(np.sum(noise_mask)), 3))
 
         # Color channel shift
         if self.color_shift and (self.current_glitch or np.random.random() < self.glitch_intensity * 0.3):

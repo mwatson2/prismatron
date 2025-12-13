@@ -178,7 +178,9 @@ def optimize_frame_led_values(
             from .diagonal_ata_matrix import DiagonalATAMatrix
 
             # Load the legacy ATA inverse matrix - unified format
-            ata_inverse_legacy = DiagonalATAMatrix.from_dict(ata_inverse)
+            # Type narrowing: is_legacy_dia_format ensures ata_inverse is a dict
+            ata_inverse_dict: Dict[str, Any] = ata_inverse  # type: ignore[assignment]
+            ata_inverse_legacy = DiagonalATAMatrix.from_dict(ata_inverse_dict)
             # Use legacy format approximation
             led_values_gpu_raw = ata_inverse_legacy.multiply_3d(ATb_gpu)
         else:
@@ -531,7 +533,7 @@ def optimize_frame_with_tensors(
     target_frame: cp.ndarray,
     mixed_tensor: SingleBlockMixedSparseTensor,
     ata_matrix: BaseATAMatrix,
-    ata_inverse: Optional[np.ndarray] = None,
+    ata_inverse: np.ndarray,
     **kwargs,
 ) -> FrameOptimizationResult:
     """
@@ -545,7 +547,7 @@ def optimize_frame_with_tensors(
                      - uint8 dtype: uses optimized uint8 x uint8 -> fp32 kernels
                      - fp32 dtype: uses fp32 x fp32 -> fp32 kernels
         ata_matrix: BaseATAMatrix format A^T A matrix for optimization (any ATA implementation)
-        ata_inverse: Optional ATA inverse matrices for optimal initialization (3, led_count, led_count)
+        ata_inverse: ATA inverse matrices for optimal initialization (3, led_count, led_count)
         **kwargs: Additional arguments for optimize_frame_led_values
 
     Returns:

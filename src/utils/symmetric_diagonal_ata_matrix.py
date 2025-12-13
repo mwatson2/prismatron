@@ -292,8 +292,9 @@ class SymmetricDiagonalATAMatrix(BaseATAMatrix):
             raise ValueError("No upper diagonals found in regular matrix")
 
         # Extract upper diagonals
-        symmetric.dia_offsets_upper = regular_matrix.dia_offsets[upper_indices].copy()
-        symmetric.k_upper = len(symmetric.dia_offsets_upper)
+        offsets_upper = regular_matrix.dia_offsets[upper_indices].copy()
+        symmetric.dia_offsets_upper = offsets_upper
+        symmetric.k_upper = len(offsets_upper)
 
         print(f"  Original diagonals: {regular_matrix.k}")
         print(f"  Upper diagonals (including main): {symmetric.k_upper}")

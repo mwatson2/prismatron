@@ -401,7 +401,7 @@ class FrameRenderer:
 
     def __init__(
         self,
-        led_ordering: np.ndarray,
+        led_ordering: Optional[np.ndarray],
         first_frame_delay_ms: float = 100.0,
         timing_tolerance_ms: float = 5.0,
         late_frame_log_threshold_ms: float = 50.0,
@@ -415,7 +415,7 @@ class FrameRenderer:
             first_frame_delay_ms: Default delay for first frame buffering
             timing_tolerance_ms: Acceptable timing deviation
             late_frame_log_threshold_ms: Log late frames above this threshold
-            led_ordering: Array mapping spatial indices to physical LED IDs
+            led_ordering: Array mapping spatial indices to physical LED IDs (None skips conversion)
             control_state: ControlState instance for audio reactive settings
             audio_beat_analyzer: AudioBeatAnalyzer instance for beat state access
         """
@@ -1437,9 +1437,9 @@ class FrameRenderer:
             if self._sparkle_effect is None:
                 # Create new sparkle effect
                 # Get LED count from the LED ordering array
-                led_count = len(self.led_ordering)
+                led_count = len(self.led_ordering) if self.led_ordering is not None else 0
 
-                self._sparkle_effect = led_effect.SparkleEffect(
+                sparkle = led_effect.SparkleEffect(
                     start_time=frame_timeline_time,
                     interval_ms=interval_ms,
                     fade_ms=fade_ms,
@@ -1447,7 +1447,8 @@ class FrameRenderer:
                     led_count=led_count,
                     random_colors=random_colors,
                 )
-                self.effect_manager.add_effect(self._sparkle_effect)
+                self._sparkle_effect = sparkle
+                self.effect_manager.add_effect(sparkle)
                 logger.info(
                     f"🎆 Created sparkle effect: intensity={buildup_intensity:.2f}, density={density:.2%}, "
                     f"interval={interval_ms:.1f}ms, fade={fade_ms:.1f}ms, random_colors={random_colors}"
@@ -2113,7 +2114,8 @@ class FrameRenderer:
         due to timing constraints or buffer overruns.
         """
         self.dropped_frames += 1
-        self._update_ewma_statistics()
+        # Note: EWMA statistics not updated for dropped frames as we don't have
+        # a valid presentation timestamp. The dropped_frames counter is still tracked.
         logger.debug(f"Frame marked as dropped (total: {self.dropped_frames})")
 
     def get_recent_performance_summary(self) -> Dict[str, Any]:

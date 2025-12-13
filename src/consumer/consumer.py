@@ -194,7 +194,9 @@ class ConsumerProcess:
             self._adaptive_frame_dropper = None
             logger.info("Adaptive frame dropping disabled")
 
-        # Create frame renderer with LED ordering from pattern file if available
+        # Create frame renderer with LED ordering from pattern file
+        if diffusion_patterns_path is None:
+            raise ValueError("diffusion_patterns_path is required for frame renderer creation")
         from ..utils.pattern_loader import create_frame_renderer_with_pattern
 
         self._frame_renderer = create_frame_renderer_with_pattern(
@@ -1502,7 +1504,7 @@ class ConsumerProcess:
                     renderer_is_playing = False
 
                 # Always call adaptive frame dropper, but only apply dropping when renderer is playing
-                led_buffer_size = len(self._led_buffer)
+                led_buffer_size = len(self._led_buffer) if self._led_buffer is not None else 0
                 should_drop_adaptive = self._adaptive_frame_dropper.should_drop_frame(
                     timestamp, led_buffer_size, renderer_state
                 )

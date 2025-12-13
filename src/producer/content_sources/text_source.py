@@ -305,7 +305,7 @@ class TextContentSource(ContentSource):
 
                 # Map font style to matplotlib properties
                 weight = "normal"
-                style = "normal"
+                style: str = "normal"
 
                 if self.font_style == "bold":
                     weight = "bold"
@@ -320,7 +320,7 @@ class TextContentSource(ContentSource):
                 font_prop = fm.FontProperties(fname=None)
                 font_prop.set_name(self.font_family)
                 font_prop.set_weight(weight)
-                font_prop.set_style(style)
+                font_prop.set_style(style)  # type: ignore[arg-type]
                 font_file = fm.findfont(font_prop)
 
                 if font_file:

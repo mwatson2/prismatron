@@ -188,14 +188,16 @@ class DiffusionPatternManager:
         logger.info(f"Saving patterns to {filepath}")
 
         # Prepare data for saving
-        save_data = {
+        save_data: Dict[str, Any] = {
             "led_count": self.led_count,
             "frame_height": self.frame_height,
             "frame_width": self.frame_width,
-            "led_positions": self._led_positions,
-            "led_spatial_mapping": self._led_spatial_mapping,
             "format_version": "2.0_planar",  # Mark as new planar format
         }
+        if self._led_positions is not None:
+            save_data["led_positions"] = self._led_positions
+        if self._led_spatial_mapping is not None:
+            save_data["led_spatial_mapping"] = self._led_spatial_mapping
 
         # Add sparse matrices
         if self._sparse_matrices:
@@ -451,7 +453,7 @@ class DiffusionPatternManager:
             "format": "planar_2.0",
             "led_count": self.led_count,
             "frame_shape": self.get_frame_shape(),
-            "matrices_loaded": len(self._sparse_matrices),
+            "matrices_loaded": len(self._sparse_matrices) if self._sparse_matrices else 0,
             "has_dense_ata": self._dense_ata is not None,
             "has_diffusion_tensor": self._diffusion_tensor is not None,
         }
@@ -528,7 +530,8 @@ class DiffusionPatternManager:
         # Load LED positions and mapping if available
         if "led_positions" in data:
             self._led_positions = data["led_positions"]
-            logger.info(f"Loaded {len(self._led_positions)} LED positions")
+            if self._led_positions is not None:
+                logger.info(f"Loaded {len(self._led_positions)} LED positions")
 
         if "led_spatial_mapping" in data:
             mapping_data = data["led_spatial_mapping"]
@@ -536,7 +539,8 @@ class DiffusionPatternManager:
                 self._led_spatial_mapping = mapping_data.item()
             else:
                 self._led_spatial_mapping = dict(mapping_data)
-            logger.info(f"Loaded LED spatial mapping with {len(self._led_spatial_mapping)} entries")
+            if self._led_spatial_mapping is not None:
+                logger.info(f"Loaded LED spatial mapping with {len(self._led_spatial_mapping)} entries")
 
         # Build diffusion tensor from loaded patterns
         logger.info("Building diffusion tensor from loaded patterns...")

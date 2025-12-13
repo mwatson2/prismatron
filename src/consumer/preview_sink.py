@@ -265,13 +265,14 @@ class PreviewSink:
                 os.unlink(shm_path)
 
             # Create and open the shared memory file
-            self.shared_memory_fd = os.open(shm_path, os.O_CREAT | os.O_RDWR, 0o666)
+            fd = os.open(shm_path, os.O_CREAT | os.O_RDWR, 0o666)
+            self.shared_memory_fd = fd
 
             # Resize file to required size
-            os.ftruncate(self.shared_memory_fd, self.shared_memory_size)
+            os.ftruncate(fd, self.shared_memory_size)
 
             # Create memory map
-            self.shared_memory_map = mmap.mmap(self.shared_memory_fd, self.shared_memory_size)
+            self.shared_memory_map = mmap.mmap(fd, self.shared_memory_size)
 
             # Initialize header
             self._write_header(timestamp=time.time(), frame_counter=0, led_count=self.led_count, rendering_index=-1)
@@ -539,9 +540,10 @@ def create_preview_sink_from_pattern(
     try:
         # Load pattern data (spatial mapping no longer needed)
         data = np.load(pattern_file_path, allow_pickle=True)
+        led_count = int(data["led_count"])
 
         # Create preview sink (no spatial mapping needed)
-        sink = PreviewSink(config)
+        sink = PreviewSink(led_count, config)
 
         logger.info(f"Created preview sink from pattern: {pattern_file_path}")
         return sink
@@ -572,7 +574,8 @@ if __name__ == "__main__":
     if args.pattern_file:
         sink = create_preview_sink_from_pattern(args.pattern_file)
     else:
-        sink = PreviewSink()
+        # Default to 100 LEDs for testing without pattern file
+        sink = PreviewSink(led_count=100)
 
     if not sink:
         logger.error("Failed to create preview sink")

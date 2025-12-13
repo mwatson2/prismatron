@@ -332,8 +332,9 @@ class DiagonalATAMatrix(BaseATAMatrix):
 
         # Create unified diagonal structure - only non-empty diagonals across ALL channels
         if all_offsets:
-            self.dia_offsets = np.array(sorted(all_offsets), dtype=np.int32)  # Shape: (k,)
-            self.k = len(self.dia_offsets)
+            dia_offsets_arr = np.array(sorted(all_offsets), dtype=np.int32)  # Shape: (k,)
+            self.dia_offsets = dia_offsets_arr
+            self.k = len(dia_offsets_arr)
         else:
             self.dia_offsets = np.array([], dtype=np.int32)
             self.k = 0
@@ -347,13 +348,15 @@ class DiagonalATAMatrix(BaseATAMatrix):
             print(f"    Offset range: [{self.dia_offsets[0]}, {self.dia_offsets[-1]}]")
 
         # Create unified 3D DIA data structure: (channels, k, leds)
-        if self.k > 0:
+        k = self.k
+        dia_offsets = self.dia_offsets
+        if k is not None and k > 0 and dia_offsets is not None:
             # Store in specified storage dtype
             storage_dtype_np = np.float32 if self.storage_dtype == cupy.float32 else np.float16
-            self.dia_data_cpu = np.zeros((self.channels, self.k, self.led_count), dtype=storage_dtype_np)
+            self.dia_data_cpu = np.zeros((self.channels, k, self.led_count), dtype=storage_dtype_np)
 
             # Create mapping from offset to index in unified structure
-            offset_to_idx: Dict[int, int] = {offset: i for i, offset in enumerate(self.dia_offsets)}
+            offset_to_idx: Dict[int, int] = {int(offset): i for i, offset in enumerate(dia_offsets)}
 
             # Fill unified structure from each channel
             for channel in range(self.channels):

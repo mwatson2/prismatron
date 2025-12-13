@@ -94,14 +94,14 @@ class WLEDClient:
     packet fragmentation for large arrays, and error handling.
     """
 
-    def __init__(self, config: Optional[WLEDConfig] = None):
+    def __init__(self, config: WLEDConfig):
         """
         Initialize WLED client.
 
         Args:
-            config: WLED configuration (uses defaults if None)
+            config: WLED configuration (required - must include led_count from pattern)
         """
-        self.config = config or WLEDConfig()
+        self.config = config
         self.socket: Optional[socket.socket] = None
         self.sequence_number = 0
         self.last_frame_time = 0.0

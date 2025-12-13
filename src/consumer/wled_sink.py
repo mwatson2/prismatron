@@ -95,14 +95,14 @@ class WLEDSink:
     packet fragmentation for large arrays, and error handling.
     """
 
-    def __init__(self, config: Optional[WLEDSinkConfig] = None):
+    def __init__(self, config: WLEDSinkConfig):
         """
         Initialize WLED sink.
 
         Args:
-            config: WLED configuration (uses defaults if None)
+            config: WLED configuration (required - must include led_count from pattern)
         """
-        self.config = config or WLEDSinkConfig()
+        self.config = config
 
         # Handle host configuration - support both hosts list and legacy single host
         if self.config.hosts is not None:

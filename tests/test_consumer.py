@@ -101,6 +101,7 @@ class TestConsumerProcess(unittest.TestCase):
                 control_name="test_control",
                 wled_hosts="192.168.7.140",
                 wled_port=4048,
+                diffusion_patterns_path="/mock/pattern.npz",
             )
 
             # Store mock references for use in tests
@@ -156,7 +157,7 @@ class TestConsumerProcess(unittest.TestCase):
         mock_frame_renderer.is_initialized.return_value = True
         mock_create_renderer.return_value = mock_frame_renderer
 
-        consumer = ConsumerProcess()
+        consumer = ConsumerProcess(diffusion_patterns_path="/mock/pattern.npz")
         result = consumer.initialize()
 
         self.assertTrue(result)
@@ -183,7 +184,7 @@ class TestConsumerProcess(unittest.TestCase):
         # Setup optimizer to fail
         mock_optimizer.return_value.initialize.return_value = False
 
-        consumer = ConsumerProcess()
+        consumer = ConsumerProcess(diffusion_patterns_path="/mock/pattern.npz")
         result = consumer.initialize()
 
         self.assertFalse(result)
@@ -317,7 +318,7 @@ class TestConsumerProcess(unittest.TestCase):
             mock_frame_renderer.get_renderer_stats.return_value = {"frames_rendered": 0}
             mock_frame_renderer.is_initialized.return_value = True
             mock_create_renderer.return_value = mock_frame_renderer
-            consumer = ConsumerProcess()
+            consumer = ConsumerProcess(diffusion_patterns_path="/mock/pattern.npz")
 
         # Verify signal handlers were registered
         signal_calls = mock_signal.call_args_list
@@ -376,7 +377,7 @@ class TestConsumerProcessIntegration(unittest.TestCase):
         mock_optimizer.return_value.optimize_frame.return_value = optimization_result
 
         # Create and initialize consumer
-        consumer = ConsumerProcess()
+        consumer = ConsumerProcess(diffusion_patterns_path="/mock/pattern.npz")
         self.assertTrue(consumer.initialize())
 
         # Verify initialization called correct methods

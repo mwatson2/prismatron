@@ -100,7 +100,7 @@ class FadeInEffect(LedEffect):
         result = self._transition.apply_led_transition(
             led_values=led_values_gpu,
             timestamp=item_timestamp,
-            item_duration=self.duration,
+            item_duration=duration,
             transition_config=self._transition_config,
             direction="in",
         )
@@ -206,7 +206,7 @@ class FadeOutEffect(LedEffect):
         result = self._transition.apply_led_transition(
             led_values=led_values_gpu,
             timestamp=item_timestamp,
-            item_duration=self.duration,
+            item_duration=duration,
             transition_config=self._transition_config,
             direction="out",
         )
@@ -321,7 +321,7 @@ class RandomInEffect(LedEffect):
         result = self._transition.apply_led_transition(
             led_values=led_values_gpu,
             timestamp=item_timestamp,
-            item_duration=self.duration,
+            item_duration=duration,
             transition_config=self._transition_config,
             direction="in",
         )
@@ -437,7 +437,7 @@ class RandomOutEffect(LedEffect):
         result = self._transition.apply_led_transition(
             led_values=led_values_gpu,
             timestamp=item_timestamp,
-            item_duration=self.duration,
+            item_duration=duration,
             transition_config=self._transition_config,
             direction="out",
         )

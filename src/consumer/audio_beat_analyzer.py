@@ -1549,9 +1549,9 @@ if __name__ == "__main__":
 
     # Create custom build-drop configuration
     custom_config = BuildDropConfig(
-        hihat_transient_threshold=0.15,  # Sensitivity for hi-hat detection
-        buildup_entry_threshold=8,  # Consecutive hi-hat hits to enter build-up
-        drop_bass_multiplier=3.0,  # Bass spike multiplier for drop detection
+        flux_slope_entry_threshold=5.0,  # Sensitivity for buildup entry detection
+        drop_bass_slope_threshold=20.0,  # Bass flux slope threshold for drop detection
+        cut_threshold=0.5,  # Mid energy ratio for cut detection
     )
 
     analyzer_full = AudioBeatAnalyzer(
