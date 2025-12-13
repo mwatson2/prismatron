@@ -138,6 +138,80 @@ class BassBoostFilter:
         self.zi = scipy_signal.lfilter_zi(self.b, self.a)
 
 
+@dataclass
+class HighpassConfig:
+    """Configuration for highpass filter to remove rumble/sub-bass noise.
+
+    Removes low-frequency rumble that can contaminate beat detection.
+    Uses a 2nd-order Butterworth highpass filter.
+    """
+
+    enabled: bool = True  # Enable/disable highpass filter
+    cutoff_hz: float = 35.0  # Cutoff frequency in Hz (removes rumble below this)
+    order: int = 2  # Filter order (2 = 12dB/octave rolloff)
+
+
+class HighpassFilter:
+    """
+    Highpass filter for rumble removal.
+
+    Removes low-frequency noise (room rumble, HVAC, handling noise) that can
+    contaminate bass detection and cause false positives in beat detection.
+    Uses a Butterworth highpass design for flat passband response.
+    """
+
+    def __init__(self, config: HighpassConfig, sample_rate: int):
+        """
+        Initialize highpass filter.
+
+        Args:
+            config: Highpass configuration
+            sample_rate: Audio sample rate in Hz
+        """
+        self.config = config
+        self.sample_rate = sample_rate
+
+        # Design Butterworth highpass filter
+        # Use sos (second-order sections) for numerical stability
+        self.sos = scipy_signal.butter(
+            config.order,
+            config.cutoff_hz,
+            btype="highpass",
+            fs=sample_rate,
+            output="sos",
+        )
+
+        # Filter state for continuity between chunks
+        self.zi = scipy_signal.sosfilt_zi(self.sos)
+
+        logger.info(
+            f"HighpassFilter initialized: cutoff={config.cutoff_hz:.0f}Hz, "
+            f"order={config.order} ({config.order * 6}dB/octave rolloff)"
+        )
+
+    def process(self, audio_chunk: np.ndarray) -> np.ndarray:
+        """
+        Apply highpass filter to audio chunk.
+
+        Args:
+            audio_chunk: Input audio samples (float32)
+
+        Returns:
+            Filtered audio chunk with rumble removed
+        """
+        if not self.config.enabled:
+            return audio_chunk
+
+        # Apply filter with state continuity
+        output, self.zi = scipy_signal.sosfilt(self.sos, audio_chunk, zi=self.zi * audio_chunk[0])
+
+        return output.astype(np.float32)
+
+    def reset(self):
+        """Reset filter state."""
+        self.zi = scipy_signal.sosfilt_zi(self.sos)
+
+
 class AutomaticGainControl:
     """
     Automatic Gain Control for microphone input normalization.
@@ -294,6 +368,7 @@ class AudioConfig:
     file_path: Optional[str] = None  # Path to audio file (test mode)
     playback_speed: float = 1.0  # Playback speed multiplier for file mode (1.0 = realtime)
     agc: Optional[AGCConfig] = None  # AGC configuration (None = disabled, AGCConfig() = enabled with defaults)
+    highpass: Optional[HighpassConfig] = None  # Highpass filter for rumble removal (None = disabled)
     bass_boost: Optional[BassBoostConfig] = None  # Bass boost EQ (None = disabled, BassBoostConfig() = enabled)
 
 
@@ -362,6 +437,15 @@ class AudioCapture:
                 config=self.config.agc,
                 sample_rate=self.config.sample_rate,
                 chunk_size=self.config.chunk_size,
+            )
+
+        # Initialize highpass filter if configured (only for live mode)
+        # Applied after AGC but before bass boost to remove rumble
+        self.highpass: Optional[HighpassFilter] = None
+        if not self.file_mode and self.config.highpass is not None:
+            self.highpass = HighpassFilter(
+                config=self.config.highpass,
+                sample_rate=self.config.sample_rate,
             )
 
         # Initialize bass boost if configured (only for live mode)
@@ -517,7 +601,12 @@ class AudioCapture:
             if self.agc is not None:
                 audio_chunk = self.agc.process(audio_chunk)
 
-            # Apply bass boost EQ if enabled (after AGC to boost normalized signal)
+            # Apply highpass filter if enabled (after AGC, before bass boost)
+            # Removes rumble/sub-bass noise that can contaminate beat detection
+            if self.highpass is not None:
+                audio_chunk = self.highpass.process(audio_chunk)
+
+            # Apply bass boost EQ if enabled (after AGC and highpass to boost clean signal)
             if self.bass_boost is not None:
                 audio_chunk = self.bass_boost.process(audio_chunk)
 

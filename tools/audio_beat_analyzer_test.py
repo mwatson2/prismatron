@@ -24,6 +24,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy import signal as scipy_signal
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -37,16 +38,18 @@ logger = logging.getLogger(__name__)
 class BeatAnalyzerTester:
     """Test harness for AudioBeatAnalyzer with file playback"""
 
-    def __init__(self, audio_file: Path, playback_speed: float = 10.0):
+    def __init__(self, audio_file: Path, playback_speed: float = 10.0, highpass_hz: float = 0.0):
         """
         Initialize beat analyzer tester.
 
         Args:
             audio_file: Path to WAV file to analyze
             playback_speed: Playback speed multiplier (default 10x for faster testing)
+            highpass_hz: Highpass filter cutoff frequency (0 = disabled, 35 = recommended for rumble removal)
         """
         self.audio_file = audio_file
         self.playback_speed = playback_speed
+        self.highpass_hz = highpass_hz
 
         # Storage for beat events
         self.beat_events = []
@@ -93,6 +96,18 @@ class BeatAnalyzerTester:
             if self.channels > 1:
                 audio_array = audio_array.reshape(-1, self.channels)
                 audio_array = np.mean(audio_array, axis=1)
+
+            # Apply highpass filter if enabled (for rumble removal)
+            if self.highpass_hz > 0:
+                sos = scipy_signal.butter(
+                    2,  # 2nd order = 12dB/octave
+                    self.highpass_hz,
+                    btype="highpass",
+                    fs=self.sample_rate,
+                    output="sos",
+                )
+                audio_array = scipy_signal.sosfilt(sos, audio_array).astype(np.float32)
+                logger.info(f"  Applied highpass filter: {self.highpass_hz}Hz cutoff (12dB/octave)")
 
             self.audio_data = audio_array
 
@@ -649,6 +664,77 @@ class BeatAnalyzerTester:
         logger.info(f"  Cut events: {cut_count}")
         logger.info(f"  Drop events: {drop_count}")
 
+        # === Noise Floor Estimation ===
+        # Calculate noise floor using percentile method (10th percentile of each band)
+        # This helps identify baseline noise levels that may contaminate detection
+        noise_percentile = 10
+
+        # Energy noise floors (for static energy values)
+        bass_noise_floor = np.percentile(bass_energy, noise_percentile)
+        mid_noise_floor = np.percentile(mid_energy, noise_percentile)
+        high_noise_floor = np.percentile(high_energy, noise_percentile)
+        air_noise_floor = np.percentile(air_energy, noise_percentile)
+
+        # Flux noise floors (for spectral flux values)
+        # Use only non-zero values to avoid skewing from initial frames
+        bass_flux_nonzero = bass_flux[bass_flux > 0]
+        mid_flux_nonzero = mid_flux[mid_flux > 0]
+        high_flux_nonzero = high_flux[high_flux > 0]
+        air_flux_nonzero = air_flux[air_flux > 0]
+
+        bass_flux_noise_floor = (
+            np.percentile(bass_flux_nonzero, noise_percentile) if len(bass_flux_nonzero) > 0 else 0.0
+        )
+        mid_flux_noise_floor = np.percentile(mid_flux_nonzero, noise_percentile) if len(mid_flux_nonzero) > 0 else 0.0
+        high_flux_noise_floor = (
+            np.percentile(high_flux_nonzero, noise_percentile) if len(high_flux_nonzero) > 0 else 0.0
+        )
+        air_flux_noise_floor = np.percentile(air_flux_nonzero, noise_percentile) if len(air_flux_nonzero) > 0 else 0.0
+
+        # Signal-to-Noise Ratio estimates (using 90th percentile as "signal" and 10th as "noise")
+        signal_percentile = 90
+        bass_snr = np.percentile(bass_energy, signal_percentile) / (bass_noise_floor + 1e-10)
+        mid_snr = np.percentile(mid_energy, signal_percentile) / (mid_noise_floor + 1e-10)
+        high_snr = np.percentile(high_energy, signal_percentile) / (high_noise_floor + 1e-10)
+        air_snr = np.percentile(air_energy, signal_percentile) / (air_noise_floor + 1e-10)
+
+        logger.info(f"  === Noise Floor Analysis (10th percentile) ===")
+        logger.info(
+            f"  Energy noise floors: bass={bass_noise_floor:.2f}, mid={mid_noise_floor:.2f}, "
+            f"high={high_noise_floor:.2f}, air={air_noise_floor:.2f}"
+        )
+        logger.info(
+            f"  Flux noise floors: bass={bass_flux_noise_floor:.2f}, mid={mid_flux_noise_floor:.2f}, "
+            f"high={high_flux_noise_floor:.2f}, air={air_flux_noise_floor:.2f}"
+        )
+        logger.info(
+            f"  Estimated SNR (90th/10th): bass={bass_snr:.1f}x, mid={mid_snr:.1f}x, "
+            f"high={high_snr:.1f}x, air={air_snr:.1f}x"
+        )
+
+        # Store noise floor data for visualization
+        noise_floor_data = {
+            "percentile": noise_percentile,
+            "energy": {
+                "bass": bass_noise_floor,
+                "mid": mid_noise_floor,
+                "high": high_noise_floor,
+                "air": air_noise_floor,
+            },
+            "flux": {
+                "bass": bass_flux_noise_floor,
+                "mid": mid_flux_noise_floor,
+                "high": high_flux_noise_floor,
+                "air": air_flux_noise_floor,
+            },
+            "snr": {
+                "bass": bass_snr,
+                "mid": mid_snr,
+                "high": high_snr,
+                "air": air_snr,
+            },
+        }
+
         self.energy_timeline = {
             "timestamps": timestamps,
             "bass": bass_energy,
@@ -692,6 +778,7 @@ class BeatAnalyzerTester:
             "mid_energy_ewma_025s": mid_energy_ewma_025s,
             "mid_energy_ewma_4s": mid_energy_ewma_4s,
             "mid_energy_ratio": mid_energy_ratio,
+            "noise_floor": noise_floor_data,
         }
 
         logger.info(f"  Computed {n_frames} frames of energy data")
@@ -1018,10 +1105,24 @@ class BeatAnalyzerTester:
             beat_times = [b["timestamp"] for b in self.beat_events]
             axes[3].vlines(beat_times, 0, np.max(rms_envelope), colors="red", alpha=0.4, linewidth=0.5)
 
-        # Plot 5: Bass Energy (separate scale)
+        # Plot 5: Bass Energy (separate scale) with noise floor
         if self.energy_timeline is not None:
             t = self.energy_timeline["timestamps"]
             axes[4].plot(t, self.energy_timeline["bass"], linewidth=0.5, color="red", alpha=0.9)
+            # Add noise floor line
+            noise_floor = self.energy_timeline.get("noise_floor", {})
+            if noise_floor:
+                bass_nf = noise_floor["energy"]["bass"]
+                bass_snr = noise_floor["snr"]["bass"]
+                axes[4].axhline(
+                    bass_nf,
+                    color="darkred",
+                    linewidth=1,
+                    linestyle="--",
+                    alpha=0.7,
+                    label=f"Noise floor: {bass_nf:.1f} (SNR: {bass_snr:.1f}x)",
+                )
+                axes[4].legend(loc="upper right", fontsize=8)
             axes[4].set_ylabel("Bass Energy (20-250 Hz)")
             axes[4].set_title("Bass Energy Over Time (~86 frames/sec, 11.6ms per frame)")
             self._setup_time_axis(axes[4], self.duration)
@@ -1031,7 +1132,7 @@ class BeatAnalyzerTester:
             axes[4].set_title("Bass Energy Over Time")
             self._setup_time_axis(axes[4], self.duration)
 
-        # Plot 6: Mid/High/Air Energy (shared scale)
+        # Plot 6: Mid/High/Air Energy (shared scale) with noise floors
         if self.energy_timeline is not None:
             t = self.energy_timeline["timestamps"]
             axes[5].plot(
@@ -1043,8 +1144,16 @@ class BeatAnalyzerTester:
             axes[5].plot(
                 t, self.energy_timeline["air"], linewidth=0.5, color="cyan", label="Air (8000-16000 Hz)", alpha=0.9
             )
+            # Add noise floor lines
+            noise_floor = self.energy_timeline.get("noise_floor", {})
+            if noise_floor:
+                axes[5].axhline(
+                    noise_floor["energy"]["mid"], color="darkorange", linewidth=1, linestyle="--", alpha=0.5
+                )
+                axes[5].axhline(noise_floor["energy"]["high"], color="darkblue", linewidth=1, linestyle="--", alpha=0.5)
+                axes[5].axhline(noise_floor["energy"]["air"], color="darkcyan", linewidth=1, linestyle="--", alpha=0.5)
             axes[5].set_ylabel("Energy")
-            axes[5].set_title("Mid/High/Air Energy Over Time (~86 frames/sec, 11.6ms per frame)")
+            axes[5].set_title("Mid/High/Air Energy Over Time (dashed = noise floor)")
             self._setup_time_axis(axes[5], self.duration)
             axes[5].legend(loc="upper left")
         else:
@@ -1088,8 +1197,15 @@ class BeatAnalyzerTester:
                 label="Air Flux (8000-16000 Hz)",
                 alpha=0.9,
             )
+            # Add noise floor lines for flux
+            noise_floor = self.energy_timeline.get("noise_floor", {})
+            if noise_floor and "flux" in noise_floor:
+                axes[6].axhline(noise_floor["flux"]["bass"], color="darkred", linewidth=1, linestyle="--", alpha=0.5)
+                axes[6].axhline(noise_floor["flux"]["mid"], color="darkorange", linewidth=1, linestyle="--", alpha=0.5)
+                axes[6].axhline(noise_floor["flux"]["high"], color="darkblue", linewidth=1, linestyle="--", alpha=0.5)
+                axes[6].axhline(noise_floor["flux"]["air"], color="darkcyan", linewidth=1, linestyle="--", alpha=0.5)
             axes[6].set_ylabel("Spectral Flux")
-            axes[6].set_title("Spectral Flux (Half-Wave Rectified Difference) - Onset Detection")
+            axes[6].set_title("Spectral Flux (dashed = noise floor)")
             self._setup_time_axis(axes[6], self.duration)
             axes[6].legend(loc="upper left")
         else:
@@ -1521,6 +1637,12 @@ def main():
     parser.add_argument(
         "--speed", type=float, default=10.0, help="Playback speed multiplier (default: 10.0 for faster testing)"
     )
+    parser.add_argument(
+        "--highpass",
+        type=float,
+        default=0.0,
+        help="Highpass filter cutoff in Hz for rumble removal (default: 0 = disabled, 35 = recommended)",
+    )
     parser.add_argument("--output", type=str, help="Output path for plot (default: auto-generated)")
 
     args = parser.parse_args()
@@ -1548,7 +1670,7 @@ def main():
         output_path = audio_file.parent / f"{audio_file.stem}_beat_analysis.svg"
 
     # Create tester and run analysis
-    tester = BeatAnalyzerTester(audio_file, playback_speed=args.speed)
+    tester = BeatAnalyzerTester(audio_file, playback_speed=args.speed, highpass_hz=args.highpass)
     beat_events = tester.run_analysis()
 
     # Generate visualization
