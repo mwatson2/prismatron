@@ -86,8 +86,9 @@ class FadeInEffect(LedEffect):
             return False
 
         # Clamp to duration to ensure we apply final state
-        if item_timestamp > self.duration:
-            item_timestamp = self.duration
+        duration = self.duration or 0.0
+        if item_timestamp > duration:
+            item_timestamp = duration
 
         # Convert to cupy if needed for GPU processing
         if isinstance(led_values, np.ndarray):
@@ -191,8 +192,9 @@ class FadeOutEffect(LedEffect):
             return False
 
         # Clamp to duration to ensure we apply final state
-        if item_timestamp > self.duration:
-            item_timestamp = self.duration
+        duration = self.duration or 0.0
+        if item_timestamp > duration:
+            item_timestamp = duration
 
         # Convert to cupy if needed for GPU processing
         if isinstance(led_values, np.ndarray):
@@ -305,8 +307,9 @@ class RandomInEffect(LedEffect):
             return False
 
         # Clamp to duration to ensure we apply final state
-        if item_timestamp > self.duration:
-            item_timestamp = self.duration
+        duration = self.duration or 0.0
+        if item_timestamp > duration:
+            item_timestamp = duration
 
         # Convert to cupy if needed for GPU processing
         if isinstance(led_values, np.ndarray):
@@ -420,8 +423,9 @@ class RandomOutEffect(LedEffect):
             return False
 
         # Clamp to duration to ensure we apply final state
-        if item_timestamp > self.duration:
-            item_timestamp = self.duration
+        duration = self.duration or 0.0
+        if item_timestamp > duration:
+            item_timestamp = duration
 
         # Convert to cupy if needed for GPU processing
         if isinstance(led_values, np.ndarray):

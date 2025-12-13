@@ -124,7 +124,7 @@ class SystemStatus:
     use_audio_test_file: bool = True  # True = test file, False = live microphone
 
     # Audio reactive trigger configuration (new framework)
-    audio_reactive_trigger_config: dict = None  # Dictionary with test_interval and rules list
+    audio_reactive_trigger_config: Optional[Dict[str, Any]] = None  # Dictionary with test_interval and rules list
 
     # Beat brightness boost settings for audio reactive effects (legacy)
     beat_brightness_enabled: bool = True

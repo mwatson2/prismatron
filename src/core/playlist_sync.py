@@ -26,7 +26,7 @@ class TransitionConfig:
     """Transition configuration for playlist items."""
 
     type: str = "none"
-    parameters: Dict[str, Any] = None
+    parameters: Optional[Dict[str, Any]] = None
 
     def __post_init__(self):
         if self.parameters is None:
@@ -55,8 +55,8 @@ class PlaylistItem:
     thumbnail: Optional[str] = None
     created_at: float = 0.0
     order: int = 0
-    transition_in: TransitionConfig = None
-    transition_out: TransitionConfig = None
+    transition_in: Optional[TransitionConfig] = None
+    transition_out: Optional[TransitionConfig] = None
 
     def __post_init__(self):
         if self.created_at == 0.0:
@@ -736,7 +736,7 @@ class PlaylistSyncClient:
     # Convenience methods for common operations
     def add_item(self, item: PlaylistItem, position: Optional[int] = None) -> bool:
         """Add item to playlist."""
-        data = {"item": item.to_dict()}
+        data: Dict[str, Any] = {"item": item.to_dict()}
         if position is not None:
             data["position"] = position
 

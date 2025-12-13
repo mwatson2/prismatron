@@ -75,8 +75,8 @@ class WLEDSinkConfig:
     """Configuration for WLED controller communication."""
 
     led_count: int  # Must be provided from pattern file
-    hosts: Union[str, List[str]] = None  # List of hosts to try in order
-    host: str = None  # Legacy single host support
+    hosts: Optional[Union[str, List[str]]] = None  # List of hosts to try in order
+    host: Optional[str] = None  # Legacy single host support
     port: int = WLED_DEFAULT_PORT
     timeout: float = WLED_TIMEOUT_SECONDS
     retry_count: int = WLED_RETRY_COUNT
@@ -119,7 +119,7 @@ class WLEDSink:
             self.hosts_to_try = [WLED_DEFAULT_HOST]
 
         # Track which host we're currently connected to
-        self.current_host = None
+        self.current_host: Optional[str] = None
 
         self.socket: Optional[socket.socket] = None
         self.sequence_number = 0
