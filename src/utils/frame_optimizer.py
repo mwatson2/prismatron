@@ -279,7 +279,7 @@ def optimize_frame_led_values(
     mse_values: Optional[List[float]] = [] if track_mse_per_iteration else None
 
     # Track initial MSE before any optimization steps (after clipping)
-    if track_mse_per_iteration:
+    if track_mse_per_iteration and mse_values is not None:
         initial_mse = _compute_mse_only(led_values_gpu, target_planar_uint8, at_matrix)
         mse_values.append(float(initial_mse))
 
@@ -322,7 +322,7 @@ def optimize_frame_led_values(
             led_values_gpu = cp.ascontiguousarray(led_values_gpu)
 
         # Track MSE after this iteration if requested
-        if track_mse_per_iteration:
+        if track_mse_per_iteration and mse_values is not None:
             current_mse = _compute_mse_only(led_values_gpu, target_planar_uint8, at_matrix)
             mse_values.append(float(current_mse))
 

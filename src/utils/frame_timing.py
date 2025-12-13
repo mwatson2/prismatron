@@ -168,7 +168,8 @@ class FrameTimingLogger:
 
         try:
             self._csv_writer.writerow(timing_data.to_csv_row())
-            self._file_handle.flush()  # Ensure data is written immediately
+            if self._file_handle:
+                self._file_handle.flush()  # Ensure data is written immediately
 
         except Exception as e:
             logger.error(f"Failed to log frame timing: {e}")

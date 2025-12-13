@@ -487,7 +487,7 @@ class ControlState:
             if current_status:
                 current_status.play_state = state
                 result = self._write_status(current_status)
-                if result:
+                if result and self._status_updated_event:
                     self._status_updated_event.set()
                 return result
             return False
@@ -511,7 +511,7 @@ class ControlState:
             if current_status:
                 current_status.current_file = filepath
                 result = self._write_status(current_status)
-                if result:
+                if result and self._config_updated_event:
                     self._config_updated_event.set()
                 return result
             return False
@@ -538,7 +538,7 @@ class ControlState:
             if current_status:
                 current_status.brightness = value
                 result = self._write_status(current_status)
-                if result:
+                if result and self._config_updated_event:
                     self._config_updated_event.set()
                 return result
             return False
@@ -565,7 +565,7 @@ class ControlState:
                 current_status.consumer_fps = consumer_fps
                 current_status.frame_rate = min(producer_fps, consumer_fps)
                 result = self._write_status(current_status)
-                if result:
+                if result and self._status_updated_event:
                     self._status_updated_event.set()
                 return result
             return False
@@ -590,7 +590,7 @@ class ControlState:
                 current_status.system_state = SystemState.ERROR
                 current_status.error_message = error_message
                 result = self._write_status(current_status)
-                if result:
+                if result and self._status_updated_event:
                     self._status_updated_event.set()
                 return result
             return False
@@ -612,7 +612,7 @@ class ControlState:
                 current_status.system_state = SystemState.RUNNING
                 current_status.error_message = ""
                 result = self._write_status(current_status)
-                if result:
+                if result and self._status_updated_event:
                     self._status_updated_event.set()
                 return result
             return False
@@ -629,7 +629,8 @@ class ControlState:
                 current_status.system_state = SystemState.SHUTTING_DOWN
                 self._write_status(current_status)
 
-            self._shutdown_event.set()
+            if self._shutdown_event:
+                self._shutdown_event.set()
             logger.info("Shutdown signal sent")
 
         except Exception as e:
@@ -643,7 +644,8 @@ class ControlState:
                 current_status.system_state = SystemState.RESTARTING
                 self._write_status(current_status)
 
-            self._restart_event.set()
+            if self._restart_event:
+                self._restart_event.set()
             logger.info("Restart signal sent")
 
         except Exception as e:
@@ -657,7 +659,8 @@ class ControlState:
                 current_status.system_state = SystemState.REBOOTING
                 self._write_status(current_status)
 
-            self._reboot_event.set()
+            if self._reboot_event:
+                self._reboot_event.set()
             logger.info("Reboot signal sent")
 
         except Exception as e:
@@ -670,7 +673,7 @@ class ControlState:
         Returns:
             True if shutdown requested, False otherwise
         """
-        return self._shutdown_event.is_set()
+        return self._shutdown_event.is_set() if self._shutdown_event else False
 
     def is_restart_requested(self) -> bool:
         """
@@ -679,7 +682,7 @@ class ControlState:
         Returns:
             True if restart requested, False otherwise
         """
-        return self._restart_event.is_set()
+        return self._restart_event.is_set() if self._restart_event else False
 
     def is_reboot_requested(self) -> bool:
         """
@@ -688,7 +691,7 @@ class ControlState:
         Returns:
             True if reboot requested, False otherwise
         """
-        return self._reboot_event.is_set()
+        return self._reboot_event.is_set() if self._reboot_event else False
 
     def should_shutdown(self) -> bool:
         """
@@ -697,7 +700,10 @@ class ControlState:
         Returns:
             True if any shutdown condition is active, False otherwise
         """
-        return self._shutdown_event.is_set() or self._restart_event.is_set() or self._reboot_event.is_set()
+        shutdown = self._shutdown_event.is_set() if self._shutdown_event else False
+        restart = self._restart_event.is_set() if self._restart_event else False
+        reboot = self._reboot_event.is_set() if self._reboot_event else False
+        return shutdown or restart or reboot
 
     def wait_for_shutdown(self, timeout: Optional[float] = None) -> bool:
         """
@@ -709,6 +715,8 @@ class ControlState:
         Returns:
             True if shutdown signaled, False if timeout
         """
+        if not self._shutdown_event:
+            return False
         return self._shutdown_event.wait(timeout)
 
     def wait_for_config_update(self, timeout: Optional[float] = None) -> bool:
@@ -721,6 +729,8 @@ class ControlState:
         Returns:
             True if config updated, False if timeout
         """
+        if not self._config_updated_event:
+            return False
         result = self._config_updated_event.wait(timeout)
         if result:
             self._config_updated_event.clear()
@@ -736,6 +746,8 @@ class ControlState:
         Returns:
             True if status updated, False if timeout
         """
+        if not self._status_updated_event:
+            return False
         result = self._status_updated_event.wait(timeout)
         if result:
             self._status_updated_event.clear()
@@ -783,7 +795,7 @@ class ControlState:
             if current_status:
                 current_status.system_state = state
                 result = self._write_status(current_status)
-                if result:
+                if result and self._status_updated_event:
                     self._status_updated_event.set()
                 return result
             return False
@@ -846,7 +858,7 @@ class ControlState:
                     )
 
             result = self._write_status(current_status)
-            if result:
+            if result and self._status_updated_event:
                 self._status_updated_event.set()
             return result
 
@@ -871,7 +883,7 @@ class ControlState:
                 # Update legacy play_state for compatibility
                 current_status.play_state = self._compute_legacy_play_state(state, current_status.renderer_state)
                 result = self._write_status(current_status)
-                if result:
+                if result and self._status_updated_event:
                     self._status_updated_event.set()
                 return result
             return False
@@ -897,7 +909,7 @@ class ControlState:
                 # Update legacy play_state for compatibility
                 current_status.play_state = self._compute_legacy_play_state(current_status.producer_state, state)
                 result = self._write_status(current_status)
-                if result:
+                if result and self._status_updated_event:
                     self._status_updated_event.set()
                 return result
             return False
@@ -955,7 +967,7 @@ class ControlState:
                 current_status.led_buffer_frames = frames
                 current_status.led_buffer_capacity = capacity
                 result = self._write_status(current_status)
-                if result:
+                if result and self._status_updated_event:
                     self._status_updated_event.set()
                 return result
             return False

@@ -173,7 +173,7 @@ def optimize_batch_frames_led_values(
     # Step 3: Track MSE if requested
     mse_values: Optional[List[np.ndarray]] = [] if track_mse_per_iteration else None
 
-    if track_mse_per_iteration:
+    if track_mse_per_iteration and mse_values is not None:
         # Compute initial MSE for all frames
         initial_mse = _compute_batch_mse(led_values_batch, target_batch_planar, at_matrix)
         mse_values.append(initial_mse)  # Shape: (8,)
@@ -237,7 +237,7 @@ def optimize_batch_frames_led_values(
         led_values_batch = cp.clip(led_values_batch - step_sizes_reshaped * gradient_batch, 0, 1)
 
         # Track MSE after this iteration if requested
-        if track_mse_per_iteration:
+        if track_mse_per_iteration and mse_values is not None:
             current_mse = _compute_batch_mse(led_values_batch, target_batch_planar, at_matrix)
             mse_values.append(current_mse)  # Shape: (8,)
 
