@@ -709,7 +709,7 @@ def setup_logging(debug: bool = False) -> None:
     root_logger.addHandler(file_handler)
 
     # Start log rotation service (checks every 5 minutes)
-    if start_log_rotation(log_file, check_interval=300):
+    if start_log_rotation(str(log_file), check_interval=300):
         logger.info("Log rotation service started (max 100MB per file, 200MB total)")
     else:
         logger.warning("Failed to start log rotation service")

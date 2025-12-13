@@ -273,7 +273,7 @@ class BuildDropDetector:
         self.alpha_raw_intensity = 1 - np.exp(-np.log(2) / 43)  # 0.5s half-life
 
         # Snare roll detection state
-        self.snare_flux_buffer = deque(maxlen=self.config.snare_window_size)
+        self.snare_flux_buffer: deque[float] = deque(maxlen=self.config.snare_window_size)
         self.snare_roll_multiplier = 0  # 0, 2, 4, or 8
         self.snare_roll_magnitude = 0.0
 
@@ -888,7 +888,7 @@ class AudioBeatAnalyzer:
         # Threading
         self.running = False
         self.beat_thread = None
-        self.beat_queue = queue.Queue(maxsize=100)
+        self.beat_queue: queue.Queue[Any] = queue.Queue(maxsize=100)
 
         # Thread pool for non-blocking beat callback execution
         self.callback_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="BeatCallback")

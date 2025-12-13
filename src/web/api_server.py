@@ -4670,7 +4670,7 @@ async def save_playlist(request: SavePlaylistRequest):
 
         # Prepare playlist data
         now = datetime.now().isoformat()
-        playlist_data = {
+        playlist_data: dict[str, Any] = {
             "version": "1.0",
             "name": request.name,
             "description": request.description or "",

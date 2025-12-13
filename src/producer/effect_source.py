@@ -3,7 +3,7 @@
 import json
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -43,7 +43,7 @@ class EffectSource(ContentSource):
 
         # Auto-rotation settings
         self.auto_rotate = False
-        self.rotation_effects = []
+        self.rotation_effects: List[str] = []
         self.rotation_index = 0
 
         # Parse effect configuration from filepath (JSON string)

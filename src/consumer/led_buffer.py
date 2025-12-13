@@ -177,7 +177,7 @@ class LEDBuffer:
             # Data available, read it
             led_values = self.led_arrays[self.read_index].copy()
             timestamp = self.timestamps[self.read_index]
-            metadata = self.metadata[self.read_index] or {}
+            metadata: Dict[str, Any] = self.metadata[self.read_index] or {}
 
             # Advance read index
             self.read_index = (self.read_index + 1) % self.buffer_size
@@ -204,7 +204,7 @@ class LEDBuffer:
             latest_index = (self.write_index - 1) % self.buffer_size
             led_values = self.led_arrays[latest_index].copy()
             timestamp = self.timestamps[latest_index]
-            metadata = self.metadata[latest_index] or {}
+            metadata: Dict[str, Any] = self.metadata[latest_index] or {}
 
             return led_values, timestamp, metadata
 

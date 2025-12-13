@@ -9,7 +9,7 @@ Extracted from the LEDOptimizer class for modular usage.
 
 import logging
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import cupy as cp
 import numpy as np
@@ -64,7 +64,7 @@ def optimize_frame_led_values(
     target_frame: cp.ndarray,
     at_matrix: SingleBlockMixedSparseTensor,
     ata_matrix: Union[BaseATAMatrix, DenseATAMatrix],
-    ata_inverse: Union[np.ndarray, BaseATAMatrix, DenseATAMatrix, Dict[str, any]],
+    ata_inverse: Union[np.ndarray, BaseATAMatrix, DenseATAMatrix, Dict[str, Any]],
     initial_values: Optional[np.ndarray] = None,
     max_iterations: int = 5,
     convergence_threshold: float = 0.3,
@@ -275,8 +275,8 @@ def optimize_frame_led_values(
 
     # Step 4: Gradient descent optimization loop
     debug and logger.info(f"Starting optimization: max_iterations={max_iterations}")
-    step_sizes = [] if debug else None
-    mse_values = [] if track_mse_per_iteration else None
+    step_sizes: Optional[List[float]] = [] if debug else None
+    mse_values: Optional[List[float]] = [] if track_mse_per_iteration else None
 
     # Track initial MSE before any optimization steps (after clipping)
     if track_mse_per_iteration:

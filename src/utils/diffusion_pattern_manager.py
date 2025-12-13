@@ -9,7 +9,7 @@ on planar format (3, H, W) throughout and handles A^T @ A precomputation.
 import logging
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import scipy.sparse as sp
@@ -59,7 +59,7 @@ class DiffusionPatternManager:
 
         # Generation state
         self._generation_complete = False
-        self._accumulated_patterns = []
+        self._accumulated_patterns: List[Dict[str, Any]] = []
 
         logger.info(f"DiffusionPatternManager initialized: {led_count} LEDs, {frame_height}×{frame_width} frames")
 
@@ -130,7 +130,7 @@ class DiffusionPatternManager:
 
         logger.debug(f"Added pattern for LED {led_id}, total patterns: {len(self._accumulated_patterns)}")
 
-    def finalize_pattern_generation(self, sparse_format: str = "csc") -> Dict[str, any]:
+    def finalize_pattern_generation(self, sparse_format: str = "csc") -> Dict[str, Any]:
         """
         Finalize pattern generation and compute A^T @ A.
 
@@ -219,7 +219,7 @@ class DiffusionPatternManager:
         file_size_mb = filepath.stat().st_size / (1024**2)
         logger.info(f"Patterns saved to {filepath} ({file_size_mb:.1f}MB)")
 
-    def load_patterns(self, filepath: Union[str, Path]) -> Dict[str, any]:
+    def load_patterns(self, filepath: Union[str, Path]) -> Dict[str, Any]:
         """
         Load patterns from file.
 
@@ -304,7 +304,7 @@ class DiffusionPatternManager:
 
         logger.info(f"Diffusion tensor built: {self._diffusion_tensor.shape}")
 
-    def _create_sparse_matrices(self, sparse_format: str) -> Dict[str, any]:
+    def _create_sparse_matrices(self, sparse_format: str) -> Dict[str, Any]:
         """Create sparse matrices from diffusion tensor."""
         logger.info(f"Creating sparse matrices in {sparse_format} format...")
 
@@ -374,7 +374,7 @@ class DiffusionPatternManager:
         logger.info(f"Sparse matrices created: {total_nnz:,} NNZ, {total_size_mb:.1f}MB")
         return stats
 
-    def _compute_dense_ata(self) -> Dict[str, any]:
+    def _compute_dense_ata(self) -> Dict[str, Any]:
         """Compute dense A^T @ A matrices."""
         logger.info("Computing dense A^T @ A matrices...")
 
@@ -414,7 +414,7 @@ class DiffusionPatternManager:
         logger.info(f"Dense A^T @ A computed: {self._dense_ata.shape}, {ata_memory_mb:.1f}MB, {computation_time:.2f}s")
         return stats
 
-    def _load_planar_format(self, data) -> Dict[str, any]:
+    def _load_planar_format(self, data) -> Dict[str, Any]:
         """Load patterns from new planar format."""
         # Load basic parameters
         self.led_count = int(data["led_count"])
@@ -458,7 +458,7 @@ class DiffusionPatternManager:
 
         return stats
 
-    def _load_and_convert_interleaved_format(self, data) -> Dict[str, any]:
+    def _load_and_convert_interleaved_format(self, data) -> Dict[str, Any]:
         """Load and convert patterns from old interleaved format."""
         logger.info("Converting from interleaved to planar format...")
 

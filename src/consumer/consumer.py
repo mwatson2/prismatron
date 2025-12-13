@@ -302,8 +302,8 @@ class ConsumerProcess:
 
         # Batch processing configuration
         self.enable_batch_mode = enable_batch_mode
-        self._frame_batch = []  # Accumulate frames for batch processing
-        self._batch_metadata = []  # Metadata for each frame in batch
+        self._frame_batch: List[np.ndarray] = []  # Accumulate frames for batch processing
+        self._batch_metadata: List[Dict[str, Any]] = []  # Metadata for each frame in batch
         self._batch_size = 8  # Target batch size
         self._batch_timeout = 0.5  # Max time to wait for batch completion (seconds)
         self._last_batch_start_time = 0.0  # When current batch started accumulating

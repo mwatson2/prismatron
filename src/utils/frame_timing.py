@@ -10,7 +10,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, TextIO
+from typing import Any, Optional, TextIO
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ class FrameTimingLogger:
         """
         self.log_file_path = Path(log_file_path)
         self._file_handle: Optional[TextIO] = None
-        self._csv_writer: Optional[csv.writer] = None
+        self._csv_writer: Optional[Any] = None  # csv.writer object
         self._header_written = False
 
         # Ensure parent directory exists

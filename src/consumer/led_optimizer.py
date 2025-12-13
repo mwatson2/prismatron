@@ -706,7 +706,7 @@ class LEDOptimizer:
         self._led_positions = data.get("led_positions", None)
 
         # Load color space information from metadata
-        metadata = data.get("metadata", {})
+        metadata: Dict[str, Any] = data.get("metadata", {})
         if hasattr(metadata, "item"):
             metadata = metadata.item()
         self._pattern_color_space = metadata.get("color_space", "srgb")

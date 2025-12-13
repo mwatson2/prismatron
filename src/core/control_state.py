@@ -165,17 +165,17 @@ class ControlState:
     """
 
     # Class-level shared lock that will be set by the main process
-    _shared_lock: Optional[mp.Lock] = None
+    _shared_lock: Optional[Any] = None  # multiprocessing.Lock
 
     # Class-level shared events that will be set by the main process
-    _shared_shutdown_event: Optional[mp.Event] = None
-    _shared_restart_event: Optional[mp.Event] = None
-    _shared_reboot_event: Optional[mp.Event] = None
-    _shared_config_updated_event: Optional[mp.Event] = None
-    _shared_status_updated_event: Optional[mp.Event] = None
+    _shared_shutdown_event: Optional[Any] = None  # multiprocessing.Event
+    _shared_restart_event: Optional[Any] = None  # multiprocessing.Event
+    _shared_reboot_event: Optional[Any] = None  # multiprocessing.Event
+    _shared_config_updated_event: Optional[Any] = None  # multiprocessing.Event
+    _shared_status_updated_event: Optional[Any] = None  # multiprocessing.Event
 
     @classmethod
-    def set_shared_lock(cls, lock: mp.Lock) -> None:
+    def set_shared_lock(cls, lock: Any) -> None:  # mp.Lock
         """
         Set the shared lock to be used by all ControlState instances.
         This must be called by the main process before creating subprocesses.
@@ -189,11 +189,11 @@ class ControlState:
     @classmethod
     def set_shared_events(
         cls,
-        shutdown_event: mp.Event,
-        restart_event: mp.Event,
-        reboot_event: mp.Event,
-        config_updated_event: mp.Event,
-        status_updated_event: mp.Event,
+        shutdown_event: Any,  # mp.Event
+        restart_event: Any,  # mp.Event
+        reboot_event: Any,  # mp.Event
+        config_updated_event: Any,  # mp.Event
+        status_updated_event: Any,  # mp.Event
     ) -> None:
         """
         Set the shared events to be used by all ControlState instances.

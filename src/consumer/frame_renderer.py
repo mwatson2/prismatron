@@ -441,8 +441,8 @@ class FrameRenderer:
         self.total_pause_time = 0.0
 
         # Output sinks (multiple sink support)
-        self.sinks = []  # List of registered sinks
-        self.sink_names = {}  # Map sink instances to names for logging
+        self.sinks: List[Any] = []  # List of registered sinks
+        self.sink_names: Dict[Any, str] = {}  # Map sink instances to names for logging
 
         # Legacy compatibility - maintain individual references
         self.wled_sink: Optional[WLEDSink] = None
@@ -480,7 +480,7 @@ class FrameRenderer:
         self._last_sink_call_time = 0.0  # Track sink call completion time for FPS calculation
 
         # Timing distribution tracking
-        self.timing_errors = []  # Track last 100 timing errors for analysis
+        self.timing_errors: List[float] = []  # Track last 100 timing errors for analysis
         self.max_timing_history = 100
 
         # Debug LED value writing (first 10 different frames)
@@ -1111,7 +1111,10 @@ class FrameRenderer:
                 break
 
     def set_output_targets(
-        self, wled_sink: Optional[WLEDSink] = None, test_sink: Optional[TestSink] = None, preview_sink: Optional = None
+        self,
+        wled_sink: Optional[WLEDSink] = None,
+        test_sink: Optional[TestSink] = None,
+        preview_sink: Optional[Any] = None,
     ) -> None:
         """
         Set output targets for rendering (legacy compatibility method).

@@ -385,7 +385,7 @@ class WLEDClient:
             TransmissionResult with transmission metrics
         """
         start_time = time.time()
-        errors = []
+        errors: list[str] = []
         if not self.is_connected or not self.socket:
             error_msg = "Not connected to WLED controller"
             return TransmissionResult(

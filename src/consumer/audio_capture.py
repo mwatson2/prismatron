@@ -14,7 +14,7 @@ import wave
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 import sounddevice as sd
@@ -405,6 +405,7 @@ class AudioCapture:
 
         # Only create queue if no callback provided (queue-based consumption)
         # When using callbacks, the queue is unnecessary and wastes memory
+        self.audio_queue: Optional[queue.Queue[Any]]
         if audio_callback is None:
             self.audio_queue = queue.Queue(maxsize=5000)
         else:

@@ -171,7 +171,7 @@ def optimize_batch_frames_led_values(
     debug and logger.info(f"Initial LED values batch shape: {led_values_batch.shape}")
 
     # Step 3: Track MSE if requested
-    mse_values = [] if track_mse_per_iteration else None
+    mse_values: Optional[List[np.ndarray]] = [] if track_mse_per_iteration else None
 
     if track_mse_per_iteration:
         # Compute initial MSE for all frames
@@ -180,7 +180,7 @@ def optimize_batch_frames_led_values(
 
     # Step 4: Batch gradient descent optimization loop
     debug and logger.info(f"Starting batch optimization: max_iterations={max_iterations}")
-    step_sizes = [] if debug else None
+    step_sizes: Optional[List[float]] = [] if debug else None
 
     for iteration in range(max_iterations):
         # Process all 8 frames together using batch operations

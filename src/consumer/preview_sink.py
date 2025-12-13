@@ -12,7 +12,7 @@ import struct
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -55,7 +55,7 @@ class PreviewSinkStatistics:
 
         # Timing tracking
         self.last_frame_time = 0.0
-        self.frame_intervals = []
+        self.frame_intervals: List[float] = []
         self.max_interval_history = 100
 
         # Thread safety

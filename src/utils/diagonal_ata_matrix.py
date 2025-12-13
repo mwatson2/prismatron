@@ -353,7 +353,7 @@ class DiagonalATAMatrix(BaseATAMatrix):
             self.dia_data_cpu = np.zeros((self.channels, self.k, self.led_count), dtype=storage_dtype_np)
 
             # Create mapping from offset to index in unified structure
-            offset_to_idx = {offset: i for i, offset in enumerate(self.dia_offsets)}
+            offset_to_idx: Dict[int, int] = {offset: i for i, offset in enumerate(self.dia_offsets)}
 
             # Fill unified structure from each channel
             for channel in range(self.channels):

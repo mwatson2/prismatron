@@ -201,7 +201,8 @@ class PerformanceTiming:
 
             elif operation_type == "sparse_matmul":
                 # Would need non-zero count from additional_params
-                nnz = shape_info.get("nnz", 0)
+                nnz_info = shape_info.get("nnz", (0,))
+                nnz = nnz_info[0] if isinstance(nnz_info, tuple) else 0
                 return nnz * 2  # Multiply + accumulate per non-zero
 
         except Exception:

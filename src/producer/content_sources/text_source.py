@@ -8,7 +8,7 @@ with configurable fonts, colors, and animations.
 import json
 import logging
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -98,7 +98,7 @@ class TextContentSource(ContentSource):
         self._next_frame_index = 0  # Track which frame to return next
 
         # Rendered frames cache
-        self._frames = []
+        self._frames: List[np.ndarray] = []
         self._frame_generated = False
 
         # Setup content info

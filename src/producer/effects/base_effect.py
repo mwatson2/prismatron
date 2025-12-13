@@ -152,7 +152,7 @@ class BaseEffect(ABC):
 class EffectRegistry:
     """Registry for available effects."""
 
-    _effects = {}
+    _effects: Dict[str, Dict[str, Any]] = {}
 
     @classmethod
     def register(
