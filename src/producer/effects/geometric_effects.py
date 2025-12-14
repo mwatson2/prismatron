@@ -358,7 +358,7 @@ class BouncingBeachBall(BaseEffect):
 
         # Create a mask for the ball
         ball_mask = np.zeros((self.height, self.width), dtype=np.uint8)
-        cv2.circle(ball_mask, center, self.radius, 255, -1)
+        cv2.circle(ball_mask, center, self.radius, (255,), -1)
 
         # Create stripe pattern with 3D rotation effect
         stripe_frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)

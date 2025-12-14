@@ -479,7 +479,7 @@ def manage_uploads_playlist(new_item: PlaylistItem) -> None:
 
 def update_playlists_for_file_operation(
     old_filename: str, new_filename: Optional[str] = None, operation: str = "rename"
-) -> Dict[str, Union[int, List[str]]]:
+) -> Dict[str, Union[int, List[str], str]]:
     """
     Update all playlists when a file is renamed or deleted.
 
