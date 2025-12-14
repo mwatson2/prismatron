@@ -152,14 +152,14 @@ class ImageSource(ContentSource):
             True if successful, False otherwise
         """
         if cv2 is None:
-            self.set_error("OpenCV not available")
+            self.set_error("OpenCV not available")  # type: ignore[unreachable]
             return False
 
         try:
             # Load image (BGR format)
             img_bgr = cv2.imread(self.filepath, cv2.IMREAD_UNCHANGED)
             if img_bgr is None:
-                self.set_error(f"OpenCV could not load image: {self.filepath}")
+                self.set_error(f"OpenCV could not load image: {self.filepath}")  # type: ignore[unreachable]
                 return False
 
             # Handle different channel counts and ensure RGB output
@@ -319,7 +319,7 @@ class ImageSource(ContentSource):
         try:
             if PILLOW_AVAILABLE and Image is not None:
                 pil_img = Image.fromarray(self._image_data)
-                pil_img.thumbnail(max_size, Image.LANCZOS)
+                pil_img.thumbnail(max_size, Image.Resampling.LANCZOS)
                 return np.array(pil_img)
             elif OPENCV_AVAILABLE and cv2 is not None:
                 height, width = self._image_data.shape[:2]
