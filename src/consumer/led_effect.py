@@ -304,6 +304,9 @@ class TemplateEffect(LedEffect):
     # Minimum luminance threshold for color thieving (below this, use white)
     COLOR_THIEVING_MIN_LUMINANCE = 0.05
 
+    # Class-level type annotation for Optional attributes
+    thieved_color: Optional[np.ndarray]
+
     def __init__(
         self,
         start_time: float,
@@ -703,6 +706,9 @@ class InverseFadeEffect(LedEffect):
 
     Uses linear interpolation over the specified duration.
     """
+
+    # Class-level type annotation for Optional attributes
+    target_values: Optional[np.ndarray]
 
     def __init__(
         self,

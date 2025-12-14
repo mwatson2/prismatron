@@ -76,6 +76,22 @@ class LEDOptimizer:
     4. Standardized optimize_frame_led_values function for optimization
     """
 
+    # Class-level type annotations for Optional attributes
+    _dense_ata_matrix: Optional[Any]
+    _symmetric_ata_matrix: Optional[Any]
+    _batch_symmetric_ata_matrix: Optional[Any]
+    _diagonal_ata_matrix: Optional[Any]
+    _ATA_inverse_gpu: Optional[Any]
+    _ATA_inverse_cpu: Optional[np.ndarray]
+    _A_r_csc_gpu: Optional[Any]
+    _A_g_csc_gpu: Optional[Any]
+    _A_b_csc_gpu: Optional[Any]
+    _A_combined_csc_gpu: Optional[Any]
+    _target_rgb_buffer: Optional[np.ndarray]
+    _ATb_gpu: Optional[Any]
+    _led_values_gpu: Optional[Any]
+    _gpu_workspace: Optional[Any]
+
     def __init__(
         self,
         diffusion_patterns_path: Optional[str] = None,

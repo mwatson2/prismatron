@@ -36,6 +36,13 @@ class DiffusionPatternManager:
     - LED output: (3, led_count) - planar RGB
     """
 
+    # Class-level type annotations for Optional attributes
+    _diffusion_tensor: Optional[np.ndarray]
+    _sparse_matrices: Optional[Dict[str, sp.spmatrix]]
+    _dense_ata: Optional[np.ndarray]
+    _led_positions: Optional[np.ndarray]
+    _led_spatial_mapping: Optional[Dict[int, int]]
+
     def __init__(self, led_count: int, frame_height: int = 640, frame_width: int = 800):
         """
         Initialize diffusion pattern manager.

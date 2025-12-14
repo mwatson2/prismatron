@@ -68,6 +68,27 @@ class DiagonalATAMatrix(BaseATAMatrix):
     - offsets: (k,) - shared diagonal offsets
     """
 
+    # Class-level type annotations for Optional attributes
+    dia_data_cpu: Optional[np.ndarray]
+    dia_data_gpu: Optional[Any]
+    dia_data_gpu_fp16: Optional[Any]
+    dia_offsets: Optional[np.ndarray]
+    dia_offsets_gpu: Optional[Any]
+    k: Optional[int]
+    custom_kernel_basic: Optional[Any]
+    custom_kernel_optimized: Optional[Any]
+    custom_3d_kernel_basic: Optional[Any]
+    custom_3d_kernel_optimized: Optional[Any]
+    custom_kernel_basic_fp16: Optional[Any]
+    custom_kernel_optimized_fp16: Optional[Any]
+    custom_3d_kernel_basic_fp16: Optional[Any]
+    custom_3d_kernel_optimized_fp16: Optional[Any]
+    pure_fp16_kernel_basic: Optional[Any]
+    pure_fp16_kernel_optimized: Optional[Any]
+    bandwidth: Optional[int]
+    sparsity: Optional[float]
+    nnz: Optional[int]
+
     def __init__(
         self,
         led_count: int,

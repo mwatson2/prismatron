@@ -117,7 +117,7 @@ class PreviewSinkStatistics:
         with self._lock:
             avg_fps = 0.0
             if self.frame_intervals:
-                avg_interval = np.mean(self.frame_intervals)
+                avg_interval = float(np.mean(self.frame_intervals))
                 avg_fps = 1.0 / avg_interval if avg_interval > 0 else 0.0
 
             return {
@@ -153,6 +153,11 @@ class PreviewSink:
     This sink receives LED values in physical order (already converted by frame renderer)
     and stores them in shared memory for the web server to read.
     """
+
+    # Class-level type annotations for Optional attributes
+    shared_memory_fd: Optional[int]
+    shared_memory_map: Optional[mmap.mmap]
+    frame_renderer: Optional[Any]
 
     def __init__(self, led_count: int, config: Optional[PreviewSinkConfig] = None):
         """

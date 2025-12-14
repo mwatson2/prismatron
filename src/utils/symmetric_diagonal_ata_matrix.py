@@ -7,7 +7,7 @@ of the symmetric structure of A^T A matrices by storing only the main diagonal
 and upper diagonals, reading lower diagonals from the symmetric positions.
 """
 
-from typing import Optional
+from typing import Any, Optional
 
 try:
     import cupy
@@ -71,6 +71,18 @@ class SymmetricDiagonalATAMatrix(BaseATAMatrix):
     - dia_data_gpu: (channels, k_upper, leds) - only main + upper diagonals
     - dia_offsets_upper: (k_upper,) - only non-negative offsets
     """
+
+    # Class-level type annotations for Optional attributes
+    dia_data_gpu: Optional[Any]
+    dia_offsets_upper: Optional[np.ndarray]
+    dia_offsets_upper_gpu: Optional[Any]
+    k_upper: Optional[int]
+    symmetric_kernel_basic: Optional[Any]
+    symmetric_kernel_optimized: Optional[Any]
+    bandwidth: Optional[int]
+    sparsity: Optional[float]
+    nnz: Optional[int]
+    original_k: Optional[int]
 
     def __init__(
         self,
