@@ -19,7 +19,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, cast
 
 import numpy as np
 import psutil
@@ -106,7 +106,7 @@ def get_gpu_usage():
 class TransitionConfig(BaseModel):
     """Transition configuration model."""
 
-    type: str = Field("none", description="Transition type: none, fade, blur")
+    type: str = Field(default="none", description="Transition type: none, fade, blur")
     parameters: Dict = Field(default_factory=dict, description="Transition parameters")
 
     def dict_serializable(self):
@@ -414,16 +414,16 @@ def manage_uploads_playlist(new_item: PlaylistItem) -> None:
 
         # Add new item to live playlist
         try:
-            # Convert to PlaylistItem for sync
+            # Convert to PlaylistItem for sync - use cast for proper type assertions
             live_item = PlaylistItem(
-                id=playlist_item["id"],
-                name=playlist_item["name"],
-                type=playlist_item["type"],
-                file_path=playlist_item["file_path"],
-                duration=playlist_item["duration"],
-                order=playlist_item["order"],
-                transition_in=TransitionConfig(**playlist_item["transition_in"]),
-                transition_out=TransitionConfig(**playlist_item["transition_out"]),
+                id=cast(str, playlist_item["id"]),
+                name=cast(str, playlist_item["name"]),
+                type=cast(str, playlist_item["type"]),
+                file_path=cast(Optional[str], playlist_item["file_path"]),
+                duration=cast(Optional[float], playlist_item["duration"]),
+                order=cast(int, playlist_item["order"]),
+                transition_in=TransitionConfig(**cast(Dict[str, Any], playlist_item["transition_in"])),
+                transition_out=TransitionConfig(**cast(Dict[str, Any], playlist_item["transition_out"])),
             )
 
             sync_item = api_item_to_sync_item(live_item)
@@ -911,11 +911,11 @@ def sync_item_to_api_item(sync_item: SyncPlaylistItem) -> PlaylistItem:
     # Convert transition configurations
     transition_in = TransitionConfig(
         type=sync_item.transition_in.type if sync_item.transition_in else "none",
-        parameters=sync_item.transition_in.parameters if sync_item.transition_in else {},
+        parameters=sync_item.transition_in.parameters or {} if sync_item.transition_in else {},
     )
     transition_out = TransitionConfig(
         type=sync_item.transition_out.type if sync_item.transition_out else "none",
-        parameters=sync_item.transition_out.parameters if sync_item.transition_out else {},
+        parameters=sync_item.transition_out.parameters or {} if sync_item.transition_out else {},
     )
 
     return PlaylistItem(
@@ -2794,7 +2794,12 @@ async def rename_media_file(file_id: str, request: RenameFileRequest):
     except Exception as e:
         logger.error(f"Failed to rename media file: {e}")
         # Try to rename back if possible
-        if "new_file_path" in locals() and new_file_path.exists() and "old_file_path" in locals():
+        if (
+            "new_file_path" in locals()
+            and new_file_path.exists()
+            and "old_file_path" in locals()
+            and old_file_path is not None
+        ):
             try:
                 new_file_path.rename(old_file_path)
                 logger.info(f"Rolled back rename: {new_file_path} -> {old_file_path}")

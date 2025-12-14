@@ -953,6 +953,12 @@ class LEDOptimizer:
             # Convert target frame to GPU (cupy) for frame optimizer
             target_frame_gpu = cp.asarray(target_frame)
 
+            # Validate required matrices are available
+            if self._mixed_tensor is None:
+                raise RuntimeError("Mixed tensor not loaded")
+            if self._ATA_inverse_cpu is None:
+                raise RuntimeError("ATA inverse not loaded")
+
             result_frame_opt = optimize_frame_led_values(
                 target_frame=target_frame_gpu,
                 at_matrix=self._mixed_tensor,  # Updated parameter name
@@ -1087,6 +1093,12 @@ class LEDOptimizer:
                     logger.info("Successfully loaded ATA inverse from pattern file")
                 else:
                     raise RuntimeError("ATA inverse matrices required but not available")
+
+            # Validate required matrices are available
+            if self._mixed_tensor is None:
+                raise RuntimeError("Mixed tensor not loaded")
+            if self._ATA_inverse_cpu is None:
+                raise RuntimeError("ATA inverse not loaded")
 
             # Use batch frame optimizer
             result = optimize_batch_frames_led_values(

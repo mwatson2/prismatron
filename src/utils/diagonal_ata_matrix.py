@@ -667,16 +667,17 @@ class DiagonalATAMatrix(BaseATAMatrix):
         """
         result_gpu = cupy.zeros_like(led_values_gpu)  # Shape: (channels, leds)
 
-        if self.k == 0 or self.dia_offsets is None or self.dia_data_gpu is None:
+        if self.k is None or self.k == 0 or self.dia_offsets is None or self.dia_data_gpu is None:
             return result_gpu
 
         # Local references for type narrowing
         dia_offsets = self.dia_offsets
         dia_data_gpu = self.dia_data_gpu
+        k = self.k
 
         # Unified 3D DIA multiplication - process all channels in single operation
         # For each diagonal band k with offset dia_offsets[k]
-        for band_idx in range(self.k):
+        for band_idx in range(k):
             offset = int(dia_offsets[band_idx])  # Diagonal offset
 
             # Get diagonal data for all channels: shape (channels, leds)
