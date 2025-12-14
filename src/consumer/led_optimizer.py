@@ -718,14 +718,14 @@ class LEDOptimizer:
             return False
 
         # Load metadata from diffusion matrix or pattern data
-        led_spatial_mapping = data.get("led_spatial_mapping", {})
+        led_spatial_mapping: Any = data.get("led_spatial_mapping", {})
         if hasattr(led_spatial_mapping, "item"):
             led_spatial_mapping = led_spatial_mapping.item()
         self._led_spatial_mapping = led_spatial_mapping
         self._led_positions = data.get("led_positions", None)
 
         # Load color space information from metadata
-        metadata_raw = data.get("metadata", {})
+        metadata_raw: Any = data.get("metadata", {})
         if hasattr(metadata_raw, "item"):
             metadata_raw = metadata_raw.item()
         metadata: Dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
@@ -1266,6 +1266,8 @@ class LEDOptimizer:
 
         if x is None:
             raise RuntimeError("LED values GPU buffer not initialized")
+        if w is None:
+            raise RuntimeError("GPU workspace not initialized")
         if self._diagonal_ata_matrix is None:
             raise RuntimeError("Diagonal ATA matrix not loaded")
 

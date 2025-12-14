@@ -400,6 +400,8 @@ class ProducerProcess:
 
     # Class-level type annotations for Optional attributes
     _last_logged_state: Optional[ProducerState]
+    _last_producer_state: Optional[ProducerState]
+    _last_no_frame_warning: float
 
     def __init__(
         self,

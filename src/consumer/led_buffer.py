@@ -9,7 +9,7 @@ jitter in the optimization process.
 import logging
 import threading
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -43,7 +43,7 @@ class LEDBuffer:
         # LED value storage (led_count, 3) format for each frame
         self.led_arrays = np.zeros((buffer_size, led_count, 3), dtype=np.uint8)
         self.timestamps = np.zeros(buffer_size, dtype=np.float64)
-        self.metadata = [None] * buffer_size
+        self.metadata: List[Optional[Dict[str, Any]]] = [None] * buffer_size
 
         # Ring buffer state
         self.write_index = 0
