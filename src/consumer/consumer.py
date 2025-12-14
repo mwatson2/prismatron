@@ -1065,6 +1065,9 @@ class ConsumerProcess:
                         logger.debug(
                             f"Renderer: About to read from LED buffer (heartbeat={self._renderer_thread_heartbeat:.1f})"
                         )
+                        if self._led_buffer is None:
+                            logger.error("LED buffer not initialized")
+                            continue
                         led_data = self._led_buffer.read_led_values(timeout=0.1)
                         logger.debug(f"Renderer: Read from LED buffer complete, got data={led_data is not None}")
                     except Exception as buffer_error:
@@ -1089,7 +1092,11 @@ class ConsumerProcess:
                     # Stopped or invalid state - just wait
                     # Note: Having frames in LED buffer during STOPPED is normal during shutdown,
                     # so we only log at DEBUG level to avoid spam
-                    if control_status and control_status.renderer_state == RendererState.STOPPED:
+                    if (
+                        control_status
+                        and control_status.renderer_state == RendererState.STOPPED
+                        and self._led_buffer is not None
+                    ):
                         buffer_stats = self._led_buffer.get_buffer_stats()
                         if buffer_stats.get("current_count", 0) > 0:
                             # Rate-limit this log to once per 30 seconds
@@ -1149,7 +1156,7 @@ class ConsumerProcess:
 
                 # Debug logging for high FPS investigation
                 frame_count = self._stats.frames_processed
-                if frame_count % 100 == 0:  # Log every 100th frame
+                if frame_count % 100 == 0 and self._led_buffer is not None:  # Log every 100th frame
                     buffer_stats = self._led_buffer.get_buffer_stats()
                     current_time = time.time()
                     # Debug logging for high FPS investigation
@@ -1373,8 +1380,9 @@ class ConsumerProcess:
                             logger.critical("Renderer thread is_alive=True but not responding")
                             # Check LED buffer status
                             try:
-                                buffer_stats = self._led_buffer.get_buffer_stats()
-                                logger.critical(f"LED buffer status: {buffer_stats}")
+                                if self._led_buffer is not None:
+                                    buffer_stats = self._led_buffer.get_buffer_stats()
+                                    logger.critical(f"LED buffer status: {buffer_stats}")
                             except Exception:
                                 pass
                         else:
@@ -1806,6 +1814,10 @@ class ConsumerProcess:
             if timing_data:
                 timing_data.mark_write_to_led_buffer()
 
+            if self._led_buffer is None:
+                logger.error("LED buffer not initialized")
+                return True  # Frame dropped due to error
+
             success = self._led_buffer.write_led_values(
                 led_values_uint8,
                 timestamp,
@@ -1863,7 +1875,7 @@ class ConsumerProcess:
                 avg_fps = self._stats.get_average_fps()
                 avg_opt_time = self._stats.get_average_optimization_time()
 
-                # Get LED buffer stats
+                # Get LED buffer stats (buffer is guaranteed initialized at this point)
                 buffer_stats = self._led_buffer.get_buffer_stats()
                 buffer_depth = buffer_stats["current_count"]
 
@@ -2046,6 +2058,10 @@ class ConsumerProcess:
                 timestamp = metadata.get("timestamp", time.time())
 
                 # Write to LED buffer
+                if self._led_buffer is None:
+                    logger.error("LED buffer not initialized")
+                    continue
+
                 success = self._led_buffer.write_led_values(
                     frame_led_values_cpu,
                     timestamp,
@@ -2082,8 +2098,11 @@ class ConsumerProcess:
                 avg_opt_time = self._stats.get_average_optimization_time()
 
                 # Get LED buffer stats
-                buffer_stats = self._led_buffer.get_buffer_stats()
-                buffer_depth = buffer_stats["current_count"]
+                if self._led_buffer is None:
+                    buffer_depth = 0
+                else:
+                    buffer_stats = self._led_buffer.get_buffer_stats()
+                    buffer_depth = buffer_stats["current_count"]
 
                 logger.info(
                     f"CONSUMER PIPELINE (BATCH): {self._stats.frames_processed} frames optimized, "
@@ -2138,6 +2157,10 @@ class ConsumerProcess:
                 timestamp = metadata.get("timestamp", time.time())
 
                 # Write to LED buffer
+                if self._led_buffer is None:
+                    logger.error("LED buffer not initialized")
+                    continue
+
                 success = self._led_buffer.write_led_values(
                     led_values_cpu,
                     timestamp,
@@ -2256,11 +2279,11 @@ class ConsumerProcess:
             "target_fps": self.target_fps,
             "led_count": self._led_optimizer._actual_led_count,
             "frame_dimensions": (FRAME_WIDTH, FRAME_HEIGHT),
-            "wled_stats": self._wled_client.get_statistics(),
+            "wled_stats": self._wled_client.get_statistics() if self._wled_client is not None else None,
             "optimizer_stats": self._led_optimizer.get_optimizer_stats(),
             "test_renderer_enabled": self.enable_test_renderer,
             "test_renderer_stats": (self._test_renderer.get_statistics() if self._test_renderer else None),
-            "led_buffer_stats": self._led_buffer.get_buffer_stats(),
+            "led_buffer_stats": self._led_buffer.get_buffer_stats() if self._led_buffer is not None else None,
             "renderer_stats": self._frame_renderer.get_renderer_stats(),
             "adaptive_frame_dropper_enabled": self.enable_adaptive_frame_dropping,
             "adaptive_frame_dropper_stats": (
@@ -2383,10 +2406,16 @@ class ConsumerProcess:
         Returns:
             True if successful, False otherwise
         """
+        if self._led_buffer is None:
+            logger.error("LED buffer not initialized")
+            return False
         return self._led_buffer.set_buffer_size(buffer_size)
 
     def clear_led_buffer(self) -> None:
         """Clear all data from LED buffer."""
+        if self._led_buffer is None:
+            logger.error("LED buffer not initialized")
+            return
         self._led_buffer.clear()
 
     def reset_renderer_stats(self) -> None:
