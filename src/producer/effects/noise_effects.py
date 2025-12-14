@@ -248,7 +248,7 @@ class FractalNoise(BaseEffect):
         noise = np.zeros((self.height, self.width))
         frequency = 1.0 / min(self.width, self.height) * 5
         amplitude = 1.0
-        max_amplitude = 0
+        max_amplitude = 0.0
 
         for octave in range(self.octaves):
             # Generate noise for this octave

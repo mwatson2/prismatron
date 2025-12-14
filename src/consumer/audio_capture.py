@@ -14,7 +14,7 @@ import wave
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 import numpy as np
 import sounddevice as sd
@@ -854,7 +854,7 @@ class AudioCapture:
             Dictionary of statistics
         """
         duration = time.time() - self.start_time if self.is_capturing else 0.0
-        stats = {
+        stats: Dict[str, Any] = {
             "is_capturing": self.is_capturing,
             "duration": duration,
             "total_chunks": self.total_chunks_captured,

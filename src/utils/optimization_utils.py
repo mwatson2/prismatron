@@ -197,7 +197,7 @@ class OptimizationPipeline:
         # Try PIL first if available for better quality
         if PIL_AVAILABLE:
             try:
-                img = Image.open(image_path)
+                img: Image.Image = Image.open(image_path)
                 img = img.convert("RGB")
                 img = img.resize((FRAME_WIDTH, FRAME_HEIGHT), Image.Resampling.LANCZOS)
                 image = np.array(img, dtype=np.uint8)

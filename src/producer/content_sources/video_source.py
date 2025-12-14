@@ -13,7 +13,7 @@ import queue
 import subprocess  # nosec B404 - needed for FFmpeg integration
 import threading
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
 
 import cv2
 import numpy as np
@@ -550,7 +550,7 @@ class VideoSource(ContentSource):
             if current_time - self._last_empty_queue_log_time >= 2.0:  # Log every 2 seconds
                 # Gather diagnostic information
                 ffmpeg_running = "unknown"
-                ffmpeg_returncode = "N/A"
+                ffmpeg_returncode: Union[str, int] = "N/A"
                 reader_alive = "unknown"
                 stderr_alive = "unknown"
 

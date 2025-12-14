@@ -398,6 +398,9 @@ class ProducerProcess:
     output to shared memory buffers.
     """
 
+    # Class-level type annotations for Optional attributes
+    _last_logged_state: Optional[ProducerState]
+
     def __init__(
         self,
         buffer_name: str = "prismatron_buffer",

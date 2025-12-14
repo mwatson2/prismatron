@@ -147,12 +147,12 @@ def reorder_matrix_columns(matrix: sp.spmatrix, block_order: np.ndarray, channel
 
     # Create column permutation: for each block in the new order,
     # include all its channels (e.g., R, G, B for LEDs)
-    col_permutation = []
+    col_permutation_list = []
     for block_idx in block_order:
         for channel in range(channels_per_block):
-            col_permutation.append(block_idx * channels_per_block + channel)
+            col_permutation_list.append(block_idx * channels_per_block + channel)
 
-    col_permutation = np.array(col_permutation, dtype=np.int32)
+    col_permutation = np.array(col_permutation_list, dtype=np.int32)
 
     # Convert to CSC format for efficient column slicing if needed
     if not hasattr(matrix, "__getitem__") or matrix.format == "coo":

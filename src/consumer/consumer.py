@@ -105,6 +105,12 @@ class ConsumerProcess:
     diffusion patterns, and transmits to WLED controller via UDP.
     """
 
+    # Class-level type annotations for Optional attributes
+    _adaptive_frame_dropper: Optional[AdaptiveFrameDropper]
+    _led_buffer: Optional[LEDBuffer]
+    _wled_client: Optional[WLEDSink]
+    _last_renderer_state: Optional[RendererState]
+
     def __init__(
         self,
         buffer_name: str = "prismatron_buffer",
@@ -1251,6 +1257,9 @@ class ConsumerProcess:
         """
         try:
             from .led_effect_transitions import FadeInEffect, FadeOutEffect, RandomInEffect, RandomOutEffect
+
+            # Type annotation for effect variable to support Union of effect types
+            effect: Union[FadeInEffect, FadeOutEffect, RandomInEffect, RandomOutEffect]
 
             item_duration = metadata.get("item_duration", 0.0)
             if item_duration <= 0:

@@ -9,10 +9,15 @@ import numpy as np
 
 from .content_sources.base import ContentSource, ContentStatus, ContentType, FrameData
 from .effects import EffectRegistry
+from .effects.base_effect import BaseEffect
 
 
 class EffectSource(ContentSource):
     """Source that generates visual effects for LED display."""
+
+    # Class-level type annotations for Optional attributes
+    current_effect: Optional[BaseEffect]
+    effect_start_time: float
 
     def __init__(self, filepath: str, width: int = 128, height: int = 64, fps: int = 30):
         """Initialize effect source.
@@ -36,7 +41,7 @@ class EffectSource(ContentSource):
         self.effect_start_time = 0
         self.effect_duration = 30.0  # Default duration
         self.frame_count = 0
-        self.last_frame_time = 0
+        self.last_frame_time = 0.0
         self.start_time = 0.0  # When effect actually started playing
 
         self.logger = logging.getLogger(__name__)

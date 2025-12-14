@@ -139,6 +139,7 @@ class SingleBlockMixedSparseTensor:
             )
 
         # Validate expected stride patterns for known tensor types
+        expected_strides: Tuple[int, ...]
         if tensor_name == "target_3d":
             # target_3d should be (channels, height, width) with C-contiguous strides
             if len(tensor.shape) == 3:

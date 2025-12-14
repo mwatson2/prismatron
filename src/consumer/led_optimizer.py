@@ -725,9 +725,10 @@ class LEDOptimizer:
         self._led_positions = data.get("led_positions", None)
 
         # Load color space information from metadata
-        metadata: Dict[str, Any] = data.get("metadata", {})
-        if hasattr(metadata, "item"):
-            metadata = metadata.item()
+        metadata_raw = data.get("metadata", {})
+        if hasattr(metadata_raw, "item"):
+            metadata_raw = metadata_raw.item()
+        metadata: Dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
         self._pattern_color_space = metadata.get("color_space", "srgb")
         logger.info(f"Pattern color space: {self._pattern_color_space}")
         if self._pattern_color_space == "linear":
@@ -1300,7 +1301,8 @@ class LEDOptimizer:
             x[:] = w["x_new"]
 
         # Ensure we return the current x
-        self._led_values_gpu[:] = x
+        if self._led_values_gpu is not None:
+            self._led_values_gpu[:] = x
 
         return x, iteration + 1
 

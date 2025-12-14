@@ -398,19 +398,20 @@ class TextContentSource(ContentSource):
         bbox_offset_y = bbox[1]  # Top offset from baseline
 
         # Calculate position based on alignment (no borders)
+        # Use int() to ensure integer coordinates for PIL text drawing
         if self.alignment == "left":
             x = 0
         elif self.alignment == "right":
-            x = FRAME_WIDTH - text_width
+            x = int(FRAME_WIDTH - text_width)
         else:  # center
-            x = (FRAME_WIDTH - text_width) // 2
+            x = int((FRAME_WIDTH - text_width) // 2)
 
         if self.vertical_alignment == "top":
-            y = -bbox_offset_y  # Compensate for bbox offset
+            y = int(-bbox_offset_y)  # Compensate for bbox offset
         elif self.vertical_alignment == "bottom":
-            y = FRAME_HEIGHT - text_height - bbox_offset_y  # Compensate for bbox offset
+            y = int(FRAME_HEIGHT - text_height - bbox_offset_y)  # Compensate for bbox offset
         else:  # center
-            y = (FRAME_HEIGHT - text_height) // 2 - bbox_offset_y  # Compensate for bbox offset
+            y = int((FRAME_HEIGHT - text_height) // 2 - bbox_offset_y)  # Compensate for bbox offset
 
         # Draw text
         logger.info(f"Rendering static text frame: '{self.text}' at ({x}, {y}) with size {self.font_size}")

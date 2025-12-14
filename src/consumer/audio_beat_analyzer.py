@@ -224,6 +224,9 @@ class BuildDropDetector:
     IDX_AIR_FLUX = 4
     NUM_SLOPE_SIGNALS = 5
 
+    # Class-level type annotations for Optional attributes
+    prev_spectrum: Optional[np.ndarray]
+
     def __init__(self, config: Optional[BuildDropConfig] = None, sample_rate: int = 44100, buf_size: int = 512):
         """
         Initialize build-up/drop detector.
@@ -836,6 +839,9 @@ class AudioBeatAnalyzer:
     Uses sounddevice for reliable audio capture with USB microphone support.
     Designed to run in a separate thread to avoid blocking LED processing.
     """
+
+    # Class-level type annotations for Optional attributes
+    builddrop_detector: Optional[BuildDropDetector]
 
     def __init__(
         self,

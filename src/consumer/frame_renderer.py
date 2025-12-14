@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from .led_effect import LedEffectManager
+from .led_effect import LedEffectManager, SparkleEffect
 from .test_sink import TestSink
 from .wled_sink import WLEDSink
 
@@ -398,6 +398,15 @@ class FrameRenderer:
     - Supports multiple output targets (WLED, test renderer)
     - Converts LED values from spatial to physical order before output
     """
+
+    # Class-level type annotations for Optional attributes
+    wallclock_delta: Optional[float]
+    first_frame_timestamp: Optional[float]
+    pause_start_time: Optional[float]
+    current_item_first_frame_timestamp: Optional[float]
+    _last_trigger_config_hash: Optional[int]
+    _sparkle_effect: Optional[SparkleEffect]
+    _debug_previous_led_values: Optional[np.ndarray]
 
     def __init__(
         self,

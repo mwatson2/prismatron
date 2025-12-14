@@ -24,6 +24,9 @@ class AdaptiveFrameDropper:
     4. Dropping frames deterministically when actual < target
     """
 
+    # Class-level type annotations for Optional attributes
+    previous_time: Optional[float]
+
     def __init__(
         self,
         led_buffer_capacity: int = 10,
