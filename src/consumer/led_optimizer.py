@@ -304,9 +304,10 @@ class LEDOptimizer:
             if USE_DENSE_ATA and "dense_ata_matrix" in data:
                 logger.debug("Loading A^T@A matrices from dense_ata_matrix key (preferred format)")
                 dense_ata_dict = data["dense_ata_matrix"].item()
-                self._dense_ata_matrix = DenseATAMatrix.from_dict(dense_ata_dict)
-                logger.info(f"Loaded dense A^T@A matrix: {self._dense_ata_matrix.led_count} LEDs")
-                logger.info(f"Dense format - shape: {self._dense_ata_matrix.dense_matrices_cpu.shape}")
+                dense_ata_matrix = DenseATAMatrix.from_dict(dense_ata_dict)
+                self._dense_ata_matrix = dense_ata_matrix
+                logger.info(f"Loaded dense A^T@A matrix: {dense_ata_matrix.led_count} LEDs")
+                logger.info(f"Dense format - shape: {dense_ata_matrix.dense_matrices_cpu.shape}")
 
                 # Calculate dense memory usage
                 dense_memory_mb = self._dense_ata_matrix.memory_mb
@@ -716,9 +717,10 @@ class LEDOptimizer:
             return False
 
         # Load metadata from diffusion matrix or pattern data
-        self._led_spatial_mapping = data.get("led_spatial_mapping", {})
-        if hasattr(self._led_spatial_mapping, "item"):
-            self._led_spatial_mapping = self._led_spatial_mapping.item()
+        led_spatial_mapping = data.get("led_spatial_mapping", {})
+        if hasattr(led_spatial_mapping, "item"):
+            led_spatial_mapping = led_spatial_mapping.item()
+        self._led_spatial_mapping = led_spatial_mapping
         self._led_positions = data.get("led_positions", None)
 
         # Load color space information from metadata
@@ -802,6 +804,9 @@ class LEDOptimizer:
     def _setup_csc_matrices(self) -> None:
         """Setup CSC matrices for GPU operations using utility class methods."""
         logger.info("Setting up CSC matrices for GPU operations...")
+
+        if self._diffusion_matrix is None:
+            raise RuntimeError("Diffusion matrix not loaded - call load_diffusion_matrices first")
 
         # Use utility class methods to get GPU matrices
         (
@@ -1157,6 +1162,8 @@ class LEDOptimizer:
         # Actual sparse matrix operation
         self.timing and self.timing.start("ATb_csc_sparse_matmul", use_gpu_events=True)
 
+        if self._A_combined_csc_gpu is None:
+            raise RuntimeError("CSC matrices not initialized - call _setup_csc_matrices first")
         ATb_combined = self._A_combined_csc_gpu.T @ target_combined_gpu
 
         self.timing and self.timing.stop("ATb_csc_sparse_matmul")
@@ -1205,6 +1212,8 @@ class LEDOptimizer:
         # This processes all channels in one CUDA kernel operation
         self.timing and self.timing.start("ATb_mixed_tensor_3d_kernel", use_gpu_events=True)
 
+        if self._mixed_tensor is None:
+            raise RuntimeError("Mixed tensor not initialized - call load_diffusion_matrices first")
         result = self._mixed_tensor.transpose_dot_product_3d(target_gpu)  # Shape: (batch_size, channels)
 
         self.timing and self.timing.stop("ATb_mixed_tensor_3d_kernel")

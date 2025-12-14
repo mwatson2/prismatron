@@ -250,10 +250,13 @@ class EffectSource(ContentSource):
                     return None
 
             # Generate frame from effect using presentation time (returns numpy array in H, W, C format)
+            current_effect = self.current_effect
+            if current_effect is None:
+                return None
             self.logger.debug(
-                f"EffectSource: About to generate frame from {self.current_effect.__class__.__name__} at time {presentation_time:.3f}s"
+                f"EffectSource: About to generate frame from {current_effect.__class__.__name__} at time {presentation_time:.3f}s"
             )
-            frame_data = self.current_effect.generate_frame(presentation_time)
+            frame_data = current_effect.generate_frame(presentation_time)
             self.logger.debug(f"EffectSource: generate_frame returned, got data={frame_data is not None}")
 
             if frame_data is None or frame_data.shape != (self.height, self.width, 3):

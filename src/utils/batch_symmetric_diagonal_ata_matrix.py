@@ -14,7 +14,7 @@ optimized for WMMA operations on tensor cores. No fallback implementation.
 """
 
 import math
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 try:
     import cupy
@@ -88,6 +88,20 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
     - block_offsets_upper: (block_diag_count,) - block diagonal offsets
     - block_masks_gpu: (channels, block_diag_count, 16, 16) - sparsity masks
     """
+
+    # Class-level type annotations for Optional attributes
+    block_data_gpu: Optional[Any]
+    block_offsets_upper: Optional[Any]
+    block_masks_gpu: Optional[Any]
+    block_diag_count: Optional[int]
+    wmma_kernel_basic: Optional[Any]
+    wmma_kernel_optimized: Optional[Any]
+    wmma_kernel_8frame_basic: Optional[Any]
+    wmma_kernel_8frame_experimental: Optional[Any]
+    bandwidth: Optional[int]
+    sparsity: Optional[float]
+    nnz: Optional[int]
+    original_k: Optional[int]
 
     def __init__(
         self,
