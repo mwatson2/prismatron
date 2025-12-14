@@ -90,11 +90,8 @@ class FadeInEffect(LedEffect):
         if item_timestamp > duration:
             item_timestamp = duration
 
-        # Convert to cupy if needed for GPU processing
-        if isinstance(led_values, np.ndarray):
-            led_values_gpu = cp.asarray(led_values)
-        else:
-            led_values_gpu = led_values
+        # Convert to cupy for GPU processing (type annotation guarantees np.ndarray)
+        led_values_gpu = cp.asarray(led_values)
 
         # Apply fade transition
         result = self._transition.apply_led_transition(
@@ -105,11 +102,8 @@ class FadeInEffect(LedEffect):
             direction="in",
         )
 
-        # Convert back to numpy if input was numpy
-        if isinstance(led_values, np.ndarray):
-            led_values[:] = cp.asnumpy(result)
-        else:
-            led_values[:] = result
+        # Convert back to numpy
+        led_values[:] = cp.asnumpy(result)
 
         # Check if effect is complete after applying
         return self.is_complete(frame_timestamp)
@@ -196,11 +190,8 @@ class FadeOutEffect(LedEffect):
         if item_timestamp > duration:
             item_timestamp = duration
 
-        # Convert to cupy if needed for GPU processing
-        if isinstance(led_values, np.ndarray):
-            led_values_gpu = cp.asarray(led_values)
-        else:
-            led_values_gpu = led_values
+        # Convert to cupy for GPU processing (type annotation guarantees np.ndarray)
+        led_values_gpu = cp.asarray(led_values)
 
         # Apply fade transition
         result = self._transition.apply_led_transition(
@@ -211,11 +202,8 @@ class FadeOutEffect(LedEffect):
             direction="out",
         )
 
-        # Convert back to numpy if input was numpy
-        if isinstance(led_values, np.ndarray):
-            led_values[:] = cp.asnumpy(result)
-        else:
-            led_values[:] = result
+        # Convert back to numpy
+        led_values[:] = cp.asnumpy(result)
 
         # Check if effect is complete after applying
         return self.is_complete(frame_timestamp)
@@ -311,11 +299,8 @@ class RandomInEffect(LedEffect):
         if item_timestamp > duration:
             item_timestamp = duration
 
-        # Convert to cupy if needed for GPU processing
-        if isinstance(led_values, np.ndarray):
-            led_values_gpu = cp.asarray(led_values)
-        else:
-            led_values_gpu = led_values
+        # Convert to cupy for GPU processing (type annotation guarantees np.ndarray)
+        led_values_gpu = cp.asarray(led_values)
 
         # Apply random transition
         result = self._transition.apply_led_transition(
@@ -326,11 +311,8 @@ class RandomInEffect(LedEffect):
             direction="in",
         )
 
-        # Convert back to numpy if input was numpy
-        if isinstance(led_values, np.ndarray):
-            led_values[:] = cp.asnumpy(result)
-        else:
-            led_values[:] = result
+        # Convert back to numpy
+        led_values[:] = cp.asnumpy(result)
 
         # Check if effect is complete after applying
         return self.is_complete(frame_timestamp)
@@ -427,11 +409,8 @@ class RandomOutEffect(LedEffect):
         if item_timestamp > duration:
             item_timestamp = duration
 
-        # Convert to cupy if needed for GPU processing
-        if isinstance(led_values, np.ndarray):
-            led_values_gpu = cp.asarray(led_values)
-        else:
-            led_values_gpu = led_values
+        # Convert to cupy for GPU processing (type annotation guarantees np.ndarray)
+        led_values_gpu = cp.asarray(led_values)
 
         # Apply random transition
         result = self._transition.apply_led_transition(
@@ -442,11 +421,8 @@ class RandomOutEffect(LedEffect):
             direction="out",
         )
 
-        # Convert back to numpy if input was numpy
-        if isinstance(led_values, np.ndarray):
-            led_values[:] = cp.asnumpy(result)
-        else:
-            led_values[:] = result
+        # Convert back to numpy
+        led_values[:] = cp.asnumpy(result)
 
         # Check if effect is complete after applying
         return self.is_complete(frame_timestamp)

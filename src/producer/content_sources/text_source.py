@@ -8,7 +8,7 @@ with configurable fonts, colors, and animations.
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -119,22 +119,24 @@ class TextContentSource(ContentSource):
             "bg_color": self.bg_color,
         }
 
-    def _parse_color(self, color_str: str) -> Tuple[int, int, int]:
+    def _parse_color(self, color_value: Union[str, list, tuple]) -> Tuple[int, int, int]:
         """
-        Parse color string to RGB tuple.
+        Parse color value to RGB tuple.
 
         Args:
-            color_str: Color string in hex format (#RRGGBB) or named color
+            color_value: Color as hex string (#RRGGBB), named color, or RGB list/tuple
 
         Returns:
             RGB tuple (r, g, b)
         """
-        if isinstance(color_str, (list, tuple)) and len(color_str) == 3:
-            return tuple(int(c) for c in color_str)
+        # Handle list/tuple from JSON config
+        if isinstance(color_value, (list, tuple)) and len(color_value) == 3:
+            return (int(color_value[0]), int(color_value[1]), int(color_value[2]))
 
-        if color_str.startswith("#"):
+        # Handle hex format
+        if isinstance(color_value, str) and color_value.startswith("#"):
             # Hex color
-            hex_color = color_str[1:]
+            hex_color = color_value[1:]
             if len(hex_color) == 6:
                 return (
                     int(hex_color[0:2], 16),
@@ -154,7 +156,10 @@ class TextContentSource(ContentSource):
             "magenta": (255, 0, 255),
         }
 
-        return named_colors.get(color_str.lower(), (255, 255, 255))
+        # Named colors fallback (only for string values)
+        if isinstance(color_value, str):
+            return named_colors.get(color_value.lower(), (255, 255, 255))
+        return (255, 255, 255)
 
     def _get_font_paths_with_style(self) -> Dict[str, list]:
         """

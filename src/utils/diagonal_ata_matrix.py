@@ -839,11 +839,8 @@ class DiagonalATAMatrix(BaseATAMatrix):
         # (channels,leds) * (channels,leds) -> (channels,)
         result_gpu = cupy.sum(gradient_gpu * ata_g_gpu, axis=1)  # Shape: (channels,)
 
-        # Convert back to numpy if input was numpy
-        if isinstance(gradient, np.ndarray):
-            return cupy.asnumpy(result_gpu)
-        else:
-            return result_gpu
+        # Convert back to numpy (type annotation guarantees np.ndarray input)
+        return cupy.asnumpy(result_gpu)
 
     # Note: RCM reordering methods removed - ordering handled by pattern generation
 

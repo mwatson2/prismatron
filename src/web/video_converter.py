@@ -258,10 +258,11 @@ class ConversionManager:
                 self._cleanup_temp_files(job)
                 return
 
-            # Check if cancelled during conversion
-            if job.status == ConversionStatus.CANCELLED:
-                self._cleanup_temp_files(job)
-                return
+            # Check if cancelled during conversion (concurrent modification by cancel_job)
+            # Note: mypy sees this as unreachable because it doesn't track concurrent modifications
+            if job.status == ConversionStatus.CANCELLED:  # type: ignore[unreachable]
+                self._cleanup_temp_files(job)  # type: ignore[unreachable]
+                return  # type: ignore[unreachable]
 
             # Validate output
             job.status = ConversionStatus.VALIDATING

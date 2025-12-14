@@ -116,11 +116,7 @@ class TransitionFactory:
             True if configuration is valid, False otherwise
         """
         try:
-            # Check required structure
-            if not isinstance(transition_config, dict):
-                logger.error("Transition config must be a dictionary")
-                return False
-
+            # Check required structure (type annotation guarantees dict)
             transition_type = transition_config.get("type")
             if not transition_type:
                 logger.error("Transition config missing 'type' field")

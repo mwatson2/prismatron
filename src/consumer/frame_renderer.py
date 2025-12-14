@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from .led_effect import LedEffectManager, SparkleEffect
+from .led_effect import LedEffect, LedEffectManager, SparkleEffect
 from .test_sink import TestSink
 from .wled_sink import WLEDSink
 
@@ -407,6 +407,8 @@ class FrameRenderer:
     _last_trigger_config_hash: Optional[int]
     _sparkle_effect: Optional[SparkleEffect]
     _debug_previous_led_values: Optional[np.ndarray]
+    _cut_fade_effect: Optional[LedEffect]
+    _drop_fade_effect: Optional[LedEffect]
 
     def __init__(
         self,
