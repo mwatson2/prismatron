@@ -267,6 +267,12 @@ class OptimizationPipeline:
         # Handle different optimizer types
         if self.use_dense:
             # Dense optimizer: use sparse matrices kept for A^T*b calculation
+            if (
+                self.optimizer._A_r_csc_gpu is None
+                or self.optimizer._A_g_csc_gpu is None
+                or self.optimizer._A_b_csc_gpu is None
+            ):
+                raise RuntimeError("Sparse matrices not loaded in optimizer")
             A_r = self.optimizer._A_r_csc_gpu.tocsr()
             A_g = self.optimizer._A_g_csc_gpu.tocsr()
             A_b = self.optimizer._A_b_csc_gpu.tocsr()

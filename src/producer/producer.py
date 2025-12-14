@@ -758,8 +758,14 @@ class ProducerProcess:
             # Frame rate is determined by content timestamps, not throttling
             current_time = time.time()
 
+            # Get current source (guaranteed by _ensure_current_content)
+            current_source = self._current_source
+            current_item = self._current_item
+            if current_source is None or current_item is None:
+                return
+
             # Get next frame from content source
-            frame_data = self._current_source.get_next_frame()
+            frame_data = current_source.get_next_frame()
 
             if frame_data is not None:
                 # Reset no-frame tracking since we got a frame
@@ -770,15 +776,13 @@ class ProducerProcess:
 
                 # Log first frame for debugging
                 if self._frames_produced == 0:
-                    logger.debug(f"Got first frame from {self._current_item.filepath}")
+                    logger.debug(f"Got first frame from {current_item.filepath}")
 
                 # Check if frame should be dropped for downbeat transition timing
                 local_timestamp = frame_data.presentation_timestamp or 0.0
                 if self._should_drop_frame_for_downbeat_transition(local_timestamp):
                     # Frame is after the last downbeat - end content item to transition on downbeat
-                    current_item_name = (
-                        os.path.basename(self._current_item.filepath) if self._current_item else "unknown"
-                    )
+                    current_item_name = os.path.basename(current_item.filepath)
                     logger.info(f"🎵 Ending content early for downbeat transition: {current_item_name}")
 
                     # Calculate truncated duration: content played up to this point
@@ -812,7 +816,7 @@ class ProducerProcess:
                     self._frames_produced += 1
                     self._last_frame_time = current_time
 
-            elif self._current_source.is_finished():
+            elif current_source.is_finished():
                 # Prevent duplicate next_item() calls for the same content
                 if not self._content_finished_processed:
                     # Content finished, accumulate actual duration and advance to next
@@ -823,14 +827,8 @@ class ProducerProcess:
                         )
                         self._last_frame_duration = None  # Reset for next item
 
-                    current_item_name = (
-                        os.path.basename(self._current_item.filepath) if self._current_item else "unknown"
-                    )
-                    content_type = (
-                        self._current_item._detected_type.value
-                        if self._current_item and self._current_item._detected_type
-                        else "unknown"
-                    )
+                    current_item_name = os.path.basename(current_item.filepath)
+                    content_type = current_item._detected_type.value if current_item._detected_type else "unknown"
                     logger.info(f"Content finished: {current_item_name} (type: {content_type})")
 
                     self._content_finished_processed = True
@@ -852,7 +850,7 @@ class ProducerProcess:
                 # No frame available yet (but not finished) - track how long we've been waiting
                 if not hasattr(self, "_no_frame_start_time"):
                     self._no_frame_start_time = time.time()
-                    logger.debug(f"No frame available from {self._current_item.filepath} (waiting...)")
+                    logger.debug(f"No frame available from {current_item.filepath} (waiting...)")
                 else:
                     # Log at INFO level if we've been waiting too long
                     wait_time = time.time() - self._no_frame_start_time
@@ -861,23 +859,23 @@ class ProducerProcess:
                     ):
                         # Gather diagnostic info from video source if available
                         diagnostics = ""
-                        if hasattr(self._current_source, "_ffmpeg_process") and self._current_source._ffmpeg_process:
-                            poll_result = self._current_source._ffmpeg_process.poll()
+                        if hasattr(current_source, "_ffmpeg_process") and current_source._ffmpeg_process:
+                            poll_result = current_source._ffmpeg_process.poll()
                             ffmpeg_status = "running" if poll_result is None else f"exited({poll_result})"
                             reader_status = (
                                 "alive"
                                 if (
-                                    hasattr(self._current_source, "_frame_reader_thread")
-                                    and self._current_source._frame_reader_thread
-                                    and self._current_source._frame_reader_thread.is_alive()
+                                    hasattr(current_source, "_frame_reader_thread")
+                                    and current_source._frame_reader_thread
+                                    and current_source._frame_reader_thread.is_alive()
                                 )
                                 else "dead"
                             )
                             diagnostics = f", FFmpeg: {ffmpeg_status}, reader thread: {reader_status}"
 
                         logger.info(
-                            f"No frames from {os.path.basename(self._current_item.filepath)} for {wait_time:.1f}s - "
-                            f"content source may be stalled (status: {self._current_source.status}{diagnostics})"
+                            f"No frames from {os.path.basename(current_item.filepath)} for {wait_time:.1f}s - "
+                            f"content source may be stalled (status: {current_source.status}{diagnostics})"
                         )
                         self._last_no_frame_warning = time.time()
 
@@ -977,7 +975,7 @@ class ProducerProcess:
 
                     # Schedule pre-preparation of NEXT item
                     item_duration = self._current_source.get_duration()
-                    if item_duration > 0:
+                    if item_duration > 0 and self._content_preparer is not None:
                         self._content_preparer.schedule_preparation(
                             current_index=current_playlist_index,
                             item_duration=item_duration,
@@ -1165,14 +1163,16 @@ class ProducerProcess:
                     metadata_record = self._frame_buffer._metadata_array[buffer_idx]
 
                     # Set transition_in configuration
-                    in_type = current_item.transition_in.type
-                    in_duration = current_item.transition_in.parameters.get("duration", 0.0)
+                    in_type = current_item.transition_in.type if current_item.transition_in else "none"
+                    in_params = current_item.transition_in.parameters if current_item.transition_in else None
+                    in_duration = in_params.get("duration", 0.0) if in_params else 0.0
                     metadata_record["transition_in_type"] = in_type
                     metadata_record["transition_in_duration"] = in_duration
 
                     # Set transition_out configuration
-                    out_type = current_item.transition_out.type
-                    out_duration = current_item.transition_out.parameters.get("duration", 0.0)
+                    out_type = current_item.transition_out.type if current_item.transition_out else "none"
+                    out_params = current_item.transition_out.parameters if current_item.transition_out else None
+                    out_duration = out_params.get("duration", 0.0) if out_params else 0.0
                     metadata_record["transition_out_type"] = out_type
                     metadata_record["transition_out_duration"] = out_duration
 

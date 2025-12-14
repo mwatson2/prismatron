@@ -1375,7 +1375,8 @@ class FrameRenderer:
         from . import led_effect
 
         # Check if sparkle effect is enabled
-        if not self._sparkle_effect_config.get("enabled", True):
+        sparkle_config = self._sparkle_effect_config or {}
+        if not sparkle_config.get("enabled", True):
             # If disabled, remove any existing sparkle effect
             if self._sparkle_effect is not None:
                 self.effect_manager.remove_effect(self._sparkle_effect)
@@ -1422,12 +1423,10 @@ class FrameRenderer:
                 return
 
             # Calculate sparkle parameters based on buildup intensity using config
-            density_config = self._sparkle_effect_config.get("density", {"min": 0.01, "max": 0.15, "curve": "linear"})
-            interval_config = self._sparkle_effect_config.get(
-                "interval_ms", {"min": 30, "max": 300, "curve": "inverse"}
-            )
-            fade_multiplier = self._sparkle_effect_config.get("fade_multiplier", 2.0)
-            random_colors = self._sparkle_effect_config.get("random_colors", False)
+            density_config = sparkle_config.get("density", {"min": 0.01, "max": 0.15, "curve": "linear"})
+            interval_config = sparkle_config.get("interval_ms", {"min": 30, "max": 300, "curve": "inverse"})
+            fade_multiplier = sparkle_config.get("fade_multiplier", 2.0)
+            random_colors = sparkle_config.get("random_colors", False)
 
             density = self._calculate_sparkle_param(buildup_intensity, density_config)
             interval_ms = self._calculate_sparkle_param(buildup_intensity, interval_config)

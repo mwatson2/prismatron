@@ -275,9 +275,11 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
         batch_matrix._convert_diagonal_to_blocks(symmetric_matrix.dia_data_gpu, symmetric_matrix.dia_offsets_upper)
 
         print("  Conversion completed!")
-        print(f"  Block storage shape: {batch_matrix.block_data_gpu.shape}")
-        print(f"  Block diagonal count: {batch_matrix.block_diag_count}")
-        print(f"  GPU memory usage: {batch_matrix.block_data_gpu.nbytes / 1024**2:.1f} MB")
+        block_data = batch_matrix.block_data_gpu
+        if block_data is not None:
+            print(f"  Block storage shape: {block_data.shape}")
+            print(f"  Block diagonal count: {batch_matrix.block_diag_count}")
+            print(f"  GPU memory usage: {block_data.nbytes / 1024**2:.1f} MB")
 
         return batch_matrix
 
@@ -339,9 +341,11 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
         batch_matrix._convert_diagonal_to_blocks(upper_data_gpu, upper_offsets)
 
         print("  Direct conversion completed!")
-        print(f"  Block storage shape: {batch_matrix.block_data_gpu.shape}")
-        print(f"  Block diagonal count: {batch_matrix.block_diag_count}")
-        print(f"  GPU memory usage: {batch_matrix.block_data_gpu.nbytes / 1024**2:.1f} MB")
+        block_data = batch_matrix.block_data_gpu
+        if block_data is not None:
+            print(f"  Block storage shape: {block_data.shape}")
+            print(f"  Block diagonal count: {batch_matrix.block_diag_count}")
+            print(f"  GPU memory usage: {block_data.nbytes / 1024**2:.1f} MB")
 
         return batch_matrix
 

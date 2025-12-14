@@ -9,7 +9,7 @@ Extracted from the LEDOptimizer class for modular usage.
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 import cupy as cp
 import numpy as np
@@ -173,12 +173,14 @@ def optimize_frame_led_values(
             if debug:
                 logger.info("Using BaseATAMatrix format ATA inverse for optimal initialization")
             # Use BaseATAMatrix format approximation directly - same operation as ATA multiply
-            led_values_gpu_raw = ata_inverse.multiply_3d(ATb_gpu)
+            ata_inv_base = cast(BaseATAMatrix, ata_inverse)
+            led_values_gpu_raw = ata_inv_base.multiply_3d(ATb_gpu)
         elif is_dense_ata_format:
             if debug:
                 logger.info("Using dense ATA format inverse for optimal initialization")
             # Use dense ATA matrix multiply method
-            led_values_gpu_raw = ata_inverse.multiply_vector(ATb_gpu)
+            ata_inv_dense = cast(DenseATAMatrix, ata_inverse)
+            led_values_gpu_raw = ata_inv_dense.multiply_vector(ATb_gpu)
         elif is_legacy_dia_format:
             if debug:
                 logger.info("Using legacy format ATA inverse for optimal initialization")
@@ -194,12 +196,14 @@ def optimize_frame_led_values(
         else:
             if debug:
                 logger.info("Using dense numpy array ATA inverse for optimal initialization")
+            # At this point, ata_inverse must be a numpy array
+            ata_inv_array = cast(np.ndarray, ata_inverse)
             # Validate dense ATA inverse shape
-            if ata_inverse.shape != (3, led_count, led_count):
-                raise ValueError(f"ATA inverse shape {ata_inverse.shape} != (3, {led_count}, {led_count})")
+            if ata_inv_array.shape != (3, led_count, led_count):
+                raise ValueError(f"ATA inverse shape {ata_inv_array.shape} != (3, {led_count}, {led_count})")
 
             # Transfer to GPU for efficient computation
-            ata_inverse_gpu = cp.asarray(ata_inverse)  # Shape: (3, led_count, led_count)
+            ata_inverse_gpu = cp.asarray(ata_inv_array)  # Shape: (3, led_count, led_count)
 
             # Compute optimal initial guess for all channels using efficient einsum
             # Efficient einsum: (3, led_count, led_count) @ (3, led_count) -> (3, led_count)

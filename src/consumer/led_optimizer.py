@@ -307,7 +307,8 @@ class LEDOptimizer:
                 dense_ata_matrix = DenseATAMatrix.from_dict(dense_ata_dict)
                 self._dense_ata_matrix = dense_ata_matrix
                 logger.info(f"Loaded dense A^T@A matrix: {dense_ata_matrix.led_count} LEDs")
-                logger.info(f"Dense format - shape: {dense_ata_matrix.dense_matrices_cpu.shape}")
+                if dense_ata_matrix.dense_matrices_cpu is not None:
+                    logger.info(f"Dense format - shape: {dense_ata_matrix.dense_matrices_cpu.shape}")
 
                 # Calculate dense memory usage
                 dense_memory_mb = self._dense_ata_matrix.memory_mb
@@ -1250,11 +1251,18 @@ class LEDOptimizer:
         w = self._gpu_workspace
         x = self._led_values_gpu  # (led_count, 3)
 
+        if x is None:
+            raise RuntimeError("LED values GPU buffer not initialized")
+        if self._diagonal_ata_matrix is None:
+            raise RuntimeError("Diagonal ATA matrix not loaded")
+
         # Verify x shape
         assert x.shape == (
             self._actual_led_count,
             3,
         ), f"x shape {x.shape} != expected ({self._actual_led_count}, 3)"
+
+        diagonal_ata = self._diagonal_ata_matrix  # Local ref for type narrowing
 
         for iteration in range(max_iters):
             # KEY OPTIMIZATION: Use DIA format for sparse ATA @ x computation
@@ -1262,7 +1270,7 @@ class LEDOptimizer:
             self.timing and self.timing.start("gradient_calculation", use_gpu_events=True)
 
             x_transposed = x.T  # Shape: (3, led_count)
-            ata_x_transposed = self._diagonal_ata_matrix.multiply_3d(cp.asnumpy(x_transposed))  # Shape: (3, led_count)
+            ata_x_transposed = diagonal_ata.multiply_3d(cp.asnumpy(x_transposed))  # Shape: (3, led_count)
             w["ATA_x"][:] = cp.asarray(ata_x_transposed).T  # Convert back to (led_count, 3)
             w["gradient"][:] = w["ATA_x"] - atb
 
@@ -1306,6 +1314,9 @@ class LEDOptimizer:
         Returns:
             Step size (float)
         """
+        if self._diagonal_ata_matrix is None:
+            raise RuntimeError("Diagonal ATA matrix not loaded")
+
         # g^T @ g (sum over all elements)
         g_dot_g = cp.sum(gradient * gradient)
 

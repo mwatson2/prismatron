@@ -3248,7 +3248,7 @@ async def set_brightness(brightness: float):
     if not 0.0 <= brightness <= 1.0:
         raise HTTPException(status_code=400, detail="Brightness must be between 0.0 and 1.0")
 
-    system_settings.brightness = brightness
+    get_system_settings().brightness = brightness
 
     # TODO: Apply brightness to actual system
 
