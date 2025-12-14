@@ -260,7 +260,7 @@ class TestRenderer:
             f"FPS: {self.current_fps:.1f} (avg: {avg_fps:.1f})",
             f"Frames: {self.frames_rendered}",
             f"Render: {avg_render_time * 1000:.1f}ms",
-            f"LEDs: {self.mixed_tensor.led_count}",
+            f"LEDs: {self.mixed_tensor.batch_size}",
             f"Size: {FRAME_WIDTH}x{FRAME_HEIGHT}",
         ]
 
@@ -346,7 +346,7 @@ class TestRenderer:
             "average_fps": avg_fps,
             "current_fps": self.current_fps,
             "display_size": self.display_size,
-            "led_count": self.mixed_tensor.led_count,
+            "led_count": self.mixed_tensor.batch_size,
             "frame_size": (FRAME_WIDTH, FRAME_HEIGHT),
             "config": {
                 "window_name": self.config.window_name,
@@ -445,7 +445,7 @@ def test_renderer_with_solid_color(renderer: TestRenderer, r: int, g: int, b: in
     """
     try:
         # Create solid color LED data
-        led_count = renderer.mixed_tensor.led_count
+        led_count = renderer.mixed_tensor.batch_size
         led_values = np.full((led_count, 3), [r, g, b], dtype=np.uint8)
 
         # Render
@@ -468,7 +468,7 @@ def test_renderer_with_gradient(renderer: TestRenderer) -> bool:
     """
     try:
         # Create gradient LED data
-        led_count = renderer.mixed_tensor.led_count
+        led_count = renderer.mixed_tensor.batch_size
         led_values = np.zeros((led_count, 3), dtype=np.uint8)
 
         # Create RGB gradient

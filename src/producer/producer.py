@@ -1870,7 +1870,7 @@ class ProducerProcess:
                 elif self._current_item_index >= 0 and self._current_item:
                     # Index is same, but check if the item itself changed (e.g., rename, replace)
                     try:
-                        current_playlist_item = self._playlist.get_item(sync_state.current_index)
+                        current_playlist_item = self._playlist.get_item_at_index(sync_state.current_index)
                         if current_playlist_item and current_playlist_item.filepath != self._current_item.filepath:
                             logger.info(
                                 f"PLAYLIST ITEM CHANGED at index {sync_state.current_index}: "

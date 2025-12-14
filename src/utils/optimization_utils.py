@@ -290,9 +290,9 @@ class OptimizationPipeline:
                 A_b_cpu = A_b
         else:
             # Sparse optimizer: use combined matrix
-            A_csr = self.optimizer._A_combined_csr_cpu
+            A_csr = getattr(self.optimizer, "_A_combined_csr_cpu", None)
             if A_csr is None:
-                raise RuntimeError("Sparse matrix not available in optimizer")
+                raise RuntimeError("Sparse matrix _A_combined_csr_cpu not available in optimizer")
 
         # Convert LED values from uint8 [0,255] to float32 [0,1]
         led_values_normalized = result.led_values.astype(np.float32) / 255.0

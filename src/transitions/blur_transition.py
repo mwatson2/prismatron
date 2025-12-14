@@ -33,6 +33,9 @@ class BlurTransition(BaseTransition):
     Optimized for real-time use with <5ms target performance.
     """
 
+    # Class-level type annotations for dynamically created attributes
+    _last_log_time: float
+
     def __init__(self):
         """Initialize blur transition with pre-compiled kernels."""
         super().__init__()
@@ -712,18 +715,22 @@ class BlurTransition(BaseTransition):
 
             # Test GPU implementation
             try:
+                gpu_frame = cp.asarray(test_frame)
                 start_time = time.perf_counter()
-                gpu_result = self._apply_gpu_blur(test_frame, radius)
+                gpu_result = self._gpu_only_blur(gpu_frame, radius)
+                cp.cuda.Stream.null.synchronize()  # Wait for GPU to finish
                 gpu_time = (time.perf_counter() - start_time) * 1000
                 logger.info(f"  GPU blur: {gpu_time:.2f}ms")
             except Exception as e:
                 gpu_time = float("inf")
                 logger.warning(f"  GPU blur failed: {e}")
 
-            # Test CPU implementation
+            # Test CPU implementation (using OpenCV)
             try:
                 start_time = time.perf_counter()
-                cpu_result = self._apply_cpu_blur(test_frame, radius)
+                kernel_size = int(radius * 2) | 1  # Ensure odd
+                sigma = radius / 3.0
+                cpu_result = cv2.GaussianBlur(test_frame, (kernel_size, kernel_size), sigma)
                 cpu_time = (time.perf_counter() - start_time) * 1000
                 logger.info(f"  CPU blur: {cpu_time:.2f}ms")
             except Exception as e:
