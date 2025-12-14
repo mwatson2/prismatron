@@ -72,9 +72,9 @@ class PlaylistItem:
         """Convert to dictionary for JSON serialization."""
         result = asdict(self)
         # Convert TransitionConfig objects to dictionaries
-        if isinstance(result.get("transition_in"), dict):
+        if self.transition_in is not None:
             result["transition_in"] = self.transition_in.to_dict()
-        if isinstance(result.get("transition_out"), dict):
+        if self.transition_out is not None:
             result["transition_out"] = self.transition_out.to_dict()
         return result
 

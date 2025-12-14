@@ -131,18 +131,22 @@ def optimize_frame_led_values(
     else:
         raise ValueError(f"Unsupported frame shape {target_frame.shape}, expected (3, H, W) or (H, W, 3) format")
 
-    debug and logger.info(f"Target frame shape: {target_planar_uint8.shape}, dtype: {target_planar_uint8.dtype}")
-    debug and logger.info(f"Mixed tensor dtype: {at_matrix.dtype}")
+    if debug:
+        logger.info(f"Target frame shape: {target_planar_uint8.shape}, dtype: {target_planar_uint8.dtype}")
+    if debug:
+        logger.info(f"Mixed tensor dtype: {at_matrix.dtype}")
 
     # Step 1: Calculate A^T @ b using the appropriate format
-    debug and logger.info("Computing A^T @ b...")
+    if debug:
+        logger.info("Computing A^T @ b...")
 
     ATb_gpu = _calculate_atb(target_planar_uint8, at_matrix, debug=debug)  # Shape: (3, led_count), dtype: fp32
 
     # ATb is already in correct (3, led_count) format and C-contiguous layout
     # The planar_output=True parameter eliminates transpose operations and memory layout issues
 
-    debug and logger.info(f"A^T @ b shape: {ATb_gpu.shape}")
+    if debug:
+        logger.info(f"A^T @ b shape: {ATb_gpu.shape}")
 
     # Step 2: Initialize LED values in optimization order - ATA inverse is now required
     led_count = ATb_gpu.shape[1]
@@ -161,19 +165,23 @@ def optimize_frame_led_values(
             (initial_values / 255.0 if initial_values.max() > 1.0 else initial_values).astype(np.float32)
         )
         led_values_gpu = led_values_gpu_raw  # No clipping needed for provided values
-        debug and logger.info("Using provided initial values (overriding ATA inverse)")
+        if debug:
+            logger.info("Using provided initial values (overriding ATA inverse)")
     else:
         # Use ATA inverse for optimal initialization: x_init = (A^T A)^-1 * A^T b
         if is_base_ata_format:
-            debug and logger.info("Using BaseATAMatrix format ATA inverse for optimal initialization")
+            if debug:
+                logger.info("Using BaseATAMatrix format ATA inverse for optimal initialization")
             # Use BaseATAMatrix format approximation directly - same operation as ATA multiply
             led_values_gpu_raw = ata_inverse.multiply_3d(ATb_gpu)
         elif is_dense_ata_format:
-            debug and logger.info("Using dense ATA format inverse for optimal initialization")
+            if debug:
+                logger.info("Using dense ATA format inverse for optimal initialization")
             # Use dense ATA matrix multiply method
             led_values_gpu_raw = ata_inverse.multiply_vector(ATb_gpu)
         elif is_legacy_dia_format:
-            debug and logger.info("Using legacy format ATA inverse for optimal initialization")
+            if debug:
+                logger.info("Using legacy format ATA inverse for optimal initialization")
             # Import here to avoid circular imports
             from .diagonal_ata_matrix import DiagonalATAMatrix
 
@@ -184,7 +192,8 @@ def optimize_frame_led_values(
             # Use legacy format approximation
             led_values_gpu_raw = ata_inverse_legacy.multiply_3d(ATb_gpu)
         else:
-            debug and logger.info("Using dense numpy array ATA inverse for optimal initialization")
+            if debug:
+                logger.info("Using dense numpy array ATA inverse for optimal initialization")
             # Validate dense ATA inverse shape
             if ata_inverse.shape != (3, led_count, led_count):
                 raise ValueError(f"ATA inverse shape {ata_inverse.shape} != (3, {led_count}, {led_count})")
@@ -200,9 +209,11 @@ def optimize_frame_led_values(
         led_values_gpu = led_values_gpu_raw.astype(cp.float32)
         led_values_gpu = cp.clip(led_values_gpu, 0.0, 1.0)
 
-        debug and logger.info("Initialization completed using ATA inverse")
+        if debug:
+            logger.info("Initialization completed using ATA inverse")
 
-    debug and logger.info(f"Initial LED values shape: {led_values_gpu.shape}")
+    if debug:
+        logger.info(f"Initial LED values shape: {led_values_gpu.shape}")
 
     # DEBUG: Compare with alternative ATA inverse if provided
     if compare_ata_inverse is not None:
@@ -276,7 +287,8 @@ def optimize_frame_led_values(
         print("=== END COMPARISON ===\n")
 
     # Step 4: Gradient descent optimization loop
-    debug and logger.info(f"Starting optimization: max_iterations={max_iterations}")
+    if debug:
+        logger.info(f"Starting optimization: max_iterations={max_iterations}")
     step_sizes: Optional[List[float]] = [] if debug else None
     mse_values: Optional[List[float]] = [] if track_mse_per_iteration else None
 
@@ -361,7 +373,8 @@ def optimize_frame_led_values(
         mse_per_iteration=np.array(mse_values) if mse_values else None,
     )
 
-    debug and logger.info(f"Optimization completed in {result.iterations} iterations")
+    if debug:
+        logger.info(f"Optimization completed in {result.iterations} iterations")
 
     return result
 
@@ -382,19 +395,22 @@ def _calculate_atb(
     Returns:
         A^T @ b result (3, led_count) float32 - always normalized to [0,1] equivalent range
     """
-    debug and logger.info("Using mixed tensor format for A^T @ b")
+    if debug:
+        logger.info("Using mixed tensor format for A^T @ b")
 
     # Handle different matrix dtypes appropriately
     if at_matrix.dtype == cp.uint8:
         # For uint8 mixed tensors: use uint8 x uint8 -> fp32 kernel with built-in scaling
         # The kernel applies / (255 * 255) scaling to produce [0,1] equivalent results
         target_gpu = cp.asarray(target_planar)  # Keep as uint8: (3, height, width)
-        debug and logger.info("Using uint8 x uint8 -> fp32 kernel with automatic scaling")
+        if debug:
+            logger.info("Using uint8 x uint8 -> fp32 kernel with automatic scaling")
     else:
         # For float32 mixed tensors: convert target to float32 [0,1] for fp32 x fp32 -> fp32 kernel
         target_float32 = target_planar.astype(np.float32) / 255.0
         target_gpu = cp.asarray(target_float32)
-        debug and logger.info("Using fp32 x fp32 -> fp32 kernel")
+        if debug:
+            logger.info("Using fp32 x fp32 -> fp32 kernel")
 
     # Use planar_output=True to get result directly in (3, led_count) format
     # This eliminates the need for transpose operations and prevents F-contiguous memory layout issues
@@ -522,7 +538,8 @@ def _compute_error_metrics(
         }
 
     except Exception as e:
-        debug and logger.error(f"Error computing metrics: {e}")
+        if debug:
+            logger.error(f"Error computing metrics: {e}")
         return {"mse": float("inf"), "mae": float("inf")}
 
 

@@ -409,7 +409,10 @@ class VideoSource(ContentSource):
         try:
             while not self._stop_reading.is_set() and self._ffmpeg_process:
                 # Read one frame
-                frame_bytes = self._ffmpeg_process.stdout.read(self._frame_size_bytes)
+                stdout = self._ffmpeg_process.stdout
+                if stdout is None:
+                    break
+                frame_bytes = stdout.read(self._frame_size_bytes)
 
                 if len(frame_bytes) != self._frame_size_bytes:
                     # End of video or error

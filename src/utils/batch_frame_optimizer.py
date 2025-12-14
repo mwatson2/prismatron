@@ -115,10 +115,12 @@ def optimize_batch_frames_led_values(
     else:
         raise ValueError(f"Unsupported frame shape {target_frames.shape}, expected (8, 3, H, W) or (8, H, W, 3)")
 
-    debug and logger.info(f"Target batch shape: {target_batch_planar.shape}")
+    if debug:
+        logger.info(f"Target batch shape: {target_batch_planar.shape}")
 
     # Step 1: Calculate A^T @ b for batch using batch operation
-    debug and logger.info("Computing A^T @ b for batch using batch kernel...")
+    if debug:
+        logger.info("Computing A^T @ b for batch using batch kernel...")
 
     # Use batch operation for all 8 frames at once
     # Returns shape (8, led_count, 3) with interleaved=False
@@ -132,7 +134,8 @@ def optimize_batch_frames_led_values(
     ATb_batch = ATb_batch.transpose(0, 2, 1)  # (8, leds, 3) -> (8, 3, leds)
     led_count = ATb_batch.shape[2]
 
-    debug and logger.info(f"A^T @ b batch shape: {ATb_batch.shape}")
+    if debug:
+        logger.info(f"A^T @ b batch shape: {ATb_batch.shape}")
 
     # Step 2: Initialize LED values using ATA inverse
     if ata_inverse.shape != (3, led_count, led_count):
@@ -149,10 +152,12 @@ def optimize_batch_frames_led_values(
             led_values_batch = (initial_values / 255.0).astype(cp.float32)
         else:
             led_values_batch = initial_values.astype(cp.float32)
-        debug and logger.info("Using provided initial values")
+        if debug:
+            logger.info("Using provided initial values")
     else:
         # Use ATA inverse for optimal initialization: x_init = (A^T A)^-1 * A^T b
-        debug and logger.info("Using ATA inverse for optimal batch initialization")
+        if debug:
+            logger.info("Using ATA inverse for optimal batch initialization")
 
         # Transfer to GPU for efficient computation
         ata_inverse_gpu = cp.asarray(ata_inverse)  # Shape: (3, led_count, led_count)
@@ -166,9 +171,11 @@ def optimize_batch_frames_led_values(
         # Clamp to valid range [0, 1]
         led_values_batch = cp.clip(led_values_batch, 0.0, 1.0)
 
-        debug and logger.info("Batch initialization completed using ATA inverse")
+        if debug:
+            logger.info("Batch initialization completed using ATA inverse")
 
-    debug and logger.info(f"Initial LED values batch shape: {led_values_batch.shape}")
+    if debug:
+        logger.info(f"Initial LED values batch shape: {led_values_batch.shape}")
 
     # Step 3: Track MSE if requested
     mse_values: Optional[List[np.ndarray]] = [] if track_mse_per_iteration else None
@@ -179,7 +186,8 @@ def optimize_batch_frames_led_values(
         mse_values.append(initial_mse)  # Shape: (8,)
 
     # Step 4: Batch gradient descent optimization loop
-    debug and logger.info(f"Starting batch optimization: max_iterations={max_iterations}")
+    if debug:
+        logger.info(f"Starting batch optimization: max_iterations={max_iterations}")
     step_sizes: Optional[List[float]] = [] if debug else None
 
     for iteration in range(max_iterations):
@@ -267,7 +275,8 @@ def optimize_batch_frames_led_values(
         mse_per_iteration=cp.asnumpy(cp.stack(mse_values)) if mse_values else None,  # (iterations+1, 8)
     )
 
-    debug and logger.info(f"Batch optimization completed in {result.iterations} iterations")
+    if debug:
+        logger.info(f"Batch optimization completed in {result.iterations} iterations")
 
     return result
 
@@ -358,5 +367,6 @@ def _compute_frame_error_metrics(
         }
 
     except Exception as e:
-        debug and logger.error(f"Error computing metrics: {e}")
+        if debug:
+            logger.error(f"Error computing metrics: {e}")
         return {"mse": float("inf"), "mae": float("inf"), "psnr": 0.0}

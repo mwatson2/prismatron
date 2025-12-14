@@ -960,6 +960,10 @@ class AudioCapture:
             self._recording_buffer = []
 
         try:
+            if output_path is None:
+                logger.error("No output path specified for recording")
+                return
+
             # Concatenate all chunks
             audio_data = np.concatenate(buffer)
 

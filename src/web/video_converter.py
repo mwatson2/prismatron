@@ -469,7 +469,10 @@ class ConversionManager:
                     return False
 
                 # Read one line at a time (blocks until line available or EOF)
-                line = process.stderr.readline()
+                stderr = process.stderr
+                if stderr is None:
+                    break
+                line = stderr.readline()
 
                 # If empty string, process has finished
                 if not line:
