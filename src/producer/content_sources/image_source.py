@@ -20,11 +20,6 @@ from .base import (
     FrameData,
 )
 
-# Type annotations for optional imports
-Image: Optional[Any] = None
-ImageOps: Optional[Any] = None
-cv2: Optional[Any] = None
-
 # Try to import PIL/Pillow for image loading
 try:
     from PIL import Image, ImageOps
@@ -32,8 +27,8 @@ try:
     PILLOW_AVAILABLE = True
 except ImportError:
     PILLOW_AVAILABLE = False
-    Image = None
-    ImageOps = None
+    Image = None  # type: ignore[misc, assignment]
+    ImageOps = None  # type: ignore[misc, assignment]
 
 # Try to import OpenCV as fallback
 try:
@@ -42,7 +37,7 @@ try:
     OPENCV_AVAILABLE = True
 except ImportError:
     OPENCV_AVAILABLE = False
-    cv2 = None
+    cv2 = None  # type: ignore[assignment]
 
 
 logger = logging.getLogger(__name__)
@@ -117,7 +112,7 @@ class ImageSource(ContentSource):
             True if successful, False otherwise
         """
         if Image is None or ImageOps is None:
-            self.set_error("PIL/Pillow not available")
+            self.set_error("PIL/Pillow not available")  # type: ignore[unreachable]
             return False
 
         try:

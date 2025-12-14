@@ -55,13 +55,15 @@ repos:
       #   files: ^(src/|tests/|test_).*\.py$
       #   exclude: ^(tools/)
 
-  # Type checking with mypy (temporarily disabled for initial setup)
-  # - repo: https://github.com/pre-commit/mirrors-mypy
-  #   rev: v1.8.0
-  #   hooks:
-  #     - id: mypy
-  #       additional_dependencies: [types-PyYAML, types-requests, types-setuptools]
-  #       args: [--ignore-missing-imports]
+  # Type checking with mypy
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.14.1
+    hooks:
+      - id: mypy
+        additional_dependencies: [types-PyYAML, types-requests, types-setuptools, types-Pillow]
+        args: [--ignore-missing-imports]
+        files: ^src/.*\.py$
+        exclude: ^(tools/|archive/)
 
   # Security scanning with bandit (temporarily disabled for development)
   # - repo: https://github.com/pycqa/bandit

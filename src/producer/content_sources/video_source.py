@@ -351,7 +351,8 @@ class VideoSource(ContentSource):
             self._ffmpeg_process = ffmpeg.run_async(output_stream, pipe_stdout=True, pipe_stderr=True, quiet=False)
             logger.info("FFmpeg process started successfully")
 
-            logger.info(f"FFmpeg process started with PID: {self._ffmpeg_process.pid}")
+            if self._ffmpeg_process is not None:
+                logger.info(f"FFmpeg process started with PID: {self._ffmpeg_process.pid}")
 
             # Start stderr monitoring thread to capture FFmpeg errors
             logger.debug("Starting stderr monitor thread")
