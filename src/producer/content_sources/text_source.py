@@ -293,7 +293,7 @@ class TextContentSource(ContentSource):
         logger.info(f"Auto font size calculated: {final_size}px for text '{self.text}'")
         return final_size
 
-    def _get_font_for_size(self, size: int) -> ImageFont.ImageFont:
+    def _get_font_for_size(self, size: int) -> Union[ImageFont.FreeTypeFont, ImageFont.ImageFont]:
         """
         Get PIL font object for a specific size.
 
@@ -373,7 +373,7 @@ class TextContentSource(ContentSource):
             logger.warning(f"Failed to load font {self.font_family} size {size}: {e}, using default")
             return ImageFont.load_default()
 
-    def _get_font(self) -> ImageFont.ImageFont:
+    def _get_font(self) -> Union[ImageFont.FreeTypeFont, ImageFont.ImageFont]:
         """
         Get PIL font object.
 

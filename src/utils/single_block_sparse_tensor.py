@@ -950,7 +950,7 @@ class SingleBlockMixedSparseTensor:
         logger.debug(f"Converted to dense patterns: {patterns.shape}")
         return patterns
 
-    def get_block_summary(self) -> Dict[str, Union[float, int, np.ndarray]]:
+    def get_block_summary(self) -> Dict[str, Union[float, int, np.ndarray, Dict[str, float]]]:
         """
         Get comprehensive summary statistics for all blocks.
 
@@ -975,7 +975,7 @@ class SingleBlockMixedSparseTensor:
         values = cp.asnumpy(self.sparse_values)  # (channels, batch_size, block_size, block_size)
 
         # Basic info
-        summary = {
+        summary: Dict[str, Union[float, int, np.ndarray, Dict[str, float]]] = {
             "batch_size": self.batch_size,
             "channels": self.channels,
             "block_size": self.block_size,
