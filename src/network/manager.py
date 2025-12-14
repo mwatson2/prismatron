@@ -140,7 +140,9 @@ class NetworkManager:
             )
             stdout, stderr = await process.communicate()
 
-            result = subprocess.CompletedProcess(cmd, process.returncode or -1, stdout, stderr)
+            result = subprocess.CompletedProcess(
+                cmd, process.returncode if process.returncode is not None else -1, stdout, stderr
+            )
 
             if check and result.returncode != 0:
                 error_msg = stderr.decode().strip() or stdout.decode().strip()

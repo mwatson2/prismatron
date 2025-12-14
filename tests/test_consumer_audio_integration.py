@@ -108,10 +108,11 @@ class TestConsumerAudioIntegration:
         # Create consumer
         consumer = ConsumerProcess(enable_audio_reactive=True, diffusion_patterns_path="test_patterns")
 
-        # Create downbeat event
+        # Create downbeat event with fixed system_time for testing
+        test_system_time = 12345.0
         beat_event = BeatEvent(
             timestamp=2.0,
-            system_time=time.time(),
+            system_time=test_system_time,
             is_downbeat=True,
             bpm=120.0,
             intensity=0.8,
@@ -125,9 +126,9 @@ class TestConsumerAudioIntegration:
         # Should have two update calls - one for beat, one for downbeat
         assert mock_control_instance.update_status.call_count == 2
 
-        # Check downbeat update
+        # Check downbeat update (consumer uses system_time for last_downbeat_time)
         downbeat_update = mock_control_instance.update_status.call_args_list[1][1]
-        assert downbeat_update["last_downbeat_time"] == 2.0
+        assert downbeat_update["last_downbeat_time"] == test_system_time
 
     @patch("src.consumer.consumer.FrameConsumer")
     @patch("src.consumer.consumer.ControlState")
