@@ -120,12 +120,12 @@ class PlaylistItem(BaseModel):
     id: str = Field(..., description="Unique item ID")
     name: str = Field(..., description="Display name")
     type: str = Field(..., description="Item type: image, video, effect")
-    file_path: Optional[str] = Field(None, description="File path for media items")
-    effect_config: Optional[Dict] = Field(None, description="Effect configuration")
-    duration: Optional[float] = Field(None, description="Duration in seconds")
-    thumbnail: Optional[str] = Field(None, description="Base64 thumbnail")
+    file_path: Optional[str] = Field(default=None, description="File path for media items")
+    effect_config: Optional[Dict] = Field(default=None, description="Effect configuration")
+    duration: Optional[float] = Field(default=None, description="Duration in seconds")
+    thumbnail: Optional[str] = Field(default=None, description="Base64 thumbnail")
     created_at: datetime = Field(default_factory=datetime.now)
-    order: int = Field(0, description="Display order")
+    order: int = Field(default=0, description="Display order")
     transition_in: TransitionConfig = Field(default_factory=TransitionConfig, description="Transition in configuration")
     transition_out: TransitionConfig = Field(
         default_factory=TransitionConfig, description="Transition out configuration"
@@ -144,10 +144,10 @@ class PlaylistState(BaseModel):
     """Current playlist state."""
 
     items: List[PlaylistItem] = Field(default_factory=list)
-    current_index: int = Field(0, description="Currently playing item index")
-    is_playing: bool = Field(False, description="Whether playback is active")
-    auto_repeat: bool = Field(True, description="Auto-repeat playlist")
-    shuffle: bool = Field(False, description="Shuffle mode")
+    current_index: int = Field(default=0, description="Currently playing item index")
+    is_playing: bool = Field(default=False, description="Whether playback is active")
+    auto_repeat: bool = Field(default=True, description="Auto-repeat playlist")
+    shuffle: bool = Field(default=False, description="Shuffle mode")
 
     def dict_serializable(self):
         """Return a dictionary with datetime objects converted to ISO strings."""
@@ -159,13 +159,13 @@ class PlaylistState(BaseModel):
 class SystemSettings(BaseModel):
     """System settings model."""
 
-    brightness: float = Field(1.0, ge=0.0, le=1.0, description="Global brightness (0-1)")
-    frame_rate: float = Field(30.0, ge=1.0, le=60.0, description="Target frame rate")
+    brightness: float = Field(default=1.0, ge=0.0, le=1.0, description="Global brightness (0-1)")
+    frame_rate: float = Field(default=30.0, ge=1.0, le=60.0, description="Target frame rate")
     led_count: int = Field(description="Number of LEDs (read from pattern file)")
     display_resolution: Dict[str, int] = Field(default_factory=lambda: {"width": FRAME_WIDTH, "height": FRAME_HEIGHT})
-    auto_start_playlist: bool = Field(True, description="Auto-start playlist on boot")
-    preview_enabled: bool = Field(True, description="Enable live preview")
-    audio_reactive_enabled: bool = Field(False, description="Enable audio reactive effects")
+    auto_start_playlist: bool = Field(default=True, description="Auto-start playlist on boot")
+    preview_enabled: bool = Field(default=True, description="Enable live preview")
+    audio_reactive_enabled: bool = Field(default=False, description="Enable audio reactive effects")
 
 
 def get_system_settings() -> SystemSettings:
