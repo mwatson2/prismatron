@@ -27,7 +27,8 @@ from ..const import FRAME_HEIGHT, FRAME_WIDTH
 # Import sparse optimizer from archive
 archive_path = str(Path(__file__).parent.parent.parent / "archive")
 sys.path.insert(0, archive_path)
-from led_optimizer_sparse import LEDOptimizer, OptimizationResult
+from led_optimizer_sparse import LEDOptimizer as SparseLEDOptimizer
+from led_optimizer_sparse import OptimizationResult
 
 # Import moved to functions to avoid circular dependency
 
@@ -137,7 +138,7 @@ class OptimizationPipeline:
                 enable_performance_timing=True,
             )
         else:
-            self.optimizer = LEDOptimizer(diffusion_patterns_path=self.diffusion_patterns_path)
+            self.optimizer = SparseLEDOptimizer(diffusion_patterns_path=self.diffusion_patterns_path)
 
         self.initialized = False
 
@@ -315,6 +316,7 @@ class OptimizationPipeline:
             reconstructed_rgb[:, :, 2] = reconstructed_b.reshape((FRAME_HEIGHT, FRAME_WIDTH))
         else:
             # Sparse optimizer: use combined block diagonal matrix
+            assert A_csr is not None  # Verified in sparse branch above
             logger.info(f"Sparse reconstruction - Matrix shape: {A_csr.shape}")
 
             # For combined block diagonal matrix, we need to reconstruct differently
