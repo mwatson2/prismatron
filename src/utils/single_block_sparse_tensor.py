@@ -13,7 +13,7 @@ Key features:
 """
 
 import logging
-from typing import Dict, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 import cupy as cp
 import numpy as np
@@ -975,7 +975,7 @@ class SingleBlockMixedSparseTensor:
         values = cp.asnumpy(self.sparse_values)  # (channels, batch_size, block_size, block_size)
 
         # Basic info
-        summary: Dict[str, Union[float, int, np.ndarray, Dict[str, float]]] = {
+        summary: Dict[str, Any] = {
             "batch_size": self.batch_size,
             "channels": self.channels,
             "block_size": self.block_size,

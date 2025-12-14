@@ -452,8 +452,8 @@ class DiagonalATAMatrix(BaseATAMatrix):
         use_custom_kernel: bool = True,
         optimized_kernel: bool = False,
         output_dtype: Optional[cupy.dtype] = None,
-        use_pure_fp16: bool = False,
         debug_logging: bool = False,
+        use_pure_fp16: bool = False,
     ) -> np.ndarray:
         """
         Perform 3D DIA matrix-vector multiplication: (A^T)A @ led_values.

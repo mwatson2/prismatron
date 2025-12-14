@@ -119,7 +119,7 @@ class EffectSource(ContentSource):
         """
         return self.duration if hasattr(self, "duration") else 30.0
 
-    def get_frame_at_time(self, time_sec: float) -> Optional[np.ndarray]:
+    def get_frame_at_time(self, time_sec: float) -> Optional[np.ndarray]:  # type: ignore[override]
         """Get frame at specific time.
 
         Args:
@@ -303,7 +303,7 @@ class EffectSource(ContentSource):
         # Set effect with default configuration
         self.set_effect(effect_id, duration=self.effect_duration)
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> Dict[str, Any]:  # type: ignore[override]
         """Get current status of the effect source.
 
         Returns:

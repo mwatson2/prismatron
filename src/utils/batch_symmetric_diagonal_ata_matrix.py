@@ -736,6 +736,8 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
     def multiply_3d(
         self,
         led_values: cupy.ndarray,
+        use_custom_kernel: bool = True,
+        optimized_kernel: bool = False,
         output_dtype: Optional[cupy.dtype] = None,
         debug_logging: bool = False,
     ) -> cupy.ndarray:
@@ -744,6 +746,8 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
 
         Args:
             led_values: LED values array (3, leds)
+            use_custom_kernel: Ignored (batch class uses WMMA kernel)
+            optimized_kernel: Ignored (batch class uses WMMA kernel)
             output_dtype: Desired output data type
             debug_logging: Enable detailed logging
 
@@ -772,6 +776,8 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
     def g_ata_g_3d(
         self,
         gradient: cupy.ndarray,
+        use_custom_kernel: bool = True,
+        optimized_kernel: bool = False,
         output_dtype: Optional[cupy.dtype] = None,
     ) -> cupy.ndarray:
         """
@@ -779,6 +785,8 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
 
         Args:
             gradient: Gradient array (3, leds)
+            use_custom_kernel: Ignored (batch class uses WMMA kernel)
+            optimized_kernel: Ignored (batch class uses WMMA kernel)
             output_dtype: Desired output data type
 
         Returns:
