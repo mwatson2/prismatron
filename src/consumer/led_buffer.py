@@ -273,7 +273,7 @@ class LEDBuffer:
                 # Allocate new arrays
                 new_led_arrays = np.zeros((new_size, self.led_count, 3), dtype=np.uint8)
                 new_timestamps = np.zeros(new_size, dtype=np.float64)
-                new_metadata = [None] * new_size
+                new_metadata: List[Optional[Dict[str, Any]]] = [None] * new_size
 
                 # Replace arrays
                 self.led_arrays = new_led_arrays

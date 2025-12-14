@@ -625,6 +625,7 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
 
         # Call kernel with appropriate signature
         if self.use_experimental_kernel and BATCH8_EXPERIMENTAL_WMMA_KERNEL_AVAILABLE:
+            assert self.wmma_kernel_8frame_experimental is not None  # Initialized above
             result_gpu = self.wmma_kernel_8frame_experimental(
                 self.block_data_gpu,
                 led_values_batch,
@@ -633,6 +634,7 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
                 self.led_count,  # Use led_count for experimental kernel
             )
         elif BATCH8_CORRECTED_WMMA_KERNEL_AVAILABLE:
+            assert self.wmma_kernel_8frame_basic is not None  # Initialized above
             result_gpu = self.wmma_kernel_8frame_basic(
                 self.block_data_gpu,
                 led_values_batch,
@@ -641,6 +643,7 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
                 self.led_count,  # Use led_count for corrected kernel
             )
         else:
+            assert self.wmma_kernel_8frame_basic is not None  # Initialized above
             result_gpu = self.wmma_kernel_8frame_basic(
                 self.block_data_gpu,
                 self.block_offsets_upper,
