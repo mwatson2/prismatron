@@ -426,7 +426,7 @@ class DiffusionPatternManager:
         self._led_spatial_mapping = data["led_spatial_mapping"].item()
 
         # Load sparse matrices
-        self._sparse_matrices = {}
+        sparse_matrices: Dict[str, sp.spmatrix] = {}
         matrix_names = ["A_r", "A_g", "A_b", "A_combined"]
 
         for name in matrix_names:
@@ -439,7 +439,8 @@ class DiffusionPatternManager:
                     ),
                     shape=tuple(data[f"sparse_{name}_shape"]),
                 )
-                self._sparse_matrices[name] = matrix
+                sparse_matrices[name] = matrix
+        self._sparse_matrices = sparse_matrices
 
         # Load dense A^T @ A
         if "dense_ata" in data:

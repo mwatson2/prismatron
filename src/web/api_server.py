@@ -585,7 +585,7 @@ def update_playlists_for_file_operation(
                 if playlist_state and playlist_state.items:
                     live_items_affected = 0
 
-                    if operation == "rename":
+                    if operation == "rename" and new_filename is not None:
                         # Update file_path and name in live playlist items
                         for item in playlist_state.items:
                             if item.type in ["image", "video"] and item.file_path:

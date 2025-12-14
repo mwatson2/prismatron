@@ -272,16 +272,15 @@ class PreviewSink:
             os.ftruncate(fd, self.shared_memory_size)
 
             # Create memory map
-            self.shared_memory_map = mmap.mmap(fd, self.shared_memory_size)
+            shared_memory_map = mmap.mmap(fd, self.shared_memory_size)
+            self.shared_memory_map = shared_memory_map
 
             # Initialize header
             self._write_header(timestamp=time.time(), frame_counter=0, led_count=self.led_count, rendering_index=-1)
 
             # Zero out LED data section
             led_data_offset = 64
-            self.shared_memory_map[led_data_offset : led_data_offset + self.led_data_size] = (
-                b"\x00" * self.led_data_size
-            )
+            shared_memory_map[led_data_offset : led_data_offset + self.led_data_size] = b"\x00" * self.led_data_size
 
             # Initialize statistics
             self._write_statistics()

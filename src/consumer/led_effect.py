@@ -478,13 +478,14 @@ class TemplateEffect(LedEffect):
                     max_channel = np.max(rgb_normalized)
                     if max_channel > 0:
                         # Scale to make max channel = 1.0 (preserves hue, maximizes brightness)
-                        self.thieved_color = (rgb_normalized / max_channel) * 255.0
+                        color = (rgb_normalized / max_channel) * 255.0
                     else:
-                        self.thieved_color = np.array([255.0, 255.0, 255.0])
+                        color = np.array([255.0, 255.0, 255.0])
+                    self.thieved_color = color
 
                     logger.info(
-                        f"Color thieving: extracted color RGB=({self.thieved_color[0]:.1f}, "
-                        f"{self.thieved_color[1]:.1f}, {self.thieved_color[2]:.1f}), "
+                        f"Color thieving: extracted color RGB=({color[0]:.1f}, "
+                        f"{color[1]:.1f}, {color[2]:.1f}), "
                         f"original_luminance={luminance:.3f}"
                     )
             else:

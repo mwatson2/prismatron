@@ -1946,6 +1946,10 @@ class FrameRenderer:
         Returns:
             LED values in physical order, shape (led_count, 3)
         """
+        # If no LED ordering available, return values unchanged
+        if self.led_ordering is None:
+            return led_values
+
         # LED ordering should have been validated at load time
         # led_ordering maps spatial_index -> physical_led_id
         # We want to place spatial_led_values[spatial_idx] at physical_led_values[physical_led_id]

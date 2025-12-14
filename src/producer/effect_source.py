@@ -177,8 +177,9 @@ class EffectSource(ContentSource):
             self.start_time = 0.0  # Will be set when first frame is requested
 
             effect_info = EffectRegistry.get_effect(effect_id)
+            effect_name = effect_info["name"] if effect_info else effect_id
             self.logger.info(
-                f"Set effect: {effect_info['name']} ({effect_id}) for {duration}s, effect object: {type(effect).__name__}"
+                f"Set effect: {effect_name} ({effect_id}) for {duration}s, effect object: {type(effect).__name__}"
             )
             return True
 
@@ -437,11 +438,12 @@ class EffectSourceManager:
                 self.logger.error(f"Effect not found: {effect_id}")
                 return False
 
+            effect_info = EffectRegistry.get_effect(effect_id)
             playlist_entry = {
                 "effect_id": effect_id,
                 "config": config or {},
                 "duration": duration,
-                "name": name or EffectRegistry.get_effect(effect_id)["name"],
+                "name": name or (effect_info["name"] if effect_info else effect_id),
             }
 
             self.playlist.append(playlist_entry)

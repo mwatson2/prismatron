@@ -401,7 +401,8 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
 
         # Step 3: Initialize CORRECTED 5D block storage
         block_shape = (self.channels, max_block_diag, self.led_blocks, self.block_size, self.block_size)
-        self.block_data_gpu = cupy.zeros(block_shape, dtype=self.compute_dtype)
+        block_data_gpu = cupy.zeros(block_shape, dtype=self.compute_dtype)
+        self.block_data_gpu = block_data_gpu
 
         print(f"    5D storage shape: {block_shape}")
 
@@ -429,7 +430,7 @@ class BatchSymmetricDiagonalATAMatrix(BaseATAMatrix):
                         block = dense_matrix[row_start:row_end, col_start:col_end].copy()
 
                         # Store block at CORRECT location in 5D storage
-                        self.block_data_gpu[channel, block_diag_idx, block_row, :, :] = cupy.asarray(
+                        block_data_gpu[channel, block_diag_idx, block_row, :, :] = cupy.asarray(
                             block, dtype=self.compute_dtype
                         )
                         blocks_stored += 1

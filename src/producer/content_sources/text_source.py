@@ -274,7 +274,7 @@ class TextContentSource(ContentSource):
                         max_size = test_size - 1
                 else:
                     # For static/fade: check both width and height constraints
-                    if text_width <= target_width and text_height <= target_height:
+                    if target_width is not None and text_width <= target_width and text_height <= target_height:
                         best_size = test_size
                         min_size = test_size + 1
                     else:

@@ -1147,11 +1147,14 @@ class LEDOptimizer:
 
         # Convert result back to tensor form
         led_count = self._actual_led_count
-        self._ATb_gpu[:, 0] = ATb_combined[:led_count]  # R LEDs
-        self._ATb_gpu[:, 1] = ATb_combined[led_count : 2 * led_count]  # G LEDs
-        self._ATb_gpu[:, 2] = ATb_combined[2 * led_count :]  # B LEDs
+        ATb_gpu = self._ATb_gpu
+        if ATb_gpu is None:
+            raise RuntimeError("GPU buffers not initialized - call _initialize_gpu_buffers first")
+        ATb_gpu[:, 0] = ATb_combined[:led_count]  # R LEDs
+        ATb_gpu[:, 1] = ATb_combined[led_count : 2 * led_count]  # G LEDs
+        ATb_gpu[:, 2] = ATb_combined[2 * led_count :]  # B LEDs
 
-        return self._ATb_gpu
+        return ATb_gpu
 
     def _calculate_atb_mixed_tensor(self, target_frame: np.ndarray) -> cp.ndarray:
         """
@@ -1191,11 +1194,14 @@ class LEDOptimizer:
         self.timing and self.timing.stop("ATb_mixed_tensor_3d_kernel")
 
         # Store in the ATb buffer
-        self._ATb_gpu[:] = result
+        ATb_gpu = self._ATb_gpu
+        if ATb_gpu is None:
+            raise RuntimeError("GPU buffers not initialized - call _initialize_gpu_buffers first")
+        ATb_gpu[:] = result
 
-        logger.debug(f"ATb result shape: {self._ATb_gpu.shape}, sample: {self._ATb_gpu[:3].get()}")
+        logger.debug(f"ATb result shape: {ATb_gpu.shape}, sample: {ATb_gpu[:3].get()}")
 
-        return self._ATb_gpu
+        return ATb_gpu
 
     def _solve_dense_gradient_descent(self, atb: cp.ndarray, max_iterations: Optional[int]) -> Tuple[cp.ndarray, int]:
         """

@@ -344,7 +344,7 @@ class DiagonalATAMatrix(BaseATAMatrix):
 
         print("  Unified diagonal structure:")
         print(f"    Non-empty diagonal bands (k): {self.k}")
-        if self.k > 0:
+        if self.k is not None and self.k > 0 and self.dia_offsets is not None:
             print(f"    Offset range: [{self.dia_offsets[0]}, {self.dia_offsets[-1]}]")
 
         # Create unified 3D DIA data structure: (channels, k, leds)
@@ -408,11 +408,12 @@ class DiagonalATAMatrix(BaseATAMatrix):
 
         # Compute 3D DIA sparsity
         dia_3d_nnz = np.count_nonzero(self.dia_data_cpu)
-        dia_3d_elements = self.channels * self.k * self.led_count
-        dia_3d_sparsity = dia_3d_nnz / dia_3d_elements * 100
+        k_val = self.k or 0
+        dia_3d_elements = self.channels * k_val * self.led_count
+        dia_3d_sparsity = dia_3d_nnz / dia_3d_elements * 100 if dia_3d_elements > 0 else 0.0
 
         # Compute bandwidth from 3D DIA offsets
-        self.bandwidth = int(np.max(np.abs(self.dia_offsets))) if self.k > 0 else 0
+        self.bandwidth = int(np.max(np.abs(self.dia_offsets))) if k_val > 0 and self.dia_offsets is not None else 0
 
         print(f"  3D DIA structure: shape {self.dia_data_cpu.shape}")
         print(f"  3D DIA nnz: {dia_3d_nnz}, sparsity: {dia_3d_sparsity:.3f}%")
@@ -645,16 +646,20 @@ class DiagonalATAMatrix(BaseATAMatrix):
         """
         result_gpu = cupy.zeros_like(led_values_gpu)  # Shape: (channels, leds)
 
-        if self.k == 0:
+        if self.k == 0 or self.dia_offsets is None or self.dia_data_gpu is None:
             return result_gpu
+
+        # Local references for type narrowing
+        dia_offsets = self.dia_offsets
+        dia_data_gpu = self.dia_data_gpu
 
         # Unified 3D DIA multiplication - process all channels in single operation
         # For each diagonal band k with offset dia_offsets[k]
         for band_idx in range(self.k):
-            offset = int(self.dia_offsets[band_idx])  # Diagonal offset
+            offset = int(dia_offsets[band_idx])  # Diagonal offset
 
             # Get diagonal data for all channels: shape (channels, leds)
-            band_data_all_channels = self.dia_data_gpu[:, band_idx, :]  # Shape: (channels, leds)
+            band_data_all_channels = dia_data_gpu[:, band_idx, :]  # Shape: (channels, leds)
 
             # DIA format: band_data[c,i] contains A[c,i,i+offset] for valid indices
             # Matrix multiplication: result[c,i] += A[c,i,i+offset] * led_values[c,i+offset]

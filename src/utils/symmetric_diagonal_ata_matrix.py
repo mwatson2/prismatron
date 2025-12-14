@@ -469,15 +469,19 @@ class SymmetricDiagonalATAMatrix(BaseATAMatrix):
         """
         result_gpu = cupy.zeros_like(led_values_gpu)  # Shape: (channels, leds)
 
-        if self.k_upper == 0:
+        if self.k_upper == 0 or self.dia_offsets_upper is None or self.dia_data_gpu is None:
             return result_gpu
+
+        # Local references for type narrowing
+        dia_offsets_upper = self.dia_offsets_upper
+        dia_data_gpu = self.dia_data_gpu
 
         # Symmetric 3D DIA multiplication - process all channels
         for band_idx in range(self.k_upper):
-            offset = int(self.dia_offsets_upper[band_idx])  # Non-negative offset
+            offset = int(dia_offsets_upper[band_idx])  # Non-negative offset
 
             # Get diagonal data for all channels: shape (channels, leds)
-            band_data_all_channels = self.dia_data_gpu[:, band_idx, :]  # Shape: (channels, leds)
+            band_data_all_channels = dia_data_gpu[:, band_idx, :]  # Shape: (channels, leds)
 
             # DIA format: band_data[j] contains A[i,j] where i = j - offset
 
