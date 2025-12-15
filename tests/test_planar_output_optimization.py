@@ -13,6 +13,12 @@ import numpy as np
 import pytest
 from PIL import Image
 
+# Skip all tests if pattern files not available (CI environment)
+PATTERNS_DIR = Path("/mnt/prismatron/patterns")
+pytestmark = pytest.mark.skipif(
+    not PATTERNS_DIR.exists(), reason="Production pattern files not available (CI environment)"
+)
+
 cp = pytest.importorskip("cupy")
 
 sys.path.append(str(Path(__file__).parent.parent / "src"))

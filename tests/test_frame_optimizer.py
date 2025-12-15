@@ -14,6 +14,12 @@ from typing import Tuple
 import numpy as np
 import pytest
 
+# Skip all tests if pattern files not available (CI environment)
+PATTERNS_DIR = Path("/mnt/prismatron/patterns")
+pytestmark = pytest.mark.skipif(
+    not PATTERNS_DIR.exists(), reason="Production pattern files not available (CI environment)"
+)
+
 cp = pytest.importorskip("cupy")
 import scipy.sparse as sp
 

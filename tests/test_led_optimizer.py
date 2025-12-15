@@ -18,6 +18,12 @@ import pytest
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Skip all tests if pattern files not available (CI environment)
+PATTERNS_DIR = Path("/mnt/prismatron/patterns")
+pytestmark = pytest.mark.skipif(
+    not PATTERNS_DIR.exists(), reason="Production pattern files not available (CI environment)"
+)
+
 pytest.importorskip("cupy")
 
 from src.const import FRAME_HEIGHT, FRAME_WIDTH

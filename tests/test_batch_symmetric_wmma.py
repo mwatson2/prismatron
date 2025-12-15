@@ -12,6 +12,9 @@ import sys
 import numpy as np
 import pytest
 
+# Mark all tests in this module as GPU tests (require specific CUDA version for precompiled kernels)
+pytestmark = pytest.mark.gpu
+
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
