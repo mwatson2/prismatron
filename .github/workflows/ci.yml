@@ -45,9 +45,20 @@ jobs:
           grep -v "^jetson-stats" requirements.txt > requirements-ci.txt
           pip install -r requirements-ci.txt
 
+      - name: Compile CUDA kernels for this GPU
+        run: |
+          cd src/utils/kernels
+          # Detect GPU architecture and recompile kernels
+          GPU_ARCH=$(python3 -c "import cupy; d = cupy.cuda.Device(); print(f'sm_{d.compute_capability[0]}{d.compute_capability[1]}')")
+          echo "Detected GPU architecture: $GPU_ARCH"
+          # Update Makefile arch and recompile
+          sed -i "s/-arch=sm_87/-arch=$GPU_ARCH/" Makefile
+          make clean && make all
+          make test
+
       - name: Run tests with coverage
         run: |
-          pytest tests/ -v -m "not gpu and not hardware" --ignore=tests/integration/ --cov=src --cov-report=xml
+          pytest tests/ -v -m "not hardware" --ignore=tests/integration/ --cov=src --cov-report=xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
