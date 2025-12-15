@@ -24,7 +24,7 @@ jobs:
         run: pre-commit run --all-files
 
   test:
-    runs-on: runs-on: codebuild-PrimatronTestRunner-${{ github.run_id }}-${{ github.run_attempt }}
+    runs-on: codebuild-PrimatronTestRunner-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
 
