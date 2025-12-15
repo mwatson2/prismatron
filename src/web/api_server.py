@@ -11,7 +11,7 @@ import logging
 import os
 import random
 import shutil
-import subprocess
+import subprocess  # nosec B404 - subprocess used for ffmpeg with hardcoded commands
 
 # Add src to path for imports
 import sys
@@ -188,7 +188,7 @@ def get_actual_led_count() -> int:
 def generate_random_led_transition() -> TransitionConfig:
     """Generate a random LED transition with 1s duration and default parameters."""
     led_transitions = ["ledblur", "ledfade", "ledrandom"]
-    transition_type = random.choice(led_transitions)
+    transition_type = random.choice(led_transitions)  # nosec B311 - not used for security
 
     # LED transitions use default parameters for the specified duration
     return TransitionConfig(type=transition_type, parameters={"duration": 1.0})  # 1 second duration as requested
@@ -1591,7 +1591,7 @@ async def preview_broadcast_task():
 
                     # Try to read from shared memory created by PreviewSink
                     try:
-                        shm_fd = os.open("/dev/shm/prismatron_preview", os.O_RDONLY)
+                        shm_fd = os.open("/dev/shm/prismatron_preview", os.O_RDONLY)  # nosec B108
 
                         # Read full header (64 bytes): timestamp(8) + frame_counter(8) + led_count(4) + padding(44)
                         header_data = os.read(shm_fd, 64)
@@ -1679,12 +1679,12 @@ async def preview_broadcast_task():
 
                         os.close(shm_fd)
                     except FileNotFoundError:
-                        pass  # PreviewSink shared memory not found
+                        pass  # nosec B110 - graceful fallback when shm not available
                     except Exception:
-                        pass  # Other errors accessing shared memory
+                        pass  # nosec B110 - graceful fallback for shm errors
 
                 except Exception:
-                    pass  # Failed to access preview shared memory
+                    pass  # nosec B110 - graceful fallback for preview access
 
                 # Time: shared memory read complete
                 shm_end = time.time()
@@ -1962,7 +1962,7 @@ async def get_system_status():
         import os
         import struct
 
-        shm_fd = os.open("/dev/shm/prismatron_preview", os.O_RDONLY)
+        shm_fd = os.open("/dev/shm/prismatron_preview", os.O_RDONLY)  # nosec B108
         # Read statistics from shared memory (last 1024 bytes)
         file_size = os.lseek(shm_fd, 0, os.SEEK_END)
         stats_offset = file_size - 1024
@@ -1980,7 +1980,7 @@ async def get_system_status():
 
         os.close(shm_fd)
     except Exception:
-        pass  # Use default frame_rate if shared memory not available
+        pass  # nosec B110 - graceful fallback to default frame_rate
 
     # Get rendering_index, renderer state, optimization_iterations, and build-drop state from control state
     rendering_index = -1
@@ -4222,7 +4222,7 @@ async def get_led_preview():
 
             # Try to read from shared memory created by PreviewSink
             try:
-                shm_fd = os.open("/dev/shm/prismatron_preview", os.O_RDONLY)
+                shm_fd = os.open("/dev/shm/prismatron_preview", os.O_RDONLY)  # nosec B108
 
                 # Read full header (64 bytes): timestamp(8) + frame_counter(8) + led_count(4) + padding(44)
                 header_data = os.read(shm_fd, 64)
@@ -4542,11 +4542,20 @@ async def load_playlist(filename: str):
     global current_playlist_file
 
     try:
-        # Validate filename
+        # Sanitize filename - remove path separators to prevent traversal attacks
+        filename = filename.replace("/", "").replace("\\", "").replace("..", "")
+        if not filename:
+            raise HTTPException(status_code=400, detail="Invalid filename")
+
         if not filename.endswith(".json"):
             filename += ".json"
 
         file_path = PLAYLISTS_DIR / filename
+
+        # Verify resolved path is within PLAYLISTS_DIR (defense in depth)
+        if not file_path.resolve().is_relative_to(PLAYLISTS_DIR.resolve()):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+
         if not file_path.exists():
             raise HTTPException(status_code=404, detail="Playlist not found")
 
@@ -4768,11 +4777,20 @@ async def save_playlist(request: SavePlaylistRequest):
 async def delete_playlist(filename: str):
     """Delete a saved playlist file."""
     try:
-        # Validate filename
+        # Sanitize filename - remove path separators to prevent traversal attacks
+        filename = filename.replace("/", "").replace("\\", "").replace("..", "")
+        if not filename:
+            raise HTTPException(status_code=400, detail="Invalid filename")
+
         if not filename.endswith(".json"):
             filename += ".json"
 
         file_path = PLAYLISTS_DIR / filename
+
+        # Verify resolved path is within PLAYLISTS_DIR (defense in depth)
+        if not file_path.resolve().is_relative_to(PLAYLISTS_DIR.resolve()):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+
         if not file_path.exists():
             raise HTTPException(status_code=404, detail="Playlist not found")
 
@@ -4840,7 +4858,7 @@ async def catch_all(path: str):
 
 
 def run_server(
-    host: str = "0.0.0.0",
+    host: str = "0.0.0.0",  # nosec B104 - intentional for LAN access
     port: int = 8000,
     debug: bool = False,
     patterns_path: Optional[str] = None,
@@ -4915,7 +4933,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Prismatron Web API Server")
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")  # nosec B104
     parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
 
