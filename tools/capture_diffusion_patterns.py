@@ -32,7 +32,7 @@ Usage:
 import argparse
 import json
 import logging
-import subprocess
+import subprocess  # nosec B404 - v4l2-ctl with hardcoded args
 import sys
 import tempfile
 import time
@@ -301,7 +301,7 @@ class CameraCapture:
         success_count = 0
         for cmd in commands:
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)  # nosec B603
                 if result.returncode == 0:
                     setting = cmd[4]  # The control=value part
                     logger.debug(f"✓ Set {setting}")
@@ -320,7 +320,7 @@ class CameraCapture:
 
         # Verify critical settings
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B603 B607 - v4l2-ctl with hardcoded args
                 ["v4l2-ctl", "-d", device_path, "--list-ctrls"], capture_output=True, text=True, timeout=10
             )
             if result.returncode == 0:

@@ -905,7 +905,9 @@ class LEDGainCalibrator:
         # Test 10 random LEDs from the test set
         import random
 
-        validation_leds = random.sample(self.test_led_indices, min(10, len(self.test_led_indices)))
+        validation_leds = random.sample(
+            self.test_led_indices, min(10, len(self.test_led_indices))
+        )  # nosec B311 - not crypto
 
         saturated_count = 0
         max_pixel_values = []

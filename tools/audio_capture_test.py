@@ -470,7 +470,7 @@ if __name__ == "__main__":
 
     # Run the 30-second recording test
     test_instance = TestAudioRecordingAndVisualization()
-    tmp_dir = Path("/tmp/audio_test")
+    tmp_dir = Path("/tmp/audio_test")  # nosec B108 - test output
     tmp_dir.mkdir(exist_ok=True)
 
     logger.info("Running 30-second audio capture test...")

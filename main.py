@@ -283,7 +283,7 @@ class ProcessManager:
 
                     # Start server (blocks until shutdown)
                     run_server(
-                        host=self.config.get("web_host", "0.0.0.0"),
+                        host=self.config.get("web_host", "0.0.0.0"),  # nosec B104 - intentional LAN access
                         port=self.config.get("web_port", 8000),
                         debug=self.config.get("debug", False),
                         patterns_path=self.config.get("diffusion_patterns_path"),
@@ -604,7 +604,9 @@ class ProcessManager:
             # Use full path for reboot command
             # Requires sudoers rule: mark ALL=(ALL) NOPASSWD: /sbin/reboot
             logger.info("Executing sudo /sbin/reboot...")
-            os.system("sudo /sbin/reboot")
+            import subprocess  # nosec B404
+
+            subprocess.run(["/usr/bin/sudo", "/sbin/reboot"], check=False)  # nosec B603 B607
         except Exception as e:
             logger.error(f"Failed to reboot system: {e}")
 
@@ -630,7 +632,7 @@ class ProcessManager:
         try:
             import os
 
-            socket_path = "/tmp/prismatron_playlist.sock"
+            socket_path = "/tmp/prismatron_playlist.sock"  # nosec B108 - IPC socket
             if os.path.exists(socket_path):
                 os.unlink(socket_path)
                 logger.info("Cleaned up orphaned playlist socket")
@@ -683,8 +685,8 @@ def setup_logging(debug: bool = False) -> None:
     try:
         with open(log_file, "w") as f:
             f.write("")  # Clear the file
-    except Exception:
-        pass  # If we can't clear it, continue anyway
+    except Exception:  # nosec B110 - graceful fallback
+        pass
 
     # Create custom formatter with app time
     formatter = create_app_time_formatter()
@@ -743,18 +745,18 @@ def emergency_cleanup() -> None:
         orphaned_memory.close()
         orphaned_memory.unlink()
         # Removed print to make emergency cleanup silent
-    except:
-        pass  # Silently handle any errors during emergency cleanup
+    except Exception:  # nosec B110 - emergency cleanup
+        pass
 
     # Clean up socket
     try:
         import os
 
-        socket_path = "/tmp/prismatron_playlist.sock"
+        socket_path = "/tmp/prismatron_playlist.sock"  # nosec B108 - IPC socket
         if os.path.exists(socket_path):
             os.unlink(socket_path)
-    except:
-        pass  # Silently handle any errors
+    except Exception:  # nosec B110 - emergency cleanup
+        pass
 
 
 def load_led_count_from_patterns(patterns_path: str) -> int:
@@ -871,7 +873,9 @@ def main():
     parser.add_argument(
         "--debug", action="store_true", default=file_config.get("debug", False), help="Enable debug logging"
     )
-    parser.add_argument("--web-host", default=file_config.get("web_host", "0.0.0.0"), help="Web server host")
+    parser.add_argument(
+        "--web-host", default=file_config.get("web_host", "0.0.0.0"), help="Web server host"  # nosec B104
+    )
     parser.add_argument("--web-port", type=int, default=file_config.get("web_port", 8080), help="Web server port")
     # Handle both wled_hosts (list) and wled_host (single) for backward compatibility
     wled_default = file_config.get("wled_hosts")

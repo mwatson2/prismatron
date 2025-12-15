@@ -19,7 +19,7 @@ import logging
 import math
 import os
 import signal
-import subprocess
+import subprocess  # nosec B404 - ffplay with hardcoded args
 import sys
 import time
 from pathlib import Path
@@ -96,7 +96,7 @@ def configure_camera_with_v4l2(
     success_count = 0
     for cmd in commands:
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)  # nosec B603
             if result.returncode == 0:
                 setting = cmd[4]  # The control=value part
                 print(f"✓ Set {setting}")
@@ -116,7 +116,7 @@ def configure_camera_with_v4l2(
 
     # Verify settings
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603 B607 - v4l2-ctl with hardcoded args
             ["v4l2-ctl", "-d", device_path, "--list-ctrls"], capture_output=True, text=True, timeout=10
         )
         if result.returncode == 0:
