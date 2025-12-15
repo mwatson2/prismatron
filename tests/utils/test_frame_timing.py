@@ -225,29 +225,86 @@ class TestFrameTimingData:
 # =============================================================================
 
 
-class TestTimingLogger:
-    """Test TimingLogger class if available."""
+class TestFrameTimingLogger:
+    """Test FrameTimingLogger class."""
 
     def test_timing_logger_import(self):
-        """Test that TimingLogger can be imported."""
-        try:
-            from src.utils.frame_timing import TimingLogger
+        """Test that FrameTimingLogger can be imported."""
+        from src.utils.frame_timing import FrameTimingLogger
 
-            assert TimingLogger is not None
-        except ImportError:
-            pytest.skip("TimingLogger not available")
+        assert FrameTimingLogger is not None
 
     def test_timing_logger_initialization(self, tmp_path):
-        """Test TimingLogger initialization."""
-        try:
-            from src.utils.frame_timing import TimingLogger
+        """Test FrameTimingLogger initialization."""
+        from src.utils.frame_timing import FrameTimingLogger
 
-            log_file = tmp_path / "timing.csv"
-            logger = TimingLogger(str(log_file))
+        log_file = tmp_path / "timing.csv"
+        logger = FrameTimingLogger(str(log_file))
 
-            assert logger is not None
-        except ImportError:
-            pytest.skip("TimingLogger not available")
-        except Exception:
-            # May not be able to create without proper setup
-            pass
+        assert logger is not None
+        assert logger.log_file_path == log_file
+
+    def test_start_logging_creates_file(self, tmp_path):
+        """Test that start_logging creates the CSV file with header."""
+        from src.utils.frame_timing import FrameTimingData, FrameTimingLogger
+
+        log_file = tmp_path / "timing.csv"
+        logger = FrameTimingLogger(str(log_file))
+
+        result = logger.start_logging()
+
+        assert result is True
+        assert log_file.exists()
+
+        # Verify header was written
+        with open(log_file) as f:
+            header = f.readline().strip()
+            expected_header = ",".join(FrameTimingData.csv_header())
+            assert header == expected_header
+
+        logger.stop_logging()
+
+    def test_log_frame_writes_data(self, tmp_path):
+        """Test that log_frame writes timing data to CSV."""
+        from src.utils.frame_timing import FrameTimingData, FrameTimingLogger
+
+        log_file = tmp_path / "timing.csv"
+
+        with FrameTimingLogger(str(log_file)) as logger:
+            timing = FrameTimingData(frame_index=42, plugin_timestamp=1.5)
+            timing.mark_write_to_buffer()
+            logger.log_frame(timing)
+
+        # Verify data was written
+        with open(log_file) as f:
+            lines = f.readlines()
+            assert len(lines) == 2  # Header + 1 data row
+            data_row = lines[1].strip().split(",")
+            assert data_row[0] == "42"  # frame_index
+
+    def test_context_manager(self, tmp_path):
+        """Test FrameTimingLogger as context manager."""
+        from src.utils.frame_timing import FrameTimingLogger
+
+        log_file = tmp_path / "timing.csv"
+
+        with FrameTimingLogger(str(log_file)) as logger:
+            assert logger._file_handle is not None
+
+        # After exiting context, file should be closed
+        assert logger._file_handle is None
+
+    def test_stop_logging_closes_file(self, tmp_path):
+        """Test that stop_logging properly closes the file."""
+        from src.utils.frame_timing import FrameTimingLogger
+
+        log_file = tmp_path / "timing.csv"
+        logger = FrameTimingLogger(str(log_file))
+        logger.start_logging()
+
+        assert logger._file_handle is not None
+
+        logger.stop_logging()
+
+        assert logger._file_handle is None
+        assert logger._csv_writer is None

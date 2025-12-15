@@ -41,6 +41,7 @@ jobs:
           pip install networkx sympy matplotlib psutil structlog
           pip install pyserial requests jinja2
           pip install fastapi uvicorn websockets pydantic python-multipart aiofiles httpx
+          pip install cupy-cuda12x
 
       - name: Run tests with coverage
         run: |
