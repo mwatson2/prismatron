@@ -52,7 +52,7 @@ jobs:
           device = cupy.cuda.Device()
           cap = device.compute_capability
           arch = f'sm_{cap[0]}{cap[1]}'
-          print(f'GPU: {device.name}, Compute Capability: {cap[0]}.{cap[1]}, Architecture: {arch}')
+          print(f'GPU Compute Capability: {cap[0]}.{cap[1]}, Architecture: {arch}')
 
           # Check precompiled kernels exist for this architecture
           import os
