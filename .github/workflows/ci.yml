@@ -45,20 +45,24 @@ jobs:
           grep -v "^jetson-stats" requirements.txt > requirements-ci.txt
           pip install -r requirements-ci.txt
 
-      - name: Compile CUDA kernels for this GPU
+      - name: Compile CUDA kernels for this GPU (if nvcc available)
         run: |
-          cd src/utils/kernels
-          # Detect GPU architecture and recompile kernels
-          GPU_ARCH=$(python3 -c "import cupy; d = cupy.cuda.Device(); print(f'sm_{d.compute_capability[0]}{d.compute_capability[1]}')")
-          echo "Detected GPU architecture: $GPU_ARCH"
-          # Update Makefile arch and recompile
-          sed -i "s/-arch=sm_87/-arch=$GPU_ARCH/" Makefile
-          make clean && make all
-          make test
+          if command -v nvcc &> /dev/null; then
+            cd src/utils/kernels
+            # Detect GPU architecture and recompile kernels
+            GPU_ARCH=$(python3 -c "import cupy; d = cupy.cuda.Device(); print(f'sm_{d.compute_capability[0]}{d.compute_capability[1]}')")
+            echo "Detected GPU architecture: $GPU_ARCH"
+            # Update Makefile arch and recompile
+            sed -i "s/-arch=sm_87/-arch=$GPU_ARCH/" Makefile
+            make clean && make all
+            make test
+          else
+            echo "nvcc not found - skipping kernel compilation (precompiled kernel tests will be skipped)"
+          fi
 
       - name: Run tests with coverage
         run: |
-          pytest tests/ -v -m "not hardware" --ignore=tests/integration/ --cov=src --cov-report=xml
+          pytest tests/ -v -m "not hardware and not gpu" --ignore=tests/integration/ --cov=src --cov-report=xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
