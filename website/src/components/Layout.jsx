@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
 import { Outlet, NavLink, useLocation } from 'react-router-dom'
-import { Menu, X, Cpu, Zap, Box, Code, Music, Settings, Home, FileText, Smartphone, Scale, ShoppingCart } from 'lucide-react'
+import { Menu, X, Cpu, Zap, Box, Code, Music, Settings, Home, FileText, Smartphone, Scale, ShoppingCart, Flame } from 'lucide-react'
 import clsx from 'clsx'
 import Footer from './Footer'
 
 const navItems = [
   { path: '/', label: 'Home', icon: Home },
+  { path: '/burning-man', label: 'Burning Man', icon: Flame },
   { path: '/mechanical', label: 'Mechanical', icon: Box },
   { path: '/electrical', label: 'Electrical', icon: Zap },
   { path: '/compute', label: 'Compute', icon: Cpu },

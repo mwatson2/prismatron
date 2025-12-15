@@ -11,6 +11,7 @@ import ControlAppPage from './pages/ControlAppPage'
 import SpecsPage from './pages/SpecsPage'
 import BOMPage from './pages/BOMPage'
 import LicensePage from './pages/LicensePage'
+import BurningManPage from './pages/BurningManPage'
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="specs" element={<SpecsPage />} />
         <Route path="bom" element={<BOMPage />} />
         <Route path="license" element={<LicensePage />} />
+        <Route path="burning-man" element={<BurningManPage />} />
       </Route>
     </Routes>
   )

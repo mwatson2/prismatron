@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { Zap, Lightbulb, Cable } from 'lucide-react'
+import electronicsPanel from '../media/PrismatronElectronicsPanel.png'
 
 export default function ElectricalPage() {
   return (
@@ -116,9 +117,13 @@ export default function ElectricalPage() {
           of the LEDs, with the controller managing timing-critical LED data generation.
         </p>
 
-        <div className="mt-6 p-4 retro-panel rounded border border-neon-purple/30">
-          <div className="text-neon-purple/50 text-sm font-mono mb-2">[PHOTO PLACEHOLDER]</div>
-          <p className="text-metal-silver text-sm">QuinLED DigiOcta and wiring harness</p>
+        <div className="mt-6 retro-panel rounded border border-neon-purple/30 overflow-hidden">
+          <img
+            src={electronicsPanel}
+            alt="QuinLED DigiOcta and wiring harness"
+            className="w-full"
+          />
+          <p className="text-metal-silver text-sm p-4">QuinLED DigiOcta and wiring harness</p>
         </div>
       </section>
     </motion.div>

@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion'
 import { ArrowRight, Sparkles } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import heroVideo from '../media/PrismatronExample1.mp4'
 
 export default function HomePage() {
   return (
@@ -38,11 +39,15 @@ export default function HomePage() {
           optimization—proving that order can emerge from apparent disorder.
         </p>
 
-        <div className="mt-10 p-8 retro-panel rounded-lg border border-neon-cyan/50">
-          <div className="text-neon-cyan/50 text-sm font-mono mb-2">[HERO VIDEO PLACEHOLDER]</div>
-          <p className="text-metal-silver text-sm">
-            Slow pan across the display showing an image forming from individual LED points
-          </p>
+        <div className="mt-10 retro-panel rounded-lg border border-neon-cyan/50 overflow-hidden">
+          <video
+            src={heroVideo}
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="w-full max-w-4xl mx-auto"
+          />
         </div>
       </motion.section>
 

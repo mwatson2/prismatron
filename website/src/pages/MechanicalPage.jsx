@@ -50,10 +50,6 @@ export default function MechanicalPage() {
           </div>
         </div>
 
-        <div className="mt-6 p-4 retro-panel rounded border border-neon-cyan/30">
-          <div className="text-neon-cyan/50 text-sm font-mono mb-2">[DIAGRAM PLACEHOLDER]</div>
-          <p className="text-metal-silver text-sm">Exploded diagram showing panel layers and mounting hardware</p>
-        </div>
       </section>
 
       {/* Mounting System */}
@@ -113,10 +109,6 @@ export default function MechanicalPage() {
           airflow. <span className="text-neon-green">No fans required.</span>
         </p>
 
-        <div className="mt-6 p-4 retro-panel rounded border border-neon-orange/30">
-          <div className="text-neon-orange/50 text-sm font-mono mb-2">[THERMAL IMAGE PLACEHOLDER]</div>
-          <p className="text-metal-silver text-sm">Heat distribution during operation</p>
-        </div>
       </section>
     </motion.div>
   )
