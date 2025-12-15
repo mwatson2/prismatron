@@ -8,7 +8,7 @@ black>=21.0.0,<24.0.0
 click>=8.0.0,<9.0.0
 
 # Security and encryption
-cryptography>=3.0.0,<42.0.0
+cryptography>=43.0.1
 
 # Optional dependencies for enhanced functionality
 # These may not be available on all systems but provide additional features
@@ -18,7 +18,7 @@ cryptography>=3.0.0,<42.0.0
 cupy-cuda12x>=13.0.0,<14.0.0
 
 # Web framework and API
-fastapi>=0.68.0,<1.0.0
+fastapi>=0.124.0,<1.0.0
 
 # Video processing (FFmpeg Python bindings)
 ffmpeg-python>=0.2.0,<1.0.0
@@ -81,6 +81,7 @@ scipy>=1.7.0,<2.0.0
 
 # Audio processing and device control
 sounddevice>=0.4.0,<1.0.0
+starlette>=0.49.1  # Security: CVE-2025-62727
 
 # Logging and monitoring
 structlog>=21.1.0,<24.0.0
@@ -95,6 +96,9 @@ torchvision>=0.10.0,<1.0.0
 
 # Additional utilities
 tqdm>=4.60.0,<5.0.0
+
+# HTTP connection pooling (security-pinned)
+urllib3>=2.6.0
 uvicorn[standard]>=0.15.0,<1.0.0
 websockets>=10.0,<12.0
 

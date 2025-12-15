@@ -294,7 +294,6 @@ exclude_dirs = ["tests", "venv", "env", ".venv", "build", "dist"]
 skips = [
     "B101",  # assert_used - allow in tests and dev code
     "B601",  # paramiko_calls - we don't use paramiko
-    "B602",  # subprocess_popen_with_shell_equals_true - careful usage allowed
-    "B603",  # subprocess_without_shell_equals_true - allow subprocess calls
+    # B602/B603 (subprocess) NOT skipped - critical for internet-exposed services
 ]
 severity = "medium"

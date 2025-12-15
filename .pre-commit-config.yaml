@@ -65,14 +65,21 @@ repos:
         files: ^src/.*\.py$
         exclude: ^(tools/|archive/)
 
-  # Security scanning with bandit (temporarily disabled for development)
-  # - repo: https://github.com/pycqa/bandit
-  #   rev: 1.8.5
-  #   hooks:
-  #     - id: bandit
-  #       args: ['-c', 'pyproject.toml']
-  #       additional_dependencies: ["bandit[toml]"]
-  #       exclude: ^tests/
+  # Security scanning with bandit
+  - repo: https://github.com/pycqa/bandit
+    rev: 1.8.5
+    hooks:
+      - id: bandit
+        args: ['-c', 'pyproject.toml']
+        additional_dependencies: ["bandit[toml]"]
+        exclude: ^tests/
+
+  # Dependency vulnerability scanning with pip-audit
+  - repo: https://github.com/pypa/pip-audit
+    rev: v2.7.3
+    hooks:
+      - id: pip-audit
+        args: ['--skip-editable']
 
   # Dockerfile linting (temporarily disabled)
   # - repo: https://github.com/hadolint/hadolint
