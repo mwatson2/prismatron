@@ -1,5 +1,7 @@
 import { motion } from 'framer-motion'
 import { Cpu, Wifi } from 'lucide-react'
+import jetsonEnclosure from '../media/JetsonEnclosure-2025-12-14-1904.png'
+import prismatronWifi from '../media/PrismatronWifi.jpg'
 
 export default function ComputePage() {
   return (
@@ -51,9 +53,29 @@ export default function ComputePage() {
           a desktop workstation.
         </p>
 
-        <div className="mt-6 p-4 retro-panel rounded border border-neon-green/30">
-          <div className="text-neon-green/50 text-sm font-mono mb-2">[PHOTO PLACEHOLDER]</div>
-          <p className="text-metal-silver text-sm">Jetson Orin Nano mounted in the assembly</p>
+        <div className="mt-6 retro-panel rounded-lg border border-neon-green/30 overflow-hidden">
+          <img
+            src={jetsonEnclosure}
+            alt="Jetson Orin Nano mounted in the assembly"
+            className="w-full"
+          />
+          <p className="text-metal-silver text-sm p-4">Jetson Orin Nano mounted in the assembly. This is placed towards
+            the top of the back panel, such that the wifi antenna extend above the panel for better signal from both in
+            front and behind the display. At the right angle, these looks like classic TV 'rabbit ears' antennas!
+          </p>
+          <p className="text-metal-silver text-sm p-4">The microphone is placed centrally and again protrudes a little above
+            the panel. Entirely unintentionally, the twin antenna and microphone head give the impression of the classic
+            'Man' of Burning Man hiding just behind the panel!
+          </p>
+        </div>
+
+        <div className="mt-6 retro-panel rounded-lg border border-neon-green/30 overflow-hidden">
+          <img
+            src={prismatronWifi}
+            alt="WiFi antennas and microphone extending above the panel"
+            className="w-full"
+          />
+          <p className="text-metal-silver text-sm p-4">The WiFi antennas and microphone extending above the back panel</p>
         </div>
       </section>
 
@@ -103,39 +125,39 @@ export default function ComputePage() {
 │  │ Audio Input │  │ Image Input │  │  Mobile App API │  │
 │  └──────┬──────┘  └──────┬──────┘  └────────┬────────┘  │
 │         │                │                   │          │
-│         ▼                ▼                   ▼          │
-│  ┌─────────────────────────────────────────────────────┐│
-│  │              Image producer pipeline                ││
-│  │            (video, still image, effects)            ││
-│  └──────────────────────┬──────────────────────────────┘│
-│                         │                               │
-│                         ▼                               │
-│  ┌─────────────────────────────────────────────────────┐│
-│  │           Optimization Engine (GPU)                 ││
-│  │     LED patterns × target → brightness values       ││
-│  └──────────────────────┬──────────────────────────────┘│
-│                         │                               │
-│                         ▼                               │
-│  ┌─────────────────────────────────────────────────────┐│
-│  │                   Renderer.                         ││
-│  │     Audio-reactive and other render-time effects    ││
-│  └──────────────────────┬──────────────────────────────┘│
-│                         │                               │
-│                         ▼ UDP/DDP (WiFi)                │
-└─────────────────────────┼───────────────────────────────┘
-                          │
-                          ▼
-              ┌───────────────────────┐
-              │  QuinLED DigiOcta     │
-              │  (WLED firmware)      │
-              │  8 parallel outputs   │
-              └───────────┬───────────┘
-                          │
-                          ▼
-              ┌───────────────────────┐
-              │    3,200 RGB LEDs     │
-              │  (12V string lights)  │
-              └───────────────────────┘`}
+│         │                ▼                   ▼          │
+│         │    ┌──────────────────────────────────────┐   │
+│         │    │       Image producer pipeline        │   │
+│         │    │     (video, still image, effects)    │   │
+│         │    └─────────────────┬────────────────────┘   │
+│         │                      │                        │
+│         │                      ▼                        │
+│         │    ┌──────────────────────────────────────┐   │
+│         │    │      Optimization Engine (GPU)       │   │
+│         │    │  LED patterns × target → brightness  │   │
+│         │    └─────────────────┬────────────────────┘   │
+│         │                      │                        │
+│         │                      ▼                        │
+│         │    ┌──────────────────────────────────────┐   │
+│         └───►│            Renderer                  │   │
+│              │  Audio-reactive & render-time effects│   │
+│              └─────────────────┬────────────────────┘   │
+│                                │                        │
+│                                ▼ UDP/DDP (WiFi)         │
+└────────────────────────────────┼────────────────────────┘
+                                 │
+                                 ▼
+                   ┌───────────────────────┐
+                   │  QuinLED DigiOcta     │
+                   │  (WLED firmware)      │
+                   │  8 parallel outputs   │
+                   └───────────┬───────────┘
+                               │
+                               ▼
+                   ┌───────────────────────┐
+                   │    3,200 RGB LEDs     │
+                   │  (12V string lights)  │
+                   └───────────────────────┘`}
         </div>
       </section>
     </motion.div>
