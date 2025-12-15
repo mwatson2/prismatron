@@ -45,24 +45,32 @@ jobs:
           grep -v "^jetson-stats" requirements.txt > requirements-ci.txt
           pip install -r requirements-ci.txt
 
-      - name: Compile CUDA kernels for this GPU (if nvcc available)
+      - name: Verify GPU and precompiled kernels
         run: |
-          if command -v nvcc &> /dev/null; then
-            cd src/utils/kernels
-            # Detect GPU architecture and recompile kernels
-            GPU_ARCH=$(python3 -c "import cupy; d = cupy.cuda.Device(); print(f'sm_{d.compute_capability[0]}{d.compute_capability[1]}')")
-            echo "Detected GPU architecture: $GPU_ARCH"
-            # Update Makefile arch and recompile
-            sed -i "s/-arch=sm_87/-arch=$GPU_ARCH/" Makefile
-            make clean && make all
-            make test
-          else
-            echo "nvcc not found - skipping kernel compilation (precompiled kernel tests will be skipped)"
-          fi
+          python3 -c "
+          import cupy
+          device = cupy.cuda.Device()
+          cap = device.compute_capability
+          arch = f'sm_{cap[0]}{cap[1]}'
+          print(f'GPU: {device.name}, Compute Capability: {cap[0]}.{cap[1]}, Architecture: {arch}')
+
+          # Check precompiled kernels exist for this architecture
+          import os
+          kernel_dir = 'src/utils/kernels'
+          kernels = ['batch_mma_kernel', 'batch8_corrected_kernel', 'batch8_experimental_kernel']
+          for k in kernels:
+              ptx = f'{kernel_dir}/{k}_{arch}.ptx'
+              if os.path.exists(ptx):
+                  print(f'✓ {k}_{arch}.ptx')
+              else:
+                  # Check for compatible architecture
+                  found = [f for f in os.listdir(kernel_dir) if f.startswith(k) and f.endswith('.ptx')]
+                  print(f'⚠ {k}_{arch}.ptx not found, available: {found}')
+          "
 
       - name: Run tests with coverage
         run: |
-          pytest tests/ -v -m "not hardware and not gpu" --ignore=tests/integration/ --cov=src --cov-report=xml
+          pytest tests/ -v -m "not hardware" --ignore=tests/integration/ --cov=src --cov-report=xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4

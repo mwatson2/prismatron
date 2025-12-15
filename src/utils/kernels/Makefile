@@ -1,63 +1,59 @@
 # Makefile for ahead-of-time compilation of CUDA MMA kernels
 #
-# This compiles the batch MMA kernels to a shared library that can be
-# loaded by Python at runtime, avoiding runtime compilation issues.
+# This compiles the batch MMA kernels to PTX files for multiple GPU architectures
+# that can be loaded by Python at runtime via CuPy.
 
 # CUDA Toolkit Configuration
 NVCC = nvcc
 
-# Compiler flags for CUDA module (.ptx for CuPy compatibility)
-NVCC_FLAGS = -ptx
-NVCC_FLAGS += --use_fast_math -O3
-NVCC_FLAGS += -arch=sm_87  # Target exact GPU architecture (8.7)
-NVCC_FLAGS += -DMMA_ENABLED
+# Base compiler flags
+NVCC_BASE_FLAGS = -ptx --use_fast_math -O3 -DMMA_ENABLED
+
+# Target GPU architectures (compile for all common datacenter/consumer GPUs)
+# sm_80: Ampere (A100)
+# sm_86: Ampere (A10G, A40, RTX 3000 series) - common in AWS
+# sm_87: Jetson Orin
+# sm_89: Ada Lovelace (L4, L40, RTX 4000 series)
+GPU_ARCHS = sm_80 sm_86 sm_87 sm_89
 
 # Directories
 SRC_DIR = .
 BUILD_DIR = build
 TARGET_DIR = .
 
-# Source and target files
+# Source files
 KERNEL_SRC = $(SRC_DIR)/batch_mma_kernel.cu
 KERNEL8_CORRECTED_SRC = $(SRC_DIR)/batch8_corrected_kernel.cu
 KERNEL8_EXPERIMENTAL_SRC = $(SRC_DIR)/batch8_experimental_kernel.cu
-KERNEL_MODULE = $(TARGET_DIR)/batch_mma_kernel.ptx
-KERNEL8_CORRECTED_MODULE = $(TARGET_DIR)/batch8_corrected_kernel.ptx
-KERNEL8_EXPERIMENTAL_MODULE = $(TARGET_DIR)/batch8_experimental_kernel.ptx
 
-# Python library information (for include paths)
-PYTHON_INCLUDE = $(shell python3 -c "import sysconfig; print(sysconfig.get_path('include'))")
-NUMPY_INCLUDE = $(shell python3 -c "import numpy; print(numpy.get_include())")
+# Generate PTX filenames for each architecture
+KERNEL_MODULES = $(foreach arch,$(GPU_ARCHS),$(TARGET_DIR)/batch_mma_kernel_$(arch).ptx)
+KERNEL8_CORRECTED_MODULES = $(foreach arch,$(GPU_ARCHS),$(TARGET_DIR)/batch8_corrected_kernel_$(arch).ptx)
+KERNEL8_EXPERIMENTAL_MODULES = $(foreach arch,$(GPU_ARCHS),$(TARGET_DIR)/batch8_experimental_kernel_$(arch).ptx)
 
-# Default target
-all: $(KERNEL_MODULE) $(KERNEL8_CORRECTED_MODULE) $(KERNEL8_EXPERIMENTAL_MODULE)
+# Default target - compile for all architectures
+all: $(KERNEL_MODULES) $(KERNEL8_CORRECTED_MODULES) $(KERNEL8_EXPERIMENTAL_MODULES)
 
 # Create build directory
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-# Compile CUDA kernel to PTX module
-$(KERNEL_MODULE): $(KERNEL_SRC) | $(BUILD_DIR)
-	@echo "Compiling CUDA MMA kernels to PTX module..."
-	@echo "CUDA Architecture: sm_87"
-	@echo "NVCC Flags: $(NVCC_FLAGS)"
-	$(NVCC) $(NVCC_FLAGS) -o $@ $<
+# Pattern rule for batch_mma_kernel
+$(TARGET_DIR)/batch_mma_kernel_sm_%.ptx: $(KERNEL_SRC) | $(BUILD_DIR)
+	@echo "Compiling batch_mma_kernel for sm_$*..."
+	$(NVCC) $(NVCC_BASE_FLAGS) -arch=sm_$* -o $@ $<
 	@echo "Successfully compiled: $@"
 
-# Compile 8-frame corrected CUDA kernel to PTX module
-$(KERNEL8_CORRECTED_MODULE): $(KERNEL8_CORRECTED_SRC) | $(BUILD_DIR)
-	@echo "Compiling 8-frame corrected CUDA MMA kernels to PTX module..."
-	@echo "CUDA Architecture: sm_87"
-	@echo "NVCC Flags: $(NVCC_FLAGS)"
-	$(NVCC) $(NVCC_FLAGS) -o $@ $<
+# Pattern rule for batch8_corrected_kernel
+$(TARGET_DIR)/batch8_corrected_kernel_sm_%.ptx: $(KERNEL8_CORRECTED_SRC) | $(BUILD_DIR)
+	@echo "Compiling batch8_corrected_kernel for sm_$*..."
+	$(NVCC) $(NVCC_BASE_FLAGS) -arch=sm_$* -o $@ $<
 	@echo "Successfully compiled: $@"
 
-# Compile 8-frame experimental CUDA kernel to PTX module
-$(KERNEL8_EXPERIMENTAL_MODULE): $(KERNEL8_EXPERIMENTAL_SRC) | $(BUILD_DIR)
-	@echo "Compiling 8-frame experimental CUDA MMA kernels to PTX module..."
-	@echo "CUDA Architecture: sm_87"
-	@echo "NVCC Flags: $(NVCC_FLAGS)"
-	$(NVCC) $(NVCC_FLAGS) -o $@ $<
+# Pattern rule for batch8_experimental_kernel
+$(TARGET_DIR)/batch8_experimental_kernel_sm_%.ptx: $(KERNEL8_EXPERIMENTAL_SRC) | $(BUILD_DIR)
+	@echo "Compiling batch8_experimental_kernel for sm_$*..."
+	$(NVCC) $(NVCC_BASE_FLAGS) -arch=sm_$* -o $@ $<
 	@echo "Successfully compiled: $@"
 
 # Check GPU compute capability
@@ -68,7 +64,13 @@ check-gpu:
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)
-	rm -f $(KERNEL_MODULE) $(KERNEL8_CORRECTED_MODULE) $(KERNEL8_EXPERIMENTAL_MODULE)
+	rm -f $(TARGET_DIR)/batch_mma_kernel_sm_*.ptx
+	rm -f $(TARGET_DIR)/batch8_corrected_kernel_sm_*.ptx
+	rm -f $(TARGET_DIR)/batch8_experimental_kernel_sm_*.ptx
+	# Also clean old single-arch files if they exist
+	rm -f $(TARGET_DIR)/batch_mma_kernel.ptx
+	rm -f $(TARGET_DIR)/batch8_corrected_kernel.ptx
+	rm -f $(TARGET_DIR)/batch8_experimental_kernel.ptx
 
 # Install dependencies (if needed)
 install-deps:
@@ -76,21 +78,45 @@ install-deps:
 	@which nvcc || (echo "ERROR: nvcc not found. Please install CUDA toolkit."; exit 1)
 	@echo "CUDA toolkit found: $$(nvcc --version | grep release)"
 
-# Test compilation
-test: $(KERNEL_MODULE) $(KERNEL8_CORRECTED_MODULE) $(KERNEL8_EXPERIMENTAL_MODULE)
+# Test compilation - list all compiled PTX files
+test: all
 	@echo "Testing kernel modules..."
-	@python3 -c "import os; print('✓ 16-frame kernel module exists') if os.path.exists('$(KERNEL_MODULE)') else print('✗ 16-frame kernel module missing')"
-	@python3 -c "import os; print('✓ 8-frame corrected kernel module exists') if os.path.exists('$(KERNEL8_CORRECTED_MODULE)') else print('✗ 8-frame corrected kernel module missing')"
-	@python3 -c "import os; print('✓ 8-frame experimental kernel module exists') if os.path.exists('$(KERNEL8_EXPERIMENTAL_MODULE)') else print('✗ 8-frame experimental kernel module missing')"
+	@echo "Compiled PTX files:"
+	@ls -la $(TARGET_DIR)/*.ptx 2>/dev/null || echo "No PTX files found"
+	@echo ""
+	@echo "Architecture coverage:"
+	@for arch in $(GPU_ARCHS); do \
+		if [ -f "$(TARGET_DIR)/batch_mma_kernel_$$arch.ptx" ]; then \
+			echo "✓ $$arch: batch_mma_kernel"; \
+		else \
+			echo "✗ $$arch: batch_mma_kernel MISSING"; \
+		fi; \
+		if [ -f "$(TARGET_DIR)/batch8_corrected_kernel_$$arch.ptx" ]; then \
+			echo "✓ $$arch: batch8_corrected_kernel"; \
+		else \
+			echo "✗ $$arch: batch8_corrected_kernel MISSING"; \
+		fi; \
+		if [ -f "$(TARGET_DIR)/batch8_experimental_kernel_$$arch.ptx" ]; then \
+			echo "✓ $$arch: batch8_experimental_kernel"; \
+		else \
+			echo "✗ $$arch: batch8_experimental_kernel MISSING"; \
+		fi; \
+	done
 
 # Help target
 help:
 	@echo "Available targets:"
-	@echo "  all          - Compile CUDA kernels (default)"
+	@echo "  all          - Compile CUDA kernels for all architectures: $(GPU_ARCHS)"
 	@echo "  check-gpu    - Check GPU compute capability"
 	@echo "  clean        - Remove build artifacts"
 	@echo "  install-deps - Check dependencies"
-	@echo "  test         - Test compiled library"
+	@echo "  test         - Test compiled PTX files"
 	@echo "  help         - Show this help"
+	@echo ""
+	@echo "Supported GPU architectures:"
+	@echo "  sm_80 - Ampere (A100)"
+	@echo "  sm_86 - Ampere (A10G, A40, RTX 3000)"
+	@echo "  sm_87 - Jetson Orin"
+	@echo "  sm_89 - Ada Lovelace (L4, L40, RTX 4000)"
 
 .PHONY: all clean check-gpu install-deps test help

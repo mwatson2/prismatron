@@ -15,7 +15,7 @@ Key features:
 
 import ctypes
 import os
-from typing import Optional
+from typing import Optional, Tuple
 
 try:
     import cupy
@@ -27,6 +27,79 @@ except ImportError:
     runtime = None
 
 import numpy as np
+
+# Supported GPU architectures (must match Makefile)
+SUPPORTED_ARCHS = ["sm_80", "sm_86", "sm_87", "sm_89"]
+
+
+def get_gpu_arch() -> str:
+    """
+    Get the current GPU's compute capability as an architecture string.
+
+    Returns:
+        Architecture string like "sm_86" or "sm_87"
+    """
+    if runtime is None:
+        raise RuntimeError("CUDA runtime not available")
+
+    device = cupy.cuda.Device()
+    cap = device.compute_capability
+    return f"sm_{cap[0]}{cap[1]}"
+
+
+def find_compatible_ptx(base_name: str, kernel_dir: str) -> Tuple[str, str]:
+    """
+    Find a compatible PTX file for the current GPU.
+
+    First tries exact match, then falls back to compatible architectures.
+
+    Args:
+        base_name: Base kernel name (e.g., "batch_mma_kernel")
+        kernel_dir: Directory containing PTX files
+
+    Returns:
+        Tuple of (ptx_path, arch_used)
+
+    Raises:
+        RuntimeError: If no compatible PTX found
+    """
+    gpu_arch = get_gpu_arch()
+
+    # Try exact match first
+    exact_path = os.path.join(kernel_dir, f"{base_name}_{gpu_arch}.ptx")
+    if os.path.exists(exact_path):
+        return exact_path, gpu_arch
+
+    # Fall back to compatible architecture (same major version, lower minor)
+    gpu_major = int(gpu_arch[3])  # e.g., 8 from sm_86
+    gpu_minor = int(gpu_arch[4:])  # e.g., 6 from sm_86
+
+    # Try architectures in descending order within same major version
+    compatible_archs = []
+    for arch in SUPPORTED_ARCHS:
+        arch_major = int(arch[3])
+        arch_minor = int(arch[4:])
+        if arch_major == gpu_major and arch_minor <= gpu_minor:
+            compatible_archs.append((arch_minor, arch))
+
+    # Sort by minor version descending (prefer closest match)
+    compatible_archs.sort(reverse=True)
+
+    for _, arch in compatible_archs:
+        fallback_path = os.path.join(kernel_dir, f"{base_name}_{arch}.ptx")
+        if os.path.exists(fallback_path):
+            print(f"Using compatible PTX {arch} for GPU {gpu_arch}")
+            return fallback_path, arch
+
+    # List available PTX files for error message
+    available = [f for f in os.listdir(kernel_dir) if f.startswith(base_name) and f.endswith(".ptx")]
+
+    raise RuntimeError(
+        f"No compatible PTX found for GPU {gpu_arch}. "
+        f"Available: {available}. "
+        f"Supported architectures: {SUPPORTED_ARCHS}. "
+        f"Run 'make' in {kernel_dir} to compile kernels."
+    )
 
 
 class PrecompiledMMAKernel:
@@ -211,26 +284,13 @@ class PrecompiledBatch8ExperimentalSymmetricWMMAMatMul:
         self._load_precompiled_experimental_kernel()
 
     def _load_precompiled_experimental_kernel(self):
-        """Load precompiled experimental 8-frame kernel using CuPy's RawModule with PTX or CUBIN."""
+        """Load precompiled experimental 8-frame kernel using CuPy's RawModule with PTX."""
         kernel_dir = os.path.dirname(os.path.abspath(__file__))
-        ptx_path = os.path.join(kernel_dir, "batch8_experimental_kernel.ptx")
-        cubin_path = os.path.join(kernel_dir, "batch8_experimental_kernel.cubin")
-
-        # Try PTX first, then fall back to CUBIN
-        if os.path.exists(ptx_path):
-            kernel_path = ptx_path
-            use_ptx = True
-        elif os.path.exists(cubin_path):
-            kernel_path = cubin_path
-            use_ptx = False
-        else:
-            raise RuntimeError(
-                f"Precompiled experimental 8-frame MMA kernel module not found. "
-                f"Expected {ptx_path} or {cubin_path}. "
-                f"Run 'make' in {kernel_dir} to compile the kernels."
-            )
 
         try:
+            # Find compatible PTX for current GPU
+            kernel_path, arch = find_compatible_ptx("batch8_experimental_kernel", kernel_dir)
+
             # Create a RawModule from the kernel file
             self._module = cupy.RawModule(path=kernel_path)
 
@@ -239,10 +299,9 @@ class PrecompiledBatch8ExperimentalSymmetricWMMAMatMul:
 
             self._kernel_basic_func = self._module.get_function(kernel_name_basic)
 
-            kernel_type = "PTX" if use_ptx else "CUBIN"
             print(
                 f"Precompiled experimental 8-frame MMA tensor core kernels loaded successfully "
-                f"from {kernel_type}: {kernel_path}"
+                f"from PTX ({arch}): {kernel_path}"
             )
 
         except Exception as e:
@@ -347,26 +406,13 @@ class PrecompiledBatch8CorrectedSymmetricWMMAMatMul:
         self._load_precompiled_corrected_kernel()
 
     def _load_precompiled_corrected_kernel(self):
-        """Load precompiled corrected 8-frame kernel using CuPy's RawModule with PTX or CUBIN."""
+        """Load precompiled corrected 8-frame kernel using CuPy's RawModule with PTX."""
         kernel_dir = os.path.dirname(os.path.abspath(__file__))
-        ptx_path = os.path.join(kernel_dir, "batch8_corrected_kernel.ptx")
-        cubin_path = os.path.join(kernel_dir, "batch8_corrected_kernel.cubin")
-
-        # Try PTX first, then fall back to CUBIN
-        if os.path.exists(ptx_path):
-            kernel_path = ptx_path
-            use_ptx = True
-        elif os.path.exists(cubin_path):
-            kernel_path = cubin_path
-            use_ptx = False
-        else:
-            raise RuntimeError(
-                f"Precompiled corrected 8-frame MMA kernel module not found. "
-                f"Expected {ptx_path} or {cubin_path}. "
-                f"Run 'make' in {kernel_dir} to compile the kernels."
-            )
 
         try:
+            # Find compatible PTX for current GPU
+            kernel_path, arch = find_compatible_ptx("batch8_corrected_kernel", kernel_dir)
+
             # Create a RawModule from the kernel file
             self._module = cupy.RawModule(path=kernel_path)
 
@@ -375,10 +421,9 @@ class PrecompiledBatch8CorrectedSymmetricWMMAMatMul:
 
             self._kernel_basic_func = self._module.get_function(kernel_name_basic)
 
-            kernel_type = "PTX" if use_ptx else "CUBIN"
             print(
                 f"Precompiled corrected 8-frame MMA tensor core kernels loaded successfully "
-                f"from {kernel_type}: {kernel_path}"
+                f"from PTX ({arch}): {kernel_path}"
             )
 
         except Exception as e:
@@ -484,26 +529,13 @@ class PrecompiledBatch8SymmetricWMMAMatMul:
         self._load_precompiled_8frame_kernel()
 
     def _load_precompiled_8frame_kernel(self):
-        """Load precompiled 8-frame vertical pair kernel using CuPy's RawModule with PTX or CUBIN."""
+        """Load precompiled 8-frame vertical pair kernel using CuPy's RawModule with PTX."""
         kernel_dir = os.path.dirname(os.path.abspath(__file__))
-        ptx_path = os.path.join(kernel_dir, "batch8_vertical_pair_kernel.ptx")
-        cubin_path = os.path.join(kernel_dir, "batch8_vertical_pair_kernel.cubin")
-
-        # Try PTX first, then fall back to CUBIN
-        if os.path.exists(ptx_path):
-            kernel_path = ptx_path
-            use_ptx = True
-        elif os.path.exists(cubin_path):
-            kernel_path = cubin_path
-            use_ptx = False
-        else:
-            raise RuntimeError(
-                f"Precompiled 8-frame MMA kernel module not found. "
-                f"Expected {ptx_path} or {cubin_path}. "
-                f"Run 'make' in {kernel_dir} to compile the kernels."
-            )
 
         try:
+            # Find compatible PTX for current GPU
+            kernel_path, arch = find_compatible_ptx("batch8_vertical_pair_kernel", kernel_dir)
+
             # Create a RawModule from the kernel file
             self._module = cupy.RawModule(path=kernel_path)
 
@@ -512,8 +544,7 @@ class PrecompiledBatch8SymmetricWMMAMatMul:
 
             self._kernel_basic_func = self._module.get_function(kernel_name_basic)
 
-            kernel_type = "PTX" if use_ptx else "CUBIN"
-            print(f"Precompiled 8-frame MMA tensor core kernels loaded successfully from {kernel_type}: {kernel_path}")
+            print(f"Precompiled 8-frame MMA tensor core kernels loaded successfully from PTX ({arch}): {kernel_path}")
 
         except Exception as e:
             raise RuntimeError(f"Failed to load precompiled 8-frame MMA kernels: {e}") from e
@@ -610,32 +641,14 @@ class PrecompiledBatchSymmetricWMMAMatMul:
         self._load_precompiled_kernel()
 
     def _load_precompiled_kernel(self):
-        """Load precompiled kernel using CuPy's RawModule with PTX or CUBIN."""
+        """Load precompiled kernel using CuPy's RawModule with PTX."""
         kernel_dir = os.path.dirname(os.path.abspath(__file__))
-        ptx_path = os.path.join(kernel_dir, "batch_mma_kernel.ptx")
-        cubin_path = os.path.join(kernel_dir, "batch_mma_kernel.cubin")
-
-        # Try PTX first, then fall back to CUBIN
-        if os.path.exists(ptx_path):
-            kernel_path = ptx_path
-            with open(ptx_path) as f:
-                kernel_source = f.read()
-            use_ptx = True
-        elif os.path.exists(cubin_path):
-            kernel_path = cubin_path
-            with open(cubin_path, "rb") as f:
-                kernel_source = f.read()
-            use_ptx = False
-        else:
-            raise RuntimeError(
-                f"Precompiled MMA kernel module not found. "
-                f"Expected {ptx_path} or {cubin_path}. "
-                f"Run 'make' in {kernel_dir} to compile the kernels."
-            )
 
         try:
+            # Find compatible PTX for current GPU
+            kernel_path, arch = find_compatible_ptx("batch_mma_kernel", kernel_dir)
+
             # Create a RawModule from the kernel file
-            # Both PTX and CUBIN can be loaded using path parameter
             self._module = cupy.RawModule(path=kernel_path)
 
             # Get the kernel function
@@ -643,8 +656,7 @@ class PrecompiledBatchSymmetricWMMAMatMul:
 
             self._kernel_basic_func = self._module.get_function(kernel_name_basic)
 
-            kernel_type = "PTX" if use_ptx else "CUBIN"
-            print(f"Precompiled MMA tensor core kernels loaded successfully from {kernel_type}: {kernel_path}")
+            print(f"Precompiled MMA tensor core kernels loaded successfully from PTX ({arch}): {kernel_path}")
 
         except Exception as e:
             raise RuntimeError(f"Failed to load precompiled MMA kernels: {e}") from e
@@ -730,56 +742,37 @@ class PrecompiledBatchSymmetricWMMAMatMul:
 
 
 # Kernel availability check
-def check_precompiled_mma_support() -> bool:
-    """Check if precompiled MMA kernels are available."""
+def _check_any_ptx_exists(base_name: str) -> bool:
+    """Check if any PTX file exists for a kernel (any architecture)."""
     try:
         kernel_dir = os.path.dirname(os.path.abspath(__file__))
-        ptx_path = os.path.join(kernel_dir, "batch_mma_kernel.ptx")
-        cubin_path = os.path.join(kernel_dir, "batch_mma_kernel.cubin")
-
-        # Check if PTX or CUBIN file exists
-        return os.path.exists(ptx_path) or os.path.exists(cubin_path)
+        for arch in SUPPORTED_ARCHS:
+            ptx_path = os.path.join(kernel_dir, f"{base_name}_{arch}.ptx")
+            if os.path.exists(ptx_path):
+                return True
+        return False
     except Exception:
         return False
+
+
+def check_precompiled_mma_support() -> bool:
+    """Check if precompiled MMA kernels are available."""
+    return _check_any_ptx_exists("batch_mma_kernel")
 
 
 def check_precompiled_8frame_mma_support() -> bool:
     """Check if precompiled 8-frame vertical pair MMA kernels are available."""
-    try:
-        kernel_dir = os.path.dirname(os.path.abspath(__file__))
-        ptx_path = os.path.join(kernel_dir, "batch8_vertical_pair_kernel.ptx")
-        cubin_path = os.path.join(kernel_dir, "batch8_vertical_pair_kernel.cubin")
-
-        # Check if PTX or CUBIN file exists
-        return os.path.exists(ptx_path) or os.path.exists(cubin_path)
-    except Exception:
-        return False
+    return _check_any_ptx_exists("batch8_vertical_pair_kernel")
 
 
 def check_precompiled_8frame_corrected_mma_support() -> bool:
     """Check if precompiled corrected 8-frame MMA kernels are available."""
-    try:
-        kernel_dir = os.path.dirname(os.path.abspath(__file__))
-        ptx_path = os.path.join(kernel_dir, "batch8_corrected_kernel.ptx")
-        cubin_path = os.path.join(kernel_dir, "batch8_corrected_kernel.cubin")
-
-        # Check if PTX or CUBIN file exists
-        return os.path.exists(ptx_path) or os.path.exists(cubin_path)
-    except Exception:
-        return False
+    return _check_any_ptx_exists("batch8_corrected_kernel")
 
 
 def check_precompiled_8frame_experimental_mma_support() -> bool:
     """Check if precompiled experimental 8-frame MMA kernels are available."""
-    try:
-        kernel_dir = os.path.dirname(os.path.abspath(__file__))
-        ptx_path = os.path.join(kernel_dir, "batch8_experimental_kernel.ptx")
-        cubin_path = os.path.join(kernel_dir, "batch8_experimental_kernel.cubin")
-
-        # Check if PTX or CUBIN file exists
-        return os.path.exists(ptx_path) or os.path.exists(cubin_path)
-    except Exception:
-        return False
+    return _check_any_ptx_exists("batch8_experimental_kernel")
 
 
 # Module-level availability flags
