@@ -1,5 +1,30 @@
 import { motion } from 'framer-motion'
-import { Smartphone, Home, Upload, Folder, Sparkles, ListMusic, Settings, Wifi } from 'lucide-react'
+import { Smartphone, Home, Upload, Folder, Sparkles, ListMusic, Settings, Wifi, Images } from 'lucide-react'
+
+// App screenshots
+import appHomePage from '../media/PrismatronAppHomePage.png'
+import appHomePage2 from '../media/PrismatronAppHomePage2.png'
+import appHomePage3 from '../media/PrismatronAppHomePage3.png'
+import appUploadPage from '../media/PrismatronAppUploadPage.png'
+import appMediaPage from '../media/PrismatronAppMediaPage.png'
+import appEffectsPage from '../media/PrismatronAppEffectsPage.png'
+import appEffectsPage2 from '../media/PrismatronAppEffectsPage2.png'
+import appPlaylistPage from '../media/PrismatronAppPlaylistPage.png'
+import appSettingsPage from '../media/PrismatronAppSettingsPage.png'
+import appSettingsPage2 from '../media/PrismatronAppSettingsPage2.png'
+
+const screenshots = [
+  { src: appHomePage, label: 'Home - Preview & Controls' },
+  { src: appHomePage2, label: 'Home - System Status' },
+  { src: appHomePage3, label: 'Home - Audio Visualizer' },
+  { src: appUploadPage, label: 'Upload' },
+  { src: appMediaPage, label: 'Media Library' },
+  { src: appEffectsPage, label: 'Effects Browser' },
+  { src: appEffectsPage2, label: 'Effect Configuration' },
+  { src: appPlaylistPage, label: 'Playlist' },
+  { src: appSettingsPage, label: 'Settings' },
+  { src: appSettingsPage2, label: 'WiFi Settings' },
+]
 
 export default function ControlAppPage() {
   return (
@@ -27,10 +52,6 @@ export default function ControlAppPage() {
           No app installation required—just open a browser.
         </p>
 
-        <div className="mt-6 p-4 retro-panel rounded border border-neon-pink/30">
-          <div className="text-neon-pink/50 text-sm font-mono mb-2">[SCREENSHOT PLACEHOLDER]</div>
-          <p className="text-metal-silver text-sm">Control app dashboard on mobile device</p>
-        </div>
       </section>
 
       {/* Home - Preview & Control */}
@@ -344,6 +365,43 @@ export default function ControlAppPage() {
             network settings or control the display.
           </p>
         </div>
+      </section>
+
+      {/* Screenshots Gallery */}
+      <section className="content-card">
+        <h2 className="subsection-title flex items-center gap-2">
+          <Images size={20} />
+          App Screenshots
+        </h2>
+        <p className="text-metal-silver mb-4">
+          Scroll horizontally to browse through the control app screens:
+        </p>
+
+        <div className="overflow-x-auto pb-4 -mx-4 px-4">
+          <div className="flex gap-4" style={{ width: 'max-content' }}>
+            {screenshots.map((screenshot, index) => (
+              <div
+                key={index}
+                className="flex-shrink-0 w-48 md:w-56 lg:w-64"
+              >
+                <div className="retro-panel rounded-lg border border-neon-pink/30 overflow-hidden">
+                  <img
+                    src={screenshot.src}
+                    alt={screenshot.label}
+                    className="w-full"
+                  />
+                  <p className="text-metal-silver text-xs p-2 text-center bg-dark-800">
+                    {screenshot.label}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <p className="text-metal-silver/60 text-xs mt-2 text-center">
+          ← Scroll to see more →
+        </p>
       </section>
     </motion.div>
   )

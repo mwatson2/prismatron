@@ -27,7 +27,7 @@ export default function HomePage() {
         </p>
         <p className="text-metal-silver/80 max-w-2xl mx-auto mb-6 leading-relaxed">
           Many people and some non-people helped in the creation of the Prismatron. Thanks and love
-          to my family for their extremepatience with the many nights and weekends this project consumed.
+          to my family for their extreme patience with the many nights and weekends this project consumed.
           Thanks to Paul J for stirling logistical support getting the thing to and from Burning Man.
           Finally, thanks to (the creators of){' '}
           <a
@@ -112,9 +112,13 @@ export default function HomePage() {
         <ul className="space-y-2 text-metal-silver">
           <li className="flex items-start gap-2">
             <span className="text-neon-cyan">•</span>
-            <span><strong className="text-neon-cyan">Mechanical Engineering</strong> — nothing I had done before - who knew acrylic could
-             be made more rigid by installing with a very slight bow - and how much weight do we need to stop the thing blowing over in a Burning Man dust storm
-            ?</span>
+            <span><strong className="text-neon-cyan">AI assistance and coding</strong> — this project would not have been possible (in the time available) without Claude.
+            Working on a green-field project in a new subject-matter area gave me a chance to develop a great sense of the strengths and limits of this tool.</span>
+          </li><li className="flex items-start gap-2">
+            <span className="text-neon-cyan">•</span>
+            <span><strong className="text-neon-cyan">Mechanical Engineering</strong> — I would not have known where to start to calculate the thickness of aluminum needed,
+            the number of supports, how much weight we need to stop the thing blowing over in a Burning Man dust storm and much much more ...
+            </span>
           </li>
           <li className="flex items-start gap-2">
             <span className="text-neon-cyan">•</span>
@@ -123,16 +127,16 @@ export default function HomePage() {
           <li className="flex items-start gap-2">
             <span className="text-neon-cyan">•</span>
             <span><strong className="text-neon-cyan">GPU optimization, modern tensor cores</strong> — did you know headline GPU speeds are valid only if you
-            happen to be calculating exactly the right kind of thing ? (basically an AI matrix multiplication)</span>
+            happen to be calculating exactly the right kind of thing ? If you're not doing the kind of matrix-matrix multiplication that is used in AI workflows
+            you're stuck with the old CUDA cores with much lower capacity. So then wrangling the problem in to the right shape was fun.</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="text-neon-cyan">•</span>
-            <span><strong className="text-neon-cyan">Audio-reactive systems</strong> — how do we process audio to extract music features</span>
+            <span><strong className="text-neon-cyan">Audio-reactive systems</strong> — how do we process audio to extract music features - surprisingly
+            you can get a long way just by reversing the polarity of the neutron flux ... no, sorry, wrong kind of flux ... it's <em>spectral</em> flux and it's
+            slope is very informative as to what is going on in the music</span>
           </li>
-          <li className="flex items-start gap-2">
-            <span className="text-neon-cyan">•</span>
-            <span><strong className="text-neon-cyan">AI assistance and coding</strong> — this project would not have been possible (in the time available) without Claude</span>
-          </li>
+
         </ul>
         <p className="text-metal-silver mt-6">
           Built for environments like Burning Man, Prismatron is designed to be rugged,
@@ -150,8 +154,11 @@ export default function HomePage() {
         {[
           { path: '/mechanical', title: 'Mechanical Design', desc: 'Panel structure and thermal management' },
           { path: '/electrical', title: 'Electrical System', desc: 'LED array and power distribution' },
+          { path: '/compute', title: 'Compute Platform', desc: 'Jetson Orin Nano and LED driver' },
           { path: '/algorithm', title: 'The Algorithm', desc: 'Calibration and optimization' },
           { path: '/audio', title: 'Audio-Reactive', desc: 'Beyond beat detection' },
+          { path: '/software', title: 'Software Architecture', desc: 'System components and design' },
+          { path: '/control-app', title: 'Control App', desc: 'Web-based interface' },
         ].map((item) => (
           <Link
             key={item.path}
