@@ -85,10 +85,20 @@ export default function ElectricalPage() {
           voltage drop across long wire runs and power dissipation in the conductors.
         </p>
 
+        <p className="text-metal-silver mb-4">
+          Power injection is provided at the start and end of the LED strings that needed it.
+          The Meanwell LRS600 power supply pairs well with the DigiOcta Powerboard which
+          provides 16 fused power outlets for LEDs and an outlet for the LED controller.
+          The Jetson has it own power supply.
+        </p>
+        <p className="text-metal-silver mb-4">
+          The power and electronics are mounted on a separate, smaller, aluminium panel With
+          an acrylic cover for safety, mirroing the standoff design of the main panel. This allowed
+          the electronics panel to be assembled separately and later mounted to the back of the main panel.
+        </p>
         <p className="text-metal-silver">
-          Power injection is provided at the start and end of each LED string/strip.
-          The Jetson and LED controller have separate, isolated power supplies to prevent
-          noise interference.
+          I built a custom 3D-printed mount for the Meanwell, allowing it to be securely fixed
+          to the electronics panel whilst also fully enclosing the 110V AC connections for safety.
         </p>
       </section>
 
@@ -111,10 +121,17 @@ export default function ElectricalPage() {
           LED controller, although we also do have an Ethernet connection.
         </p>
 
-        <p className="text-metal-silver">
+        <p className="text-metal-silver mb-4">
           The QuinLED DigiOcta runs WLED firmware and drives 8 parallel LED data outputs,
           enabling fast refresh rates across all 3,200 LEDs. Each output handles a subset
           of the LEDs, with the controller managing timing-critical LED data generation.
+        </p>
+
+        <p className="text-metal-silver">
+          There is space on the bottom right for a second DigiOcta in case we wanted to
+          expand the LED count in the future, although we don't have many power connections
+          left. The number of LEDs per DigiOcta output is limited by the refresh rate
+          we want to achieve
         </p>
 
         <div className="mt-6 retro-panel rounded border border-neon-purple/30 overflow-hidden">

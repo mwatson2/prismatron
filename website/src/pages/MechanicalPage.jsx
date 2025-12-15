@@ -27,7 +27,7 @@ export default function MechanicalPage() {
               <li>• 1/4" textured acrylic sheet (60" × 36")</li>
               <li>• Creates unique, irregular light patterns from each LED</li>
               <li>• Mounted with cylindrical aluminium standoffs close to the edges</li>
-              <li>• The texture transforms point sources into organic light shapes</li>
+              <li>• The texture transforms point sources into sparkling light shapes</li>
             </ul>
           </div>
 

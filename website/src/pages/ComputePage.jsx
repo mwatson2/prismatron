@@ -22,7 +22,7 @@ export default function ComputePage() {
           it when their diffused light patterns combine.
         </p>
         <p className="text-metal-silver mb-6">
-          This is computationally intensive—potentially billions of calculations per frame.
+          This is computationally intensive.
           A Jetson Orin Nano provides:
         </p>
 
@@ -99,20 +99,26 @@ export default function ComputePage() {
         <div className="diagram-box text-xs">
 {`┌─────────────────────────────────────────────────────────┐
 │                    Jetson Orin Nano                     │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐ │
-│  │ Audio Input │  │ Image Input │  │  Mobile App API │ │
-│  └──────┬──────┘  └──────┬──────┘  └────────┬────────┘ │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐  │
+│  │ Audio Input │  │ Image Input │  │  Mobile App API │  │
+│  └──────┬──────┘  └──────┬──────┘  └────────┬────────┘  │
 │         │                │                   │          │
 │         ▼                ▼                   ▼          │
 │  ┌─────────────────────────────────────────────────────┐│
-│  │              Mode Controller                        ││
-│  │  (audio-reactive / image display / video / demo)    ││
+│  │              Image producer pipeline                ││
+│  │            (video, still image, effects)            ││
 │  └──────────────────────┬──────────────────────────────┘│
 │                         │                               │
 │                         ▼                               │
 │  ┌─────────────────────────────────────────────────────┐│
 │  │           Optimization Engine (GPU)                 ││
 │  │     LED patterns × target → brightness values       ││
+│  └──────────────────────┬──────────────────────────────┘│
+│                         │                               │
+│                         ▼                               │
+│  ┌─────────────────────────────────────────────────────┐│
+│  │                   Renderer.                         ││
+│  │     Audio-reactive and other render-time effects    ││
 │  └──────────────────────┬──────────────────────────────┘│
 │                         │                               │
 │                         ▼ UDP/DDP (WiFi)                │

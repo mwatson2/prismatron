@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { Smartphone, Sliders, BarChart3, Image, Music, Wifi } from 'lucide-react'
+import { Smartphone, Home, Upload, Folder, Sparkles, ListMusic, Settings, Wifi } from 'lucide-react'
 
 export default function ControlAppPage() {
   return (
@@ -22,8 +22,9 @@ export default function ControlAppPage() {
           for use in low-light environments.
         </p>
         <p className="text-metal-silver">
-          The interface provides real-time control over all display modes, audio settings,
-          and system monitoring—no app installation required.
+          The interface is a Progressive Web App (PWA) built with React and Vite. It provides
+          real-time control through six main screens, with live updates streamed via WebSocket.
+          No app installation required—just open a browser.
         </p>
 
         <div className="mt-6 p-4 retro-panel rounded border border-neon-pink/30">
@@ -32,168 +33,271 @@ export default function ControlAppPage() {
         </div>
       </section>
 
-      {/* Display Modes */}
+      {/* Home - Preview & Control */}
       <section className="content-card">
         <h2 className="subsection-title flex items-center gap-2">
-          <Image size={20} />
-          Display Modes
+          <Home size={20} />
+          Home — Preview & Control
         </h2>
         <p className="text-metal-silver mb-4">
-          Switch between different display modes with a single tap:
+          The home screen is the main dashboard for monitoring and controlling the display in real-time.
         </p>
 
         <div className="space-y-4">
           <div className="border-l-2 border-neon-cyan pl-4">
-            <h3 className="font-retro text-neon-cyan mb-1">Image Display</h3>
+            <h3 className="font-retro text-neon-cyan mb-1">Live LED Preview</h3>
             <p className="text-metal-silver text-sm">
-              Upload images or select from a library. The optimization engine renders them
-              in real-time, with controls for brightness, contrast, and color adjustment.
+              A canvas renders the current LED output in real-time, showing exactly what's being
+              displayed. The preview uses the actual LED positions from calibration, so you see
+              the true scattered layout rather than a grid approximation.
             </p>
           </div>
 
           <div className="border-l-2 border-neon-pink pl-4">
-            <h3 className="font-retro text-neon-pink mb-1">Audio-Reactive</h3>
+            <h3 className="font-retro text-neon-pink mb-1">Playback Controls</h3>
             <p className="text-metal-silver text-sm">
-              Responds to music in real-time. Adjust sensitivity, choose color palettes,
-              and tune how build-ups and drops affect the display.
+              Play/pause the current playlist, skip to next or previous items. The current item
+              name, type (image/video/effect), and remaining duration are displayed prominently.
             </p>
           </div>
 
           <div className="border-l-2 border-neon-green pl-4">
-            <h3 className="font-retro text-neon-green mb-1">Video Playback</h3>
+            <h3 className="font-retro text-neon-green mb-1">System Status</h3>
             <p className="text-metal-silver text-sm">
-              Play video content optimized for the display. Supports playlist mode
-              with crossfade transitions between clips.
+              Real-time indicators show CPU and GPU utilization, temperatures, current FPS,
+              and connection status. Warnings appear if temperatures get too high.
             </p>
           </div>
 
           <div className="border-l-2 border-neon-purple pl-4">
-            <h3 className="font-retro text-neon-purple mb-1">Demo Mode</h3>
+            <h3 className="font-retro text-neon-purple mb-1">Audio Visualizer</h3>
             <p className="text-metal-silver text-sm">
-              Cycles through preset patterns and effects automatically. Perfect for
-              showcasing the display without manual intervention.
+              When audio-reactive mode is active, a real-time frequency spectrum visualizer
+              shows what the system is hearing. Useful for confirming audio input is working.
+            </p>
+          </div>
+
+          <div className="border-l-2 border-neon-orange pl-4">
+            <h3 className="font-retro text-neon-orange mb-1">Optimization Control</h3>
+            <p className="text-metal-silver text-sm">
+              Adjust the number of optimization iterations in real-time. More iterations mean
+              better image quality but lower frame rate—find the right balance for your content.
             </p>
           </div>
         </div>
       </section>
 
-      {/* Audio Controls */}
+      {/* Upload - Add Content */}
       <section className="content-card">
         <h2 className="subsection-title flex items-center gap-2">
-          <Music size={20} />
-          Audio Controls
+          <Upload size={20} />
+          Upload — Add Content
         </h2>
         <p className="text-metal-silver mb-4">
-          Fine-tune how the display responds to audio:
+          Add new images and videos to the system directly from your device.
         </p>
-
-        <div className="grid md:grid-cols-2 gap-4">
-          <div className="bg-dark-800 p-4 rounded border border-neon-cyan/20">
-            <h4 className="font-retro text-neon-cyan text-sm mb-2">Input Selection</h4>
-            <p className="text-metal-silver text-sm">
-              Choose between line-in, microphone, or Bluetooth audio sources.
-            </p>
-          </div>
-
-          <div className="bg-dark-800 p-4 rounded border border-neon-pink/20">
-            <h4 className="font-retro text-neon-pink text-sm mb-2">Sensitivity</h4>
-            <p className="text-metal-silver text-sm">
-              Adjust how strongly the display reacts to different volume levels.
-            </p>
-          </div>
-
-          <div className="bg-dark-800 p-4 rounded border border-neon-green/20">
-            <h4 className="font-retro text-neon-green text-sm mb-2">Color Palette</h4>
-            <p className="text-metal-silver text-sm">
-              Select from preset palettes or create custom color schemes.
-            </p>
-          </div>
-
-          <div className="bg-dark-800 p-4 rounded border border-neon-purple/20">
-            <h4 className="font-retro text-neon-purple text-sm mb-2">Effect Intensity</h4>
-            <p className="text-metal-silver text-sm">
-              Control how dramatic the build-up and drop effects appear.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* System Monitoring */}
-      <section className="content-card">
-        <h2 className="subsection-title flex items-center gap-2">
-          <BarChart3 size={20} />
-          System Monitoring
-        </h2>
-        <p className="text-metal-silver mb-4">
-          Real-time status and performance metrics:
-        </p>
-
-        <div className="bg-dark-800 rounded border border-neon-cyan/20 overflow-hidden">
-          <table className="spec-table">
-            <thead>
-              <tr>
-                <th>Metric</th>
-                <th>Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td className="text-neon-cyan">FPS</td>
-                <td>Current frame rate of the optimization engine</td>
-              </tr>
-              <tr>
-                <td className="text-neon-cyan">CPU/GPU Temp</td>
-                <td>Jetson thermal monitoring with alerts</td>
-              </tr>
-              <tr>
-                <td className="text-neon-cyan">Audio Level</td>
-                <td>Real-time input level meter with AGC status</td>
-              </tr>
-              <tr>
-                <td className="text-neon-cyan">BPM</td>
-                <td>Detected beats per minute from audio</td>
-              </tr>
-              <tr>
-                <td className="text-neon-cyan">LED Controller</td>
-                <td>Connection status to WLED/DigiOcta</td>
-              </tr>
-              <tr>
-                <td className="text-neon-cyan">Network</td>
-                <td>WiFi signal strength and AP fallback status</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      {/* Settings */}
-      <section className="content-card">
-        <h2 className="subsection-title flex items-center gap-2">
-          <Sliders size={20} />
-          Settings
-        </h2>
 
         <div className="space-y-4">
-          <div className="border-l-2 border-neon-orange pl-4">
-            <h3 className="font-retro text-neon-orange mb-1">Network Configuration</h3>
-            <p className="text-metal-silver text-sm">
-              Configure WiFi networks. The system automatically falls back to AP mode
-              if no known network is available, ensuring you can always connect.
-            </p>
-          </div>
-
-          <div className="border-l-2 border-neon-yellow pl-4">
-            <h3 className="font-retro text-neon-yellow mb-1">Calibration Tools</h3>
-            <p className="text-metal-silver text-sm">
-              Run the LED calibration wizard to capture diffusion patterns. Includes
-              manual LED testing and pattern validation tools.
-            </p>
-          </div>
-
           <div className="border-l-2 border-neon-cyan pl-4">
-            <h3 className="font-retro text-neon-cyan mb-1">System Controls</h3>
+            <h3 className="font-retro text-neon-cyan mb-1">Drag and Drop</h3>
             <p className="text-metal-silver text-sm">
-              Reboot, shutdown, or update the system. View logs and diagnostic information.
+              Drop files directly onto the upload zone, or tap to browse. Supports common
+              image formats (JPG, PNG, GIF, WebP) and video formats (MP4, MOV, MKV, WebM).
+            </p>
+          </div>
+
+          <div className="border-l-2 border-neon-pink pl-4">
+            <h3 className="font-retro text-neon-pink mb-1">Batch Upload</h3>
+            <p className="text-metal-silver text-sm">
+              Select multiple files at once. Each file uploads sequentially with progress
+              indication, and gets added to the uploads folder for later use.
+            </p>
+          </div>
+
+          <div className="border-l-2 border-neon-green pl-4">
+            <h3 className="font-retro text-neon-green mb-1">Video Conversion</h3>
+            <p className="text-metal-silver text-sm">
+              Videos are automatically converted to an optimized format for the display.
+              A progress bar shows conversion status, and you're notified when complete.
+              The converted video is then available in your media library.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Media - Manage Files */}
+      <section className="content-card">
+        <h2 className="subsection-title flex items-center gap-2">
+          <Folder size={20} />
+          Media — Manage Files
+        </h2>
+        <p className="text-metal-silver mb-4">
+          Browse and manage all your media files in one place.
+        </p>
+
+        <div className="space-y-4">
+          <div className="border-l-2 border-neon-cyan pl-4">
+            <h3 className="font-retro text-neon-cyan mb-1">Media Library</h3>
+            <p className="text-metal-silver text-sm">
+              View all images and videos in the permanent media folder. Files are shown
+              with thumbnails, names, and file sizes. Tap any file to add it to the current playlist.
+            </p>
+          </div>
+
+          <div className="border-l-2 border-neon-pink pl-4">
+            <h3 className="font-retro text-neon-pink mb-1">Uploads Management</h3>
+            <p className="text-metal-silver text-sm">
+              Recently uploaded files appear in a separate section. Move files you want to
+              keep to the permanent media library, or delete temporary uploads to free space.
+            </p>
+          </div>
+
+          <div className="border-l-2 border-neon-green pl-4">
+            <h3 className="font-retro text-neon-green mb-1">File Operations</h3>
+            <p className="text-metal-silver text-sm">
+              Rename files to keep your library organized, or delete files you no longer need.
+              When you delete a file, it's automatically removed from any playlists that reference it.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Effects - Visual Effects */}
+      <section className="content-card">
+        <h2 className="subsection-title flex items-center gap-2">
+          <Sparkles size={20} />
+          Effects — Visual Effects
+        </h2>
+        <p className="text-metal-silver mb-4">
+          Browse and configure procedural visual effects to add to your playlist.
+        </p>
+
+        <div className="space-y-4">
+          <div className="border-l-2 border-neon-cyan pl-4">
+            <h3 className="font-retro text-neon-cyan mb-1">Effect Categories</h3>
+            <p className="text-metal-silver text-sm">
+              Effects are organized by category: patterns (plasma, fire, matrix), geometric
+              (spirals, waves, kaleidoscope), text displays, and audio-reactive visualizations.
+              Filter by category to find what you're looking for.
+            </p>
+          </div>
+
+          <div className="border-l-2 border-neon-pink pl-4">
+            <h3 className="font-retro text-neon-pink mb-1">Effect Configuration</h3>
+            <p className="text-metal-silver text-sm">
+              Each effect has configurable parameters—colors, speed, intensity, and more.
+              Adjust settings before adding to see how they'll look. Text effects let you
+              enter custom messages and choose fonts.
+            </p>
+          </div>
+
+          <div className="border-l-2 border-neon-green pl-4">
+            <h3 className="font-retro text-neon-green mb-1">Duration Control</h3>
+            <p className="text-metal-silver text-sm">
+              Set how long each effect runs before the playlist advances. Effects can run
+              for a few seconds or loop indefinitely until you skip manually.
+            </p>
+          </div>
+
+          <div className="border-l-2 border-neon-purple pl-4">
+            <h3 className="font-retro text-neon-purple mb-1">Audio-Reactive Mode</h3>
+            <p className="text-metal-silver text-sm">
+              Enable audio reactivity for supported effects. Configure sensitivity, frequency
+              bands, and how the audio analysis maps to visual parameters like color and intensity.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Playlist - Manage Queue */}
+      <section className="content-card">
+        <h2 className="subsection-title flex items-center gap-2">
+          <ListMusic size={20} />
+          Playlist — Manage Queue
+        </h2>
+        <p className="text-metal-silver mb-4">
+          Build and manage the sequence of content that plays on the display.
+        </p>
+
+        <div className="space-y-4">
+          <div className="border-l-2 border-neon-cyan pl-4">
+            <h3 className="font-retro text-neon-cyan mb-1">Drag and Drop Reordering</h3>
+            <p className="text-metal-silver text-sm">
+              Rearrange items by dragging them to new positions. The currently playing item
+              is highlighted, and you can see what's coming up next in the queue.
+            </p>
+          </div>
+
+          <div className="border-l-2 border-neon-pink pl-4">
+            <h3 className="font-retro text-neon-pink mb-1">Save and Load Playlists</h3>
+            <p className="text-metal-silver text-sm">
+              Save your current playlist with a name for later use. Load saved playlists
+              to quickly switch between different content sets—one for parties, one for
+              ambient display, etc.
+            </p>
+          </div>
+
+          <div className="border-l-2 border-neon-green pl-4">
+            <h3 className="font-retro text-neon-green mb-1">Playback Modes</h3>
+            <p className="text-metal-silver text-sm">
+              Enable auto-repeat to loop the playlist continuously, or shuffle mode to
+              randomize the order. Combine both for endless variety.
+            </p>
+          </div>
+
+          <div className="border-l-2 border-neon-purple pl-4">
+            <h3 className="font-retro text-neon-purple mb-1">Transitions</h3>
+            <p className="text-metal-silver text-sm">
+              Configure how items transition from one to the next. Choose from fade,
+              blur, or instant cut. Set transition duration and apply different
+              transitions for entering and exiting each item.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Settings - System Config */}
+      <section className="content-card">
+        <h2 className="subsection-title flex items-center gap-2">
+          <Settings size={20} />
+          Settings — System Config
+        </h2>
+        <p className="text-metal-silver mb-4">
+          Configure system-wide settings and monitor hardware status.
+        </p>
+
+        <div className="space-y-4">
+          <div className="border-l-2 border-neon-cyan pl-4">
+            <h3 className="font-retro text-neon-cyan mb-1">Brightness Control</h3>
+            <p className="text-metal-silver text-sm">
+              Adjust global LED brightness from 0-100%. Lower brightness extends LED life
+              and reduces power consumption—useful for indoor settings or late night use.
+            </p>
+          </div>
+
+          <div className="border-l-2 border-neon-pink pl-4">
+            <h3 className="font-retro text-neon-pink mb-1">WiFi Network Management</h3>
+            <p className="text-metal-silver text-sm">
+              Scan for available networks, connect to new ones, or forget saved networks.
+              See signal strength and connection status. If no known network is available,
+              the system automatically creates an access point.
+            </p>
+          </div>
+
+          <div className="border-l-2 border-neon-green pl-4">
+            <h3 className="font-retro text-neon-green mb-1">Audio Source</h3>
+            <p className="text-metal-silver text-sm">
+              Switch between microphone input for live audio reactivity, or use a test
+              audio file for development and demos. Configure input gain and see real-time
+              audio levels.
+            </p>
+          </div>
+
+          <div className="border-l-2 border-neon-orange pl-4">
+            <h3 className="font-retro text-neon-orange mb-1">System Controls</h3>
+            <p className="text-metal-silver text-sm">
+              Restart the Prismatron service if something goes wrong, or reboot the entire
+              system. View current software version and system uptime.
             </p>
           </div>
         </div>
@@ -221,6 +325,10 @@ export default function ControlAppPage() {
           <li className="flex items-start gap-2">
             <span className="text-neon-cyan">→</span>
             <span>Real-time updates via WebSocket—no page refresh needed</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="text-neon-cyan">→</span>
+            <span>Install as a PWA on mobile for app-like experience</span>
           </li>
         </ul>
 

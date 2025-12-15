@@ -76,35 +76,30 @@ export default function AudioPage() {
             <tbody>
               <tr>
                 <td className="text-neon-cyan">Beat</td>
-                <td>Pulse/flash intensity</td>
+                <td>Pulse/flash intensity / Trigger template animation</td>
               </tr>
               <tr>
                 <td className="text-neon-cyan">Bass energy</td>
-                <td>Color warmth, overall brightness</td>
-              </tr>
-              <tr>
-                <td className="text-neon-cyan">High frequencies</td>
-                <td>Sparkle, detail activation</td>
-              </tr>
-              <tr>
-                <td className="text-neon-cyan">Spectral centroid</td>
-                <td>Color palette selection</td>
+                <td>Color warmth, overall brightness (not implemeted yet)</td>
               </tr>
               <tr>
                 <td className="text-neon-cyan">Build-up detection</td>
-                <td>Increasing complexity, rising patterns</td>
+                <td>Sparkle effect with increasing intensity</td>
               </tr>
               <tr>
-                <td className="text-neon-cyan">Cut/drop detection</td>
-                <td>Full-field dramatic transitions</td>
+                <td className="text-neon-cyan">Cut before the drop</td>
+                <td>Drop to black and fade back</td>
+              </tr>
+              <tr>
+                <td className="text-neon-cyan">Drop</td>
+                <td>Full-field max brightness and fade back to image</td>
               </tr>
             </tbody>
           </table>
         </div>
 
         <p className="text-metal-silver mt-6">
-          The mapping is configurable, allowing different "personalities" for different
-          music styles.
+          The mapping is configurable, allowing experimentation and customization.
         </p>
       </section>
 
@@ -120,8 +115,9 @@ export default function AudioPage() {
           <div className="border-l-2 border-neon-yellow pl-4">
             <h3 className="font-retro text-neon-yellow mb-2">Build-Up Detection</h3>
             <p className="text-metal-silver text-sm">
-              Triggered by <strong>snare rolls</strong> (detected via autocorrelation at 4x or 8x BPM)
-              combined with <strong>rising high-frequency flux</strong> and <strong>rising spectral centroid</strong>.
+              Triggered by <strong>snare rolls</strong> which we detected via autocorrelation in the frequency bands
+              associated with snare drums, looking specifically for autocorrelation at 4x or 8x BPM
+              We also look for <strong>rising high-frequency flux</strong> and <strong>rising spectral centroid</strong>.
               Build-up intensity is a continuous value that increases as the build progresses.
             </p>
           </div>
@@ -199,6 +195,16 @@ export default function AudioPage() {
         <p className="text-metal-silver mt-4">
           Slopes are calculated over 0.25s intervals to detect rising/falling trends rather than
           instantaneous values, making detection robust to momentary fluctuations.
+        </p>
+        <p className="text-metal-silver mt-4">
+          We also implemented automatic gain control to handle varying input volumes together with a slight bass boost
+          to compensate for poor bass response in the (very cheap!) microphone used. A high-pass filter is used
+          to remove very low-frequence noise.
+        </p>
+        <p className="text-metal-silver mt-4">
+          For development / tuning, the system can be set to use a wav file input on a loop. This allows experimentation
+          with a known input signal. We also provide an option to capture and output the microphone signal, allowing
+          offline experimentation with the signal exactly as it is heard by the system.
         </p>
       </section>
     </motion.div>

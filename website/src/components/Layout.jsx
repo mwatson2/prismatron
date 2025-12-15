@@ -6,7 +6,6 @@ import Footer from './Footer'
 
 const navItems = [
   { path: '/', label: 'Home', icon: Home },
-  { path: '/burning-man', label: 'Burning Man', icon: Flame },
   { path: '/mechanical', label: 'Mechanical', icon: Box },
   { path: '/electrical', label: 'Electrical', icon: Zap },
   { path: '/compute', label: 'Compute', icon: Cpu },
@@ -14,6 +13,7 @@ const navItems = [
   { path: '/audio', label: 'Audio-Reactive', icon: Music },
   { path: '/software', label: 'Software', icon: Settings },
   { path: '/control-app', label: 'Control App', icon: Smartphone },
+  { path: '/burning-man', label: 'Burning Man', icon: Flame },
   { path: '/specs', label: 'Specifications', icon: FileText },
   { path: '/bom', label: 'Bill of Materials', icon: ShoppingCart },
   { path: '/license', label: 'License', icon: Scale },

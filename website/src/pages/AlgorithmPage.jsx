@@ -42,7 +42,11 @@ export default function AlgorithmPage() {
           Each column of <span className="font-mono text-neon-cyan">A</span> represents one LED's diffusion
           pattern—how light from that LED spreads across the image plane when photographed through the
           textured diffuser. With 3,200 LEDs and ~380,000 pixels, the full matrix would be enormous,
-          but the diffusion patterns are localized, making the matrix highly sparse.
+          but the diffusion patterns are localized, making the matrix highly sparse. I created a custom matrix
+          format with GPU kernels to efficiently store and operate on this matrix. This recognizes that
+          the non-zero pixels in each image (one per LED) are localized and so we store only a 64x64 region
+          centered on the LED's position. This may involve some cropping if an LED casts a wide image,
+          but this is an acceptable trade-off for efficiency.
         </p>
       </section>
 
@@ -64,11 +68,12 @@ export default function AlgorithmPage() {
         </div>
 
         <p className="text-metal-silver mb-4">
-          We precompute <span className="font-mono text-neon-cyan">(AᵀA)⁻¹</span> once during calibration.
+          We precompute both <span className="font-mono text-neon-cyan">(AᵀA)</span> and
+          <span className="font-mono text-neon-cyan">(AᵀA)⁻¹</span> once during calibration.
           For each new target frame, we only need to compute:
         </p>
 
-        <ol className="space-y-2 text-metal-silver">
+        <ol className="space-y-2 text-metal-silver mb-4">
           <li className="flex items-start gap-2">
             <span className="text-neon-cyan font-retro">1.</span>
             <span><span className="font-mono text-neon-pink">Aᵀb</span> — Project target image into LED space</span>
@@ -78,6 +83,12 @@ export default function AlgorithmPage() {
             <span><span className="font-mono text-neon-pink">(AᵀA)⁻¹ · (Aᵀb)</span> — Apply precomputed inverse</span>
           </li>
         </ol>
+
+        <p className="text-metal-silver mb-4">
+          Our custom format for <span className="font-mono text-neon-pink">A</span> makes the computation
+          of <span className="font-mono text-neon-pink">Aᵀb</span> very efficient: for each LED we only need to
+          calculate the dot product with the corresponding 64x64 region of <span className="font-mono text-neon-pink">b</span>.
+        </p>
 
         <div className="mt-6 p-4 bg-dark-700 rounded border-l-4 border-neon-orange">
           <h4 className="font-retro text-neon-orange text-sm mb-2">The Problem</h4>
@@ -118,9 +129,18 @@ export default function AlgorithmPage() {
           the solution while maintaining stability.
         </p>
 
-        <p className="text-metal-silver">
+        <p className="text-metal-silver mb-4">
           In practice, <strong className="text-neon-cyan">5-15 iterations</strong> are sufficient to
           converge from the pseudo-inverse initialization, since it's already close to optimal.
+        </p>
+        <p className="text-metal-silver">
+          The complex part of the above is the matrix multiplications with <span className="font-mono text-neon-cyan">AᵀA·x</span>,
+          and <span className="font-mono text-neon-cyan">AᵀA·g</span>. To speed this up, we note
+          that by suitably ordering the LEDs we can ensure that <span className="font-mono text-neon-cyan">AᵀA</span> is concentrated close to the diagonal.
+          This can be done by ordering the LEDs so that LEDs that are far apart in the physical layout are also far apart in the ordering we use for
+          computation. Since the LEDs are randomly arranged, we need to work out this ordering: we use Reverse Cuthill-McKee (RCM) algorithm to achieve this.
+          The ordering can obviously be pre-computed, allowing us to store the precomputed <span className="font-mono text-neon-cyan">AᵀA</span>
+          in this order, using a format efficient for a matrix with few non-zero diagonals. We provide custom GPU kernals for multiplying with this format.
         </p>
       </section>
 
@@ -204,15 +224,20 @@ export default function AlgorithmPage() {
             </div>
             <p className="text-metal-silver text-sm mt-2">
               Only upper diagonals are stored (symmetry gives us lower diagonals for free).
-              The 16×16 block size aligns with Tensor Core requirements.
+              Rather than storing each diagonal in an array, we decompose the whole matrix into 16×16 blocks
+              and store the diagonals of blocks. This is a little less efficient (some blocks overlap empty
+              diagonals) but it allows us to leverage Tensor Cores for acceleration.
             </p>
           </div>
 
           {/* WMMA Kernel */}
           <div className="border-l-2 border-neon-green pl-4">
-            <h3 className="font-retro text-neon-green mb-2">Custom WMMA Multiplication Kernel</h3>
+            <h3 className="font-retro text-neon-green mb-2">Batching and custom WMMA Multiplication Kernel</h3>
             <p className="text-metal-silver text-sm mb-3">
-              Standard cuBLAS can't efficiently handle our symmetric block diagonal format.
+              The algorithm described above involves matrix-vector multiplications, but Tensor Cores are designed
+              for the matrix-matrix operations that power AI models. As a result, optimizing a single frame as described above
+              happens only on the CUDA cores and we get only about 2 of the Jetson's 67 TFlops! The solution is to optimize frames 8 at a time.
+              The required operations then become (8,32)x(32,8) matrix matrix multiplications which can be accelerated on the Tensor Cores.
               We wrote a <strong>custom CUDA kernel using WMMA intrinsics</strong> (Warp Matrix Multiply Accumulate):
             </p>
             <ul className="text-metal-silver text-sm space-y-1">
@@ -286,11 +311,17 @@ export default function AlgorithmPage() {
           </table>
         </div>
 
-        <p className="text-metal-silver">
+        <p className="text-metal-silver mb-4">
           In <strong className="text-neon-pink">batch mode</strong>, we process 8 frames simultaneously,
-          maximizing GPU utilization. For audio-reactive content where consecutive frames are
-          correlated, <strong className="text-neon-cyan">warm-start optimization</strong> uses the
-          previous frame's solution as the starting point, reducing iterations needed.
+          maximizing GPU utilization. This does add delay into the optimization pipeline and we anyway maintain
+          a faily deep buffer of optimized frames to smooth out any hiccups in performance. An optimized frame is
+          just the RGB values for the 3200 LEDs and is relatively small compared to the original image frames.
+        </p>
+        <p className="text-metal-silver">
+          Effects that need to be applied in real time (the audio-reactive effects) are applied to the LED values
+          at rendering time, in order to make these as responsive as possible to the audio signal. These effects include
+          fades, brightness modulation a random sparkle effect and various 'templates' which contain short pre-optimixed
+          image sequences that can be blended in with the optimized output.
         </p>
       </section>
     </motion.div>

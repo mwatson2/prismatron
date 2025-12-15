@@ -19,24 +19,39 @@ export default function HomePage() {
         <p className="text-xl md:text-2xl text-neon-pink mb-4">
           A computational LED display where chaos becomes coherent
         </p>
-        <p className="text-sm text-metal-silver mb-6 flex items-center justify-center gap-2">
-          Made with help from
+
+        <p className="text-metal-silver max-w-2xl mx-auto text-lg mb-6 leading-relaxed">
+          3,200 LEDs. Randomly arranged. Mathematically orchestrated. Prismatron transforms
+          scattered points of light into recognizable images through real-time computational
+          optimization—proving that order can emerge from apparent disorder.
+        </p>
+        <p className="text-metal-silver/80 max-w-2xl mx-auto mb-6 leading-relaxed">
+          Many people and some non-people helped in the creation of the Prismatron. Thanks and love
+          to my family for their extremepatience with the many nights and weekends this project consumed.
+          Thanks to Paul J for stirling logistical support getting the thing to and from Burning Man.
+          Finally, thanks to (the creators of){' '}
+          <a
+            href="https://claude.ai"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-neon-orange hover:text-neon-pink transition-colors"
+          >
+            <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
+              <path d="M4.709 15.955l4.72-2.647.08-.08 2.958-1.665c.084-.05.2-.05.283 0l2.958 1.665.08.08 4.72 2.647c.26.147.26.537 0 .683l-4.72 2.648-.08.079-2.958 1.665c-.084.05-.2.05-.283 0l-2.958-1.665-.08-.08-4.72-2.647c-.26-.146-.26-.536 0-.683zM12 3c.103 0 .205.026.297.078l7.5 4.25c.185.104.297.298.297.508v8.328c0 .21-.112.404-.297.508l-7.5 4.25c-.184.104-.41.104-.594 0l-7.5-4.25C4.018 16.568 3.906 16.374 3.906 16.164V7.836c0-.21.112-.404.297-.508l7.5-4.25C11.795 3.026 11.897 3 12 3z"/>
+            </svg>
+            Claude
+          </a>{' '}and{' '}
           <a
             href="https://claude.ai/code"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-neon-orange hover:text-neon-pink transition-colors"
+            className="inline-flex items-center gap-1 text-neon-orange hover:text-neon-pink transition-colors"
           >
             <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
               <path d="M4.709 15.955l4.72-2.647.08-.08 2.958-1.665c.084-.05.2-.05.283 0l2.958 1.665.08.08 4.72 2.647c.26.147.26.537 0 .683l-4.72 2.648-.08.079-2.958 1.665c-.084.05-.2.05-.283 0l-2.958-1.665-.08-.08-4.72-2.647c-.26-.146-.26-.536 0-.683zM12 3c.103 0 .205.026.297.078l7.5 4.25c.185.104.297.298.297.508v8.328c0 .21-.112.404-.297.508l-7.5 4.25c-.184.104-.41.104-.594 0l-7.5-4.25C4.018 16.568 3.906 16.374 3.906 16.164V7.836c0-.21.112-.404.297-.508l7.5-4.25C11.795 3.026 11.897 3 12 3z"/>
             </svg>
             Claude Code
-          </a>
-        </p>
-        <p className="text-metal-silver max-w-2xl mx-auto text-lg leading-relaxed">
-          3,200 LEDs. Randomly arranged. Mathematically orchestrated. Prismatron transforms
-          scattered points of light into recognizable images through real-time computational
-          optimization—proving that order can emerge from apparent disorder.
+          </a>, without which this project would not have been possible.
         </p>
 
         <div className="mt-10 retro-panel rounded-lg border border-neon-cyan/50 overflow-hidden">

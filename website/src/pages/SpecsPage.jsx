@@ -61,7 +61,7 @@ export default function SpecsPage() {
               </tr>
               <tr>
                 <td>Frame rate</td>
-                <td className="text-neon-cyan">15+ fps (dynamic), higher for static</td>
+                <td className="text-neon-cyan">~30+ fps (dynamic)</td>
               </tr>
               <tr>
                 <td>Compute platform</td>
