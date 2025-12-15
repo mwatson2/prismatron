@@ -261,7 +261,7 @@ class PreviewSink:
             import os
 
             # Create shared memory file in /dev/shm
-            shm_path = f"/dev/shm/{self.config.shared_memory_name}"
+            shm_path = f"/dev/shm/{self.config.shared_memory_name}"  # nosec B108 - IPC shared memory
 
             # Remove existing file if it exists
             import contextlib

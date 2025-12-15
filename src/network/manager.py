@@ -5,7 +5,7 @@ NetworkManager wrapper for WiFi AP and client mode management.
 import asyncio
 import json
 import logging
-import subprocess
+import subprocess  # nosec B404 - subprocess used for nmcli commands with hardcoded args
 import tempfile
 from dataclasses import asdict
 from pathlib import Path
@@ -36,7 +36,7 @@ class NetworkManager:
     def _detect_wifi_interface(self) -> str:
         """Detect the WiFi interface name."""
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B603 B607 - hardcoded nmcli command
                 ["nmcli", "--terse", "--fields", "DEVICE,TYPE", "device", "status"],
                 capture_output=True,
                 text=True,
@@ -53,7 +53,9 @@ class NetworkManager:
             # Fallback to common names
             for interface in ["wlP1p1s0", "wlan0", "wlo1"]:
                 try:
-                    subprocess.run(["nmcli", "device", "show", interface], capture_output=True, check=True)
+                    subprocess.run(
+                        ["nmcli", "device", "show", interface], capture_output=True, check=True
+                    )  # nosec B603 B607
                     logger.info(f"Found WiFi interface: {interface}")
                     return interface
                 except subprocess.CalledProcessError:
@@ -68,7 +70,7 @@ class NetworkManager:
     def _detect_ethernet_interface(self) -> str:
         """Detect the Ethernet interface name."""
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B603 B607 - hardcoded nmcli command
                 ["nmcli", "--terse", "--fields", "DEVICE,TYPE", "device", "status"],
                 capture_output=True,
                 text=True,
@@ -85,7 +87,9 @@ class NetworkManager:
             # Fallback to common names
             for interface in ["enP8p1s0", "eth0", "enp0s1"]:
                 try:
-                    subprocess.run(["nmcli", "device", "show", interface], capture_output=True, check=True)
+                    subprocess.run(
+                        ["nmcli", "device", "show", interface], capture_output=True, check=True
+                    )  # nosec B603 B607
                     logger.info(f"Found Ethernet interface: {interface}")
                     return interface
                 except subprocess.CalledProcessError:

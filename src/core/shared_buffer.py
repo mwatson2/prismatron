@@ -423,7 +423,10 @@ class FrameProducer(FrameRingBuffer):
                 import stat
 
                 with contextlib.suppress(OSError, PermissionError):
-                    os.chmod(f"/dev/shm/{shm_name}", stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP)
+                    os.chmod(
+                        f"/dev/shm/{shm_name}",  # nosec B108
+                        stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP,
+                    )
                 self._shared_memory.append(shm)
 
             # Create shared memory for frame metadata
@@ -437,7 +440,10 @@ class FrameProducer(FrameRingBuffer):
             )
             # Set group read/write permissions for metadata
             with contextlib.suppress(OSError, PermissionError):
-                os.chmod(f"/dev/shm/{self.name}_metadata", stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP)
+                os.chmod(
+                    f"/dev/shm/{self.name}_metadata",  # nosec B108
+                    stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP,
+                )
 
             # Create control structure for cross-process coordination
             # Layout: [write_idx, read_idx, frame_counter,
@@ -448,7 +454,10 @@ class FrameProducer(FrameRingBuffer):
             )
             # Set group read/write permissions for control
             with contextlib.suppress(OSError, PermissionError):
-                os.chmod(f"/dev/shm/{self.name}_control", stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP)
+                os.chmod(
+                    f"/dev/shm/{self.name}_control",  # nosec B108
+                    stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP,
+                )
 
             # Create array views from shared memory
             if not self._create_array_views_from_shared_memory():

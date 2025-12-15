@@ -6,7 +6,7 @@ to avoid repeated subprocess calls to ffmpeg during video source initialization.
 """
 
 import logging
-import subprocess
+import subprocess  # nosec B404 - subprocess used for ffmpeg with hardcoded args
 import threading
 import time
 from typing import Dict, Optional, Set
@@ -85,7 +85,7 @@ class HardwareAccelerationCache:
         """
         try:
             # First check for Jetson NVMPI decoders (Jetson Orin Nano, etc.)
-            result = subprocess.run(  # nosec B607 - ffmpeg is a trusted tool
+            result = subprocess.run(  # nosec B603 B607 - ffmpeg is a trusted tool
                 ["ffmpeg", "-hide_banner", "-decoders"],
                 capture_output=True,
                 text=True,
@@ -118,7 +118,7 @@ class HardwareAccelerationCache:
                     return
 
             # Fall back to checking standard hardware acceleration
-            result = subprocess.run(  # nosec B607 - ffmpeg is a trusted tool
+            result = subprocess.run(  # nosec B603 B607 - ffmpeg is a trusted tool
                 ["ffmpeg", "-hide_banner", "-hwaccels"],
                 capture_output=True,
                 text=True,

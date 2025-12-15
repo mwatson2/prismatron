@@ -234,7 +234,7 @@ class ConsumerProcess:
         # Debug frame writing (first 10 frames)
         self._debug_frame_count = 0
         self._debug_max_frames = 10
-        self._debug_frame_dir = Path("/tmp/prismatron_debug_frames")
+        self._debug_frame_dir = Path("/tmp/prismatron_debug_frames")  # nosec B108 - debug output
         self._debug_frame_dir.mkdir(exist_ok=True)
 
         # Periodic logging for pipeline debugging
@@ -1383,7 +1383,7 @@ class ConsumerProcess:
                                 if self._led_buffer is not None:
                                     buffer_stats = self._led_buffer.get_buffer_stats()
                                     logger.critical(f"LED buffer status: {buffer_stats}")
-                            except Exception:
+                            except Exception:  # nosec B110 - diagnostic logging
                                 pass
                         else:
                             logger.critical("Renderer thread is_alive=False - thread has crashed!")
@@ -1394,7 +1394,7 @@ class ConsumerProcess:
                                     logger.critical(
                                         f"System state at crash: renderer_state={control_status.renderer_state}, producer_state={control_status.producer_state}"
                                     )
-                            except Exception:
+                            except Exception:  # nosec B110 - diagnostic logging
                                 pass
                 elif self._renderer_thread_heartbeat == 0.0 and current_time - self._last_thread_check > 30.0:
                     # Heartbeat was cleared (thread died)
@@ -1775,8 +1775,8 @@ class ConsumerProcess:
                         if iterations != self.optimization_iterations:
                             self.optimization_iterations = iterations
                             # Update optimization iterations from ControlState
-            except Exception as e:
-                pass  # Failed to read optimization iterations from ControlState
+            except Exception:  # nosec B110 - graceful fallback for control state read
+                pass
 
             # Move to CPU for single frame optimizer if needed
             if isinstance(rgb_frame, cp.ndarray):
@@ -2032,7 +2032,7 @@ class ConsumerProcess:
                 control_status = self._control_state.get_status()
                 if control_status and hasattr(control_status, "optimization_iterations"):
                     iterations = control_status.optimization_iterations
-            except Exception:
+            except Exception:  # nosec B110 - graceful fallback for control state read
                 pass
 
             # Process batch

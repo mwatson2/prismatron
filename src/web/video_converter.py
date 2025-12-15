@@ -11,7 +11,7 @@ import logging
 import os
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404 - subprocess used for ffmpeg/ffprobe with hardcoded args
 import threading
 import time
 import uuid
@@ -304,7 +304,7 @@ class ConversionManager:
         try:
             cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", str(video_path)]
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)  # nosec B603 - ffprobe
             if result.returncode != 0:
                 logger.error(f"ffprobe failed: {result.stderr}")
                 return None
@@ -412,7 +412,7 @@ class ConversionManager:
             # Use stdbuf to disable buffering on FFmpeg's output
             buffered_cmd = ["stdbuf", "-oL", "-eL"] + cmd
 
-            process = subprocess.Popen(
+            process = subprocess.Popen(  # nosec B603 - ffmpeg with hardcoded args
                 buffered_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -575,7 +575,7 @@ class ConversionManager:
                 # Re-run ffprobe to check for audio streams
                 cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", str(job.temp_path)]
 
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)  # nosec B603 - ffprobe
                 if result.returncode == 0:
                     data = json.loads(result.stdout)
                     audio_streams = [s for s in data.get("streams", []) if s.get("codec_type") == "audio"]

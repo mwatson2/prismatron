@@ -7,7 +7,7 @@ GPU usage, CPU usage, temperatures, memory, and power consumption.
 
 import logging
 import re
-import subprocess
+import subprocess  # nosec B404 - subprocess used for tegrastats with hardcoded args
 import threading
 import time
 from dataclasses import dataclass, field
@@ -122,7 +122,7 @@ class TegrastatsMonitor:
                 cmd = ["tegrastats", "--interval", str(self.interval_ms)]
                 logger.info(f"Starting tegrastats: {' '.join(cmd)}")
 
-                self.process = subprocess.Popen(
+                self.process = subprocess.Popen(  # nosec B603 - tegrastats with hardcoded args
                     cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,  # Suppress warnings about inaccessible debug interfaces

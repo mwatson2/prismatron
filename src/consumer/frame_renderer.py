@@ -497,7 +497,7 @@ class FrameRenderer:
         # Debug LED value writing (first 10 different frames)
         self._debug_led_count = 0
         self._debug_max_leds = 0
-        self._debug_led_dir = Path("/tmp/prismatron_debug_leds")
+        self._debug_led_dir = Path("/tmp/prismatron_debug_leds")  # nosec B108 - debug output
         self._debug_led_dir.mkdir(exist_ok=True)
         self._debug_previous_led_values = None  # Track previous frame for uniqueness
 

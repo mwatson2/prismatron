@@ -1012,8 +1012,8 @@ class AudioBeatAnalyzer:
         try:
             if hasattr(self, "running") and self.running:
                 self.stop_analysis()
-        except Exception:
-            pass  # Suppress errors during GC
+        except Exception:  # nosec B110 - suppress errors during GC cleanup
+            pass
 
     def _on_audio_chunk(self, audio_chunk: np.ndarray, timestamp: float):
         """

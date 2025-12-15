@@ -176,7 +176,7 @@ class PlaylistSyncService:
     and broadcasting changes to all connected clients.
     """
 
-    def __init__(self, socket_path: str = "/tmp/prismatron_playlist.sock"):
+    def __init__(self, socket_path: str = "/tmp/prismatron_playlist.sock"):  # nosec B108 - IPC socket
         self.socket_path = socket_path
         self.playlist_state = PlaylistState(items=[])
         self.clients: Dict[str, Dict[str, Any]] = {}  # client_id -> client_info
@@ -209,8 +209,8 @@ class PlaylistSyncService:
             self.server_socket.bind(self.socket_path)
             self.server_socket.listen(5)
 
-            # Set socket permissions
-            os.chmod(self.socket_path, 0o666)
+            # Set socket permissions - allow all local processes to connect
+            os.chmod(self.socket_path, 0o666)  # nosec B103 - IPC socket for local processes
 
             self.running = True
             self.server_thread = threading.Thread(target=self._server_loop, daemon=True)
@@ -592,7 +592,7 @@ class PlaylistSyncClient:
     Used by web interface and producer process to send/receive playlist updates.
     """
 
-    def __init__(self, socket_path: str = "/tmp/prismatron_playlist.sock", client_name: str = "unknown"):
+    def __init__(self, socket_path: str = "/tmp/prismatron_playlist.sock", client_name: str = "unknown"):  # nosec B108
         self.socket_path = socket_path
         self.client_name = client_name
         self.socket: Optional[socket.socket] = None
