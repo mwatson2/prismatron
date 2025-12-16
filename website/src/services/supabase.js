@@ -5,8 +5,11 @@
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  throw new Error('Missing Supabase configuration: VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY must be set')
+// Comments feature is disabled if Supabase is not configured
+export const isCommentsEnabled = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY)
+
+if (!isCommentsEnabled) {
+  console.warn('Comments disabled: VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY not configured')
 }
 
 /**
