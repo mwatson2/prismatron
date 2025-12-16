@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { ShoppingCart, Box, Zap, Cpu, Wrench } from 'lucide-react'
+import Comments from '../components/Comments'
 
 const bomData = {
   Mechanical: [
@@ -138,6 +139,8 @@ export default function BOMPage() {
           </section>
         )
       })}
+
+      <Comments pageSlug="bom" />
     </motion.div>
   )
 }

@@ -2,6 +2,7 @@ import { motion } from 'framer-motion'
 import { ArrowRight, Sparkles } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import heroVideo from '../media/PrismatronExample1.mp4'
+import Comments from '../components/Comments'
 
 export default function HomePage() {
   return (
@@ -173,6 +174,8 @@ export default function HomePage() {
           </Link>
         ))}
       </motion.section>
+
+      <Comments pageSlug="home" />
     </div>
   )
 }

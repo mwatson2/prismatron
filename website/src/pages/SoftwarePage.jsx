@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { Settings, Smartphone, Layers } from 'lucide-react'
+import Comments from '../components/Comments'
 
 export default function SoftwarePage() {
   return (
@@ -214,6 +215,8 @@ export default function SoftwarePage() {
           No internet connection required—works entirely on local network.
         </p>
       </section>
+
+      <Comments pageSlug="software" />
     </motion.div>
   )
 }

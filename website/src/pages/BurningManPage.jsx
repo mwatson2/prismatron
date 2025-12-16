@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { Flame, Wind, Shield, Anchor } from 'lucide-react'
+import Comments from '../components/Comments'
 
 export default function BurningManPage() {
   return (
@@ -136,6 +137,8 @@ export default function BurningManPage() {
           through several moderate wind events.
         </p>
       </section>
+
+      <Comments pageSlug="burning-man" />
     </motion.div>
   )
 }

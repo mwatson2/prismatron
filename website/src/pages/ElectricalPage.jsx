@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion'
 import { Zap, Lightbulb, Cable } from 'lucide-react'
 import electronicsPanel from '../media/PrismatronElectronicsPanel.png'
+import Comments from '../components/Comments'
 
 export default function ElectricalPage() {
   return (
@@ -143,6 +144,8 @@ export default function ElectricalPage() {
           <p className="text-metal-silver text-sm p-4">QuinLED DigiOcta and wiring harness</p>
         </div>
       </section>
+
+      <Comments pageSlug="electrical" />
     </motion.div>
   )
 }
