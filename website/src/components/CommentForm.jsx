@@ -64,51 +64,26 @@ export default function CommentForm({
       onSubmit={handleSubmit}
       className="space-y-3"
     >
-      {/* Author info row - only show for top-level comments or first reply */}
-      {!isReply && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <input
-            type="text"
-            placeholder="Your name *"
-            value={authorName}
-            onChange={(e) => setAuthorName(e.target.value)}
-            className={inputClasses}
-            maxLength={50}
-            required
-          />
-          <input
-            type="email"
-            placeholder="Email (optional, not displayed)"
-            value={authorEmail}
-            onChange={(e) => setAuthorEmail(e.target.value)}
-            className={inputClasses}
-            maxLength={100}
-          />
-        </div>
-      )}
-
-      {/* For replies, show name and email */}
-      {isReply && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <input
-            type="text"
-            placeholder="Your name *"
-            value={authorName}
-            onChange={(e) => setAuthorName(e.target.value)}
-            className={inputClasses}
-            maxLength={50}
-            required
-          />
-          <input
-            type="email"
-            placeholder="Email (optional)"
-            value={authorEmail}
-            onChange={(e) => setAuthorEmail(e.target.value)}
-            className={inputClasses}
-            maxLength={100}
-          />
-        </div>
-      )}
+      {/* Author info row */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <input
+          type="text"
+          placeholder="Your name *"
+          value={authorName}
+          onChange={(e) => setAuthorName(e.target.value)}
+          className={inputClasses}
+          maxLength={50}
+          required
+        />
+        <input
+          type="email"
+          placeholder={isReply ? 'Email (optional)' : 'Email (optional, not displayed)'}
+          value={authorEmail}
+          onChange={(e) => setAuthorEmail(e.target.value)}
+          className={inputClasses}
+          maxLength={100}
+        />
+      </div>
 
       {/* Comment textarea */}
       <textarea
