@@ -1,7 +1,8 @@
 import { motion } from 'framer-motion'
 import { ArrowRight, Sparkles } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import heroVideo from '../media/PrismatronExample1.mp4'
+import heroVideo from '../media/PrismatronExample2.mp4'
+import secondaryVideo from '../media/PrismatronExample1.mp4'
 import Comments from '../components/Comments'
 
 export default function HomePage() {
@@ -65,6 +66,23 @@ export default function HomePage() {
             className="w-full max-w-4xl mx-auto"
           />
         </div>
+      </motion.section>
+
+      {/* Secondary Video */}
+      <motion.section
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.2 }}
+        className="mt-10 retro-panel rounded-lg border border-neon-cyan/50 overflow-hidden"
+      >
+        <video
+          src={secondaryVideo}
+          autoPlay
+          loop
+          muted
+          playsInline
+          className="w-full max-w-4xl mx-auto"
+        />
       </motion.section>
 
       {/* What is Prismatron */}
