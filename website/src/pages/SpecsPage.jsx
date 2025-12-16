@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { FileText } from 'lucide-react'
+import Comments from '../components/Comments'
 
 export default function SpecsPage() {
   return (
@@ -104,6 +105,8 @@ export default function SpecsPage() {
           Built with passion for the playa.
         </p>
       </section>
+
+      <Comments pageSlug="specs" />
 
       {/* Footer */}
       <div className="mt-12 text-center py-8 border-t border-neon-cyan/20">

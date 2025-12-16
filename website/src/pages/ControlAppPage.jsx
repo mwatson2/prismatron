@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { Smartphone, Home, Upload, Folder, Sparkles, ListMusic, Settings, Wifi, GalleryHorizontal } from 'lucide-react'
+import Comments from '../components/Comments'
 
 // App screenshots
 import appHomePage2 from '../media/PrismatronAppHomePage2.png'
@@ -402,6 +403,8 @@ export default function ControlAppPage() {
           ← Scroll to see more →
         </p>
       </section>
+
+      <Comments pageSlug="control-app" />
     </motion.div>
   )
 }

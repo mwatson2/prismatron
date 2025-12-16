@@ -2,6 +2,7 @@ import { motion } from 'framer-motion'
 import { Cpu, Wifi } from 'lucide-react'
 import jetsonEnclosure from '../media/JetsonEnclosure-2025-12-14-1904.png'
 import prismatronWifi from '../media/PrismatronWifi.jpg'
+import Comments from '../components/Comments'
 
 export default function ComputePage() {
   return (
@@ -160,6 +161,8 @@ export default function ComputePage() {
                    └───────────────────────┘`}
         </div>
       </section>
+
+      <Comments pageSlug="compute" />
     </motion.div>
   )
 }

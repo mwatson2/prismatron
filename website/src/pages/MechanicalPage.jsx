@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { Box, Thermometer, Move } from 'lucide-react'
+import Comments from '../components/Comments'
 
 export default function MechanicalPage() {
   return (
@@ -108,8 +109,9 @@ export default function MechanicalPage() {
           The 4-inch air gap enables natural convection, and the open edges allow continuous
           airflow. <span className="text-neon-green">No fans required.</span>
         </p>
-
       </section>
+
+      <Comments pageSlug="mechanical" />
     </motion.div>
   )
 }

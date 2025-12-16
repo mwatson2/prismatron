@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { Music, Waves, Palette } from 'lucide-react'
+import Comments from '../components/Comments'
 
 export default function AudioPage() {
   return (
@@ -207,6 +208,8 @@ export default function AudioPage() {
           offline experimentation with the signal exactly as it is heard by the system.
         </p>
       </section>
+
+      <Comments pageSlug="audio" />
     </motion.div>
   )
 }

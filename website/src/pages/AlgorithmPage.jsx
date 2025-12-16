@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { Code, Camera, Gauge, Zap, Cpu } from 'lucide-react'
+import Comments from '../components/Comments'
 
 export default function AlgorithmPage() {
   return (
@@ -324,6 +325,8 @@ export default function AlgorithmPage() {
           image sequences that can be blended in with the optimized output.
         </p>
       </section>
+
+      <Comments pageSlug="algorithm" />
     </motion.div>
   )
 }
