@@ -27,7 +27,7 @@ export default function HomePage() {
           optimization—proving that order can emerge from apparent disorder.
         </p>
         <p className="text-metal-silver/80 max-w-2xl mx-auto mb-6 leading-relaxed">
-          Many people and some non-people helped in the creation of the Prismatron. Thanks and love
+          Prismatron was created by Mark Watson, but several people and some non-people helped. Thanks and love
           to my family for their extreme patience with the many nights and weekends this project consumed.
           Thanks to Paul J for stirling logistical support getting the thing to and from Burning Man.
           Finally, thanks to (the creators of){' '}
