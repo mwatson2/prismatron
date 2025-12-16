@@ -93,7 +93,7 @@ export default function LicensePage() {
               href="https://prismatron.net"
               className="text-neon-pink hover:underline"
             >
-              prismatron.info
+              prismatron.net
             </a>
           </p>
         </div>
