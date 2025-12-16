@@ -7,11 +7,13 @@ on:
     branches: [main]
 
 jobs:
-  # Check which files changed to determine if tests should run
+  # Check which files changed to determine which jobs should run
   changes:
     runs-on: ubuntu-latest
     outputs:
       src: ${{ steps.filter.outputs.src }}
+      website: ${{ steps.filter.outputs.website }}
+      control-app: ${{ steps.filter.outputs.control-app }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -23,6 +25,10 @@ jobs:
               - 'tests/**'
               - 'requirements.txt'
               - 'pyproject.toml'
+            website:
+              - 'website/**'
+            control-app:
+              - 'src/web/frontend/**'
 
   pre-commit:
     runs-on: ubuntu-latest
@@ -103,3 +109,53 @@ jobs:
           files: ./coverage.xml
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  build-website:
+    needs: changes
+    if: ${{ needs.changes.outputs.website == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          cd website
+          npm ci
+
+      - name: Build website
+        run: |
+          cd website
+          npm run build
+
+  build-control-app:
+    needs: changes
+    if: ${{ needs.changes.outputs.control-app == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: src/web/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          cd src/web/frontend
+          npm ci
+
+      - name: Build control app
+        run: |
+          cd src/web/frontend
+          npm run build
