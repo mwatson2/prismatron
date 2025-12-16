@@ -7,6 +7,23 @@ on:
     branches: [main]
 
 jobs:
+  # Check which files changed to determine if tests should run
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      src: ${{ steps.filter.outputs.src }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            src:
+              - 'src/**'
+              - 'tests/**'
+              - 'requirements.txt'
+              - 'pyproject.toml'
+
   pre-commit:
     runs-on: ubuntu-latest
     steps:
@@ -24,6 +41,8 @@ jobs:
         run: pre-commit run --all-files
 
   test:
+    needs: changes
+    if: ${{ needs.changes.outputs.src == 'true' }}
     runs-on: codebuild-PrimatronTestRunner-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
