@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { Scale, Mail, ExternalLink } from 'lucide-react'
+import { Scale, Mail, ExternalLink, Github } from 'lucide-react'
 
 export default function LicensePage() {
   return (
@@ -38,6 +38,17 @@ export default function LicensePage() {
             Anything non-commercial
           </li>
         </ul>
+
+        <a
+          href="https://github.com/mwatson2/prismatron"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-dark-700 hover:bg-dark-600 border border-neon-cyan/50 hover:border-neon-cyan rounded transition-all text-neon-cyan"
+        >
+          <Github size={18} />
+          View on GitHub
+          <ExternalLink size={14} />
+        </a>
       </section>
 
       {/* License Details */}
