@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { MessageCircle, RefreshCw, Loader2 } from 'lucide-react'
-import { getComments } from '../services/supabase'
+import { getComments, isCommentsEnabled } from '../services/supabase'
 import Comment from './Comment'
 import CommentForm from './CommentForm'
 
@@ -10,6 +10,10 @@ import CommentForm from './CommentForm'
  * Fetches and displays comments for a specific page with nested replies
  */
 export default function Comments({ pageSlug }) {
+  // Don't render if Supabase is not configured
+  if (!isCommentsEnabled) {
+    return null
+  }
   const [comments, setComments] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
