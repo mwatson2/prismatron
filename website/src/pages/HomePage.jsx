@@ -29,7 +29,7 @@ export default function HomePage() {
         <p className="text-metal-silver/80 max-w-2xl mx-auto mb-6 leading-relaxed">
           Prismatron was created by Mark Watson, but several people and some non-people helped. Thanks and love
           to my family for their extreme patience with the many nights and weekends this project consumed.
-          Thanks to Paul J for stirling logistical support getting the thing to and from Burning Man.
+          Thanks to Paul J for sterling logistical support getting the thing to and from Burning Man.
           Finally, thanks to (the creators of){' '}
           <a
             href="https://claude.ai"
