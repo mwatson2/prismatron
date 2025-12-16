@@ -1,0 +1,5 @@
+# Code owners for Prismatron
+# These users must approve PRs that modify matching paths
+
+# Default: require approval for all files
+* @mwatson2
