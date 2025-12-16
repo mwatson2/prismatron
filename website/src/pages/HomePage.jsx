@@ -68,23 +68,6 @@ export default function HomePage() {
         </div>
       </motion.section>
 
-      {/* Secondary Video */}
-      <motion.section
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.2 }}
-        className="mt-10 retro-panel rounded-lg border border-neon-cyan/50 overflow-hidden"
-      >
-        <video
-          src={secondaryVideo}
-          autoPlay
-          loop
-          muted
-          playsInline
-          className="w-full max-w-4xl mx-auto"
-        />
-      </motion.section>
-
       {/* What is Prismatron */}
       <motion.section
         initial={{ opacity: 0 }}
@@ -191,6 +174,23 @@ export default function HomePage() {
             <p className="text-metal-silver text-sm mt-1">{item.desc}</p>
           </Link>
         ))}
+      </motion.section>
+
+      {/* Secondary Video */}
+      <motion.section
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.6 }}
+        className="mt-10 retro-panel rounded-lg border border-neon-cyan/50 overflow-hidden"
+      >
+        <video
+          src={secondaryVideo}
+          autoPlay
+          loop
+          muted
+          playsInline
+          className="w-full max-w-4xl mx-auto"
+        />
       </motion.section>
 
       <Comments pageSlug="home" />
