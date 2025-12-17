@@ -1533,3 +1533,512 @@ class TestWledReconnectionMonitoring:
 
         consumer_with_mocks._frame_renderer.set_wled_enabled(False)
         consumer_with_mocks._frame_renderer.set_wled_enabled.assert_called_with(False)
+
+
+class TestAudioBeatCallbacks:
+    """Test audio beat detection callback methods."""
+
+    @pytest.fixture
+    def consumer_with_mocks(self):
+        """Create consumer with mocked dependencies."""
+        with patch.object(ConsumerProcess, "__init__", lambda self: None):
+            consumer = ConsumerProcess()
+            consumer._control_state = MagicMock()
+            consumer._audio_analysis_running = True
+            return consumer
+
+    def test_on_beat_detected_updates_control_state(self, consumer_with_mocks):
+        """Test _on_beat_detected updates control state with beat info."""
+        from src.consumer.audio_beat_analyzer import BeatEvent
+
+        beat_event = BeatEvent(
+            timestamp=1.0,
+            system_time=time.time(),
+            bpm=120.0,
+            beat_count=1,
+            confidence=0.9,
+            intensity=0.8,
+            is_downbeat=False,
+        )
+
+        consumer_with_mocks._on_beat_detected(beat_event)
+
+        consumer_with_mocks._control_state.update_status.assert_called()
+        call_kwargs = consumer_with_mocks._control_state.update_status.call_args[1]
+        assert call_kwargs["current_bpm"] == 120.0
+        assert call_kwargs["beat_count"] == 1
+        assert call_kwargs["beat_confidence"] == 0.9
+        assert call_kwargs["audio_intensity"] == 0.8
+
+    def test_on_beat_detected_downbeat_updates_downbeat_time(self, consumer_with_mocks):
+        """Test _on_beat_detected updates downbeat time for downbeats."""
+        from src.consumer.audio_beat_analyzer import BeatEvent
+
+        system_time = time.time()
+        beat_event = BeatEvent(
+            timestamp=1.0,
+            system_time=system_time,
+            bpm=120.0,
+            beat_count=4,
+            confidence=0.95,
+            intensity=0.9,
+            is_downbeat=True,
+        )
+
+        consumer_with_mocks._on_beat_detected(beat_event)
+
+        # Should have two calls - one for beat info, one for downbeat time
+        assert consumer_with_mocks._control_state.update_status.call_count == 2
+
+    def test_on_beat_detected_handles_exception(self, consumer_with_mocks):
+        """Test _on_beat_detected handles exceptions gracefully."""
+        from src.consumer.audio_beat_analyzer import BeatEvent
+
+        consumer_with_mocks._control_state.update_status.side_effect = RuntimeError("Test error")
+
+        beat_event = BeatEvent(
+            timestamp=1.0,
+            system_time=time.time(),
+            bpm=120.0,
+            beat_count=1,
+            confidence=0.9,
+            intensity=0.8,
+            is_downbeat=False,
+        )
+
+        # Should not raise
+        consumer_with_mocks._on_beat_detected(beat_event)
+
+    def test_on_builddrop_event_updates_control_state(self, consumer_with_mocks):
+        """Test _on_builddrop_event updates control state."""
+        from src.consumer.audio_beat_analyzer import BuildDropEvent
+
+        builddrop_event = BuildDropEvent(
+            timestamp=1.0,
+            system_time=time.time(),
+            event_type="building",
+            buildup_intensity=0.7,
+            bass_energy=0.5,
+            high_energy=0.3,
+            confidence=0.9,
+            is_cut=False,
+            is_drop=False,
+        )
+
+        consumer_with_mocks._on_builddrop_event(builddrop_event)
+
+        consumer_with_mocks._control_state.update_status.assert_called_once()
+        call_kwargs = consumer_with_mocks._control_state.update_status.call_args[1]
+        assert call_kwargs["buildup_state"] == "building"
+        assert call_kwargs["buildup_intensity"] == 0.7
+
+    def test_on_builddrop_event_cut_updates_cut_time(self, consumer_with_mocks):
+        """Test _on_builddrop_event updates cut time on cut events."""
+        from src.consumer.audio_beat_analyzer import BuildDropEvent
+
+        system_time = time.time()
+        builddrop_event = BuildDropEvent(
+            timestamp=1.0,
+            system_time=system_time,
+            event_type="cut",
+            buildup_intensity=0.0,
+            bass_energy=0.2,
+            high_energy=0.1,
+            confidence=0.95,
+            is_cut=True,
+            is_drop=False,
+        )
+
+        consumer_with_mocks._on_builddrop_event(builddrop_event)
+
+        call_kwargs = consumer_with_mocks._control_state.update_status.call_args[1]
+        assert call_kwargs["last_cut_time"] == system_time
+
+    def test_on_builddrop_event_drop_updates_drop_time(self, consumer_with_mocks):
+        """Test _on_builddrop_event updates drop time on drop events."""
+        from src.consumer.audio_beat_analyzer import BuildDropEvent
+
+        system_time = time.time()
+        builddrop_event = BuildDropEvent(
+            timestamp=1.0,
+            system_time=system_time,
+            event_type="drop",
+            buildup_intensity=1.0,
+            bass_energy=0.9,
+            high_energy=0.8,
+            confidence=0.98,
+            is_cut=False,
+            is_drop=True,
+        )
+
+        consumer_with_mocks._on_builddrop_event(builddrop_event)
+
+        call_kwargs = consumer_with_mocks._control_state.update_status.call_args[1]
+        assert call_kwargs["last_drop_time"] == system_time
+
+    def test_on_builddrop_event_handles_exception(self, consumer_with_mocks):
+        """Test _on_builddrop_event handles exceptions gracefully."""
+        from src.consumer.audio_beat_analyzer import BuildDropEvent
+
+        consumer_with_mocks._control_state.update_status.side_effect = RuntimeError("Test error")
+
+        builddrop_event = BuildDropEvent(
+            timestamp=1.0,
+            system_time=time.time(),
+            event_type="building",
+            buildup_intensity=0.7,
+            bass_energy=0.5,
+            high_energy=0.3,
+            confidence=0.9,
+            is_cut=False,
+            is_drop=False,
+        )
+
+        # Should not raise
+        consumer_with_mocks._on_builddrop_event(builddrop_event)
+
+
+class TestProcessSingleFrame:
+    """Test single frame processing logic."""
+
+    @pytest.fixture
+    def consumer_with_mocks(self):
+        """Create consumer with mocked dependencies."""
+        from src.utils.frame_drop_rate_ewma import FrameDropRateEwma
+
+        with patch.object(ConsumerProcess, "__init__", lambda self: None):
+            consumer = ConsumerProcess()
+            consumer._led_optimizer = MagicMock()
+            consumer._led_buffer = MagicMock()
+            consumer._control_state = MagicMock()
+            consumer._stats = ConsumerStats()
+            consumer._frame_renderer = MagicMock()
+            consumer._frames_with_content = 0
+            consumer.optimization_iterations = 10
+            consumer.pre_optimization_drop_rate_ewma = FrameDropRateEwma(alpha=0.1, name="test")
+            consumer._last_consumer_log_time = 0.0
+            consumer._consumer_log_interval = 2.0
+            return consumer
+
+    def test_process_single_frame_success(self, consumer_with_mocks):
+        """Test successful single frame processing."""
+        # Create mock frame (cupy array)
+        rgb_frame = cp.zeros((480, 800, 3), dtype=cp.uint8)
+        rgb_frame[:, :, 0] = 128  # Non-zero content
+
+        # Mock buffer info
+        mock_buffer_info = Mock()
+        mock_buffer_info.metadata = Mock()
+        mock_buffer_info.metadata.presentation_timestamp = 1.0
+        mock_buffer_info.metadata.playlist_item_index = 0
+        mock_buffer_info.metadata.is_first_frame_of_item = False
+        mock_buffer_info.metadata.timing_data = None
+
+        # Mock optimization result
+        mock_result = Mock()
+        mock_result.led_values = np.random.randint(0, 255, (3200, 3), dtype=np.uint8)
+        mock_result.converged = True
+        mock_result.iterations = 5
+        mock_result.error_metrics = {"mse": 0.01}
+        consumer_with_mocks._led_optimizer.optimize_frame.return_value = mock_result
+
+        # Mock LED buffer write
+        consumer_with_mocks._led_buffer.write_led_values.return_value = True
+
+        result = consumer_with_mocks._process_single_frame(rgb_frame, mock_buffer_info, {}, 0.001, time.time())
+
+        assert result is False  # Not dropped
+        consumer_with_mocks._led_optimizer.optimize_frame.assert_called_once()
+        consumer_with_mocks._led_buffer.write_led_values.assert_called_once()
+
+    def test_process_single_frame_optimization_not_converged(self, consumer_with_mocks):
+        """Test single frame processing when optimization doesn't converge."""
+        rgb_frame = cp.zeros((480, 800, 3), dtype=cp.uint8)
+
+        mock_buffer_info = Mock()
+        mock_buffer_info.metadata = Mock()
+        mock_buffer_info.metadata.presentation_timestamp = 1.0
+        mock_buffer_info.metadata.playlist_item_index = 0
+        mock_buffer_info.metadata.is_first_frame_of_item = False
+        mock_buffer_info.metadata.timing_data = None
+
+        mock_result = Mock()
+        mock_result.led_values = np.zeros((3200, 3), dtype=np.uint8)
+        mock_result.converged = False  # Not converged
+        mock_result.iterations = 10
+        mock_result.error_metrics = {"mse": 0.5}
+        consumer_with_mocks._led_optimizer.optimize_frame.return_value = mock_result
+        consumer_with_mocks._led_buffer.write_led_values.return_value = True
+
+        result = consumer_with_mocks._process_single_frame(rgb_frame, mock_buffer_info, {}, 0.001, time.time())
+
+        assert result is False
+        assert consumer_with_mocks._stats.optimization_errors == 1
+
+    def test_process_single_frame_led_buffer_none(self, consumer_with_mocks):
+        """Test single frame processing when LED buffer is None."""
+        rgb_frame = cp.zeros((480, 800, 3), dtype=cp.uint8)
+
+        mock_buffer_info = Mock()
+        mock_buffer_info.metadata = Mock()
+        mock_buffer_info.metadata.presentation_timestamp = 1.0
+        mock_buffer_info.metadata.playlist_item_index = 0
+        mock_buffer_info.metadata.is_first_frame_of_item = False
+        mock_buffer_info.metadata.timing_data = None
+
+        mock_result = Mock()
+        mock_result.led_values = np.zeros((3200, 3), dtype=np.uint8)
+        mock_result.converged = True
+        mock_result.iterations = 5
+        mock_result.error_metrics = {}
+        consumer_with_mocks._led_optimizer.optimize_frame.return_value = mock_result
+
+        consumer_with_mocks._led_buffer = None
+
+        result = consumer_with_mocks._process_single_frame(rgb_frame, mock_buffer_info, {}, 0.001, time.time())
+
+        assert result is True  # Dropped due to error
+
+    def test_process_single_frame_reads_iterations_from_control_state(self, consumer_with_mocks):
+        """Test that optimization iterations are read from control state."""
+        rgb_frame = cp.zeros((480, 800, 3), dtype=cp.uint8)
+
+        mock_buffer_info = Mock()
+        mock_buffer_info.metadata = Mock()
+        mock_buffer_info.metadata.presentation_timestamp = 1.0
+        mock_buffer_info.metadata.playlist_item_index = 0
+        mock_buffer_info.metadata.is_first_frame_of_item = False
+        mock_buffer_info.metadata.timing_data = None
+
+        # Mock control state with different iterations
+        mock_status = Mock()
+        mock_status.optimization_iterations = 15
+        consumer_with_mocks._control_state.get_status.return_value = mock_status
+
+        mock_result = Mock()
+        mock_result.led_values = np.zeros((3200, 3), dtype=np.uint8)
+        mock_result.converged = True
+        mock_result.iterations = 15
+        mock_result.error_metrics = {}
+        consumer_with_mocks._led_optimizer.optimize_frame.return_value = mock_result
+        consumer_with_mocks._led_buffer.write_led_values.return_value = True
+
+        consumer_with_mocks._process_single_frame(rgb_frame, mock_buffer_info, {}, 0.001, time.time())
+
+        # Verify optimize_frame was called with iterations from control state
+        call_kwargs = consumer_with_mocks._led_optimizer.optimize_frame.call_args[1]
+        assert call_kwargs["max_iterations"] == 15
+
+
+class TestConsumerLifecycle:
+    """Test consumer start/stop lifecycle methods."""
+
+    @pytest.fixture
+    def consumer_with_mocks(self):
+        """Create consumer with mocked dependencies."""
+        with patch.object(ConsumerProcess, "__init__", lambda self: None):
+            consumer = ConsumerProcess()
+            consumer._running = False
+            consumer._shutdown_requested = False
+            consumer._initialized = False
+            consumer._control_state = MagicMock()
+            consumer._frame_consumer = MagicMock()
+            consumer._led_optimizer = MagicMock()
+            consumer._led_buffer = MagicMock()
+            consumer._wled_client = MagicMock()
+            consumer._frame_renderer = MagicMock()
+            consumer._audio_beat_analyzer = None
+            consumer._audio_analysis_running = False
+            consumer._optimization_thread = None
+            consumer._renderer_thread = None
+            consumer._wled_reconnection_thread = None
+            consumer._thread_monitor_thread = None
+            consumer._wled_reconnection_event = MagicMock()
+            consumer._thread_monitor_shutdown_event = MagicMock()
+            return consumer
+
+    def test_start_returns_true_when_already_running(self, consumer_with_mocks):
+        """Test start returns True if already running."""
+        consumer_with_mocks._running = True
+
+        result = consumer_with_mocks.start()
+
+        assert result is True
+
+    def test_stop_sets_shutdown_flags(self, consumer_with_mocks):
+        """Test stop sets shutdown flags."""
+        consumer_with_mocks._running = True
+        consumer_with_mocks._shutdown_requested = False
+
+        consumer_with_mocks.stop()
+
+        assert consumer_with_mocks._shutdown_requested is True
+        assert consumer_with_mocks._running is False
+
+    def test_stop_prevents_duplicate_calls(self, consumer_with_mocks):
+        """Test stop returns early on duplicate calls."""
+        consumer_with_mocks._shutdown_requested = True
+
+        consumer_with_mocks.stop()
+
+        # Should not call set_renderer_state since it returns early
+        consumer_with_mocks._control_state.set_renderer_state.assert_not_called()
+
+    def test_stop_sets_renderer_state_to_stopped(self, consumer_with_mocks):
+        """Test stop sets renderer state to STOPPED."""
+        consumer_with_mocks._running = True
+
+        consumer_with_mocks.stop()
+
+        consumer_with_mocks._control_state.set_renderer_state.assert_called_with(RendererState.STOPPED)
+
+    def test_stop_signals_wled_reconnection_event(self, consumer_with_mocks):
+        """Test stop signals WLED reconnection event."""
+        consumer_with_mocks._running = True
+
+        consumer_with_mocks.stop()
+
+        consumer_with_mocks._wled_reconnection_event.set.assert_called_once()
+
+    def test_stop_signals_thread_monitor_shutdown(self, consumer_with_mocks):
+        """Test stop signals thread monitor shutdown."""
+        consumer_with_mocks._running = True
+
+        consumer_with_mocks.stop()
+
+        consumer_with_mocks._thread_monitor_shutdown_event.set.assert_called_once()
+
+    def test_stop_stops_audio_analysis_if_running(self, consumer_with_mocks):
+        """Test stop stops audio analysis if running."""
+        consumer_with_mocks._running = True
+        consumer_with_mocks._audio_beat_analyzer = MagicMock()
+        consumer_with_mocks._audio_analysis_running = True
+
+        consumer_with_mocks.stop()
+
+        consumer_with_mocks._audio_beat_analyzer.stop_analysis.assert_called_once()
+        assert consumer_with_mocks._audio_analysis_running is False
+
+
+class TestUpdateAudioReactiveState:
+    """Test audio reactive state management."""
+
+    @pytest.fixture
+    def consumer_with_mocks(self):
+        """Create consumer with mocked dependencies."""
+        with patch.object(ConsumerProcess, "__init__", lambda self: None):
+            consumer = ConsumerProcess()
+            consumer._control_state = MagicMock()
+            consumer._audio_beat_analyzer = MagicMock()
+            consumer._audio_analysis_running = False
+            consumer._use_audio_test_file = True
+            consumer._frame_renderer = MagicMock()
+            return consumer
+
+    def test_starts_audio_when_enabled_and_not_running(self, consumer_with_mocks):
+        """Test audio starts when enabled but not running."""
+        mock_status = Mock()
+        mock_status.audio_reactive_enabled = True
+        mock_status.use_audio_test_file = True
+        consumer_with_mocks._control_state.get_status.return_value = mock_status
+
+        consumer_with_mocks._update_audio_reactive_state()
+
+        consumer_with_mocks._audio_beat_analyzer.start_analysis.assert_called_once()
+        assert consumer_with_mocks._audio_analysis_running is True
+
+    def test_stops_audio_when_disabled_and_running(self, consumer_with_mocks):
+        """Test audio stops when disabled but running."""
+        consumer_with_mocks._audio_analysis_running = True
+
+        mock_status = Mock()
+        mock_status.audio_reactive_enabled = False
+        mock_status.use_audio_test_file = True
+        consumer_with_mocks._control_state.get_status.return_value = mock_status
+
+        consumer_with_mocks._update_audio_reactive_state()
+
+        consumer_with_mocks._audio_beat_analyzer.stop_analysis.assert_called_once()
+        assert consumer_with_mocks._audio_analysis_running is False
+
+    def test_no_action_when_already_in_correct_state(self, consumer_with_mocks):
+        """Test no action when audio is already in correct state."""
+        consumer_with_mocks._audio_analysis_running = True
+
+        mock_status = Mock()
+        mock_status.audio_reactive_enabled = True  # Already running
+        mock_status.use_audio_test_file = True
+        consumer_with_mocks._control_state.get_status.return_value = mock_status
+
+        consumer_with_mocks._update_audio_reactive_state()
+
+        # Should not call start or stop
+        consumer_with_mocks._audio_beat_analyzer.start_analysis.assert_not_called()
+        consumer_with_mocks._audio_beat_analyzer.stop_analysis.assert_not_called()
+
+    def test_returns_early_when_no_status(self, consumer_with_mocks):
+        """Test returns early when control status is None."""
+        consumer_with_mocks._control_state.get_status.return_value = None
+
+        consumer_with_mocks._update_audio_reactive_state()
+
+        # Should not interact with audio analyzer
+        consumer_with_mocks._audio_beat_analyzer.start_analysis.assert_not_called()
+        consumer_with_mocks._audio_beat_analyzer.stop_analysis.assert_not_called()
+
+    def test_returns_early_when_no_audio_analyzer(self, consumer_with_mocks):
+        """Test returns early when audio analyzer is None."""
+        consumer_with_mocks._audio_beat_analyzer = None
+
+        mock_status = Mock()
+        mock_status.audio_reactive_enabled = True
+        mock_status.use_audio_test_file = True
+        consumer_with_mocks._control_state.get_status.return_value = mock_status
+
+        # Should not raise
+        consumer_with_mocks._update_audio_reactive_state()
+
+    def test_handles_start_analysis_exception(self, consumer_with_mocks):
+        """Test handles exception when starting analysis."""
+        mock_status = Mock()
+        mock_status.audio_reactive_enabled = True
+        mock_status.use_audio_test_file = True
+        consumer_with_mocks._control_state.get_status.return_value = mock_status
+
+        consumer_with_mocks._audio_beat_analyzer.start_analysis.side_effect = RuntimeError("Test error")
+
+        # Should not raise
+        consumer_with_mocks._update_audio_reactive_state()
+
+    def test_updates_audio_level_when_running(self, consumer_with_mocks):
+        """Test updates audio level in control state when running."""
+        consumer_with_mocks._audio_analysis_running = True
+        consumer_with_mocks._audio_beat_analyzer.audio_capture = None  # No audio capture for recording
+
+        mock_status = Mock()
+        mock_status.audio_reactive_enabled = True
+        mock_status.use_audio_test_file = True
+        mock_status.audio_recording_requested = False
+        consumer_with_mocks._control_state.get_status.return_value = mock_status
+
+        consumer_with_mocks._audio_beat_analyzer.get_audio_stats.return_value = {
+            "audio_level": 0.75,
+            "agc_gain_db": 12.0,
+        }
+
+        consumer_with_mocks._update_audio_reactive_state()
+
+        # Should call update_status at least once for audio level
+        consumer_with_mocks._control_state.update_status.assert_called()
+
+        # Check that one of the calls contains audio level
+        calls = consumer_with_mocks._control_state.update_status.call_args_list
+        audio_level_updated = False
+        for call in calls:
+            kwargs = call[1]
+            if "audio_level" in kwargs:
+                assert kwargs["audio_level"] == 0.75
+                assert kwargs["agc_gain_db"] == 12.0
+                audio_level_updated = True
+                break
+        assert audio_level_updated, "audio_level was not updated in any call"
