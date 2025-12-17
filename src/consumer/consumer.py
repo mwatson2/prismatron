@@ -97,6 +97,60 @@ class ConsumerStats:
             logger.debug(f"CONSUMER INPUT FPS DEBUG: Updated from {old_fps:.2f} to {self.consumer_input_fps:.2f}")
 
 
+@dataclass
+class OptimizationLoopState:
+    """State tracked across optimization loop iterations."""
+
+    last_audio_check: float = 0.0
+    last_heartbeat_log: float = 0.0
+    audio_check_interval: float = 1.0
+
+
+@dataclass
+class OptimizationStepResult:
+    """Result from a single optimization loop step.
+
+    Attributes:
+        should_continue: Whether the loop should continue
+        next_timeout: Timeout for the next wait_for_ready_buffer call
+        reason: Description of what happened in this step (for debugging/testing)
+    """
+
+    should_continue: bool
+    next_timeout: float
+    reason: str = ""
+
+
+@dataclass
+class RenderingLoopState:
+    """State tracked across rendering loop iterations."""
+
+    consecutive_errors: int = 0
+    max_consecutive_errors: int = 10
+    last_heartbeat_log: float = 0.0
+    last_frame_render_time: float = 0.0
+    last_buffer_warning_time: float = 0.0
+
+
+@dataclass
+class RenderingStepResult:
+    """Result from a single rendering loop step.
+
+    Attributes:
+        should_continue: Whether the loop should continue
+        should_break: Whether to break immediately (critical error)
+        wait_action: What the outer loop should do next ("sleep" or "read_buffer")
+        wait_timeout: Timeout for the next wait action
+        reason: Description of what happened in this step (for debugging/testing)
+    """
+
+    should_continue: bool
+    should_break: bool
+    wait_action: str  # "sleep" or "read_buffer"
+    wait_timeout: float
+    reason: str = ""
+
+
 class ConsumerProcess:
     """
     Main consumer process for LED optimization and transmission.
@@ -874,51 +928,98 @@ class ConsumerProcess:
         self._last_frame_timestamp = frame_timestamp
         self._last_frame_receive_time = receive_time
 
+    def _optimization_loop_step(
+        self, buffer_info: Optional[Any], loop_state: OptimizationLoopState
+    ) -> OptimizationStepResult:
+        """
+        Execute a single step of the optimization loop.
+
+        This method contains all the logic of the optimization loop, extracted
+        for testability. The outer loop handles waiting and exception recovery.
+
+        Args:
+            buffer_info: Frame data from wait_for_ready_buffer, or None if timeout
+            loop_state: Mutable state tracked across loop iterations
+
+        Returns:
+            OptimizationStepResult indicating whether to continue and next timeout
+        """
+        current_time = time.time()
+
+        # Update heartbeat
+        self._optimization_thread_heartbeat = current_time
+
+        # Log heartbeat periodically
+        if current_time - loop_state.last_heartbeat_log > 30.0:
+            logger.debug("Optimization thread heartbeat")
+            loop_state.last_heartbeat_log = current_time
+
+        # Check for shutdown signal from control state
+        if self._control_state.should_shutdown():
+            logger.info("Shutdown signal received from control state")
+            return OptimizationStepResult(
+                should_continue=False,
+                next_timeout=self.max_frame_wait_timeout,
+                reason="shutdown_signal",
+            )
+
+        # Periodically check for audio reactive state changes
+        if current_time - loop_state.last_audio_check >= loop_state.audio_check_interval:
+            self._update_audio_reactive_state()
+            loop_state.last_audio_check = current_time
+
+        # Handle timeout (no frame available)
+        if buffer_info is None:
+            logger.debug("Optimization: Timeout waiting for frame")
+            return OptimizationStepResult(
+                should_continue=True,
+                next_timeout=self.max_frame_wait_timeout,
+                reason="timeout",
+            )
+
+        # Process the frame for optimization
+        logger.debug("Optimization: About to process frame optimization")
+        self._process_frame_optimization(buffer_info)
+        logger.debug("Optimization: process_frame_optimization completed")
+
+        return OptimizationStepResult(
+            should_continue=True,
+            next_timeout=self.max_frame_wait_timeout,
+            reason="frame_processed",
+        )
+
     def _optimization_loop(self) -> None:
-        """Optimization thread - processes frames as fast as possible."""
+        """
+        Optimization thread - thin wrapper around _optimization_loop_step.
+
+        This loop handles:
+        - Waiting for frames from the shared buffer
+        - Exception recovery with brief pauses
+        - Thread lifecycle (startup/shutdown logging)
+
+        All business logic is in _optimization_loop_step for testability.
+        """
         logger.info("Optimization thread started")
 
-        # Track last audio state check to avoid checking too frequently
-        last_audio_check = 0.0
-        audio_check_interval = 1.0  # Check every 1 second
-        last_heartbeat_log = 0.0
+        loop_state = OptimizationLoopState()
+        timeout = self.max_frame_wait_timeout
 
         while self._running and not self._shutdown_requested:
             try:
-                # Update heartbeat
-                self._optimization_thread_heartbeat = time.time()
-
-                # Log heartbeat periodically
-                if time.time() - last_heartbeat_log > 30.0:
-                    logger.debug("Optimization thread heartbeat")
-                    last_heartbeat_log = time.time()
-                # Check for shutdown signal from control state
-                if self._control_state.should_shutdown():
-                    logger.info("Shutdown signal received from control state")
-                    break
-
-                # Periodically check for audio reactive state changes
-                current_time = time.time()
-                if current_time - last_audio_check >= audio_check_interval:
-                    self._update_audio_reactive_state()
-                    last_audio_check = current_time
-
                 # Wait for new frame
                 logger.debug(
                     f"Optimization: About to wait for ready buffer (heartbeat={self._optimization_thread_heartbeat:.1f})"
                 )
-                buffer_info = self._frame_consumer.wait_for_ready_buffer(timeout=self.max_frame_wait_timeout)
+                buffer_info = self._frame_consumer.wait_for_ready_buffer(timeout=timeout)
                 logger.debug(f"Optimization: wait_for_ready_buffer returned, got buffer_info={buffer_info is not None}")
 
-                if buffer_info is None:
-                    # Timeout waiting for frame
-                    logger.debug("Optimization: Timeout waiting for frame")
-                    continue
+                # Execute step logic
+                result = self._optimization_loop_step(buffer_info, loop_state)
 
-                # Process the frame for optimization only
-                logger.debug("Optimization: About to process frame optimization")
-                self._process_frame_optimization(buffer_info)
-                logger.debug("Optimization: process_frame_optimization completed")
+                if not result.should_continue:
+                    break
+
+                timeout = result.next_timeout
 
             except Exception as e:
                 logger.error(f"Error in optimization loop: {e}", exc_info=True)
@@ -1009,229 +1110,293 @@ class ConsumerProcess:
         except Exception as e:
             logger.error(f"Error handling renderer state transitions: {e}", exc_info=True)
 
+    def _rendering_loop_step(
+        self,
+        control_status: Optional[Any],
+        led_data: Optional[tuple],
+        loop_state: RenderingLoopState,
+    ) -> RenderingStepResult:
+        """
+        Execute a single step of the rendering loop.
+
+        This method contains all the logic of the rendering loop, extracted
+        for testability. The outer loop handles waiting and exception recovery.
+
+        Args:
+            control_status: Current system status from control state, or None
+            led_data: LED values from buffer (tuple of values, timestamp, metadata), or None
+            loop_state: Mutable state tracked across loop iterations
+
+        Returns:
+            RenderingStepResult indicating what the outer loop should do next
+        """
+        current_time = time.time()
+
+        # Update heartbeat
+        self._renderer_thread_heartbeat = current_time
+
+        # Log heartbeat periodically
+        if current_time - loop_state.last_heartbeat_log > 30.0:
+            logger.debug(
+                f"Renderer thread heartbeat (last frame {current_time - loop_state.last_frame_render_time:.1f}s ago)"
+            )
+            loop_state.last_heartbeat_log = current_time
+
+        # Handle missing control status
+        if control_status is None:
+            logger.warning("Could not get control status for renderer state transitions")
+            return RenderingStepResult(
+                should_continue=True,
+                should_break=False,
+                wait_action="sleep",
+                wait_timeout=0.1,
+                reason="no_control_status",
+            )
+
+        # Handle state transitions
+        self._handle_renderer_state_transitions(control_status)
+
+        # Handle pause/resume detection for frame renderer timing compensation
+        if self._last_renderer_state != control_status.renderer_state:
+            if (
+                control_status.renderer_state == RendererState.PAUSED
+                and self._last_renderer_state != RendererState.PAUSED
+            ):
+                # Transitioning to PAUSED state
+                self._frame_renderer.pause_renderer()
+            elif (
+                self._last_renderer_state == RendererState.PAUSED
+                and control_status.renderer_state != RendererState.PAUSED
+            ):
+                # Transitioning from PAUSED to any other state (resume)
+                self._frame_renderer.resume_renderer()
+
+            self._last_renderer_state = control_status.renderer_state
+
+        # Handle non-PLAYING states
+        if control_status.renderer_state == RendererState.PAUSED:
+            return RenderingStepResult(
+                should_continue=True,
+                should_break=False,
+                wait_action="sleep",
+                wait_timeout=0.1,
+                reason="paused",
+            )
+
+        if control_status.renderer_state == RendererState.WAITING:
+            return RenderingStepResult(
+                should_continue=True,
+                should_break=False,
+                wait_action="sleep",
+                wait_timeout=0.1,
+                reason="waiting",
+            )
+
+        if control_status.renderer_state != RendererState.PLAYING:
+            # STOPPED or invalid state
+            if control_status.renderer_state == RendererState.STOPPED and self._led_buffer is not None:
+                buffer_stats = self._led_buffer.get_buffer_stats()
+                buffer_has_frames = buffer_stats.get("current_count", 0) > 0
+                should_log_warning = current_time - loop_state.last_buffer_warning_time > 30.0
+                if buffer_has_frames and should_log_warning:
+                    logger.debug(
+                        f"Renderer STOPPED with {buffer_stats.get('current_count')} frames in LED buffer (normal during shutdown)"
+                    )
+                    loop_state.last_buffer_warning_time = current_time
+            return RenderingStepResult(
+                should_continue=True,
+                should_break=False,
+                wait_action="sleep",
+                wait_timeout=0.1,
+                reason="stopped",
+            )
+
+        # PLAYING state - need LED data to process
+        if led_data is None:
+            # No data yet - tell outer loop to read from buffer
+            return RenderingStepResult(
+                should_continue=True,
+                should_break=False,
+                wait_action="read_buffer",
+                wait_timeout=0.1,
+                reason="need_led_data",
+            )
+
+        # Process the LED frame
+        led_values, timestamp, metadata = led_data
+
+        # Extract timing data and mark read-from-LED-buffer time
+        timing_data = None
+        if metadata and "timing_data" in metadata:
+            timing_data = metadata["timing_data"]
+            if timing_data:
+                timing_data.mark_read_from_led_buffer()
+
+        # Check for playlist item transitions
+        is_first_frame_of_item = metadata and metadata.get("is_first_frame_of_item", False)
+        playlist_item_index = metadata.get("playlist_item_index", -1) if metadata else -1
+
+        # Track overall frame drops based on missing frame indices
+        current_frame_index = None
+        if timing_data and hasattr(timing_data, "frame_index"):
+            current_frame_index = timing_data.frame_index
+
+            # Check for missing frames between last rendered and current
+            if current_frame_index > self._expected_next_frame_index:
+                missing_count = current_frame_index - self._expected_next_frame_index
+                logger.debug(f"Detected {missing_count} missing frames before frame {current_frame_index}")
+
+                # Update overall drop rate EWMA for each missing frame
+                for _ in range(missing_count):
+                    self.overall_drop_rate_ewma.update(dropped=True)
+
+            # Update expected next frame index
+            self._expected_next_frame_index = current_frame_index + 1
+
+        should_update_rendering_index = (
+            is_first_frame_of_item
+            and playlist_item_index >= 0
+            and playlist_item_index != self._last_rendered_item_index
+        )
+
+        if should_update_rendering_index:
+            logger.info(f"RENDERER: Starting to render playlist item {playlist_item_index}")
+            self._create_led_transition_effects_for_item(timestamp, metadata)
+
+        # Render with timestamp-based timing
+        try:
+            logger.debug(f"Renderer: About to call render_frame_at_timestamp for frame index {current_frame_index}")
+            success = self._frame_renderer.render_frame_at_timestamp(led_values, timestamp, metadata)
+            logger.debug(f"Renderer: render_frame_at_timestamp returned success={success}")
+            loop_state.last_frame_render_time = time.time()
+            loop_state.consecutive_errors = 0  # Reset error counter on success
+        except Exception as render_error:
+            logger.error(
+                f"CRITICAL: Frame renderer crashed during render_frame_at_timestamp: {render_error}",
+                exc_info=True,
+            )
+            success = False
+            loop_state.consecutive_errors += 1
+
+            if loop_state.consecutive_errors >= loop_state.max_consecutive_errors:
+                logger.critical(
+                    f"Renderer thread has failed {loop_state.consecutive_errors} times consecutively - stopping thread"
+                )
+                return RenderingStepResult(
+                    should_continue=False,
+                    should_break=True,
+                    wait_action="sleep",
+                    wait_timeout=0.0,
+                    reason="critical_render_error",
+                )
+
+        # Update rendering_index AFTER successful render
+        if success and should_update_rendering_index:
+            self._last_rendered_item_index = playlist_item_index
+            try:
+                self._control_state.update_status(rendering_index=playlist_item_index)
+                logger.info(f"Updated rendering_index to {playlist_item_index} after successful render")
+            except Exception as e:
+                logger.warning(f"Failed to update rendering_index in ControlState: {e}")
+
+        # Mark render time and log timing data
+        if timing_data:
+            if success:
+                timing_data.mark_render()
+            if self._timing_logger:
+                self._timing_logger.log_frame(timing_data)
+
+        # Update renderer output FPS tracking and overall drop rate
+        if success:
+            self._stats.renderer_output_fps_ewma = self._frame_renderer.get_output_fps()
+            if current_frame_index is not None:
+                self.overall_drop_rate_ewma.update(dropped=False)
+                self._last_rendered_frame_index = current_frame_index
+        else:
+            if current_frame_index is not None:
+                self.overall_drop_rate_ewma.update(dropped=True)
+            logger.warning("Frame rendering failed")
+
+        return RenderingStepResult(
+            should_continue=True,
+            should_break=False,
+            wait_action="read_buffer",
+            wait_timeout=0.1,
+            reason="frame_processed",
+        )
+
     def _rendering_loop(self) -> None:
-        """Rendering thread - handles timestamp-based frame output."""
+        """
+        Rendering thread - thin wrapper around _rendering_loop_step.
+
+        This loop handles:
+        - Getting control status
+        - Reading from LED buffer (when PLAYING)
+        - Exception recovery with brief pauses
+        - Thread lifecycle (startup/shutdown logging)
+
+        All business logic is in _rendering_loop_step for testability.
+        """
         logger.info("Renderer thread started")
 
-        consecutive_errors = 0
-        max_consecutive_errors = 10
-        last_heartbeat_log = 0.0
-        last_frame_render_time = 0.0
+        loop_state = RenderingLoopState()
 
         # Log initial renderer state
         initial_status = self._control_state.get_status()
         if initial_status:
             logger.info(f"Initial renderer state: {initial_status.renderer_state}")
 
+        next_action = "sleep"  # Start with a sleep to get initial state
+        led_data = None
+
         while self._running and not self._shutdown_requested:
             try:
-                # Update heartbeat
-                self._renderer_thread_heartbeat = time.time()
-
-                # Log heartbeat periodically
-                if time.time() - last_heartbeat_log > 30.0:
-                    logger.debug(
-                        f"Renderer thread heartbeat (last frame {time.time() - last_frame_render_time:.1f}s ago)"
-                    )
-                    last_heartbeat_log = time.time()
-                # Check renderer state and handle transitions
+                # Get current control status
                 control_status = self._control_state.get_status()
-                if control_status:
-                    self._handle_renderer_state_transitions(control_status)
 
-                    # Handle pause/resume detection for frame renderer timing compensation
-                    if self._last_renderer_state != control_status.renderer_state:
-                        if (
-                            control_status.renderer_state == RendererState.PAUSED
-                            and self._last_renderer_state != RendererState.PAUSED
-                        ):
-                            # Transitioning to PAUSED state
-                            self._frame_renderer.pause_renderer()
-                        elif (
-                            self._last_renderer_state == RendererState.PAUSED
-                            and control_status.renderer_state != RendererState.PAUSED
-                        ):
-                            # Transitioning from PAUSED to any other state (resume)
-                            self._frame_renderer.resume_renderer()
-
-                        self._last_renderer_state = control_status.renderer_state
+                # If we need to read from buffer (PLAYING state)
+                if next_action == "read_buffer":
+                    if self._led_buffer is None:
+                        logger.error("LED buffer not initialized")
+                        led_data = None
+                    else:
+                        try:
+                            logger.debug(
+                                f"Renderer: About to read from LED buffer (heartbeat={self._renderer_thread_heartbeat:.1f})"
+                            )
+                            led_data = self._led_buffer.read_led_values(timeout=0.1)
+                            logger.debug(f"Renderer: Read from LED buffer complete, got data={led_data is not None}")
+                        except Exception as buffer_error:
+                            logger.error(f"Failed to read from LED buffer: {buffer_error}", exc_info=True)
+                            loop_state.consecutive_errors += 1
+                            led_data = None
                 else:
-                    logger.warning("Could not get control status for renderer state transitions")
+                    led_data = None
 
-                # Handle renderer state
-                if control_status and control_status.renderer_state == RendererState.PLAYING:
-                    # Get next LED values with timeout
-                    try:
-                        logger.debug(
-                            f"Renderer: About to read from LED buffer (heartbeat={self._renderer_thread_heartbeat:.1f})"
-                        )
-                        if self._led_buffer is None:
-                            logger.error("LED buffer not initialized")
-                            continue
-                        led_data = self._led_buffer.read_led_values(timeout=0.1)
-                        logger.debug(f"Renderer: Read from LED buffer complete, got data={led_data is not None}")
-                    except Exception as buffer_error:
-                        logger.error(f"Failed to read from LED buffer: {buffer_error}", exc_info=True)
-                        consecutive_errors += 1
-                        continue
+                # Execute step logic
+                result = self._rendering_loop_step(control_status, led_data, loop_state)
 
-                    if led_data is None:
-                        continue  # Timeout - no data available
+                if result.should_break:
+                    break
 
-                elif control_status and control_status.renderer_state == RendererState.PAUSED:
-                    # Paused - keep displaying current frame, don't advance buffer
-                    time.sleep(0.1)
-                    continue
+                if not result.should_continue:
+                    break
 
-                elif control_status and control_status.renderer_state == RendererState.WAITING:
-                    # Waiting for frames - just wait, state transition will handle the switch to PLAYING
-                    time.sleep(0.1)
-                    continue
-
+                # Perform the next action
+                if result.wait_action == "sleep":
+                    time.sleep(result.wait_timeout)
+                    next_action = "sleep"
                 else:
-                    # Stopped or invalid state - just wait
-                    # Note: Having frames in LED buffer during STOPPED is normal during shutdown,
-                    # so we only log at DEBUG level to avoid spam
-                    if (
-                        control_status
-                        and control_status.renderer_state == RendererState.STOPPED
-                        and self._led_buffer is not None
-                    ):
-                        buffer_stats = self._led_buffer.get_buffer_stats()
-                        if buffer_stats.get("current_count", 0) > 0:
-                            # Rate-limit this log to once per 30 seconds
-                            if not hasattr(self, "_last_buffer_warning_time"):
-                                self._last_buffer_warning_time = 0.0
-                            current_time = time.time()
-                            if current_time - self._last_buffer_warning_time > 30.0:
-                                logger.debug(
-                                    f"Renderer STOPPED with {buffer_stats.get('current_count')} frames in LED buffer (normal during shutdown)"
-                                )
-                                self._last_buffer_warning_time = current_time
-                    time.sleep(0.1)
-                    continue
-
-                led_values, timestamp, metadata = led_data
-
-                # Extract timing data and mark read-from-LED-buffer time
-                timing_data = None
-                if metadata and "timing_data" in metadata:
-                    timing_data = metadata["timing_data"]
-                    if timing_data:
-                        timing_data.mark_read_from_led_buffer()
-
-                # Check for playlist item transitions (but update rendering_index after successful render)
-                is_first_frame_of_item = metadata and metadata.get("is_first_frame_of_item", False)
-                playlist_item_index = metadata.get("playlist_item_index", -1) if metadata else -1
-
-                # Track overall frame drops based on missing frame indices
-                current_frame_index = None
-                if timing_data and hasattr(timing_data, "frame_index"):
-                    current_frame_index = timing_data.frame_index
-
-                    # Check for missing frames between last rendered and current
-                    if current_frame_index > self._expected_next_frame_index:
-                        # Missing frames detected - mark them as dropped in overall tracking
-                        missing_count = current_frame_index - self._expected_next_frame_index
-                        logger.debug(f"Detected {missing_count} missing frames before frame {current_frame_index}")
-
-                        # Update overall drop rate EWMA for each missing frame
-                        for _ in range(missing_count):
-                            self.overall_drop_rate_ewma.update(dropped=True)
-
-                    # Update expected next frame index
-                    self._expected_next_frame_index = current_frame_index + 1
-
-                should_update_rendering_index = (
-                    is_first_frame_of_item
-                    and playlist_item_index >= 0
-                    and playlist_item_index != self._last_rendered_item_index
-                )
-
-                if should_update_rendering_index:
-                    logger.info(f"RENDERER: Starting to render playlist item {playlist_item_index}")
-
-                    # Create LED transition effects for this playlist item
-                    self._create_led_transition_effects_for_item(timestamp, metadata)
-
-                # Debug logging for high FPS investigation
-                frame_count = self._stats.frames_processed
-                if frame_count % 100 == 0 and self._led_buffer is not None:  # Log every 100th frame
-                    buffer_stats = self._led_buffer.get_buffer_stats()
-                    current_time = time.time()
-                    # Debug logging for high FPS investigation
-
-                # Render with timestamp-based timing
-                try:
-                    logger.debug(
-                        f"Renderer: About to call render_frame_at_timestamp for frame index {current_frame_index}"
-                    )
-                    success = self._frame_renderer.render_frame_at_timestamp(led_values, timestamp, metadata)
-                    logger.debug(f"Renderer: render_frame_at_timestamp returned success={success}")
-                    last_frame_render_time = time.time()
-                    consecutive_errors = 0  # Reset error counter on success
-                except Exception as render_error:
-                    logger.error(
-                        f"CRITICAL: Frame renderer crashed during render_frame_at_timestamp: {render_error}",
-                        exc_info=True,
-                    )
-                    success = False
-                    consecutive_errors += 1
-
-                    if consecutive_errors >= max_consecutive_errors:
-                        logger.critical(
-                            f"Renderer thread has failed {consecutive_errors} times consecutively - stopping thread"
-                        )
-                        break
-
-                # Update rendering_index AFTER successful render to reflect what's actually been rendered
-                if success and should_update_rendering_index:
-                    self._last_rendered_item_index = playlist_item_index
-                    try:
-                        self._control_state.update_status(rendering_index=playlist_item_index)
-                        logger.info(f"Updated rendering_index to {playlist_item_index} after successful render")
-                    except Exception as e:
-                        logger.warning(f"Failed to update rendering_index in ControlState: {e}")
-
-                    # Note: Don't send position updates to sync service as this creates a feedback loop
-                    # The producer already sends next_item() commands when content finishes
-
-                # Mark render time and log timing data based on success
-                if timing_data:
-                    if success:
-                        # Successful render - mark render time and log complete data
-                        timing_data.mark_render()
-                    # Always log timing data (Case 3: failed renders have empty render_time)
-                    if self._timing_logger:
-                        self._timing_logger.log_frame(timing_data)
-                        if not success:
-                            pass  # Log render-failed frame to timing data
-
-                # Update renderer output FPS tracking and overall drop rate
-                if success:
-                    # Get output FPS from frame renderer (measured at sink output)
-                    self._stats.renderer_output_fps_ewma = self._frame_renderer.get_output_fps()
-                    # Mark successful render in overall drop rate tracking
-                    if current_frame_index is not None:
-                        self.overall_drop_rate_ewma.update(dropped=False)
-                        self._last_rendered_frame_index = current_frame_index
-                else:
-                    # Mark render failure in overall drop rate tracking
-                    if current_frame_index is not None:
-                        self.overall_drop_rate_ewma.update(dropped=True)
-
-                if not success:
-                    logger.warning("Frame rendering failed")
+                    next_action = "read_buffer"
 
             except Exception as e:
                 logger.error(f"Error in rendering loop: {e}", exc_info=True)
-                consecutive_errors += 1
+                loop_state.consecutive_errors += 1
 
-                if consecutive_errors >= max_consecutive_errors:
+                if loop_state.consecutive_errors >= loop_state.max_consecutive_errors:
                     logger.critical(
-                        f"Renderer thread has encountered {consecutive_errors} consecutive errors - exiting thread"
+                        f"Renderer thread has encountered {loop_state.consecutive_errors} consecutive errors - exiting thread"
                     )
-                    # Set renderer state to STOPPED to signal issue
                     with contextlib.suppress(Exception):
                         self._control_state.set_renderer_state(RendererState.STOPPED)
                     break
@@ -1239,7 +1404,7 @@ class ConsumerProcess:
                 time.sleep(0.01)
 
         # Thread is exiting - log reason
-        if consecutive_errors >= max_consecutive_errors:
+        if loop_state.consecutive_errors >= loop_state.max_consecutive_errors:
             logger.critical("RENDERER THREAD CRASHED: Exiting due to excessive consecutive errors")
         elif self._shutdown_requested:
             logger.info("Renderer thread ended: Shutdown requested")
@@ -2003,12 +2168,13 @@ class ConsumerProcess:
             return True
 
         try:
-            # Check if LED optimizer supports batch mode
+            # Verify LED optimizer supports batch mode (required for batch processing)
             if not self._led_optimizer.supports_batch_optimization():
-                logger.warning(
-                    "LED optimizer does not support batch optimization - falling back to single frame processing"
+                raise RuntimeError(
+                    "Batch mode is enabled, but the LED optimizer does not support batch optimization. "
+                    "Ensure that the LED count is divisible by 16 and that the pattern file was "
+                    "generated with batch matrix support enabled."
                 )
-                return self._process_batch_frames_individually()
 
             # Pad batch to target size if needed
             while len(self._frame_batch) < self._batch_size:
@@ -2123,71 +2289,9 @@ class ConsumerProcess:
 
         except Exception as e:
             logger.error(f"Batch processing failed: {e}")
-            # Fallback to individual processing
-            return self._process_batch_frames_individually()
+            raise
         finally:
             self._clear_batch()
-
-    def _process_batch_frames_individually(self) -> bool:
-        """
-        Fallback: Process batch frames individually using single frame optimizer.
-
-        Returns:
-            True if at least one frame was processed successfully
-        """
-        success_count = 0
-
-        for frame_idx, (frame, metadata) in enumerate(zip(self._frame_batch, self._batch_metadata)):
-            try:
-                # Convert GPU frame to CPU for single frame optimizer
-                if isinstance(frame, cp.ndarray):
-                    frame_cpu = cp.asnumpy(frame)
-                else:
-                    frame_cpu = frame
-
-                # Process single frame using existing logic
-                result = self._led_optimizer.optimize_frame(frame_cpu, max_iterations=self.optimization_iterations)
-
-                # Convert to uint8 if needed
-                if isinstance(result.led_values, cp.ndarray):
-                    led_values_cpu = cp.asnumpy(result.led_values).astype(np.uint8)
-                else:
-                    led_values_cpu = result.led_values.astype(np.uint8)
-
-                timestamp = metadata.get("timestamp", time.time())
-
-                # Write to LED buffer
-                if self._led_buffer is None:
-                    logger.error("LED buffer not initialized")
-                    continue
-
-                success = self._led_buffer.write_led_values(
-                    led_values_cpu,
-                    timestamp,
-                    {
-                        "batch_fallback": True,
-                        "optimization_time": metadata.get("optimization_time", 0.0),
-                        "converged": result.converged,
-                        "iterations": result.iterations,
-                        "error_metrics": result.error_metrics,
-                        **metadata,
-                    },
-                    block=True,
-                    timeout=0.1,
-                )
-
-                if success:
-                    success_count += 1
-
-            except Exception as e:
-                logger.error(f"Error processing individual frame {frame_idx} from batch: {e}")
-
-        # Update statistics
-        self._stats.frames_processed += success_count
-
-        logger.debug(f"Batch fallback processing: {success_count}/{len(self._frame_batch)} frames successful")
-        self._clear_batch()
-        return success_count > 0
 
     def _initialize_test_renderer(self) -> bool:
         """
