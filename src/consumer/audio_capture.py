@@ -32,9 +32,9 @@ class AGCConfig:
     rms_window_ms: float = 200.0  # RMS calculation window in milliseconds
     attack_time_ms: float = 50.0  # Fast attack when signal exceeds target
     release_time_s: float = 120.0  # Slow release (2 minutes) for gain increase
-    max_gain_db: float = 20.0  # Maximum gain in dB (10x multiplier)
+    max_gain_db: float = 12.0  # Maximum gain in dB (4x multiplier) - limits noise amplification
     min_gain_db: float = -20.0  # Minimum gain in dB (0.1x multiplier)
-    noise_gate_threshold: float = 0.01  # Below this RMS, freeze gain increase
+    noise_gate_threshold: float = 0.05  # Below this RMS, freeze gain increase (ambient noise ~0.05-0.07)
 
 
 @dataclass
