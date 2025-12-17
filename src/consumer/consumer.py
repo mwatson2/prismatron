@@ -2003,12 +2003,9 @@ class ConsumerProcess:
             return True
 
         try:
-            # Check if LED optimizer supports batch mode
+            # Verify LED optimizer supports batch mode (required for batch processing)
             if not self._led_optimizer.supports_batch_optimization():
-                logger.warning(
-                    "LED optimizer does not support batch optimization - falling back to single frame processing"
-                )
-                return self._process_batch_frames_individually()
+                raise RuntimeError("Batch mode enabled but LED optimizer does not support batch optimization")
 
             # Pad batch to target size if needed
             while len(self._frame_batch) < self._batch_size:
@@ -2123,71 +2120,9 @@ class ConsumerProcess:
 
         except Exception as e:
             logger.error(f"Batch processing failed: {e}")
-            # Fallback to individual processing
-            return self._process_batch_frames_individually()
+            raise
         finally:
             self._clear_batch()
-
-    def _process_batch_frames_individually(self) -> bool:
-        """
-        Fallback: Process batch frames individually using single frame optimizer.
-
-        Returns:
-            True if at least one frame was processed successfully
-        """
-        success_count = 0
-
-        for frame_idx, (frame, metadata) in enumerate(zip(self._frame_batch, self._batch_metadata)):
-            try:
-                # Convert GPU frame to CPU for single frame optimizer
-                if isinstance(frame, cp.ndarray):
-                    frame_cpu = cp.asnumpy(frame)
-                else:
-                    frame_cpu = frame
-
-                # Process single frame using existing logic
-                result = self._led_optimizer.optimize_frame(frame_cpu, max_iterations=self.optimization_iterations)
-
-                # Convert to uint8 if needed
-                if isinstance(result.led_values, cp.ndarray):
-                    led_values_cpu = cp.asnumpy(result.led_values).astype(np.uint8)
-                else:
-                    led_values_cpu = result.led_values.astype(np.uint8)
-
-                timestamp = metadata.get("timestamp", time.time())
-
-                # Write to LED buffer
-                if self._led_buffer is None:
-                    logger.error("LED buffer not initialized")
-                    continue
-
-                success = self._led_buffer.write_led_values(
-                    led_values_cpu,
-                    timestamp,
-                    {
-                        "batch_fallback": True,
-                        "optimization_time": metadata.get("optimization_time", 0.0),
-                        "converged": result.converged,
-                        "iterations": result.iterations,
-                        "error_metrics": result.error_metrics,
-                        **metadata,
-                    },
-                    block=True,
-                    timeout=0.1,
-                )
-
-                if success:
-                    success_count += 1
-
-            except Exception as e:
-                logger.error(f"Error processing individual frame {frame_idx} from batch: {e}")
-
-        # Update statistics
-        self._stats.frames_processed += success_count
-
-        logger.debug(f"Batch fallback processing: {success_count}/{len(self._frame_batch)} frames successful")
-        self._clear_batch()
-        return success_count > 0
 
     def _initialize_test_renderer(self) -> bool:
         """

@@ -30,7 +30,6 @@ from ..utils.frame_optimizer import (
     load_ata_inverse_from_pattern,
     optimize_frame_led_values,
 )
-from ..utils.led_diffusion_csc_matrix import LEDDiffusionCSCMatrix
 from ..utils.performance_timing import PerformanceTiming
 from ..utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 from ..utils.symmetric_diagonal_ata_matrix import SymmetricDiagonalATAMatrix
@@ -83,10 +82,6 @@ class LEDOptimizer:
     _diagonal_ata_matrix: Optional[Any]
     _ATA_inverse_gpu: Optional[Any]
     _ATA_inverse_cpu: Optional[np.ndarray]
-    _A_r_csc_gpu: Optional[Any]
-    _A_g_csc_gpu: Optional[Any]
-    _A_b_csc_gpu: Optional[Any]
-    _A_combined_csc_gpu: Optional[Any]
     _target_rgb_buffer: Optional[np.ndarray]
     _ATb_gpu: Optional[Any]
     _led_values_gpu: Optional[Any]
@@ -135,12 +130,6 @@ class LEDOptimizer:
         self._ATA_inverse_cpu = None  # Shape: (3, led_count, led_count) - inverse on CPU
         self._has_ata_inverse = False  # Whether ATA inverse matrices are available
 
-        # Sparse matrices for A^T*b calculation (kept sparse for efficiency)
-        self._A_r_csc_gpu = None  # Red channel sparse matrix (pixels, leds)
-        self._A_g_csc_gpu = None  # Green channel sparse matrix
-        self._A_b_csc_gpu = None  # Blue channel sparse matrix
-        self._A_combined_csc_gpu = None  # Combined block diagonal matrix for faster A^T*b
-
         # Pre-allocated arrays for optimization
         self._target_rgb_buffer = None  # (pixels, 3) CPU buffer
         self._ATb_gpu = None  # (led_count, 3) dense vector on GPU
@@ -150,7 +139,6 @@ class LEDOptimizer:
         self._gpu_workspace = None
 
         # Utility class instances for encapsulated matrix operations
-        self._diffusion_matrix: Optional[LEDDiffusionCSCMatrix] = None
         self._mixed_tensor: Optional[SingleBlockMixedSparseTensor] = None
 
         self._led_spatial_mapping: Optional[Dict[int, int]] = None
@@ -508,14 +496,14 @@ class LEDOptimizer:
             logger.info(f"Loading patterns from {patterns_path}")
             data = np.load(patterns_path, allow_pickle=True)
 
-            # Check for new nested format first
-            if "mixed_tensor" in data and (
-                "diffusion_matrix" in data or "dia_matrix" in data or "symmetric_dia_matrix" in data
-            ):
-                return self._load_matricies_from_file(data)
-            else:
-                logger.error(f"{patterns_path} is in unsupported legacy format")
+            # Validate required format: mixed_tensor + DIA matrix
+            if "mixed_tensor" not in data:
+                logger.error(f"{patterns_path} is missing required 'mixed_tensor' key")
                 return False
+            if "dia_matrix" not in data and "symmetric_dia_matrix" not in data:
+                logger.error(f"{patterns_path} is missing required DIA matrix (dia_matrix or symmetric_dia_matrix)")
+                return False
+            return self._load_matricies_from_file(data)
 
         except Exception as e:
             logger.error(f"Failed to load matrices: {e}")
@@ -634,26 +622,12 @@ class LEDOptimizer:
                 self._dense_ata_matrix = None
                 logger.debug("Cleaned up dense ATA matrix")
 
-            # In batch mode, clean up the regular symmetric matrix (keep batch version)
-            if self.enable_batch_mode and self._batch_symmetric_ata_matrix is not None:
-                if self._symmetric_ata_matrix is not None:
-                    if (
-                        hasattr(self._symmetric_ata_matrix, "dia_data_gpu")
-                        and self._symmetric_ata_matrix.dia_data_gpu is not None
-                    ):
-                        memory_freed += self._symmetric_ata_matrix.dia_data_gpu.nbytes / (1024 * 1024)
-                        self._symmetric_ata_matrix.dia_data_gpu = None
-                    if (
-                        hasattr(self._symmetric_ata_matrix, "dia_data_cpu")
-                        and self._symmetric_ata_matrix.dia_data_cpu is not None
-                    ):
-                        memory_freed += self._symmetric_ata_matrix.dia_data_cpu.nbytes / (1024 * 1024)
-                        self._symmetric_ata_matrix.dia_data_cpu = None
-                    self._symmetric_ata_matrix = None
-                    logger.debug("Cleaned up regular symmetric ATA matrix (using batch version)")
+            # NOTE: In batch mode, keep the regular symmetric matrix for single-frame fallback
+            # operations (e.g., initial frame or error recovery). The batch matrix handles
+            # batch operations, but single-frame optimize_frame() still needs the regular ATA matrix.
 
             # In non-batch mode, clean up the batch matrix (keep regular symmetric version)
-            elif (
+            if (
                 not self.enable_batch_mode
                 and self._symmetric_ata_matrix is not None
                 and self._batch_symmetric_ata_matrix is not None
@@ -693,31 +667,15 @@ class LEDOptimizer:
             logger.warning(f"Error during matrix cleanup: {e}")
 
     def _load_matricies_from_file(self, data: np.lib.npyio.NpzFile) -> bool:
-        """Load matrices from new nested format using utility classes."""
-        logger.info("Detected new nested format with utility classes")
+        """Load matrices from pattern file using DIA format."""
+        logger.info("Loading matrices from pattern file")
 
-        # Load LEDDiffusionCSCMatrix - try diffusion_matrix first, then dia_matrix, then symmetric_dia_matrix
-        if "diffusion_matrix" in data:
-            logger.info("Loading LEDDiffusionCSCMatrix from diffusion_matrix...")
-            diffusion_dict = data["diffusion_matrix"].item()
-            self._diffusion_matrix = LEDDiffusionCSCMatrix.from_dict(diffusion_dict)
-        elif "dia_matrix" in data:
-            logger.info("Loading from DIA matrix format - using direct frame optimizer approach...")
-            # Since we're using the standardized frame optimizer, we don't need the CSC wrapper
-            # We'll set _diffusion_matrix to None and skip CSC setup
-            self._diffusion_matrix = None
-            logger.info("DIA matrix format detected - will use frame optimizer directly")
-        elif "symmetric_dia_matrix" in data:
-            logger.info("Loading from symmetric DIA matrix format - using direct frame optimizer approach...")
-            # Since we're using the standardized frame optimizer, we don't need the CSC wrapper
-            # We'll set _diffusion_matrix to None and skip CSC setup
-            self._diffusion_matrix = None
-            logger.info("Symmetric DIA matrix format detected - will use frame optimizer directly")
-        else:
-            logger.error("No diffusion matrix found in data")
+        # Validate DIA matrix format is present
+        if "dia_matrix" not in data and "symmetric_dia_matrix" not in data:
+            logger.error("Pattern file must contain dia_matrix or symmetric_dia_matrix")
             return False
 
-        # Load metadata from diffusion matrix or pattern data
+        # Load metadata from pattern data
         led_spatial_mapping: Any = data.get("led_spatial_mapping", {})
         if hasattr(led_spatial_mapping, "item"):
             led_spatial_mapping = led_spatial_mapping.item()
@@ -734,20 +692,12 @@ class LEDOptimizer:
         if self._pattern_color_space == "linear":
             logger.info("  Input frames will be converted from sRGB to linear for optimization")
 
-        if self._diffusion_matrix is not None:
-            self._actual_led_count = self._diffusion_matrix.led_count
-            # Validate matrix dimensions
-            expected_pixels = FRAME_HEIGHT * FRAME_WIDTH
-            if self._diffusion_matrix.pixels != expected_pixels:
-                logger.error(f"Matrix pixel dimension mismatch: {self._diffusion_matrix.pixels} != {expected_pixels}")
-                return False
-        else:
-            # Get LED count from metadata when using DIA format (metadata already loaded above)
-            if "led_count" not in metadata:
-                logger.error("Pattern file is missing required 'led_count' metadata")
-                return False
-            self._actual_led_count = metadata["led_count"]
-            logger.info(f"Using LED count from metadata: {self._actual_led_count}")
+        # Get LED count from metadata (required for DIA format)
+        if "led_count" not in metadata:
+            logger.error("Pattern file is missing required 'led_count' metadata")
+            return False
+        self._actual_led_count = metadata["led_count"]
+        logger.info(f"LED count from metadata: {self._actual_led_count}")
 
         # Load precomputed A^T*A matrices (DIA format)
         if not self._load_precomputed_ata_matrices(data):
@@ -784,13 +734,6 @@ class LEDOptimizer:
                     f"✅ BATCH MODE ACTIVE: Using {self._batch_symmetric_ata_matrix.batch_size}-frame batch optimization with {self._batch_symmetric_ata_matrix.block_diag_count} block diagonals"
                 )
 
-        # Load CSC format for A^T@b calculation (only if using legacy diffusion matrix)
-        if self._diffusion_matrix is not None:
-            logger.info("Setting up CSC matrices for A^T@b calculation...")
-            self._setup_csc_matrices()
-        else:
-            logger.info("Skipping CSC matrix setup - using frame optimizer directly")
-
         # Log memory usage summary
         if self._diagonal_ata_matrix and self._diagonal_ata_matrix.dia_data_cpu is not None:
             dia_memory_mb = self._diagonal_ata_matrix.dia_data_cpu.nbytes / (1024 * 1024)
@@ -802,23 +745,6 @@ class LEDOptimizer:
         self._matrix_loaded = True
         logger.info("Matrix loading completed successfully")
         return True
-
-    def _setup_csc_matrices(self) -> None:
-        """Setup CSC matrices for GPU operations using utility class methods."""
-        logger.info("Setting up CSC matrices for GPU operations...")
-
-        if self._diffusion_matrix is None:
-            raise RuntimeError("Diffusion matrix not loaded - call load_diffusion_matrices first")
-
-        # Use utility class methods to get GPU matrices
-        (
-            self._A_r_csc_gpu,
-            self._A_g_csc_gpu,
-            self._A_b_csc_gpu,
-            self._A_combined_csc_gpu,
-        ) = self._diffusion_matrix.to_gpu_matrices()
-
-        logger.info("CSC matrices transferred to GPU successfully")
 
     def _calculate_flops_per_iteration(self) -> None:
         """FLOP calculation removed - kept as stub for API compatibility."""
@@ -1138,247 +1064,6 @@ class LEDOptimizer:
             True if batch optimization is available, False otherwise
         """
         return self._matrix_loaded and self._batch_symmetric_ata_matrix is not None and self._actual_led_count % 16 == 0
-
-    def _calculate_atb(self, target_frame: np.ndarray) -> cp.ndarray:
-        """
-        DEPRECATED: Calculate A^T * b - now handled by frame optimizer.
-
-        This method is kept for compatibility but should not be used.
-        The standardized frame optimizer handles A^T @ b calculation internally.
-        """
-        logger.warning("_calculate_atb is deprecated - use standardized frame optimizer API")
-        return self._calculate_atb_mixed_tensor(target_frame)
-
-    def _convert_frame_to_flat_format(self, target_frame: np.ndarray) -> cp.ndarray:
-        """Convert frame to flat format for CSC sparse operations."""
-        target_rgb_normalized = target_frame.astype(np.float32) / 255.0
-        target_flattened = target_rgb_normalized.reshape(-1, 3)  # (pixels, 3)
-
-        # Create combined target vector [R_pixels; G_pixels; B_pixels]
-        pixels = target_flattened.shape[0]
-        target_combined = np.empty(pixels * 3, dtype=np.float32)
-        target_combined[:pixels] = target_flattened[:, 0]  # R channel
-        target_combined[pixels : 2 * pixels] = target_flattened[:, 1]  # G channel
-        target_combined[2 * pixels :] = target_flattened[:, 2]  # B channel
-
-        # Transfer to GPU
-        return cp.asarray(target_combined)
-
-    def _calculate_atb_csc_format(self, target_frame: np.ndarray) -> cp.ndarray:
-        """Calculate A^T@b using CSC sparse format."""
-        self.timing and self.timing.start("ATb_data_preparation")
-
-        # Convert frame to flat format
-        target_combined_gpu = self._convert_frame_to_flat_format(target_frame)
-
-        self.timing and self.timing.stop("ATb_data_preparation")
-
-        # Actual sparse matrix operation
-        self.timing and self.timing.start("ATb_csc_sparse_matmul", use_gpu_events=True)
-
-        if self._A_combined_csc_gpu is None:
-            raise RuntimeError("CSC matrices not initialized - call _setup_csc_matrices first")
-        ATb_combined = self._A_combined_csc_gpu.T @ target_combined_gpu
-
-        self.timing and self.timing.stop("ATb_csc_sparse_matmul")
-
-        # Convert result back to tensor form
-        led_count = self._actual_led_count
-        ATb_gpu = self._ATb_gpu
-        if ATb_gpu is None:
-            raise RuntimeError("GPU buffers not initialized - call _initialize_gpu_buffers first")
-        ATb_gpu[:, 0] = ATb_combined[:led_count]  # R LEDs
-        ATb_gpu[:, 1] = ATb_combined[led_count : 2 * led_count]  # G LEDs
-        ATb_gpu[:, 2] = ATb_combined[2 * led_count :]  # B LEDs
-
-        return ATb_gpu
-
-    def _calculate_atb_mixed_tensor(self, target_frame: np.ndarray) -> cp.ndarray:
-        """
-        Calculate A^T@b using mixed tensor format with 3D CUDA kernel.
-
-        Uses the new transpose_dot_product_3d method to process all channels in one
-        optimized CUDA operation. Implements einsum 'ijkl,jkl->ij' efficiently:
-        - Mixed tensor: (leds, channels, height, width) - shape 'ijkl'
-        - Target frame: (channels, height, width) - shape 'jkl' (planar form)
-        - Result: (leds, channels) - shape 'ij'
-
-        Args:
-            target_frame: Target image (height, width, 3) in range [0, 255]
-
-        Returns:
-            ATb vector (led_count, 3) on GPU
-        """
-        self.timing and self.timing.start("ATb_data_preparation")
-
-        # Step 1: Normalize target frame and convert to planar form
-        target_normalized = target_frame.astype(np.float32) / 255.0  # Shape: (height, width, 3)
-
-        # Convert from HWC to CHW (planar form): (height, width, 3) -> (3, height, width)
-        target_planar = target_normalized.transpose(2, 0, 1)  # Shape: (3, height, width)
-        target_gpu = cp.asarray(target_planar)  # Shape: (3, height, width)
-
-        logger.debug(f"Target planar shape: {target_gpu.shape}")
-
-        self.timing and self.timing.stop("ATb_data_preparation")
-
-        # Step 2: Use the new 3D transpose_dot_product method
-        # This processes all channels in one CUDA kernel operation
-        self.timing and self.timing.start("ATb_mixed_tensor_3d_kernel", use_gpu_events=True)
-
-        if self._mixed_tensor is None:
-            raise RuntimeError("Mixed tensor not initialized - call load_diffusion_matrices first")
-        result = self._mixed_tensor.transpose_dot_product_3d(target_gpu)  # Shape: (batch_size, channels)
-
-        self.timing and self.timing.stop("ATb_mixed_tensor_3d_kernel")
-
-        # Store in the ATb buffer
-        ATb_gpu = self._ATb_gpu
-        if ATb_gpu is None:
-            raise RuntimeError("GPU buffers not initialized - call _initialize_gpu_buffers first")
-        ATb_gpu[:] = result
-
-        logger.debug(f"ATb result shape: {ATb_gpu.shape}, sample: {ATb_gpu[:3].get()}")
-
-        return ATb_gpu
-
-    def _solve_dense_gradient_descent(self, atb: cp.ndarray, max_iterations: Optional[int]) -> Tuple[cp.ndarray, int]:
-        """
-        DEPRECATED: Dense gradient descent - now handled by frame optimizer.
-
-        This method is kept for compatibility but should not be used.
-        The standardized frame optimizer handles optimization internally.
-        """
-        logger.warning("_solve_dense_gradient_descent is deprecated - use standardized frame optimizer API")
-        max_iters = max_iterations or self.max_iterations
-
-        # Verify input shapes and DIA matrix availability
-        if self._diagonal_ata_matrix is None:
-            raise RuntimeError("Diagonal ATA matrix not loaded")
-        assert atb.shape == (
-            self._actual_led_count,
-            3,
-        ), f"ATb shape {atb.shape} != expected ({self._actual_led_count}, 3)"
-
-        # Get workspace arrays
-        w = self._gpu_workspace
-        x = self._led_values_gpu  # (led_count, 3)
-
-        if x is None:
-            raise RuntimeError("LED values GPU buffer not initialized")
-        if w is None:
-            raise RuntimeError("GPU workspace not initialized")
-        if self._diagonal_ata_matrix is None:
-            raise RuntimeError("Diagonal ATA matrix not loaded")
-
-        # Verify x shape
-        assert x.shape == (
-            self._actual_led_count,
-            3,
-        ), f"x shape {x.shape} != expected ({self._actual_led_count}, 3)"
-
-        diagonal_ata = self._diagonal_ata_matrix  # Local ref for type narrowing
-
-        for iteration in range(max_iters):
-            # KEY OPTIMIZATION: Use DIA format for sparse ATA @ x computation
-            # Convert x from (led_count, 3) to (3, led_count) for DIA multiplication
-            self.timing and self.timing.start("gradient_calculation", use_gpu_events=True)
-
-            x_transposed = x.T  # Shape: (3, led_count)
-            ata_x_transposed = diagonal_ata.multiply_3d(cp.asnumpy(x_transposed))  # Shape: (3, led_count)
-            w["ATA_x"][:] = cp.asarray(ata_x_transposed).T  # Convert back to (led_count, 3)
-            w["gradient"][:] = w["ATA_x"] - atb
-
-            self.timing and self.timing.stop("gradient_calculation")
-
-            # KEY STEP 4: Compute step size using optimized dense operations
-            self.timing and self.timing.start("step_size_calculation", use_gpu_events=True)
-
-            step_size = self._compute_dense_step_size(w["gradient"])
-
-            self.timing and self.timing.stop("step_size_calculation")
-
-            # Gradient descent step with projection to [0, 1]
-            self.timing and self.timing.start("gradient_step", use_gpu_events=True)
-
-            w["x_new"][:] = cp.clip(x - step_size * w["gradient"], 0, 1)
-
-            self.timing and self.timing.stop("gradient_step")
-
-            # Check convergence
-            delta = cp.linalg.norm(w["x_new"] - x)
-            if delta < self.convergence_threshold:
-                logger.debug(f"Converged after {iteration + 1} iterations, delta: {delta:.6f}")
-                break
-
-            # Update (copy values to avoid reference swapping issues)
-            x[:] = w["x_new"]
-
-        # Ensure we return the current x
-        if self._led_values_gpu is not None:
-            self._led_values_gpu[:] = x
-
-        return x, iteration + 1
-
-    def _compute_dense_step_size(self, gradient: cp.ndarray) -> float:
-        """
-        Compute step size using single einsum for g^T @ ATA @ g: (g^T @ g) / (g^T @ A^T*A @ g).
-
-        Args:
-            gradient: Gradient vector (led_count, 3)
-
-        Returns:
-            Step size (float)
-        """
-        if self._diagonal_ata_matrix is None:
-            raise RuntimeError("Diagonal ATA matrix not loaded")
-
-        # g^T @ g (sum over all elements)
-        g_dot_g = cp.sum(gradient * gradient)
-
-        # Compute g^T @ ATA @ g using DIA format
-        # Convert gradient from (led_count, 3) to (3, led_count)
-        gradient_transposed = gradient.T  # Shape: (3, led_count)
-        g_ata_g_per_channel = self._diagonal_ata_matrix.g_ata_g_3d(cp.asnumpy(gradient_transposed))  # Shape: (3,)
-        g_dot_ATA_g = cp.sum(cp.asarray(g_ata_g_per_channel))
-
-        if g_dot_ATA_g > 0:
-            return float(self.step_size_scaling * g_dot_g / g_dot_ATA_g)
-        else:
-            return 0.01  # Fallback step size
-
-    def _compute_error_metrics(self, led_values: cp.ndarray, target_frame: np.ndarray) -> Dict[str, float]:
-        """Compute error metrics using sparse matrices for accuracy."""
-        # Convert target frame
-        target_rgb = target_frame.astype(np.float32) / 255.0
-        target_r = cp.asarray(target_rgb[:, :, 0].ravel())
-        target_g = cp.asarray(target_rgb[:, :, 1].ravel())
-        target_b = cp.asarray(target_rgb[:, :, 2].ravel())
-
-        # Compute A @ x for each channel
-        rendered_r = self._A_r_csc_gpu @ led_values[:, 0]
-        rendered_g = self._A_g_csc_gpu @ led_values[:, 1]
-        rendered_b = self._A_b_csc_gpu @ led_values[:, 2]
-
-        # Compute residuals
-        residual_r = rendered_r - target_r
-        residual_g = rendered_g - target_g
-        residual_b = rendered_b - target_b
-
-        # Combine residuals for overall metrics
-        residual_combined = cp.concatenate([residual_r, residual_g, residual_b])
-
-        mse = float(cp.mean(residual_combined**2))
-        mae = float(cp.mean(cp.abs(residual_combined)))
-        max_error = float(cp.max(cp.abs(residual_combined)))
-        rmse = float(cp.sqrt(mse))
-
-        return {
-            "mse": mse,
-            "mae": mae,
-            "max_error": max_error,
-            "rmse": rmse,
-        }
 
     def get_optimizer_stats(self) -> Dict[str, Any]:
         """Get optimizer statistics."""

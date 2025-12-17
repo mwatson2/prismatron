@@ -205,24 +205,6 @@ class TestLEDOptimizer:
         assert stats["ata_k_bands"] == 50
         assert stats["approach_description"] == "Standardized frame optimizer with mixed tensor and DIA matrix"
 
-    def test_deprecated_methods_warning(self):
-        """Test that deprecated methods issue warnings."""
-        optimizer = LEDOptimizer(diffusion_patterns_path=self.REAL_PATTERNS_PATH)
-
-        # Mock the mixed tensor method to avoid AttributeError
-        with patch.object(optimizer, "_calculate_atb_mixed_tensor", return_value=Mock()), patch(
-            "src.consumer.led_optimizer.logger"
-        ) as mock_logger:
-            target_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
-
-            # Call deprecated method
-            optimizer._calculate_atb(target_frame)
-
-            # Should have logged a warning
-            mock_logger.warning.assert_called_with(
-                "_calculate_atb is deprecated - use standardized frame optimizer API"
-            )
-
     def test_initial_values_format_conversion(self):
         """Test that initial values are correctly converted between formats."""
         optimizer = LEDOptimizer(diffusion_patterns_path=self.REAL_PATTERNS_PATH)
