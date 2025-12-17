@@ -854,6 +854,7 @@ class AudioBeatAnalyzer:
         audio_config: Optional[AudioConfig] = None,
         enable_builddrop_detection: bool = False,
         builddrop_config: Optional[BuildDropConfig] = None,
+        noise_gate_rms: float = 0.15,
     ):
         """
         Initialize audio beat analyzer.
@@ -868,6 +869,10 @@ class AudioBeatAnalyzer:
             audio_config: Optional AudioConfig for custom audio capture settings (file mode, etc)
             enable_builddrop_detection: Enable build-up/drop detection (default: False)
             builddrop_config: Configuration for build-up/drop detection
+            noise_gate_rms: RMS threshold below which beats are suppressed (default 0.15, ~-16 dB).
+                            Set to 0.0 to disable. Ambient noise typically peaks 0.05-0.15;
+                            music typically has RMS > 0.15 during beats. Adjust higher (0.20-0.25)
+                            in noisy environments, or lower (0.10) for quiet music.
         """
         self.beat_callback = beat_callback
         self.builddrop_callback = builddrop_callback
@@ -876,6 +881,7 @@ class AudioBeatAnalyzer:
         self.buffer_size = buffer_size
         self.hop_size = 512  # Aubio hop size for processing (~11.6ms at 44.1kHz)
         self.chunk_size = 1024  # Audio chunk size for capture (~23ms at 44.1kHz)
+        self.noise_gate_rms = noise_gate_rms  # RMS threshold for noise gating
 
         # Processing components
         self.bpm_calculator = BPMCalculator()
@@ -906,6 +912,7 @@ class AudioBeatAnalyzer:
         # Audio processing statistics
         self.total_frames_processed = 0
         self.total_beats_detected = 0
+        self.total_beats_suppressed = 0  # Beats suppressed by noise gate
         self.last_status_log = 0.0
         self.last_beat_audio_timestamp = 0.0  # Track last beat in audio time, not wall clock
 
@@ -941,8 +948,10 @@ class AudioBeatAnalyzer:
             except Exception:
                 logger.info("Aubio available (version unknown)")
 
+        noise_gate_db = 20 * np.log10(self.noise_gate_rms + 1e-10) if self.noise_gate_rms > 0 else float("-inf")
         logger.info(
             f"AudioBeatAnalyzer initialized (aubio, hop_size={self.hop_size}, "
+            f"noise_gate={self.noise_gate_rms:.4f} (~{noise_gate_db:.1f} dB), "
             f"USB device={self.audio_capture.device_index})"
         )
 
@@ -1209,6 +1218,18 @@ class AudioBeatAnalyzer:
                     self._pending_beat_timestamp = None
                     self._pending_beat_wallclock = None
 
+            # Noise gate: suppress beat detection when audio level is below threshold
+            # This prevents false positives from ambient noise (HVAC, electrical hum, etc.)
+            if beat_detected and self.noise_gate_rms > 0 and self.audio_state.current_rms < self.noise_gate_rms:
+                self.total_beats_suppressed += 1
+                # Log occasionally when suppressing beats
+                if self.total_beats_suppressed <= 5 or self.total_beats_suppressed % 50 == 0:
+                    logger.debug(
+                        f"Beat suppressed by noise gate: RMS={self.audio_state.current_rms:.4f} < "
+                        f"threshold={self.noise_gate_rms:.4f} (suppressed={self.total_beats_suppressed})"
+                    )
+                beat_detected = False
+
             if beat_detected:
                 # Calculate timestamp relative to audio start (in audio time, not wall clock)
                 audio_timestamp = (self.total_frames_processed * self.hop_size) / self.capture_rate
@@ -1283,14 +1304,19 @@ class AudioBeatAnalyzer:
         if current_time - self.last_status_log >= status_log_interval:
             current_audio_rms = np.sqrt(np.mean(audio_chunk * audio_chunk))
 
+            suppressed_info = ""
+            if self.total_beats_suppressed > 0:
+                suppressed_info = f", {self.total_beats_suppressed} suppressed by noise gate"
+
             logger.debug(
                 f"Audio processing status: {self.total_frames_processed} frames processed, "
-                f"{self.total_beats_detected} beats detected, "
-                f"audio RMS: {current_audio_rms:.6f}, "
+                f"{self.total_beats_detected} beats detected{suppressed_info}, "
+                f"audio RMS: {current_audio_rms:.6f} (gate: {self.noise_gate_rms:.4f}), "
                 f"current BPM: {self.audio_state.current_bpm:.1f}"
             )
             self.last_status_log = current_time
             self.total_beats_detected = 0
+            self.total_beats_suppressed = 0
 
     def _beat_worker(self):
         """Beat event processing worker thread"""
