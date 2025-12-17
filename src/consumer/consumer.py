@@ -2170,7 +2170,11 @@ class ConsumerProcess:
         try:
             # Verify LED optimizer supports batch mode (required for batch processing)
             if not self._led_optimizer.supports_batch_optimization():
-                raise RuntimeError("Batch mode enabled but LED optimizer does not support batch optimization")
+                raise RuntimeError(
+                    "Batch mode is enabled, but the LED optimizer does not support batch optimization. "
+                    "Ensure that the LED count is divisible by 16 and that the pattern file was "
+                    "generated with batch matrix support enabled."
+                )
 
             # Pad batch to target size if needed
             while len(self._frame_batch) < self._batch_size:

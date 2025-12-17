@@ -667,13 +667,12 @@ class LEDOptimizer:
             logger.warning(f"Error during matrix cleanup: {e}")
 
     def _load_matricies_from_file(self, data: np.lib.npyio.NpzFile) -> bool:
-        """Load matrices from pattern file using DIA format."""
-        logger.info("Loading matrices from pattern file")
+        """Load matrices from pattern file using DIA format.
 
-        # Validate DIA matrix format is present
-        if "dia_matrix" not in data and "symmetric_dia_matrix" not in data:
-            logger.error("Pattern file must contain dia_matrix or symmetric_dia_matrix")
-            return False
+        Note: Validation of required keys (mixed_tensor, dia_matrix) is done
+        in _load() before calling this method.
+        """
+        logger.info("Loading matrices from pattern file")
 
         # Load metadata from pattern data
         led_spatial_mapping: Any = data.get("led_spatial_mapping", {})
