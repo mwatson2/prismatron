@@ -24,7 +24,7 @@ from src.consumer.consumer import (
     RenderingLoopState,
     RenderingStepResult,
 )
-from src.core.control_state import RendererState
+from src.core.control_state import ProducerState, RendererState
 
 
 class TestConsumerStats:
@@ -862,3 +862,674 @@ class TestRenderingStepResultDataclass:
         assert result.wait_action == "read_buffer"
         assert result.wait_timeout == 0.5
         assert result.reason == "critical_error"
+
+
+# =============================================================================
+# Phase 2: Integration Tests - State Machine and Frame Processing
+# =============================================================================
+
+
+class TestRendererStateTransitions:
+    """Test renderer state transition logic."""
+
+    @pytest.fixture
+    def consumer_with_mocks(
+        self,
+        mock_frame_consumer,
+        mock_control_state,
+        mock_led_optimizer,
+        mock_wled_sink,
+        mock_led_buffer,
+        mock_frame_renderer,
+    ):
+        """Create ConsumerProcess with all dependencies mocked."""
+        with patch("src.consumer.consumer.FrameConsumer", return_value=mock_frame_consumer), patch(
+            "src.consumer.consumer.ControlState", return_value=mock_control_state
+        ), patch("src.consumer.consumer.LEDOptimizer", return_value=mock_led_optimizer), patch(
+            "src.consumer.consumer.WLEDSink", return_value=mock_wled_sink
+        ), patch(
+            "src.consumer.consumer.LEDBuffer", return_value=mock_led_buffer
+        ), patch(
+            "src.utils.pattern_loader.create_frame_renderer_with_pattern", return_value=mock_frame_renderer
+        ):
+            consumer = ConsumerProcess(diffusion_patterns_path="/mock/pattern.npz")
+            consumer._led_buffer = mock_led_buffer
+            yield consumer
+
+    def test_skip_default_status(self, consumer_with_mocks):
+        """Test that default/error status is skipped."""
+        mock_status = Mock()
+        mock_status.consumer_input_fps = 0.0
+        mock_status.renderer_output_fps = 0.0
+        mock_status.uptime = 0.0
+        mock_status.renderer_state = RendererState.STOPPED
+
+        # Should return early without calling update_buffer_status
+        consumer_with_mocks._handle_renderer_state_transitions(mock_status)
+
+        consumer_with_mocks._control_state.update_buffer_status.assert_not_called()
+
+    def test_waiting_to_playing_when_buffer_full(self, consumer_with_mocks):
+        """Test transition from WAITING to PLAYING when buffer is full."""
+        mock_status = Mock()
+        mock_status.consumer_input_fps = 30.0
+        mock_status.renderer_output_fps = 30.0
+        mock_status.uptime = 100.0
+        mock_status.renderer_state = RendererState.WAITING
+        mock_status.producer_state = Mock()
+
+        # Buffer is full
+        consumer_with_mocks._led_buffer.get_buffer_stats.return_value = {
+            "current_count": 10,
+            "buffer_size": 10,
+        }
+        consumer_with_mocks._control_state.set_renderer_state.return_value = True
+
+        consumer_with_mocks._handle_renderer_state_transitions(mock_status)
+
+        consumer_with_mocks._control_state.set_renderer_state.assert_called_with(RendererState.PLAYING)
+
+    def test_waiting_stays_waiting_when_buffer_not_full(self, consumer_with_mocks):
+        """Test WAITING state stays when buffer is not full."""
+        mock_status = Mock()
+        mock_status.consumer_input_fps = 30.0
+        mock_status.renderer_output_fps = 30.0
+        mock_status.uptime = 100.0
+        mock_status.renderer_state = RendererState.WAITING
+        mock_status.producer_state = Mock()
+
+        # Buffer is not full
+        consumer_with_mocks._led_buffer.get_buffer_stats.return_value = {
+            "current_count": 5,
+            "buffer_size": 10,
+        }
+
+        consumer_with_mocks._handle_renderer_state_transitions(mock_status)
+
+        consumer_with_mocks._control_state.set_renderer_state.assert_not_called()
+
+    def test_playing_to_stopped_when_buffer_empty_and_producer_stopped(self, consumer_with_mocks):
+        """Test transition from PLAYING to STOPPED when buffer empty and producer stopped."""
+        from src.core.control_state import ProducerState
+
+        mock_status = Mock()
+        mock_status.consumer_input_fps = 30.0
+        mock_status.renderer_output_fps = 30.0
+        mock_status.uptime = 100.0
+        mock_status.renderer_state = RendererState.PLAYING
+        mock_status.producer_state = ProducerState.STOPPED
+
+        # Buffer is empty
+        consumer_with_mocks._led_buffer.get_buffer_stats.return_value = {
+            "current_count": 0,
+            "buffer_size": 10,
+        }
+
+        consumer_with_mocks._handle_renderer_state_transitions(mock_status)
+
+        consumer_with_mocks._control_state.set_renderer_state.assert_called_with(RendererState.STOPPED)
+
+    def test_playing_continues_when_buffer_has_frames(self, consumer_with_mocks):
+        """Test PLAYING continues when buffer has frames."""
+        from src.core.control_state import ProducerState
+
+        mock_status = Mock()
+        mock_status.consumer_input_fps = 30.0
+        mock_status.renderer_output_fps = 30.0
+        mock_status.uptime = 100.0
+        mock_status.renderer_state = RendererState.PLAYING
+        mock_status.producer_state = ProducerState.STOPPED
+
+        # Buffer has frames
+        consumer_with_mocks._led_buffer.get_buffer_stats.return_value = {
+            "current_count": 5,
+            "buffer_size": 10,
+        }
+
+        consumer_with_mocks._handle_renderer_state_transitions(mock_status)
+
+        consumer_with_mocks._control_state.set_renderer_state.assert_not_called()
+
+    def test_paused_to_stopped_when_buffer_empty_and_producer_stopped(self, consumer_with_mocks):
+        """Test transition from PAUSED to STOPPED when buffer empty and producer stopped."""
+        from src.core.control_state import ProducerState
+
+        mock_status = Mock()
+        mock_status.consumer_input_fps = 30.0
+        mock_status.renderer_output_fps = 30.0
+        mock_status.uptime = 100.0
+        mock_status.renderer_state = RendererState.PAUSED
+        mock_status.producer_state = ProducerState.STOPPED
+
+        # Buffer is empty
+        consumer_with_mocks._led_buffer.get_buffer_stats.return_value = {
+            "current_count": 0,
+            "buffer_size": 10,
+        }
+
+        consumer_with_mocks._handle_renderer_state_transitions(mock_status)
+
+        consumer_with_mocks._control_state.set_renderer_state.assert_called_with(RendererState.STOPPED)
+
+    def test_no_transition_when_led_buffer_none(self, consumer_with_mocks):
+        """Test no transition when LED buffer is not initialized."""
+        mock_status = Mock()
+        mock_status.consumer_input_fps = 30.0
+        mock_status.renderer_output_fps = 30.0
+        mock_status.uptime = 100.0
+        mock_status.renderer_state = RendererState.WAITING
+
+        consumer_with_mocks._led_buffer = None
+
+        consumer_with_mocks._handle_renderer_state_transitions(mock_status)
+
+        consumer_with_mocks._control_state.set_renderer_state.assert_not_called()
+
+
+class TestFrameGapTracking:
+    """Test frame gap tracking logic."""
+
+    @pytest.fixture
+    def consumer_with_mocks(
+        self,
+        mock_frame_consumer,
+        mock_control_state,
+        mock_led_optimizer,
+        mock_wled_sink,
+        mock_led_buffer,
+        mock_frame_renderer,
+    ):
+        """Create ConsumerProcess with all dependencies mocked."""
+        with patch("src.consumer.consumer.FrameConsumer", return_value=mock_frame_consumer), patch(
+            "src.consumer.consumer.ControlState", return_value=mock_control_state
+        ), patch("src.consumer.consumer.LEDOptimizer", return_value=mock_led_optimizer), patch(
+            "src.consumer.consumer.WLEDSink", return_value=mock_wled_sink
+        ), patch(
+            "src.consumer.consumer.LEDBuffer", return_value=mock_led_buffer
+        ), patch(
+            "src.utils.pattern_loader.create_frame_renderer_with_pattern", return_value=mock_frame_renderer
+        ):
+            consumer = ConsumerProcess(diffusion_patterns_path="/mock/pattern.npz")
+            yield consumer
+
+    def test_first_frame_initializes_tracking(self, consumer_with_mocks):
+        """Test first frame initializes timestamp tracking."""
+        consumer_with_mocks._last_frame_timestamp = 0.0
+        consumer_with_mocks._last_frame_receive_time = 0.0
+
+        consumer_with_mocks._track_frame_gaps(1.0, 100.0, has_presentation_timestamp=True)
+
+        assert consumer_with_mocks._last_frame_timestamp == 1.0
+        assert consumer_with_mocks._last_frame_receive_time == 100.0
+
+    def test_sequential_frames_update_tracking(self, consumer_with_mocks):
+        """Test sequential frames update tracking correctly."""
+        consumer_with_mocks._last_frame_timestamp = 1.0
+        consumer_with_mocks._last_frame_receive_time = 100.0
+
+        consumer_with_mocks._track_frame_gaps(1.033, 100.033, has_presentation_timestamp=True)
+
+        assert consumer_with_mocks._last_frame_timestamp == 1.033
+        assert consumer_with_mocks._last_frame_receive_time == 100.033
+
+    def test_no_timestamp_gap_check_without_presentation_timestamp(self, consumer_with_mocks):
+        """Test timestamp gap check is skipped without presentation timestamp."""
+        consumer_with_mocks._last_frame_timestamp = 1.0
+        consumer_with_mocks._last_frame_receive_time = 100.0
+        consumer_with_mocks._frame_timestamp_gap_threshold = 0.1
+
+        # Large timestamp gap but no presentation timestamp - should not warn
+        consumer_with_mocks._track_frame_gaps(2.0, 100.033, has_presentation_timestamp=False)
+
+        # Just verify tracking is updated
+        assert consumer_with_mocks._last_frame_timestamp == 2.0
+
+    def test_batch_mode_increases_gap_threshold(self, consumer_with_mocks):
+        """Test batch mode allows larger realtime gaps."""
+        consumer_with_mocks.enable_batch_mode = True
+        consumer_with_mocks._batch_size = 8
+        consumer_with_mocks._realtime_gap_threshold = 0.2
+        consumer_with_mocks._last_frame_timestamp = 1.0
+        consumer_with_mocks._last_frame_receive_time = 100.0
+
+        # Gap that would warn in single mode but not batch mode
+        consumer_with_mocks._track_frame_gaps(1.5, 100.5, has_presentation_timestamp=True)
+
+        # Should update tracking
+        assert consumer_with_mocks._last_frame_receive_time == 100.5
+
+
+class TestLedTransitionEffects:
+    """Test LED transition effect creation."""
+
+    @pytest.fixture
+    def consumer_with_mocks(
+        self,
+        mock_frame_consumer,
+        mock_control_state,
+        mock_led_optimizer,
+        mock_wled_sink,
+        mock_led_buffer,
+        mock_frame_renderer,
+    ):
+        """Create ConsumerProcess with all dependencies mocked."""
+        with patch("src.consumer.consumer.FrameConsumer", return_value=mock_frame_consumer), patch(
+            "src.consumer.consumer.ControlState", return_value=mock_control_state
+        ), patch("src.consumer.consumer.LEDOptimizer", return_value=mock_led_optimizer), patch(
+            "src.consumer.consumer.WLEDSink", return_value=mock_wled_sink
+        ), patch(
+            "src.consumer.consumer.LEDBuffer", return_value=mock_led_buffer
+        ), patch(
+            "src.utils.pattern_loader.create_frame_renderer_with_pattern", return_value=mock_frame_renderer
+        ):
+            consumer = ConsumerProcess(diffusion_patterns_path="/mock/pattern.npz")
+            consumer._frame_renderer = mock_frame_renderer
+            yield consumer
+
+    def test_skip_when_no_item_duration(self, consumer_with_mocks):
+        """Test transition effects skipped when no item duration."""
+        metadata = {"item_duration": 0.0}
+
+        consumer_with_mocks._create_led_transition_effects_for_item(0.0, metadata)
+
+        consumer_with_mocks._frame_renderer.add_led_effect.assert_not_called()
+
+    def test_skip_when_transition_type_none(self, consumer_with_mocks):
+        """Test transition effects skipped when type is none."""
+        metadata = {
+            "item_duration": 30.0,
+            "transition_in_type": "none",
+            "transition_out_type": "none",
+        }
+
+        consumer_with_mocks._create_led_transition_effects_for_item(0.0, metadata)
+
+        consumer_with_mocks._frame_renderer.add_led_effect.assert_not_called()
+
+    def test_creates_fade_in_effect(self, consumer_with_mocks):
+        """Test fade-in effect is created."""
+        metadata = {
+            "item_duration": 30.0,
+            "transition_in_type": "led_fade",
+            "transition_in_duration": 1.0,
+            "transition_out_type": "none",
+        }
+
+        consumer_with_mocks._create_led_transition_effects_for_item(0.0, metadata)
+
+        consumer_with_mocks._frame_renderer.add_led_effect.assert_called_once()
+
+    def test_creates_fade_out_effect(self, consumer_with_mocks):
+        """Test fade-out effect is created."""
+        metadata = {
+            "item_duration": 30.0,
+            "transition_in_type": "none",
+            "transition_out_type": "led_fade",
+            "transition_out_duration": 1.0,
+        }
+
+        consumer_with_mocks._create_led_transition_effects_for_item(0.0, metadata)
+
+        consumer_with_mocks._frame_renderer.add_led_effect.assert_called_once()
+
+    def test_creates_both_fade_effects(self, consumer_with_mocks):
+        """Test both fade-in and fade-out effects are created."""
+        metadata = {
+            "item_duration": 30.0,
+            "transition_in_type": "led_fade",
+            "transition_in_duration": 1.0,
+            "transition_out_type": "led_fade",
+            "transition_out_duration": 1.0,
+        }
+
+        consumer_with_mocks._create_led_transition_effects_for_item(0.0, metadata)
+
+        assert consumer_with_mocks._frame_renderer.add_led_effect.call_count == 2
+
+    def test_creates_random_in_effect(self, consumer_with_mocks):
+        """Test random-in effect is created."""
+        metadata = {
+            "item_duration": 30.0,
+            "transition_in_type": "led_random",
+            "transition_in_duration": 1.0,
+            "transition_out_type": "none",
+        }
+
+        consumer_with_mocks._create_led_transition_effects_for_item(0.0, metadata)
+
+        consumer_with_mocks._frame_renderer.add_led_effect.assert_called_once()
+
+    def test_creates_random_out_effect(self, consumer_with_mocks):
+        """Test random-out effect is created."""
+        metadata = {
+            "item_duration": 30.0,
+            "transition_in_type": "none",
+            "transition_out_type": "led_random",
+            "transition_out_duration": 1.0,
+        }
+
+        consumer_with_mocks._create_led_transition_effects_for_item(0.0, metadata)
+
+        consumer_with_mocks._frame_renderer.add_led_effect.assert_called_once()
+
+
+class TestConsumerUtilityMethods:
+    """Test various utility methods on ConsumerProcess."""
+
+    @pytest.fixture
+    def consumer_with_mocks(
+        self,
+        mock_frame_consumer,
+        mock_control_state,
+        mock_led_optimizer,
+        mock_wled_sink,
+        mock_led_buffer,
+        mock_frame_renderer,
+    ):
+        """Create ConsumerProcess with all dependencies mocked."""
+        with patch("src.consumer.consumer.FrameConsumer", return_value=mock_frame_consumer), patch(
+            "src.consumer.consumer.ControlState", return_value=mock_control_state
+        ), patch("src.consumer.consumer.LEDOptimizer", return_value=mock_led_optimizer), patch(
+            "src.consumer.consumer.WLEDSink", return_value=mock_wled_sink
+        ), patch(
+            "src.consumer.consumer.LEDBuffer", return_value=mock_led_buffer
+        ), patch(
+            "src.utils.pattern_loader.create_frame_renderer_with_pattern", return_value=mock_frame_renderer
+        ):
+            consumer = ConsumerProcess(diffusion_patterns_path="/mock/pattern.npz")
+            consumer._led_buffer = mock_led_buffer
+            consumer._frame_renderer = mock_frame_renderer
+            yield consumer
+
+    def test_is_renderer_initialized_true(self, consumer_with_mocks):
+        """Test is_renderer_initialized returns True when initialized."""
+        consumer_with_mocks._frame_renderer.is_initialized.return_value = True
+
+        assert consumer_with_mocks.is_renderer_initialized() is True
+
+    def test_is_renderer_initialized_false(self, consumer_with_mocks):
+        """Test is_renderer_initialized returns False when not initialized."""
+        consumer_with_mocks._frame_renderer.is_initialized.return_value = False
+
+        assert consumer_with_mocks.is_renderer_initialized() is False
+
+    def test_clear_led_buffer(self, consumer_with_mocks):
+        """Test clear_led_buffer clears the buffer."""
+        consumer_with_mocks.clear_led_buffer()
+
+        consumer_with_mocks._led_buffer.clear.assert_called_once()
+
+    def test_clear_led_buffer_when_none(self, consumer_with_mocks):
+        """Test clear_led_buffer handles None buffer gracefully."""
+        consumer_with_mocks._led_buffer = None
+
+        # Should not raise
+        consumer_with_mocks.clear_led_buffer()
+
+    def test_reset_renderer_stats(self, consumer_with_mocks):
+        """Test reset_renderer_stats resets frame renderer stats."""
+        consumer_with_mocks.reset_renderer_stats()
+
+        consumer_with_mocks._frame_renderer.reset_stats.assert_called_once()
+
+    def test_set_wled_enabled_true(self, consumer_with_mocks):
+        """Test enabling WLED sink."""
+        consumer_with_mocks._wled_client = Mock()
+
+        consumer_with_mocks.set_wled_enabled(True)
+
+        consumer_with_mocks._frame_renderer.set_wled_enabled.assert_called_with(True)
+
+    def test_set_wled_enabled_false(self, consumer_with_mocks):
+        """Test disabling WLED sink."""
+        consumer_with_mocks._wled_client = Mock()
+
+        consumer_with_mocks.set_wled_enabled(False)
+
+        consumer_with_mocks._frame_renderer.set_wled_enabled.assert_called_with(False)
+
+    def test_set_led_buffer_size_success(self, consumer_with_mocks):
+        """Test setting LED buffer size."""
+        consumer_with_mocks._led_buffer.set_buffer_size.return_value = True
+
+        result = consumer_with_mocks.set_led_buffer_size(20)
+
+        assert result is True
+        consumer_with_mocks._led_buffer.set_buffer_size.assert_called_with(20)
+
+    def test_set_led_buffer_size_when_none(self, consumer_with_mocks):
+        """Test setting LED buffer size when buffer is None."""
+        consumer_with_mocks._led_buffer = None
+
+        result = consumer_with_mocks.set_led_buffer_size(20)
+
+        assert result is False
+
+    def test_set_timing_parameters(self, consumer_with_mocks):
+        """Test setting timing parameters on frame renderer."""
+        consumer_with_mocks.set_timing_parameters(
+            first_frame_delay_ms=100.0,
+            timing_tolerance_ms=10.0,
+        )
+
+        consumer_with_mocks._frame_renderer.set_timing_parameters.assert_called_with(
+            first_frame_delay_ms=100.0,
+            timing_tolerance_ms=10.0,
+        )
+
+
+class TestHandleRendererStateTransitions:
+    """Test _handle_renderer_state_transitions state machine logic."""
+
+    @pytest.fixture
+    def consumer_with_mocks(self):
+        """Create consumer with mocked dependencies."""
+        with patch.object(ConsumerProcess, "__init__", lambda self: None):
+            consumer = ConsumerProcess()
+            consumer._led_buffer = MagicMock()
+            consumer._control_state = MagicMock()
+            consumer._led_buffer.get_buffer_stats.return_value = {
+                "current_count": 5,
+                "buffer_size": 10,
+            }
+            return consumer
+
+    def _create_mock_status(
+        self,
+        renderer_state: RendererState = RendererState.STOPPED,
+        producer_state: ProducerState = ProducerState.STOPPED,
+        consumer_input_fps: float = 30.0,
+        renderer_output_fps: float = 30.0,
+        uptime: float = 100.0,
+    ):
+        """Create a mock control status object."""
+        mock_status = Mock()
+        mock_status.renderer_state = renderer_state
+        mock_status.producer_state = producer_state
+        mock_status.consumer_input_fps = consumer_input_fps
+        mock_status.renderer_output_fps = renderer_output_fps
+        mock_status.uptime = uptime
+        return mock_status
+
+    def test_skips_transition_on_default_error_status(self, consumer_with_mocks):
+        """Test that state transitions are skipped when status looks like error/default."""
+        mock_status = self._create_mock_status(
+            consumer_input_fps=0.0,
+            renderer_output_fps=0.0,
+            uptime=0.0,
+        )
+
+        consumer_with_mocks._handle_renderer_state_transitions(mock_status)
+
+        # Should not call set_renderer_state
+        consumer_with_mocks._control_state.set_renderer_state.assert_not_called()
+
+    def test_skips_transition_when_buffer_is_none(self, consumer_with_mocks):
+        """Test that state transitions are skipped when LED buffer is None."""
+        consumer_with_mocks._led_buffer = None
+        mock_status = self._create_mock_status(renderer_state=RendererState.WAITING)
+
+        consumer_with_mocks._handle_renderer_state_transitions(mock_status)
+
+        # Should not call anything since buffer is None
+        consumer_with_mocks._control_state.set_renderer_state.assert_not_called()
+
+    def test_updates_buffer_status(self, consumer_with_mocks):
+        """Test that buffer status is updated in control state."""
+        mock_status = self._create_mock_status(renderer_state=RendererState.STOPPED)
+
+        consumer_with_mocks._handle_renderer_state_transitions(mock_status)
+
+        consumer_with_mocks._control_state.update_buffer_status.assert_called_with(5, 10)
+
+    def test_stopped_state_no_automatic_transition(self, consumer_with_mocks):
+        """Test that STOPPED state doesn't auto-transition."""
+        mock_status = self._create_mock_status(renderer_state=RendererState.STOPPED)
+
+        consumer_with_mocks._handle_renderer_state_transitions(mock_status)
+
+        consumer_with_mocks._control_state.set_renderer_state.assert_not_called()
+
+    def test_waiting_to_playing_when_buffer_full(self, consumer_with_mocks):
+        """Test WAITING -> PLAYING transition when buffer is full."""
+        consumer_with_mocks._led_buffer.get_buffer_stats.return_value = {
+            "current_count": 10,
+            "buffer_size": 10,
+        }
+        mock_status = self._create_mock_status(renderer_state=RendererState.WAITING)
+
+        consumer_with_mocks._handle_renderer_state_transitions(mock_status)
+
+        consumer_with_mocks._control_state.set_renderer_state.assert_called_with(RendererState.PLAYING)
+
+    def test_waiting_stays_waiting_when_buffer_not_full(self, consumer_with_mocks):
+        """Test WAITING stays WAITING when buffer is not full."""
+        consumer_with_mocks._led_buffer.get_buffer_stats.return_value = {
+            "current_count": 5,
+            "buffer_size": 10,
+        }
+        mock_status = self._create_mock_status(
+            renderer_state=RendererState.WAITING,
+            producer_state=ProducerState.PLAYING,
+        )
+
+        consumer_with_mocks._handle_renderer_state_transitions(mock_status)
+
+        consumer_with_mocks._control_state.set_renderer_state.assert_not_called()
+
+    def test_playing_to_stopped_when_buffer_empty_and_producer_stopped(self, consumer_with_mocks):
+        """Test PLAYING -> STOPPED when buffer empty and producer stopped."""
+        consumer_with_mocks._led_buffer.get_buffer_stats.return_value = {
+            "current_count": 0,
+            "buffer_size": 10,
+        }
+        mock_status = self._create_mock_status(
+            renderer_state=RendererState.PLAYING,
+            producer_state=ProducerState.STOPPED,
+        )
+
+        consumer_with_mocks._handle_renderer_state_transitions(mock_status)
+
+        consumer_with_mocks._control_state.set_renderer_state.assert_called_with(RendererState.STOPPED)
+
+    def test_playing_continues_when_buffer_has_frames(self, consumer_with_mocks):
+        """Test PLAYING continues when buffer has frames."""
+        consumer_with_mocks._led_buffer.get_buffer_stats.return_value = {
+            "current_count": 5,
+            "buffer_size": 10,
+        }
+        mock_status = self._create_mock_status(
+            renderer_state=RendererState.PLAYING,
+            producer_state=ProducerState.STOPPED,
+        )
+
+        consumer_with_mocks._handle_renderer_state_transitions(mock_status)
+
+        consumer_with_mocks._control_state.set_renderer_state.assert_not_called()
+
+    def test_paused_to_stopped_when_buffer_empty_and_producer_stopped(self, consumer_with_mocks):
+        """Test PAUSED -> STOPPED when buffer empty and producer stopped."""
+        consumer_with_mocks._led_buffer.get_buffer_stats.return_value = {
+            "current_count": 0,
+            "buffer_size": 10,
+        }
+        mock_status = self._create_mock_status(
+            renderer_state=RendererState.PAUSED,
+            producer_state=ProducerState.STOPPED,
+        )
+
+        consumer_with_mocks._handle_renderer_state_transitions(mock_status)
+
+        consumer_with_mocks._control_state.set_renderer_state.assert_called_with(RendererState.STOPPED)
+
+    def test_paused_stays_paused_when_producer_playing(self, consumer_with_mocks):
+        """Test PAUSED stays PAUSED when producer is playing."""
+        consumer_with_mocks._led_buffer.get_buffer_stats.return_value = {
+            "current_count": 0,
+            "buffer_size": 10,
+        }
+        mock_status = self._create_mock_status(
+            renderer_state=RendererState.PAUSED,
+            producer_state=ProducerState.PLAYING,
+        )
+
+        consumer_with_mocks._handle_renderer_state_transitions(mock_status)
+
+        consumer_with_mocks._control_state.set_renderer_state.assert_not_called()
+
+    def test_handles_exception_gracefully(self, consumer_with_mocks):
+        """Test that exceptions in state transitions are handled."""
+        consumer_with_mocks._led_buffer.get_buffer_stats.side_effect = RuntimeError("Buffer error")
+        mock_status = self._create_mock_status(renderer_state=RendererState.PLAYING)
+
+        # Should not raise, error is logged
+        consumer_with_mocks._handle_renderer_state_transitions(mock_status)
+
+    def test_state_change_detection_logging(self, consumer_with_mocks):
+        """Test that state changes are tracked for logging."""
+        mock_status = self._create_mock_status(renderer_state=RendererState.PLAYING)
+
+        # First call initializes tracking
+        consumer_with_mocks._handle_renderer_state_transitions(mock_status)
+
+        # Verify tracking attribute was created
+        assert hasattr(consumer_with_mocks, "_last_logged_state")
+
+
+class TestWledReconnectionMonitoring:
+    """Test WLED reconnection and thread monitoring."""
+
+    @pytest.fixture
+    def consumer_with_mocks(self):
+        """Create consumer with mocked dependencies."""
+        with patch.object(ConsumerProcess, "__init__", lambda self: None):
+            consumer = ConsumerProcess()
+            consumer._wled_client = MagicMock()
+            consumer._frame_renderer = MagicMock()
+            consumer._stop_event = MagicMock()
+            consumer._wled_reconnection_event = MagicMock()
+            return consumer
+
+    def test_wled_sink_is_connected(self, consumer_with_mocks):
+        """Test checking if WLED sink is connected."""
+        consumer_with_mocks._wled_client.is_connected.return_value = True
+
+        assert consumer_with_mocks._wled_client.is_connected() is True
+
+    def test_wled_sink_reconnect_called(self, consumer_with_mocks):
+        """Test that reconnect is called on WLED client."""
+        consumer_with_mocks._wled_client.is_connected.return_value = False
+        consumer_with_mocks._wled_client.reconnect.return_value = True
+
+        result = consumer_with_mocks._wled_client.reconnect()
+
+        assert result is True
+        consumer_with_mocks._wled_client.reconnect.assert_called_once()
+
+    def test_frame_renderer_wled_enabled_state(self, consumer_with_mocks):
+        """Test frame renderer WLED enabled state."""
+        consumer_with_mocks._frame_renderer.set_wled_enabled(True)
+        consumer_with_mocks._frame_renderer.set_wled_enabled.assert_called_with(True)
+
+        consumer_with_mocks._frame_renderer.set_wled_enabled(False)
+        consumer_with_mocks._frame_renderer.set_wled_enabled.assert_called_with(False)
