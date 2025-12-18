@@ -22,7 +22,6 @@ from ..core import ControlState, FrameConsumer
 from ..core.control_state import ProducerState, RendererState
 from ..utils.frame_drop_rate_ewma import FrameDropRateEwma
 from ..utils.frame_timing import FrameTimingData, FrameTimingLogger
-from .adaptive_frame_dropper import AdaptiveFrameDropper
 from .audio_beat_analyzer import AudioBeatAnalyzer, BeatEvent, BuildDropEvent
 from .audio_capture import AGCConfig, AudioConfig, BassBoostConfig, HighpassConfig
 from .frame_renderer import FrameRenderer
@@ -160,7 +159,6 @@ class ConsumerProcess:
     """
 
     # Class-level type annotations for Optional attributes
-    _adaptive_frame_dropper: Optional[AdaptiveFrameDropper]
     _led_buffer: Optional[LEDBuffer]
     _wled_client: Optional[WLEDSink]
     _last_renderer_state: Optional[RendererState]
@@ -175,7 +173,6 @@ class ConsumerProcess:
         enable_test_renderer: bool = False,
         test_renderer_config: Optional[TestSinkConfig] = None,
         timing_log_path: Optional[str] = None,
-        enable_adaptive_frame_dropping: bool = True,
         enable_audio_reactive: bool = False,
         audio_device: str = "auto",
         enable_batch_mode: bool = False,
@@ -193,7 +190,6 @@ class ConsumerProcess:
             enable_test_renderer: Enable test renderer for debugging
             test_renderer_config: Test renderer configuration
             timing_log_path: Path to CSV file for timing data logging (optional)
-            enable_adaptive_frame_dropping: Enable adaptive frame dropping for LED buffer management
             enable_audio_reactive: Enable audio-reactive effects with beat detection
             audio_device: Audio device selection ('auto', 'cuda', 'cpu')
             enable_batch_mode: Enable batch processing (8 frames at once) for improved performance
@@ -235,24 +231,6 @@ class ConsumerProcess:
         self.wled_port = wled_port
         self._wled_client = None  # Will be created after LED count is known
         self._led_buffer = None  # Will be created after LED count is known
-
-        # Adaptive frame dropping for LED buffer management
-        self.enable_adaptive_frame_dropping = enable_adaptive_frame_dropping
-        if self.enable_adaptive_frame_dropping:
-            self._adaptive_frame_dropper = AdaptiveFrameDropper(
-                led_buffer_capacity=10,  # Expected LED buffer capacity
-                led_buffer_ewma_alpha=0.03,  # Balanced EWMA - responsive but still smoothing
-                max_drop_rate=0.66,  # Maximum drop rate (supports up to 2x input rate)
-                use_pid_controller=True,  # Use PID controller for better buffer management
-                kp=3.0,  # Proportional gain
-                ki=0.5,  # Integral gain for steady-state error elimination
-                kd=1.0,  # Derivative gain for oscillation damping
-                target_buffer_level=10,  # Maintain buffer at capacity for smooth playback
-            )
-            logger.info("Adaptive frame dropping enabled with PID controller")
-        else:
-            self._adaptive_frame_dropper = None
-            logger.info("Adaptive frame dropping disabled")
 
         # Create frame renderer with LED ordering from pattern file
         if diffusion_patterns_path is None:
@@ -1673,39 +1651,6 @@ class ConsumerProcess:
             # Update consumer input FPS tracking
             self._stats.update_consumer_input_fps(timestamp)
 
-            # Adaptive frame dropping based on LED buffer occupancy - only when renderer is PLAYING
-            if self.enable_adaptive_frame_dropping and self._adaptive_frame_dropper:
-                # Get current renderer state for adaptive dropping
-                try:
-                    control_status = self._control_state.get_status()
-                    renderer_state = control_status.renderer_state.value if control_status else "STOPPED"
-                    renderer_is_playing = control_status and control_status.renderer_state == RendererState.PLAYING
-                except Exception as e:
-                    logger.warning(f"Could not get renderer state for adaptive dropping: {e}")
-                    renderer_state = "STOPPED"
-                    renderer_is_playing = False
-
-                # Always call adaptive frame dropper, but only apply dropping when renderer is playing
-                led_buffer_size = len(self._led_buffer) if self._led_buffer is not None else 0
-                should_drop_adaptive = self._adaptive_frame_dropper.should_drop_frame(
-                    timestamp, led_buffer_size, renderer_state
-                )
-
-                if renderer_is_playing and should_drop_adaptive:
-                    # Drop frame for LED buffer management
-                    self._stats.frames_dropped_early += 1
-                    self.pre_optimization_drop_rate_ewma.update(dropped=True)
-
-                    # Log dropped frame to timing data if configured
-                    if timing_data and self._timing_logger:
-                        # Adaptive drop - has frame info and buffer times, but no optimization/render times
-                        self._timing_logger.log_frame(timing_data)
-
-                    logger.info(
-                        f"📦 FRAME DROPPED (adaptive): Frame {timing_data.frame_index if timing_data else 'unknown'} - LED buffer size: {led_buffer_size}, drop_rate: {self.pre_optimization_drop_rate_ewma.get_rate_percentage():.1f}%"
-                    )
-                    return True
-
             # Track current playlist item for early drop decisions (changes before renderer sees it)
             if playlist_item_index >= 0 and playlist_item_index != self._current_optimization_item_index:
                 self._current_optimization_item_index = playlist_item_index
@@ -2389,10 +2334,6 @@ class ConsumerProcess:
             "test_renderer_stats": (self._test_renderer.get_statistics() if self._test_renderer else None),
             "led_buffer_stats": self._led_buffer.get_buffer_stats() if self._led_buffer is not None else None,
             "renderer_stats": self._frame_renderer.get_renderer_stats(),
-            "adaptive_frame_dropper_enabled": self.enable_adaptive_frame_dropping,
-            "adaptive_frame_dropper_stats": (
-                self._adaptive_frame_dropper.get_stats() if self._adaptive_frame_dropper else None
-            ),
         }
 
     def get_statistics(self) -> Dict[str, Any]:

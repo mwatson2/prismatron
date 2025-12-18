@@ -183,7 +183,6 @@ class TestOptimizationUtils:
 | `src/consumer/frame_renderer.py` | 900 | 655 | 27% | HIGH |
 | `src/consumer/wled_client.py` | 416 | 347 | 17% | HIGH |
 | `src/consumer/led_buffer.py` | 131 | 113 | 14% | MEDIUM |
-| `src/consumer/adaptive_frame_dropper.py` | 190 | 145 | 24% | MEDIUM |
 | `src/consumer/transition_processor.py` | 86 | 69 | 20% | MEDIUM |
 
 **Test Strategy for `consumer.py`:**
