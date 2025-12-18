@@ -5,8 +5,8 @@ This document tracks the remaining test coverage improvements needed for `src/co
 ## Current Status
 
 As of the last update:
-- **Total consumer tests**: 193
-- **Unit tests in test_consumer_unit.py**: 156
+- **Total consumer tests**: 209
+- **Unit tests in test_consumer_unit.py**: 172
 
 ## Priority 1: Core Frame Processing ✅ COMPLETED
 
@@ -25,18 +25,17 @@ These methods are central to the consumer's functionality:
 - 4 tests added in TestProcessFrameBatch
 - Covers: batch optimization, batch clearing, stats updates, exception handling
 
-## Priority 2: Initialization and Configuration
+## Priority 2: Initialization and Configuration ✅ COMPLETED
 
 ### `initialize()` (lines ~683-793) - Partially covered
 - 5 tests added in TestInitializeComponents
 - Complex method with many dependencies - basic component tests added
 - Full integration testing deferred due to complexity
 
-### `_check_audio_recording_request` (lines ~531-614)
-- Audio recording debug feature
-- Tests needed for:
-  - Recording start/stop handling
-  - File writing behavior
+### `_check_audio_recording_request` (lines ~531-614) ✅
+- 10 tests added in TestCheckAudioRecordingRequest
+- Covers: recording progress updates, recording completion, error handling,
+  file mode checks, output path validation, successful/failed recording starts
 
 ## Priority 3: Main Loop and Control Flow
 
@@ -53,13 +52,12 @@ These methods are central to the consumer's functionality:
   - Loop state management
   - Frame timing synchronization
 
-## Priority 4: WLED Communication
+## Priority 4: WLED Communication ✅ COMPLETED
 
-### WLED reconnection logic
-- Tests needed for:
-  - Connection loss detection
-  - Reconnection attempts
-  - Fallback behavior during disconnection
+### WLED reconnection logic ✅
+- 6 tests added in TestWledReconnectionLoop
+- Covers: reconnection skipped when client none, reconnection skipped when connected,
+  successful reconnection, failed reconnection, shutdown event handling, exception recovery
 
 ## Priority 5: Edge Cases and Error Handling
 
@@ -99,11 +97,20 @@ These methods are central to the consumer's functionality:
 - Resource cleanup
 - Component initialization order
 
-### Component Initialization (NEW)
+### Component Initialization
 - Frame consumer connection setup
 - Control state initialization
 - LED optimizer initialization
 - Frame renderer initialization checks
+
+### Audio Recording (NEW)
+- `_check_audio_recording_request`: 10 tests
+- Recording progress updates, completion detection
+- Error handling for various scenarios
+
+### WLED Reconnection (NEW)
+- `_wled_reconnection_loop`: 6 tests
+- Connection recovery, shutdown handling, exception recovery
 
 ## Notes
 

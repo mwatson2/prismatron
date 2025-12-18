@@ -2482,3 +2482,242 @@ class TestInitializeComponents:
 
         consumer_with_mocks._frame_renderer.is_initialized.return_value = False
         assert consumer_with_mocks._frame_renderer.is_initialized() is False
+
+
+class TestCheckAudioRecordingRequest:
+    """Test _check_audio_recording_request method."""
+
+    @pytest.fixture
+    def consumer_with_mocks(self):
+        """Create consumer with mocked audio components."""
+        with patch.object(ConsumerProcess, "__init__", lambda self: None):
+            consumer = ConsumerProcess()
+            consumer._control_state = MagicMock()
+            consumer._audio_beat_analyzer = MagicMock()
+            consumer._audio_beat_analyzer.audio_capture = MagicMock()
+            return consumer
+
+    def test_no_recording_requested_and_not_recording(self, consumer_with_mocks):
+        """Test when no recording requested and not currently recording."""
+        status = Mock()
+        status.audio_recording_requested = False
+        status.audio_recording_in_progress = False  # No recording was in progress
+        consumer_with_mocks._audio_beat_analyzer.audio_capture.is_recording = False
+
+        consumer_with_mocks._check_audio_recording_request(status)
+
+        # Should not update any recording status
+        consumer_with_mocks._control_state.update_status.assert_not_called()
+
+    def test_updates_progress_when_recording_in_progress(self, consumer_with_mocks):
+        """Test recording progress is updated when recording is in progress."""
+        status = Mock()
+        status.audio_recording_requested = False
+        consumer_with_mocks._audio_beat_analyzer.audio_capture.is_recording = True
+        consumer_with_mocks._audio_beat_analyzer.audio_capture.get_recording_status.return_value = {"progress": 0.5}
+
+        consumer_with_mocks._check_audio_recording_request(status)
+
+        consumer_with_mocks._control_state.update_status.assert_called_once_with(
+            audio_recording_in_progress=True,
+            audio_recording_progress=0.5,
+        )
+
+    def test_recording_finished_updates_status(self, consumer_with_mocks):
+        """Test status updated when recording finishes."""
+        status = Mock()
+        status.audio_recording_requested = False
+        status.audio_recording_in_progress = True  # Was recording
+        consumer_with_mocks._audio_beat_analyzer.audio_capture.is_recording = False  # Now finished
+
+        consumer_with_mocks._check_audio_recording_request(status)
+
+        consumer_with_mocks._control_state.update_status.assert_called_once_with(
+            audio_recording_in_progress=False,
+            audio_recording_progress=1.0,
+            audio_recording_status="complete",
+        )
+
+    def test_recording_requested_no_audio_capture(self, consumer_with_mocks):
+        """Test error when recording requested but audio capture not available."""
+        status = Mock()
+        status.audio_recording_requested = True
+        consumer_with_mocks._audio_beat_analyzer = None
+
+        consumer_with_mocks._check_audio_recording_request(status)
+
+        consumer_with_mocks._control_state.update_status.assert_called_once_with(
+            audio_recording_requested=False,
+            audio_recording_status="error: audio capture not available",
+        )
+
+    def test_recording_requested_already_recording(self, consumer_with_mocks):
+        """Test warning when recording requested but already recording."""
+        status = Mock()
+        status.audio_recording_requested = True
+        consumer_with_mocks._audio_beat_analyzer.audio_capture.is_recording = True
+
+        consumer_with_mocks._check_audio_recording_request(status)
+
+        consumer_with_mocks._control_state.update_status.assert_called_once_with(audio_recording_requested=False)
+
+    def test_recording_requested_in_file_mode(self, consumer_with_mocks):
+        """Test error when recording requested in file playback mode."""
+        status = Mock()
+        status.audio_recording_requested = True
+        consumer_with_mocks._audio_beat_analyzer.audio_capture.is_recording = False
+        consumer_with_mocks._audio_beat_analyzer.audio_capture.file_mode = True
+
+        consumer_with_mocks._check_audio_recording_request(status)
+
+        consumer_with_mocks._control_state.update_status.assert_called_once_with(
+            audio_recording_requested=False,
+            audio_recording_status="error: cannot record in file mode",
+        )
+
+    def test_recording_requested_no_output_path(self, consumer_with_mocks):
+        """Test error when recording requested without output path."""
+        status = Mock()
+        status.audio_recording_requested = True
+        status.audio_recording_duration = 60.0
+        status.audio_recording_output_path = ""
+        consumer_with_mocks._audio_beat_analyzer.audio_capture.is_recording = False
+        consumer_with_mocks._audio_beat_analyzer.audio_capture.file_mode = False
+
+        consumer_with_mocks._check_audio_recording_request(status)
+
+        consumer_with_mocks._control_state.update_status.assert_called_once_with(
+            audio_recording_requested=False,
+            audio_recording_status="error: no output path specified",
+        )
+
+    def test_recording_started_successfully(self, consumer_with_mocks):
+        """Test successful recording start."""
+        status = Mock()
+        status.audio_recording_requested = True
+        status.audio_recording_duration = 30.0
+        status.audio_recording_output_path = "/tmp/test.wav"
+        consumer_with_mocks._audio_beat_analyzer.audio_capture.is_recording = False
+        consumer_with_mocks._audio_beat_analyzer.audio_capture.file_mode = False
+        consumer_with_mocks._audio_beat_analyzer.audio_capture.start_recording.return_value = True
+
+        consumer_with_mocks._check_audio_recording_request(status)
+
+        consumer_with_mocks._audio_beat_analyzer.audio_capture.start_recording.assert_called_once()
+        consumer_with_mocks._control_state.update_status.assert_called_once_with(
+            audio_recording_requested=False,
+            audio_recording_in_progress=True,
+            audio_recording_progress=0.0,
+            audio_recording_status="recording",
+        )
+
+    def test_recording_failed_to_start(self, consumer_with_mocks):
+        """Test failed recording start."""
+        status = Mock()
+        status.audio_recording_requested = True
+        status.audio_recording_duration = 30.0
+        status.audio_recording_output_path = "/tmp/test.wav"
+        consumer_with_mocks._audio_beat_analyzer.audio_capture.is_recording = False
+        consumer_with_mocks._audio_beat_analyzer.audio_capture.file_mode = False
+        consumer_with_mocks._audio_beat_analyzer.audio_capture.start_recording.return_value = False
+
+        consumer_with_mocks._check_audio_recording_request(status)
+
+        consumer_with_mocks._control_state.update_status.assert_called_once_with(
+            audio_recording_requested=False,
+            audio_recording_status="error: failed to start recording",
+        )
+
+    def test_exception_handling(self, consumer_with_mocks):
+        """Test exception handling in audio recording check."""
+        status = Mock()
+        status.audio_recording_requested = True
+        consumer_with_mocks._audio_beat_analyzer.audio_capture.is_recording = Mock(
+            side_effect=RuntimeError("Test error")
+        )
+
+        # Should not raise
+        consumer_with_mocks._check_audio_recording_request(status)
+
+        # Should update status with error
+        consumer_with_mocks._control_state.update_status.assert_called()
+
+
+class TestWledReconnectionLoop:
+    """Test WLED reconnection loop behavior."""
+
+    @pytest.fixture
+    def consumer_with_mocks(self):
+        """Create consumer with mocked WLED components."""
+        with patch.object(ConsumerProcess, "__init__", lambda self: None):
+            consumer = ConsumerProcess()
+            consumer._running = True
+            consumer._shutdown_requested = False
+            consumer._wled_client = MagicMock()
+            consumer._wled_reconnection_event = MagicMock()
+            consumer._frame_renderer = MagicMock()
+            consumer._test_renderer = None
+            consumer._preview_sink = None
+            consumer.wled_reconnect_interval = 0.1  # Fast for tests
+            return consumer
+
+    def test_reconnection_skipped_when_client_none(self, consumer_with_mocks):
+        """Test reconnection is skipped when WLED client is None."""
+        consumer_with_mocks._wled_client = None
+        consumer_with_mocks._wled_reconnection_event.wait.side_effect = [False, True]  # First iteration, then shutdown
+
+        consumer_with_mocks._wled_reconnection_loop()
+
+        # Should not crash, just skip reconnection
+
+    def test_reconnection_skipped_when_already_connected(self, consumer_with_mocks):
+        """Test reconnection is skipped when already connected."""
+        consumer_with_mocks._wled_client.is_connected = True
+        consumer_with_mocks._wled_reconnection_event.wait.side_effect = [False, True]
+
+        consumer_with_mocks._wled_reconnection_loop()
+
+        consumer_with_mocks._wled_client.connect.assert_not_called()
+
+    def test_successful_reconnection(self, consumer_with_mocks):
+        """Test successful WLED reconnection."""
+        consumer_with_mocks._wled_client.is_connected = False
+        consumer_with_mocks._wled_client.connect.return_value = True
+        consumer_with_mocks._wled_reconnection_event.wait.side_effect = [False, True]
+
+        consumer_with_mocks._wled_reconnection_loop()
+
+        consumer_with_mocks._wled_client.connect.assert_called_once()
+        consumer_with_mocks._frame_renderer.set_output_targets.assert_called_once()
+
+    def test_failed_reconnection(self, consumer_with_mocks):
+        """Test failed WLED reconnection."""
+        consumer_with_mocks._wled_client.is_connected = False
+        consumer_with_mocks._wled_client.connect.return_value = False
+        consumer_with_mocks._wled_reconnection_event.wait.side_effect = [False, True]
+
+        consumer_with_mocks._wled_reconnection_loop()
+
+        consumer_with_mocks._wled_client.connect.assert_called_once()
+        consumer_with_mocks._frame_renderer.set_output_targets.assert_not_called()
+
+    def test_shutdown_event_stops_loop(self, consumer_with_mocks):
+        """Test shutdown event stops the reconnection loop."""
+        consumer_with_mocks._wled_reconnection_event.wait.return_value = True  # Event was set
+
+        consumer_with_mocks._wled_reconnection_loop()
+
+        # Should exit immediately without attempting reconnection
+        consumer_with_mocks._wled_client.connect.assert_not_called()
+
+    def test_exception_handling_continues_loop(self, consumer_with_mocks):
+        """Test exception in loop doesn't crash - continues with retry."""
+        consumer_with_mocks._wled_client.is_connected = False
+        consumer_with_mocks._wled_client.connect.side_effect = [RuntimeError("Connection error"), True]
+        consumer_with_mocks._wled_reconnection_event.wait.side_effect = [False, False, True]
+
+        with patch("time.sleep"):  # Skip sleep in test
+            consumer_with_mocks._wled_reconnection_loop()
+
+        # Should have attempted connect twice (error then success)
+        assert consumer_with_mocks._wled_client.connect.call_count == 2
