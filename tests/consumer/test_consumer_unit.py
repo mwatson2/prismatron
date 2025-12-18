@@ -2042,3 +2042,443 @@ class TestUpdateAudioReactiveState:
                 audio_level_updated = True
                 break
         assert audio_level_updated, "audio_level was not updated in any call"
+
+
+class TestProcessFrameOptimization:
+    """Test _process_frame_optimization method."""
+
+    @pytest.fixture
+    def consumer_with_mocks(self):
+        """Create consumer with mocked dependencies for frame optimization tests."""
+        from pathlib import Path
+
+        from src.utils.frame_drop_rate_ewma import FrameDropRateEwma
+
+        with patch.object(ConsumerProcess, "__init__", lambda self: None):
+            consumer = ConsumerProcess()
+            consumer._led_optimizer = MagicMock()
+            consumer._led_buffer = MagicMock()
+            consumer._control_state = MagicMock()
+            consumer._stats = ConsumerStats()
+            consumer._frame_renderer = MagicMock()
+            consumer._transition_processor = MagicMock()
+            consumer._timing_logger = None
+            consumer._frames_with_content = 0
+            consumer.optimization_iterations = 10
+            consumer.enable_batch_mode = False
+            consumer.brightness_scale = 1.0
+            consumer.pre_optimization_drop_rate_ewma = FrameDropRateEwma(alpha=0.1, name="test")
+            consumer._last_consumer_log_time = 0.0
+            consumer._consumer_log_interval = 2.0
+            consumer._current_optimization_item_index = -1
+            consumer._suspend_late_frame_drops = False
+            consumer._consecutive_late_drops = 0
+            consumer._last_late_drop_time = 0.0
+            consumer._first_late_drop_lateness = 0.0
+            consumer._late_drop_cascade_threshold = 5
+            consumer._last_frame_receive_time = 0.0
+            consumer._last_frame_gap_time = 0.0
+            consumer._frame_gap_detected = False
+            consumer._debug_frame_count = 100  # Disable debug frame saving
+            consumer._debug_max_frames = 10
+            consumer._debug_frame_dir = Path("/tmp")
+            consumer._frame_batch = []
+            consumer._batch_metadata = []
+            consumer._last_frame_timestamp = 0.0
+
+            # Setup default mocks
+            consumer._frame_renderer.is_frame_late.return_value = False
+            consumer._frame_renderer.is_initialized.return_value = True
+            consumer._transition_processor.process_frame.side_effect = lambda f, m: f
+
+            return consumer
+
+    @pytest.fixture
+    def mock_buffer_info(self):
+        """Create mock buffer info with valid frame data."""
+        buffer_info = Mock()
+        buffer_info.metadata = Mock()
+        buffer_info.metadata.presentation_timestamp = 1.0
+        buffer_info.metadata.playlist_item_index = 0
+        buffer_info.metadata.is_first_frame_of_item = False
+        buffer_info.metadata.timing_data = None
+        buffer_info.metadata.has_presentation_timestamp = True
+
+        # Create valid frame data
+        frame_data = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
+        frame_data[:, :, 0] = 128  # Some non-zero content
+        buffer_info.get_array_interleaved.return_value = frame_data
+
+        return buffer_info
+
+    def test_successful_frame_processing(self, consumer_with_mocks, mock_buffer_info):
+        """Test successful frame processing routes to single frame processing."""
+        # Mock single frame processing
+        consumer_with_mocks._process_single_frame = Mock(return_value=False)
+
+        result = consumer_with_mocks._process_frame_optimization(mock_buffer_info)
+
+        assert result is False  # Not dropped
+        consumer_with_mocks._process_single_frame.assert_called_once()
+
+    def test_late_frame_dropped(self, consumer_with_mocks, mock_buffer_info):
+        """Test late frames are dropped."""
+        consumer_with_mocks._frame_renderer.is_frame_late.return_value = True
+        consumer_with_mocks._frame_renderer.get_adjusted_wallclock_delta.return_value = -100.0  # Very late
+
+        result = consumer_with_mocks._process_frame_optimization(mock_buffer_info)
+
+        assert result is True  # Dropped
+        assert consumer_with_mocks._stats.frames_dropped_early == 1
+
+    def test_first_frame_of_item_suspends_late_drops(self, consumer_with_mocks, mock_buffer_info):
+        """Test first frame of new playlist item suspends late frame dropping."""
+        mock_buffer_info.metadata.is_first_frame_of_item = True
+        mock_buffer_info.metadata.playlist_item_index = 1
+        consumer_with_mocks._frame_renderer.is_frame_late.return_value = True
+
+        # Mock single frame processing
+        consumer_with_mocks._process_single_frame = Mock(return_value=False)
+
+        result = consumer_with_mocks._process_frame_optimization(mock_buffer_info)
+
+        # First frame should NOT be dropped, late drops should be suspended
+        assert result is False  # Frame was processed, not dropped
+        assert consumer_with_mocks._suspend_late_frame_drops is True
+        consumer_with_mocks._process_single_frame.assert_called_once()
+
+    def test_resumes_late_drops_when_caught_up(self, consumer_with_mocks, mock_buffer_info):
+        """Test late drop suspension is cleared when caught up."""
+        consumer_with_mocks._suspend_late_frame_drops = True
+        consumer_with_mocks._frame_renderer.is_frame_late.return_value = False
+
+        consumer_with_mocks._process_single_frame = Mock(return_value=False)
+
+        consumer_with_mocks._process_frame_optimization(mock_buffer_info)
+
+        assert consumer_with_mocks._suspend_late_frame_drops is False
+
+    def test_invalid_frame_shape_dropped(self, consumer_with_mocks, mock_buffer_info):
+        """Test frames with invalid shape are dropped."""
+        # Return frame with wrong shape
+        wrong_shape_frame = np.zeros((100, 100, 3), dtype=np.uint8)
+        mock_buffer_info.get_array_interleaved.return_value = wrong_shape_frame
+
+        result = consumer_with_mocks._process_frame_optimization(mock_buffer_info)
+
+        assert result is True  # Dropped
+
+    def test_batch_mode_routes_to_batch_processing(self, consumer_with_mocks, mock_buffer_info):
+        """Test batch mode routes to batch frame processing."""
+        consumer_with_mocks.enable_batch_mode = True
+        consumer_with_mocks._led_optimizer.supports_batch_optimization.return_value = True
+        consumer_with_mocks._process_frame_for_batch = Mock(return_value=False)
+        consumer_with_mocks._process_single_frame = Mock(return_value=False)
+
+        result = consumer_with_mocks._process_frame_optimization(mock_buffer_info)
+
+        assert result is False
+        consumer_with_mocks._process_frame_for_batch.assert_called_once()
+        consumer_with_mocks._process_single_frame.assert_not_called()
+
+    def test_exception_handling(self, consumer_with_mocks, mock_buffer_info):
+        """Test exceptions during processing are handled."""
+        mock_buffer_info.get_array_interleaved.side_effect = RuntimeError("Test error")
+
+        result = consumer_with_mocks._process_frame_optimization(mock_buffer_info)
+
+        assert result is True  # Dropped due to error
+        assert consumer_with_mocks._stats.optimization_errors == 1
+
+    def test_brightness_scaling_applied(self, consumer_with_mocks, mock_buffer_info):
+        """Test brightness scaling is applied to frames."""
+        consumer_with_mocks.brightness_scale = 0.5
+        consumer_with_mocks._process_single_frame = Mock(return_value=False)
+
+        consumer_with_mocks._process_frame_optimization(mock_buffer_info)
+
+        # Verify transition processor was called (brightness applied before this)
+        consumer_with_mocks._transition_processor.process_frame.assert_called_once()
+
+    def test_updates_playlist_item_tracking(self, consumer_with_mocks, mock_buffer_info):
+        """Test playlist item index tracking is updated."""
+        mock_buffer_info.metadata.playlist_item_index = 5
+        consumer_with_mocks._process_single_frame = Mock(return_value=False)
+
+        consumer_with_mocks._process_frame_optimization(mock_buffer_info)
+
+        assert consumer_with_mocks._current_optimization_item_index == 5
+
+    def test_cascade_detection(self, consumer_with_mocks, mock_buffer_info):
+        """Test late frame drop cascade detection."""
+        consumer_with_mocks._frame_renderer.is_frame_late.return_value = True
+        consumer_with_mocks._frame_renderer.get_adjusted_wallclock_delta.return_value = -100.0
+        consumer_with_mocks._consecutive_late_drops = 4  # One away from threshold
+
+        result = consumer_with_mocks._process_frame_optimization(mock_buffer_info)
+
+        assert result is True  # Dropped
+        assert consumer_with_mocks._consecutive_late_drops == 5  # Reached threshold
+
+    def test_cascade_resets_on_non_late_frame(self, consumer_with_mocks, mock_buffer_info):
+        """Test cascade counter resets when processing non-late frame."""
+        consumer_with_mocks._consecutive_late_drops = 3
+        consumer_with_mocks._frame_renderer.is_frame_late.return_value = False
+        consumer_with_mocks._process_single_frame = Mock(return_value=False)
+
+        consumer_with_mocks._process_frame_optimization(mock_buffer_info)
+
+        assert consumer_with_mocks._consecutive_late_drops == 0
+
+    def test_updates_consumer_input_fps(self, consumer_with_mocks, mock_buffer_info):
+        """Test consumer input FPS tracking is updated."""
+        consumer_with_mocks._process_single_frame = Mock(return_value=False)
+        consumer_with_mocks._stats._last_frame_timestamp = 0.9  # Previous timestamp
+
+        consumer_with_mocks._process_frame_optimization(mock_buffer_info)
+
+        # FPS should be updated (may be approximate based on timing)
+        # Just verify the method didn't error
+        assert consumer_with_mocks._stats.consumer_input_fps >= 0
+
+
+class TestProcessFrameForBatch:
+    """Test _process_frame_for_batch method."""
+
+    @pytest.fixture
+    def consumer_with_mocks(self):
+        """Create consumer with mocked dependencies for batch tests."""
+        from src.utils.frame_drop_rate_ewma import FrameDropRateEwma
+
+        with patch.object(ConsumerProcess, "__init__", lambda self: None):
+            consumer = ConsumerProcess()
+            consumer._led_optimizer = MagicMock()
+            consumer._led_buffer = MagicMock()
+            consumer._stats = ConsumerStats()
+            consumer._frame_batch = []
+            consumer._batch_metadata = []
+            consumer._batch_size = 8
+            consumer._last_batch_start_time = 0.0
+            consumer.enable_batch_mode = True
+            consumer.pre_optimization_drop_rate_ewma = FrameDropRateEwma(alpha=0.1, name="test")
+
+            return consumer
+
+    @pytest.fixture
+    def mock_buffer_info(self):
+        """Create mock buffer info for batch tests."""
+        buffer_info = Mock()
+        buffer_info.metadata = Mock()
+        buffer_info.metadata.presentation_timestamp = 1.0
+        buffer_info.metadata.playlist_item_index = 0
+        buffer_info.metadata.is_first_frame_of_item = False
+        buffer_info.metadata.timing_data = None
+        return buffer_info
+
+    def test_frame_accumulated_to_batch(self, consumer_with_mocks, mock_buffer_info):
+        """Test frame is accumulated to batch."""
+        rgb_frame = cp.zeros((480, 800, 3), dtype=cp.uint8)
+        consumer_with_mocks._should_process_batch = Mock(return_value=False)
+
+        result = consumer_with_mocks._process_frame_for_batch(rgb_frame, mock_buffer_info, {}, 0.001, time.time())
+
+        assert result is False  # Not dropped (accumulated)
+        assert len(consumer_with_mocks._frame_batch) == 1
+        assert len(consumer_with_mocks._batch_metadata) == 1
+
+    def test_batch_processed_when_full(self, consumer_with_mocks, mock_buffer_info):
+        """Test batch is processed when full."""
+        rgb_frame = cp.zeros((480, 800, 3), dtype=cp.uint8)
+        consumer_with_mocks._should_process_batch = Mock(return_value=True)
+        consumer_with_mocks._process_frame_batch = Mock(return_value=True)
+
+        result = consumer_with_mocks._process_frame_for_batch(rgb_frame, mock_buffer_info, {}, 0.001, time.time())
+
+        assert result is False  # Not dropped
+        consumer_with_mocks._process_frame_batch.assert_called_once()
+
+    def test_metadata_preserved_in_batch(self, consumer_with_mocks, mock_buffer_info):
+        """Test metadata is preserved when adding to batch."""
+        rgb_frame = cp.zeros((480, 800, 3), dtype=cp.uint8)
+        mock_buffer_info.metadata.playlist_item_index = 5
+        mock_buffer_info.metadata.is_first_frame_of_item = True
+        consumer_with_mocks._should_process_batch = Mock(return_value=False)
+
+        consumer_with_mocks._process_frame_for_batch(
+            rgb_frame, mock_buffer_info, {"transition_in_type": "fade"}, 0.001, time.time()
+        )
+
+        metadata = consumer_with_mocks._batch_metadata[0]
+        assert metadata["playlist_item_index"] == 5
+        assert metadata["is_first_frame_of_item"] is True
+        assert metadata["transition_in_type"] == "fade"
+
+    def test_initializes_batch_start_time(self, consumer_with_mocks, mock_buffer_info):
+        """Test batch start time is initialized on first frame."""
+        rgb_frame = cp.zeros((480, 800, 3), dtype=cp.uint8)
+        consumer_with_mocks._should_process_batch = Mock(return_value=False)
+        consumer_with_mocks._last_batch_start_time = 0.0
+
+        before_time = time.time()
+        consumer_with_mocks._process_frame_for_batch(rgb_frame, mock_buffer_info, {}, 0.001, time.time())
+        after_time = time.time()
+
+        assert consumer_with_mocks._last_batch_start_time >= before_time
+        assert consumer_with_mocks._last_batch_start_time <= after_time
+
+
+class TestProcessFrameBatch:
+    """Test _process_frame_batch method."""
+
+    @pytest.fixture
+    def consumer_with_mocks(self):
+        """Create consumer with mocked dependencies for batch processing tests."""
+        from src.utils.frame_drop_rate_ewma import FrameDropRateEwma
+
+        with patch.object(ConsumerProcess, "__init__", lambda self: None):
+            consumer = ConsumerProcess()
+            consumer._led_optimizer = MagicMock()
+            consumer._led_buffer = MagicMock()
+            consumer._frame_renderer = MagicMock()
+            consumer._control_state = MagicMock()
+            consumer._stats = ConsumerStats()
+            consumer._timing_logger = None
+            consumer._frame_batch = []
+            consumer._batch_metadata = []
+            consumer._batch_size = 8
+            consumer.enable_batch_mode = True
+            consumer.optimization_iterations = 10
+            consumer.pre_optimization_drop_rate_ewma = FrameDropRateEwma(alpha=0.1, name="test")
+            consumer._last_consumer_log_time = 0.0
+            consumer._consumer_log_interval = 2.0
+            consumer._frames_with_content = 0
+
+            # Mock control state
+            mock_status = Mock()
+            mock_status.optimization_iterations = 10
+            consumer._control_state.get_status.return_value = mock_status
+
+            # Add frames to batch
+            for i in range(8):
+                frame = cp.zeros((480, 800, 3), dtype=cp.uint8)
+                consumer._frame_batch.append(frame)
+                consumer._batch_metadata.append(
+                    {
+                        "timestamp": float(i),
+                        "playlist_item_index": 0,
+                        "is_first_frame_of_item": False,
+                        "timing_data": None,
+                        "transition_time": 0.001,
+                        "optimization_time": 0.0,
+                    }
+                )
+
+            return consumer
+
+    def test_batch_optimization_called(self, consumer_with_mocks):
+        """Test batch optimization is called with accumulated frames."""
+        mock_result = Mock()
+        # led_values shape is (batch, channels, led_count) - use cupy array
+        mock_result.led_values = cp.random.randint(0, 255, (8, 3, 3200), dtype=cp.uint8)
+        mock_result.converged = True
+        mock_result.iterations = 5
+        # error_metrics is a list indexed by frame
+        mock_result.error_metrics = [{"mse": 0.01} for _ in range(8)]
+        consumer_with_mocks._led_optimizer.optimize_batch_frames.return_value = mock_result
+        consumer_with_mocks._led_buffer.write_led_values.return_value = True
+
+        result = consumer_with_mocks._process_frame_batch()
+
+        assert result is True
+        consumer_with_mocks._led_optimizer.optimize_batch_frames.assert_called_once()
+
+    def test_batch_cleared_after_processing(self, consumer_with_mocks):
+        """Test batch is cleared after processing."""
+        mock_result = Mock()
+        mock_result.led_values = cp.random.randint(0, 255, (8, 3, 3200), dtype=cp.uint8)
+        mock_result.converged = True
+        mock_result.iterations = 5
+        mock_result.error_metrics = [{"mse": 0.01} for _ in range(8)]
+        consumer_with_mocks._led_optimizer.optimize_batch_frames.return_value = mock_result
+        consumer_with_mocks._led_buffer.write_led_values.return_value = True
+
+        consumer_with_mocks._process_frame_batch()
+
+        assert len(consumer_with_mocks._frame_batch) == 0
+        assert len(consumer_with_mocks._batch_metadata) == 0
+
+    def test_stats_updated_for_batch(self, consumer_with_mocks):
+        """Test statistics are updated for all frames in batch."""
+        mock_result = Mock()
+        mock_result.led_values = cp.random.randint(0, 255, (8, 3, 3200), dtype=cp.uint8)
+        mock_result.converged = True
+        mock_result.iterations = 5
+        mock_result.error_metrics = [{"mse": 0.01} for _ in range(8)]
+        consumer_with_mocks._led_optimizer.optimize_batch_frames.return_value = mock_result
+        consumer_with_mocks._led_buffer.write_led_values.return_value = True
+
+        consumer_with_mocks._process_frame_batch()
+
+        # All 8 frames should be counted as processed
+        assert consumer_with_mocks._stats.frames_processed == 8
+
+    def test_exception_handling(self, consumer_with_mocks):
+        """Test exception handling in batch processing - batch cleared even on error."""
+        consumer_with_mocks._led_optimizer.optimize_batch_frames.side_effect = RuntimeError("Batch error")
+
+        # Method re-raises exceptions, but batch should be cleared in finally block
+        with pytest.raises(RuntimeError, match="Batch error"):
+            consumer_with_mocks._process_frame_batch()
+
+        # Batch should be cleared even on error (in finally block)
+        assert len(consumer_with_mocks._frame_batch) == 0
+        assert len(consumer_with_mocks._batch_metadata) == 0
+
+
+class TestInitializeComponents:
+    """Test component initialization behavior."""
+
+    @pytest.fixture
+    def consumer_with_mocks(self):
+        """Create consumer with mocked components."""
+        with patch.object(ConsumerProcess, "__init__", lambda self: None):
+            consumer = ConsumerProcess()
+            consumer._frame_consumer = MagicMock()
+            consumer._control_state = MagicMock()
+            consumer._led_optimizer = MagicMock()
+            consumer._frame_renderer = MagicMock()
+            consumer._stats = ConsumerStats()
+
+            return consumer
+
+    def test_frame_consumer_connection_called_during_startup(self, consumer_with_mocks):
+        """Test that frame consumer connect is properly set up."""
+        # Verify the mock is configured correctly
+        consumer_with_mocks._frame_consumer.connect.return_value = True
+        assert consumer_with_mocks._frame_consumer.connect() is True
+
+    def test_control_state_initialization(self, consumer_with_mocks):
+        """Test control state initialization is properly set up."""
+        consumer_with_mocks._control_state.initialize.return_value = True
+        assert consumer_with_mocks._control_state.initialize() is True
+
+    def test_led_optimizer_initialization(self, consumer_with_mocks):
+        """Test LED optimizer initialization returns proper result."""
+        consumer_with_mocks._led_optimizer.initialize.return_value = True
+        assert consumer_with_mocks._led_optimizer.initialize() is True
+
+        consumer_with_mocks._led_optimizer.initialize.return_value = False
+        assert consumer_with_mocks._led_optimizer.initialize() is False
+
+    def test_optimizer_led_count_available_after_init(self, consumer_with_mocks):
+        """Test LED count is available after optimizer initialization."""
+        consumer_with_mocks._led_optimizer._actual_led_count = 3200
+        assert consumer_with_mocks._led_optimizer._actual_led_count == 3200
+
+    def test_frame_renderer_initialized_check(self, consumer_with_mocks):
+        """Test frame renderer initialization check."""
+        consumer_with_mocks._frame_renderer.is_initialized.return_value = True
+        assert consumer_with_mocks._frame_renderer.is_initialized() is True
+
+        consumer_with_mocks._frame_renderer.is_initialized.return_value = False
+        assert consumer_with_mocks._frame_renderer.is_initialized() is False

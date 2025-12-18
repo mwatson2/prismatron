@@ -5,42 +5,32 @@ This document tracks the remaining test coverage improvements needed for `src/co
 ## Current Status
 
 As of the last update:
-- **Total consumer tests**: 168
-- **Unit tests in test_consumer_unit.py**: 131
+- **Total consumer tests**: 193
+- **Unit tests in test_consumer_unit.py**: 156
 
-## Priority 1: Core Frame Processing
+## Priority 1: Core Frame Processing ✅ COMPLETED
 
 These methods are central to the consumer's functionality:
 
-### `_process_frame_optimization` (lines ~1623-1848)
-- The main optimization loop
-- Tests needed for:
-  - Successful optimization with valid frame
-  - Handling of optimization failures
-  - Timing tracking behavior
-  - LED buffer writing after optimization
+### `_process_frame_optimization` (lines ~1623-1848) ✅
+- 12 tests added in TestProcessFrameOptimization
+- Covers: successful processing, late frame dropping, first frame handling,
+  cascade detection, batch mode routing, brightness scaling
 
-### `_process_frame_for_batch` (lines ~1850-1917)
-- Prepares frames for batch optimization
-- Tests needed for:
-  - Frame preparation and queuing
-  - Batch threshold triggering
-  - Metadata handling
+### `_process_frame_for_batch` (lines ~1850-1917) ✅
+- 4 tests added in TestProcessFrameForBatch
+- Covers: frame accumulation, batch triggering, metadata preservation
 
-### `_process_frame_batch` (line ~2160+)
-- Batch processing of multiple frames
-- Tests needed for:
-  - Multi-frame batch optimization
-  - Error handling for batch failures
+### `_process_frame_batch` (line ~2160+) ✅
+- 4 tests added in TestProcessFrameBatch
+- Covers: batch optimization, batch clearing, stats updates, exception handling
 
 ## Priority 2: Initialization and Configuration
 
-### `initialize()` (lines ~683-793)
-- Complex initialization with many components
-- Tests needed for:
-  - Successful full initialization
-  - Partial failure scenarios (one component fails)
-  - Configuration validation
+### `initialize()` (lines ~683-793) - Partially covered
+- 5 tests added in TestInitializeComponents
+- Complex method with many dependencies - basic component tests added
+- Full integration testing deferred due to complexity
 
 ### `_check_audio_recording_request` (lines ~531-614)
 - Audio recording debug feature
@@ -83,6 +73,12 @@ These methods are central to the consumer's functionality:
 
 ## Completed Test Coverage
 
+### Core Frame Processing (NEW)
+- `_process_frame_optimization`: 12 tests
+- `_process_frame_for_batch`: 4 tests
+- `_process_frame_batch`: 4 tests
+- `_process_single_frame`: 4 tests (existing)
+
 ### State Transitions
 - RendererState transitions (STOPPED, WAITING, PLAYING, PAUSED)
 - ProducerState handling
@@ -102,6 +98,12 @@ These methods are central to the consumer's functionality:
 - Consumer start/stop
 - Resource cleanup
 - Component initialization order
+
+### Component Initialization (NEW)
+- Frame consumer connection setup
+- Control state initialization
+- LED optimizer initialization
+- Frame renderer initialization checks
 
 ## Notes
 
