@@ -375,7 +375,6 @@ class ProcessManager:
                         diffusion_patterns_path=self.config.get("diffusion_patterns_path"),
                         timing_log_path=self.config.get("timing_log_path"),
                         enable_batch_mode=self.config.get("enable_batch_mode", False),
-                        enable_adaptive_frame_dropping=self.config.get("enable_adaptive_frame_dropping", True),
                         enable_audio_reactive=self.config.get("enable_audio_reactive", False),
                         audio_device=self.config.get("audio_device"),
                         optimization_iterations=self.config.get("optimization_iterations", 10),
@@ -918,33 +917,6 @@ def main():
             help="Enable batch processing (8 frames at once) for improved performance",
         )
 
-    # Handle adaptive-dropping with config file default
-    adaptive_dropping_default = file_config.get("adaptive_dropping", False)
-    if adaptive_dropping_default:
-        parser.add_argument(
-            "--adaptive-dropping",
-            dest="no_adaptive_dropping",
-            action="store_false",
-            default=False,
-            help="Enable adaptive frame dropping for LED buffer management",
-        )
-        parser.add_argument(
-            "--no-adaptive-dropping", action="store_true", default=False, help="Disable adaptive frame dropping"
-        )
-    else:
-        parser.add_argument(
-            "--no-adaptive-dropping",
-            action="store_true",
-            default=True,
-            help="Disable adaptive frame dropping for LED buffer management",
-        )
-        parser.add_argument(
-            "--adaptive-dropping",
-            dest="no_adaptive_dropping",
-            action="store_false",
-            help="Enable adaptive frame dropping",
-        )
-
     # Audio reactive settings
     parser.add_argument(
         "--audio-reactive",
@@ -1010,7 +982,6 @@ def main():
         "led_count": led_count,  # Add LED count to config
         "timing_log_path": args.timing_log,
         "enable_batch_mode": args.batch_mode,
-        "enable_adaptive_frame_dropping": not args.no_adaptive_dropping,  # Invert the flag
         "enable_audio_reactive": args.audio_reactive,
         "audio_device": args.audio_device,
     }
