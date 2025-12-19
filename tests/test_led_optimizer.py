@@ -182,8 +182,8 @@ class TestLEDOptimizer:
         assert result.iterations == 0
         assert not result.converged
 
-    def test_get_optimizer_stats(self):
-        """Test getting optimizer statistics."""
+    def test_get_optimizer_stats_with_diagonal_matrix(self):
+        """Test getting optimizer statistics with diagonal ATA matrix."""
         optimizer = LEDOptimizer(diffusion_patterns_path=self.REAL_PATTERNS_PATH)
         optimizer._matrix_loaded = True
         optimizer._actual_led_count = 100
@@ -204,6 +204,54 @@ class TestLEDOptimizer:
         assert stats["ata_bandwidth"] == 25
         assert stats["ata_k_bands"] == 50
         assert stats["approach_description"] == "Standardized frame optimizer with mixed tensor and DIA matrix"
+
+    def test_get_optimizer_stats_with_symmetric_matrix(self):
+        """Test getting optimizer statistics with symmetric ATA matrix."""
+        optimizer = LEDOptimizer(diffusion_patterns_path=self.REAL_PATTERNS_PATH)
+        optimizer._matrix_loaded = True
+        optimizer._actual_led_count = 100
+        optimizer._optimization_count = 3
+        optimizer._symmetric_ata_matrix = Mock()
+        optimizer._symmetric_ata_matrix.get_info.return_value = {
+            "bandwidth": 30,
+            "k_upper": 15,
+            "original_k": 30,
+            "memory_reduction": "50%",
+        }
+        optimizer._symmetric_ata_matrix.dia_data_gpu = Mock()
+        optimizer._symmetric_ata_matrix.dia_data_gpu.nbytes = 512 * 1024  # 0.5MB
+
+        stats = optimizer.get_optimizer_stats()
+
+        assert stats["optimizer_type"] == "standardized_frame_optimizer"
+        assert stats["led_count"] == 100
+        assert stats["optimization_count"] == 3
+        assert stats["matrix_loaded"]
+        assert stats["ata_format"] == "Symmetric_DIA"
+        assert stats["ata_bandwidth"] == 30
+        assert stats["ata_k_upper"] == 15
+        assert (
+            stats["approach_description"] == "Standardized frame optimizer with mixed tensor and symmetric DIA matrix"
+        )
+
+    def test_optimize_frame_no_ata_matrix_error(self):
+        """Test optimize_frame raises error when no ATA matrix is available."""
+        optimizer = LEDOptimizer(diffusion_patterns_path=self.REAL_PATTERNS_PATH)
+        optimizer._matrix_loaded = True
+        optimizer._actual_led_count = 100
+        optimizer._has_ata_inverse = True
+        optimizer._ATA_inverse_cpu = np.random.rand(3, 100, 100).astype(np.float32)
+        optimizer._pattern_color_space = "srgb"
+        # Don't set any ATA matrix - both _symmetric_ata_matrix and _diagonal_ata_matrix are None
+
+        target_frame = np.random.randint(0, 255, (FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8)
+
+        result = optimizer.optimize_frame(target_frame)
+
+        # Should return error result since no ATA matrix is available
+        assert isinstance(result, OptimizationResult)
+        assert result.iterations == 0
+        assert not result.converged
 
     def test_initial_values_format_conversion(self):
         """Test that initial values are correctly converted between formats."""
