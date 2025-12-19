@@ -4,7 +4,7 @@ This document tracks the test coverage improvements needed for `src/consumer/fra
 
 ## Current Status
 
-As of latest update:
+Current metrics (see Git history for last update):
 - **Unit tests**: 81 tests in `tests/consumer/test_frame_renderer_unit.py`
 - **File size**: 2106 lines containing 2 classes and many methods
 - **Factory tests**: `TestCreateFrameRendererWithPattern` in `tests/utils/test_pattern_loader.py` (3 tests)
@@ -43,7 +43,7 @@ Main timestamp-based frame renderer.
 ### `establish_wallclock_delta` (lines 1009-1037) ✅
 - Test: First frame establishes delta correctly ✅
 - Test: Warning logged if delta already established ✅
-- Test: Control state updated with delta (basic test)
+- Test: Control state updated with delta (partial)
 
 ### `render_frame_at_timestamp` (lines 1039-1162) ✅
 - Test: First frame calls establish_wallclock_delta ✅

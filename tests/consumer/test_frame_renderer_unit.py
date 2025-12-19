@@ -183,8 +183,8 @@ class TestEffectTriggerManager:
 
         # All conditions met
         assert trigger_manager._check_beat_conditions(trigger, 0.5, 0.7, 120.0)
-        # One condition not met
-        assert not trigger_manager._check_beat_conditions(trigger, 0.5, 0.3, 120.0)  # confidence too low
+        # One condition not met: beat_confidence (0.3) < confidence_min (0.5)
+        assert not trigger_manager._check_beat_conditions(trigger, 0.5, 0.3, 120.0)
 
     def test_carousel_rotation(self, trigger_manager):
         """Test _check_carousel_rotation rotates carousel."""
