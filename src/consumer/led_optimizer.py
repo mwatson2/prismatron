@@ -15,16 +15,14 @@ import logging
 # import time  # Removed for clean utility class implementation
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import cupy as cp
 import numpy as np
-import scipy.sparse as sp
 
 from ..const import FRAME_HEIGHT, FRAME_WIDTH
 from ..utils.batch_frame_optimizer import BatchFrameOptimizationResult, optimize_batch_frames_led_values
 from ..utils.batch_symmetric_diagonal_ata_matrix import BatchSymmetricDiagonalATAMatrix
-from ..utils.dense_ata_matrix import DenseATAMatrix
 from ..utils.diagonal_ata_matrix import DiagonalATAMatrix
 from ..utils.frame_optimizer import (
     load_ata_inverse_from_pattern,
@@ -35,8 +33,6 @@ from ..utils.single_block_sparse_tensor import SingleBlockMixedSparseTensor
 from ..utils.symmetric_diagonal_ata_matrix import SymmetricDiagonalATAMatrix
 
 logger = logging.getLogger(__name__)
-
-USE_DENSE_ATA = False  # Use DIA A^T*A matrices by default
 
 
 @dataclass
@@ -76,16 +72,11 @@ class LEDOptimizer:
     """
 
     # Class-level type annotations for Optional attributes
-    _dense_ata_matrix: Optional[Any]
     _symmetric_ata_matrix: Optional[Any]
     _batch_symmetric_ata_matrix: Optional[Any]
     _diagonal_ata_matrix: Optional[Any]
     _ATA_inverse_gpu: Optional[Any]
     _ATA_inverse_cpu: Optional[np.ndarray]
-    _target_rgb_buffer: Optional[np.ndarray]
-    _ATb_gpu: Optional[Any]
-    _led_values_gpu: Optional[Any]
-    _gpu_workspace: Optional[Any]
 
     def __init__(
         self,
@@ -119,8 +110,7 @@ class LEDOptimizer:
         self.convergence_threshold = 1e-3
         self.step_size_scaling = 0.9
 
-        # ATA matrices: Dense format preferred, Symmetric DIA format for efficiency, DIA format for fallback, dense inverse for optimal initialization
-        self._dense_ata_matrix = None  # DenseATAMatrix instance for dense ATA operations (preferred)
+        # ATA matrices: Symmetric DIA format for efficiency, DIA format for fallback, dense inverse for optimal initialization
         self._symmetric_ata_matrix = (
             None  # SymmetricDiagonalATAMatrix instance for efficient ATA operations (preferred over regular DIA)
         )
@@ -130,19 +120,9 @@ class LEDOptimizer:
         self._ATA_inverse_cpu = None  # Shape: (3, led_count, led_count) - inverse on CPU
         self._has_ata_inverse = False  # Whether ATA inverse matrices are available
 
-        # Pre-allocated arrays for optimization
-        self._target_rgb_buffer = None  # (pixels, 3) CPU buffer
-        self._ATb_gpu = None  # (led_count, 3) dense vector on GPU
-        self._led_values_gpu = None  # (led_count, 3) LED values on GPU
-
-        # GPU workspace for optimization loop (all dense)
-        self._gpu_workspace = None
-
         # Utility class instances for encapsulated matrix operations
         self._mixed_tensor: Optional[SingleBlockMixedSparseTensor] = None
 
-        self._led_spatial_mapping: Optional[Dict[int, int]] = None
-        self._led_positions: Optional[np.ndarray] = None
         self._matrix_loaded = False
         self._actual_led_count = 0  # Will be set from pattern file
         self._pattern_color_space = "srgb"  # Color space of diffusion patterns (srgb or linear)
@@ -261,9 +241,7 @@ class LEDOptimizer:
 
             logger.info("LED optimizer initialized successfully")
             logger.info(f"LED count: {self._actual_led_count}")
-            if self._dense_ata_matrix is not None:
-                logger.info("ATA format: Dense (preferred)")
-            elif self._symmetric_ata_matrix is not None:
+            if self._symmetric_ata_matrix is not None:
                 logger.info("ATA format: Symmetric DIA (efficient)")
             elif self._diagonal_ata_matrix is not None:
                 logger.info("ATA format: DIA sparse (fallback)")
@@ -288,23 +266,9 @@ class LEDOptimizer:
             True if precomputed matrices were loaded successfully, False otherwise
         """
         try:
-            # Check for dense ATA matrix first (preferred format)
-            if USE_DENSE_ATA and "dense_ata_matrix" in data:
-                logger.debug("Loading A^T@A matrices from dense_ata_matrix key (preferred format)")
-                dense_ata_dict = data["dense_ata_matrix"].item()
-                dense_ata_matrix = DenseATAMatrix.from_dict(dense_ata_dict)
-                self._dense_ata_matrix = dense_ata_matrix
-                logger.info(f"Loaded dense A^T@A matrix: {dense_ata_matrix.led_count} LEDs")
-                if dense_ata_matrix.dense_matrices_cpu is not None:
-                    logger.info(f"Dense format - shape: {dense_ata_matrix.dense_matrices_cpu.shape}")
-
-                # Calculate dense memory usage
-                dense_memory_mb = self._dense_ata_matrix.memory_mb
-                logger.info(f"Dense A^T@A memory: {dense_memory_mb:.1f}MB")
-
-            # Check for diagonal ATA matrix (fallback format)
-            elif "diagonal_ata_matrix" in data:
-                logger.debug("Loading A^T@A matrices from diagonal_ata_matrix key (fallback format)")
+            # Check for diagonal ATA matrix
+            if "diagonal_ata_matrix" in data:
+                logger.debug("Loading A^T@A matrices from diagonal_ata_matrix key")
                 diagonal_ata_dict = data["diagonal_ata_matrix"].item()
                 # Create with FP32 storage and computation for stability with real hardware patterns
                 self._diagonal_ata_matrix = DiagonalATAMatrix.from_dict(diagonal_ata_dict)
@@ -605,23 +569,6 @@ class LEDOptimizer:
         try:
             memory_freed = 0
 
-            # Always clean up dense ATA matrix as we use sparse formats
-            if self._dense_ata_matrix is not None:
-                if (
-                    hasattr(self._dense_ata_matrix, "dense_matrices_cpu")
-                    and self._dense_ata_matrix.dense_matrices_cpu is not None
-                ):
-                    memory_freed += self._dense_ata_matrix.dense_matrices_cpu.nbytes / (1024 * 1024)
-                    self._dense_ata_matrix.dense_matrices_cpu = None
-                if (
-                    hasattr(self._dense_ata_matrix, "dense_matrices_gpu")
-                    and self._dense_ata_matrix.dense_matrices_gpu is not None
-                ):
-                    memory_freed += self._dense_ata_matrix.dense_matrices_gpu.nbytes / (1024 * 1024)
-                    self._dense_ata_matrix.dense_matrices_gpu = None
-                self._dense_ata_matrix = None
-                logger.debug("Cleaned up dense ATA matrix")
-
             # NOTE: In batch mode, keep the regular symmetric matrix for single-frame fallback
             # operations (e.g., initial frame or error recovery). The batch matrix handles
             # batch operations, but single-frame optimize_frame() still needs the regular ATA matrix.
@@ -673,13 +620,6 @@ class LEDOptimizer:
         in _load() before calling this method.
         """
         logger.info("Loading matrices from pattern file")
-
-        # Load metadata from pattern data
-        led_spatial_mapping: Any = data.get("led_spatial_mapping", {})
-        if hasattr(led_spatial_mapping, "item"):
-            led_spatial_mapping = led_spatial_mapping.item()
-        self._led_spatial_mapping = led_spatial_mapping
-        self._led_positions = data.get("led_positions", None)
 
         # Load color space information from metadata
         metadata_raw: Any = data.get("metadata", {})
@@ -745,55 +685,9 @@ class LEDOptimizer:
         logger.info("Matrix loading completed successfully")
         return True
 
-    def _calculate_flops_per_iteration(self) -> None:
-        """FLOP calculation removed - kept as stub for API compatibility."""
-        # All FLOP calculations removed for clean implementation
-        # These fields are maintained as zeros for API compatibility
-        self._dense_flops_per_iteration = 0
-        self._flops_per_iteration = 0
-
-        logger.debug("FLOP calculations removed for clean implementation")
-
     def _initialize_workspace(self) -> None:
-        """Initialize GPU workspace arrays for dense optimization."""
-        if not self._matrix_loaded:
-            return
-
-        pixels = FRAME_HEIGHT * FRAME_WIDTH
-        led_count = self._actual_led_count
-
-        logger.info("Initializing workspace arrays...")
-
-        # CPU buffers
-        self._target_rgb_buffer = np.empty((pixels, 3), dtype=np.float32)
-
-        # GPU arrays for optimization (all dense)
-        self._ATb_gpu = cp.zeros((led_count, 3), dtype=cp.float32)  # A^T @ b
-        self._led_values_gpu = cp.full((led_count, 3), 0.5, dtype=cp.float32)  # x
-
-        # Workspace for optimization loop
-        self._gpu_workspace = {
-            "gradient": cp.zeros((led_count, 3), dtype=cp.float32),  # ATA @ x - ATb
-            "ATA_x": cp.zeros((led_count, 3), dtype=cp.float32),  # ATA @ x
-            "x_new": cp.zeros((led_count, 3), dtype=cp.float32),  # Updated x
-            "ATA_g": cp.zeros((led_count, 3), dtype=cp.float32),  # ATA @ gradient
-        }
-
-        workspace_mb = sum(arr.nbytes for arr in self._gpu_workspace.values()) / (1024 * 1024)
-        logger.info(f"Workspace memory: {workspace_mb:.1f}MB")
-
-    def _reset_workspace_references(self) -> None:
-        """Reset workspace array references to ensure deterministic behavior."""
-        if not hasattr(self, "_gpu_workspace") or self._gpu_workspace is None:
-            return
-
-        # Clear all workspace arrays to zero
-        for key, arr in self._gpu_workspace.items():
-            arr.fill(0.0)
-
-        # Ensure LED values are properly initialized
-        if hasattr(self, "_led_values_gpu") and self._led_values_gpu is not None:
-            self._led_values_gpu.fill(0.5)
+        """Initialize workspace - placeholder for future use."""
+        # Workspace arrays are managed by frame_optimizer module
 
     def optimize_frame(
         self,
@@ -865,15 +759,13 @@ class LEDOptimizer:
             # Use standardized frame optimizer with ATA inverse
             from ..utils.frame_optimizer import FrameOptimizationResult
 
-            # Determine which ATA matrix to use - prefer dense, then symmetric, then regular DIA
-            if self._dense_ata_matrix is not None:
-                ata_matrix = self._dense_ata_matrix
-            elif self._symmetric_ata_matrix is not None:
+            # Determine which ATA matrix to use - prefer symmetric, then regular DIA
+            if self._symmetric_ata_matrix is not None:
                 ata_matrix = self._symmetric_ata_matrix
             elif self._diagonal_ata_matrix is not None:
                 ata_matrix = self._diagonal_ata_matrix
             else:
-                raise RuntimeError("No ATA matrix available (dense, symmetric, or DIA format)")
+                raise RuntimeError("No ATA matrix available (symmetric or DIA format)")
 
             # Convert target frame to GPU (cupy) for frame optimizer
             target_frame_gpu = cp.asarray(target_frame)
@@ -912,25 +804,17 @@ class LEDOptimizer:
                 precomputation_info=(
                     {
                         "ata_format": (
-                            "Dense"
-                            if self._dense_ata_matrix is not None
-                            else (
-                                "Symmetric_DIA"
-                                if self._symmetric_ata_matrix is not None
-                                else "DIA_sparse" if self._diagonal_ata_matrix is not None else "None"
-                            )
+                            "Symmetric_DIA"
+                            if self._symmetric_ata_matrix is not None
+                            else "DIA_sparse" if self._diagonal_ata_matrix is not None else "None"
                         ),
                         "ata_memory_mb": (
-                            self._dense_ata_matrix.memory_mb
-                            if self._dense_ata_matrix is not None
+                            self._symmetric_ata_matrix.dia_data_gpu.nbytes / (1024 * 1024)
+                            if self._symmetric_ata_matrix and self._symmetric_ata_matrix.dia_data_gpu is not None
                             else (
-                                self._symmetric_ata_matrix.dia_data_gpu.nbytes / (1024 * 1024)
-                                if self._symmetric_ata_matrix and self._symmetric_ata_matrix.dia_data_gpu is not None
-                                else (
-                                    self._diagonal_ata_matrix.dia_data_cpu.nbytes / (1024 * 1024)
-                                    if self._diagonal_ata_matrix and self._diagonal_ata_matrix.dia_data_cpu is not None
-                                    else 0
-                                )
+                                self._diagonal_ata_matrix.dia_data_cpu.nbytes / (1024 * 1024)
+                                if self._diagonal_ata_matrix and self._diagonal_ata_matrix.dia_data_cpu is not None
+                                else 0
                             )
                         ),
                         "approach": "standardized_frame_optimizer",
@@ -1081,14 +965,7 @@ class LEDOptimizer:
 
         if self._matrix_loaded:
             ata_info = {}
-            if self._dense_ata_matrix is not None:
-                ata_info = {
-                    "ata_format": "Dense",
-                    "ata_shape": self._dense_ata_matrix.dense_matrices_cpu.shape,
-                    "ata_memory_mb": self._dense_ata_matrix.memory_mb,
-                    "approach_description": "Standardized frame optimizer with mixed tensor and dense ATA matrix",
-                }
-            elif self._symmetric_ata_matrix is not None:
+            if self._symmetric_ata_matrix is not None:
                 symmetric_info = self._symmetric_ata_matrix.get_info()
                 ata_info = {
                     "ata_format": "Symmetric_DIA",
